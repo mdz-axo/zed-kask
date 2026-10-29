@@ -802,8 +802,8 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 
 | Record key | Producer |
 |---|---|
-| `reg.skill.<skill-id>.outcome` | `SkillTool::run` and `activate_delegated_skill` record successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`, `delegated`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:1029-1060`). |
-| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:5069@Thread::run_tool`, `:4947-4948@Thread::run_tool`, `crates/agent/src/agent.rs:5117@record_skill_tool_failure`; `crates/zed/src/main.rs:1763-1768`). |
+| `reg.skill.<skill-id>.outcome` | `SkillTool::run` records successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:1029-1060`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:5069@Thread::run_tool`, `:5069-5070@Thread::run_tool`, `crates/agent/src/agent.rs:5535@record_skill_tool_failure`; `crates/zed/src/main.rs:1763-1768`). |
 | `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1726-1762`). |
 
 ---

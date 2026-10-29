@@ -341,11 +341,11 @@ impl Component for AiSettingItem {
                     .child(
                         AiSettingItem::new(
                             "builtin-mcp",
-                            "swarm",
+                            "corpus",
                             AiSettingItemStatus::Running,
                             AiSettingItemSource::BuiltIn,
                         )
-                        .detail_label("42 tools")
+                        .detail_label("25 tools")
                         .action(
                             IconButton::new("builtin-toggle", IconName::Check)
                                 .icon_size(IconSize::Small)
@@ -468,8 +468,8 @@ mod tests {
     #[test]
     fn builtin_source_tooltip_names_the_kask_runtime() {
         assert_eq!(
-            AiSettingItemSource::BuiltIn.tooltip_text("swarm"),
-            "swarm is a built-in kask MCP server, managed by the kask runtime."
+            AiSettingItemSource::BuiltIn.tooltip_text("corpus"),
+            "corpus is a built-in kask MCP server, managed by the kask runtime."
         );
         assert_eq!(AiSettingItemSource::BuiltIn.icon_name(), IconName::Kask);
     }

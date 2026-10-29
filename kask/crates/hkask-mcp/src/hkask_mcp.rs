@@ -8,8 +8,9 @@
 //!
 //! `invoke` performs no per-call authorization; see `ToolPort::invoke` and
 //! the tool-port README for why the prior capability gate was removed. Authority lives in the
-//! inference IPC `tool_allowlist`, the swarm card `mcp_tools` allowlist, and the
-//! per-server MCP env allowlists.
+//! inference IPC `tool_allowlist` and the per-server MCP env allowlists (the
+//! former swarm-card `mcp_tools` allowlist was removed 2026-10-28 with the
+//! swarm capability).
 
 pub mod runtime;
 

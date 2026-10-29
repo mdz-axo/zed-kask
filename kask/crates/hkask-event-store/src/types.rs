@@ -16,9 +16,11 @@
 //!
 //! - **`RolloutKind`** ≅ AL's `Rollout.kind` — *what type of execution
 //!   unit produced these events*. A rollout is the unit that has a
-//!   lifecycle and a judge: a delegation (one `swarm_delegate_local`
-//!   call), a turn (a curator/user interaction), or a harness run (one
-//!   `swarm_eval_agent_local` call). Carried in event payloads so
+//!   lifecycle and a judge: a delegation (a delegated task execution —
+//!   historically one `swarm_delegate_local` call), a turn (a curator/user
+//!   interaction), or a harness run (historically one `swarm_eval_agent_local`
+//!   call; both former-swarm kinds remain for reading events recorded before
+//!   the 2026-10-28 swarm removal). Carried in event payloads so
 //!   consumers can classify without a separate rollouts table.
 //!
 //! Both types serialize to snake_case strings in event payloads — the
@@ -43,7 +45,7 @@ use serde::{Deserialize, Serialize};
 pub enum VerdictSource {
     /// A deterministic evaluator (contains/not_contains/regex)
     /// run against the response. The only automated source
-    /// trusted for the C0 `s` axis of the swarm-state distance.
+    /// trusted for the C0 `s` axis of the state-distance reading.
     DeterministicEvaluator,
     /// A human (the operator or Curator) stamped the verdict. Ground truth.
     Operator,
@@ -85,7 +87,7 @@ impl VerdictSource {
 }
 
 /// The coarse rollout classification. A rollout is the unit that has a
-/// lifecycle and a judge — a local swarm delegation, a curator/user turn,
+/// lifecycle and a judge — a delegated task execution, a curator/user turn,
 /// or a harness run. Carried in event payloads so consumers can classify
 /// a rollout without a separate rollouts table.
 ///
@@ -93,16 +95,20 @@ impl VerdictSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RolloutKind {
-    /// A single `swarm_delegate_local` call — one agent executing one
-    /// task through the inference + tool loop. Produces `model_request`
+    /// A delegated task execution — one agent executing one
+    /// task through the inference + tool loop (historically a
+    /// `swarm_delegate_local` call; the regulation loop's impact
+    /// verdicts are written back under this kind). Produces `model_request`
     /// and `verdict` events.
     Delegation,
     /// A curator or user interaction turn. Not yet produced by any code
     /// path (reserved for the regulation consumer's curator-turn rollout
     /// concept).
     Turn,
-    /// A `swarm_eval_agent_local` call — one agent × one task set × N
-    /// repeats. Produces `harness_summary` events alongside the per-
+    /// A harness run — one agent × one task set × N
+    /// repeats (historically a `swarm_eval_agent_local` call; no live
+    /// writer since the 2026-10-28 swarm removal — the kind remains for
+    /// reading recorded events). Produces `harness_summary` events alongside the per-
     /// delegation `model_request` and `verdict` events.
     HarnessRun,
 }

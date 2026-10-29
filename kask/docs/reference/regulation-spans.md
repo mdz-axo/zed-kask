@@ -40,7 +40,7 @@ stderr lines into this pathway (`kask/crates/hkask-mcp/src/runtime.rs`).
 
 `CANONICAL_NAMESPACES` is the source of truth for accepted `reg.*` roots and sub-namespaces (`kask/crates/hkask-types/src/event.rs:75-154`). `SpanNamespace::new` validates a full namespace; `SpanNamespace::parse` accepts short or full forms, and hierarchical validation allows descendants of a registered root (`kask/crates/hkask-types/src/event.rs:156-271`).
 
-`SpanKind` currently has 11 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:411-445,447-499`):
+`SpanKind` currently has 11 variants. `Span::from_kind` converts each variant to the canonical namespace/path pair in `namespace_and_path` (`kask/crates/hkask-types/src/event.rs:411-449`):
 
 | Group | Typed variants |
 | --- | --- |
@@ -49,7 +49,7 @@ stderr lines into this pathway (`kask/crates/hkask-mcp/src/runtime.rs`).
 | Outcome assessment | `ImpactVerified`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`, `ToolOutcomeBreakdown` |
 | Inference resilience | `InferenceCircuitTransition`, `InferenceObservedRecovery` |
 
-`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs:468-473`).
+`CyclePhase` is `Sense | Compute | Compare | Act`; there is no `Verify` phase (`kask/crates/hkask-types/src/event.rs:493-502`).
 
 `SpanCategory` is the typed dispatch key for span-category-dependent logic — a closed
 classification of a namespace's `short_name()` prefix: `Cybernetics` (`variety`,

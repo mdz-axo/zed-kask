@@ -58,9 +58,9 @@ instead of findings.
 - `self` — the session that authored any current edits runs the fixtures.
   Label it; self-run scores are harness mechanics, not calibrated performance.
 - `spawn_agent` / `fresh_session` — preferred for reported numbers: a
-  decoupled executor runs the fixtures (the P1 discipline). A local agent
-  card declaring the `code-review` skill can be run via
-  `swarm_eval_agent_local` with one task per fixture.
+  decoupled executor runs the fixtures (the P1 discipline) — e.g.
+  `spawn_agent` with one task per fixture, the delegate declaring the
+  `code-review` skill.
 
 ## Held-out policy
 

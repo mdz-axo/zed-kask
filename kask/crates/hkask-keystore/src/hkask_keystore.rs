@@ -13,7 +13,7 @@
 //! (injected by `build_mcp_server_env`, which reads the canonical keychain URLs).
 //! The DB passphrase is read by this crate via `resolve_db_passphrase_string`,
 //! which also hits `kask://credentials/*`. There is ONE passphrase for all
-//! SQLCipher databases — the swarm memory DB uses the same one.
+//! SQLCipher databases.
 
 pub mod error;
 pub mod keychain;

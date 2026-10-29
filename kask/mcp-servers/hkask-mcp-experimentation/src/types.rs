@@ -116,18 +116,18 @@ pub const RUBRIC_KINDS: &[&str] = &[
     RUBRIC_KIND_GROUNDED_REPORT,
 ];
 
-/// A rubric's verification — deliberately the same vocabulary as
-/// `swarm_evaluate_local`'s evaluator kinds (contains / not_contains /
+/// A rubric's verification — deliberately the same vocabulary as the
+/// execution harnesses' evaluator kinds (contains / not_contains /
 /// regex) plus the recorded-report form: one grammar from declaration
 /// (P1) to recorded run.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RubricVerification {
-    /// The evidence must contain the spec string (== swarm "contains").
+    /// The evidence must contain the spec string (the harness "contains" kind).
     Contains { spec: String },
-    /// The evidence must not contain the spec string (== swarm "not_contains").
+    /// The evidence must not contain the spec string (the harness "not_contains" kind).
     NotContains { spec: String },
-    /// The evidence must match the regex pattern (== swarm "regex").
+    /// The evidence must match the regex pattern (the harness "regex" kind).
     Regex { pattern: String },
     /// A recorded harness report names the evidence — a declaration this
     /// server validates and stores, never one it executes.

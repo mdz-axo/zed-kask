@@ -85,8 +85,8 @@ pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 ///
 /// - the per-request `tool_allowlist` on the inference IPC dispatch
 ///   (`kask_bridge::inference_ipc_server`, fail-closed on missing/empty),
-/// - each swarm agent card's declared `mcp_tools` allowlist,
-/// - the per-server MCP env/credential allowlists.
+/// - the per-server MCP env/credential allowlists (the former swarm-card
+///   `mcp_tools` allowlist was removed 2026-10-28 with the swarm capability).
 ///
 /// The `agent` argument is an accounting identity, not a credential.
 ///

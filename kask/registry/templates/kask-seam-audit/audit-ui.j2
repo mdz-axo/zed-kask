@@ -15,19 +15,14 @@ Audit ONLY these kask-owned GPUI crates (they live under `crates/` because they
 depend on gpui/theme, per the §13.1 invariant, but they are kask-owned):
 `hkask-viz-core`, `hkask-media-widget`, `hkask-graph-widget`,
 `hkask-kanban-widget`, `hkask-scenarios-widget`, `marketplace_ui_common`,
-`swarm_panel`, `kanban_panel`,
+`kanban_panel`,
 and the D9 settings page (`settings_ui/src/pages/kask_page.rs` — flag findings
 but mark remediation D9-seam-scoped). Do NOT audit upstream Zed editor/panel
 code outside the above.
 
 ## Explicit D-seam callouts
-- **D33** — the swarm panel destructive-action confirmation flow: the
-  `DestructiveAction` enum (`DeleteSwarm`/`RemoveAgent`), the
-  `pending_destructive` two-step stage→confirm flow, and the active-run warning
-  shown for deletes. Verify the confirmation gate fires on every
-  destructive path (local delete, remove-agent) and that the
-  warning text is non-empty when active runs exist. A destructive action that
-  bypasses `pending_destructive` is a blocking finding.
+(D33 — the swarm panel — was retired 2026-10-28 with the whole local swarm
+capability; it is no longer an audit surface.)
 
 ## Audit axes (Sense→Orient→Decide→Act→Review)
 1. **measured-layout** — renderers that stack N children in an `h_flex`/`div().flex()`

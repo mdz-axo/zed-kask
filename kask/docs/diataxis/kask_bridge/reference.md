@@ -182,7 +182,7 @@ inference socket, and an optional timeout
    (`kask/crates/kask_bridge/src/mcp_servers.rs:472@build_mcp_server_env`).
 
 Unknown IDs receive neither credentials nor configuration
-(`kask/crates/kask_bridge/src/mcp_servers.rs:414@filter_credentials_for_server,871@filter_config_env_for_server`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:414@filter_credentials_for_server,803@filter_config_env_for_server`).
 
 ## Nonblocking composition
 

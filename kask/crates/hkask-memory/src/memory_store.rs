@@ -14,8 +14,8 @@
 //!   canonical passage and require atomic row/vector publication
 //! - `store()` — raw EAV/control writes, without a semantic-recall guarantee
 //! - `query_deduped()` / `query_deduped_untouched()` — recall with decay + dedup
-//! - `query_for_deduped_untouched()` — filter by who wrote the memory (the
-//!   swarm hive uses this to scope by agent)
+//! - `query_for_deduped_untouched()` — filter by who wrote the memory
+//!   (perspective-scoped recall; the curator's per-agent recall uses this)
 //! - Embedding operations (store, search, purge)
 //! - Consolidation helpers (update_confidence, delete_h_mem)
 //!
@@ -256,8 +256,8 @@ const TURN_STORAGE_PREFIX: &str = "curator:thread:";
 ///
 /// The ontology blob on each h_mem carries dual-axis anchoring. `store()`
 /// accepts any h_mem; the ontology classifies it. Recall queries filter by
-/// `perspective` (who wrote this) when needed — the swarm hive uses this
-/// to scope by agent.
+/// `perspective` (who wrote this) when needed — the curator's
+/// perspective-scoped recall uses this shape.
 ///
 /// Decay (Wozniak-Gorzelanczyk, 1995) is applied at recall time:
 /// `R(t) = exp(-t/S)` where `t` is days since `recalled_at` and `S` is
@@ -568,8 +568,8 @@ impl MemoryStore {
     /// deduplication and decay, **without** touching `recalled_at`.
     ///
     /// This is the recall path for perspective-scoped memory: filter to
-    /// the memories written by a specific agent/user. The swarm hive uses
-    /// this to scope by agent.
+    /// the memories written by a specific agent/user. The curator's
+    /// perspective-scoped recall (`query_for_deduped`) uses this shape.
     pub fn query_for_deduped_untouched(
         &self,
         entity: &str,

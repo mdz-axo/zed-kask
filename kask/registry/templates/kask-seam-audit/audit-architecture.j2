@@ -24,9 +24,8 @@ Zed files outside `{{ seam_scope }}`.
    service with zero production callers in the new host.
 
 ## Explicit D-seam callouts
-- **D33** — `LocalSwarmRegistry` gained `update_metadata` and `clone_swarm`.
-  Verify each new method has production callers
-  (panel + MCP tool paths); a method wired only by a test is helper-test-only.
+(D33 — the local swarm registry and panel — was retired 2026-10-28 with the
+whole local swarm capability; it is no longer an audit surface.)
 - **D28** — the override hooks `THREADS_DB_PATH_OVERRIDE` (in `agent.rs`) and
   `GLOBAL_SKILLS_DIR_OVERRIDE` (in `agent_skills.rs`) relocate threads/skills
   under `{kask_data_dir}/`. Verify the override hooks are exercised by

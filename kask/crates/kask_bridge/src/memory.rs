@@ -3462,9 +3462,9 @@ pub(crate) mod tests {
 
         let healthy = port.memory_health_json();
         assert_eq!(healthy["curator_store"], true);
-        // `degraded` follows the curator store alone now — the bridge-side
-        // swarm store was removed (swarm memory lives in the swarm MCP
-        // server, not the bridge).
+        // `degraded` follows the curator store alone — the bridge-side
+        // swarm store was removed with the swarm capability (2026-10-28);
+        // there is no second managed memory DB.
         assert_eq!(healthy["degraded"], false);
 
         // Simulate a curator outage. Healing is disabled in test handles, so

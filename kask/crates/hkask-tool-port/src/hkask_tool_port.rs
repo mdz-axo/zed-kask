@@ -10,9 +10,9 @@
 //!
 //! Capability *separation* is still enforced, at the boundaries that hold a list
 //! the caller cannot choose: the per-request `tool_allowlist` on the inference
-//! IPC dispatch, each swarm agent card's `mcp_tools` allowlist, and the
-//! per-server MCP env/credential allowlists. What remains here is the dispatch
-//! port itself.
+//! IPC dispatch and the per-server MCP env/credential allowlists (the former
+//! swarm-card `mcp_tools` allowlist was removed 2026-10-28 with the swarm
+//! capability). What remains here is the dispatch port itself.
 //!
 //! The FIDES `ToolTaint` labels also lived here. They were removed with the
 //! runtime-policy gate they fed: every `ToolInfo` was labelled `Pure` at its

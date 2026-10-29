@@ -63,13 +63,13 @@ PopoverMenu::new("menu-id")
 ```
 
 Key details:
-- `panel_handle` is a `WeakEntity<SwarmPanel>` captured before the closure: `let panel_handle = cx.entity().downgrade();`
+- `panel_handle` is a `WeakEntity<Panel>` captured before the closure: `let panel_handle = cx.entity().downgrade();`
 - `menu.entry()` takes 3 args: `(label: impl Into<SharedString>, action: Option<Box<dyn Action>>, handler: impl Fn(&mut Window, &mut App))`
-- The handler captures `WeakEntity`, upgrades, and calls panel methods — it does NOT capture `&mut self` or `Context<SwarmPanel>` directly.
+- The handler captures `WeakEntity`, upgrades, and calls panel methods — it does NOT capture `&mut self` or `Context<Panel>` directly.
 - `render_card` must take `&mut Window` as a parameter (passed from `render_entries`).
 
 ### For Gate 2 (No Primary Action):
-Make exactly one button `ButtonStyle::Filled` (the primary action — usually "Hire" for agent cards, "Details" for swarm cards). Keep all others `ButtonStyle::Subtle`.
+Make exactly one button `ButtonStyle::Filled` (the primary action — usually the card's "Details" affordance). Keep all others `ButtonStyle::Subtle`.
 
 ### For Gate 3 (Text Column Collapse):
 - Add `min_w_0()` on the text column's `v_flex`/`h_flex` (prevents flex child from refusing to shrink below content width).

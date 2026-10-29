@@ -17,7 +17,7 @@ use super::error::McpToolError;
 /// `HKASK_DB_PASSPHRASE` has a dedicated keystore resolver (env →
 /// `hkask-keystore` keychain) because it predates the zed CredentialsProvider
 /// integration and is read by `hkask-keystore` directly. It is the ONE
-/// passphrase for all SQLCipher databases — the swarm memory DB included.
+/// passphrase for all SQLCipher databases.
 ///
 /// pre:  env_var is non-empty
 /// post: returns credential value from env var

@@ -154,9 +154,9 @@ itself; it routes to the owners and carries the cycle's memory.
    refused at any gate (falsifiability-admit, no-headroom, incompatibility)
    returns to the card as a cheap fossil — "refused at gate X, reason Y" — and
    the cycle continues with the survivors.
-7. **EXECUTE.** The delegated lifecycle runs the bound protocol. Swarm delegation
-   is one executor among several (data pullers, `lean_check`, job execution,
-   research runs); the lifecycle binds the executor per its DesignSpec.
+7. **EXECUTE.** The delegated lifecycle runs the bound protocol. Delegated
+   worktree execution is one executor among several (data pullers, `lean_check`,
+   job execution, research runs); the lifecycle binds the executor per its DesignSpec.
 8. **MEASURE.** `fitness_record` under the server-enforced budget; a typed
    `BudgetExhausted` refusal is surfaced to the PI, never retried silently.
 9. **RESOLVE.** `final_evaluation_record` on the selection set; the verdict lands

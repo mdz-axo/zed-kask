@@ -1271,7 +1271,7 @@ mod tests {
 
     /// A valid rubric bundle (P1): one metric rubric verified by a recorded
     /// harness report, one implementation rubric verified by a contains
-    /// check — the swarm evaluator vocabulary.
+    /// check — the rubric verification vocabulary.
     fn rubrics() -> Vec<Rubric> {
         vec![
             Rubric {

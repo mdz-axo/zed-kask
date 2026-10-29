@@ -21,12 +21,14 @@ unconditionally — while `DIVERGENCE.md` D3 advertised it as "the enforced gate
 metering, not a credential**.
 
 A capability check is only a gate when the authority list is not chosen by the
-caller being checked. Authority in zed-kask lives at three such boundaries:
+caller being checked. Authority in zed-kask lives at three such boundaries
+(PRINCIPLES P4.2; the former per-agent swarm-card `mcp_tools` allowlist was a
+fourth, removed 2026-10-28 with the whole local swarm capability):
 
 | Boundary | Location | Pinned by |
 |---|---|---|
-| Per-request delegated-tool allowlist (fail-closed on missing/empty) | `kask_bridge::inference_ipc_server` `tool_invoke` dispatch | `dispatch_tool_invoke_rejects_unallowed_tool` |
-| Per-agent declared `mcp_tools` allowlist | `hkask-mcp-swarm` `agent_executor` | swarm card tests |
+| The child's requested narrowing — the per-request `tool_allowlist` on the inference IPC `create_worktree_thread` dispatch (fail-closed on missing) | `kask_bridge::inference_ipc_server` | the `dispatch_create_worktree_thread_*` tests |
+| The parent grant the narrowing is measured against (`worktree_tools` intersection; requires `host/create_worktree_thread`) | `kask_bridge::delegation_grants` | `granted_worktree_request` and the worktree authority tests |
 | Per-server MCP env / credential allowlists | `kask_bridge::mcp_servers` | `all_servers_have_credential_allowlist` |
 
 Capability **separation** (which tools a given agent may reach at all) is

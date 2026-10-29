@@ -851,7 +851,7 @@ fn main() {
         // otherwise refuse every governed panel tool call with
         // `EnergyBudgetExceeded`.
         {
-            let panel_webid = hkask_types::WebID::from_persona(b"kask-panel");
+            let panel_webid = hkask_types::WebID::from_persona(hkask_types::event::KASK_PANEL_PERSONA.as_bytes());
             cx.foreground_executor()
                 .block_on(cybernetics_loop_inner.register_call_cap(panel_webid, KASK_PANEL_CALL_CAP));
             log::info!(
@@ -4264,7 +4264,7 @@ fn sync_kask_mcp_runtime_servers(
     .detach();
 }
 
-// ── Swarm panel tool-invoker adapter ───────────────────────────────────────
+// ── Kask panel tool-invoker adapter ───────────────────────────────────────
 //
 // This adapter implements the kask panels' `ToolInvoker` trait (from the
 // `hkask-tool-invoker` leaf crate) by delegating to
@@ -4361,7 +4361,7 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
         use hkask_types::WebID;
 
         // Accounting identity for the call meter — not a credential.
-        let webid = WebID::from_persona(b"kask-panel");
+        let webid = WebID::from_persona(hkask_types::event::KASK_PANEL_PERSONA.as_bytes());
 
         let tool_port = self.tool_port.clone();
         let server = server.to_string();

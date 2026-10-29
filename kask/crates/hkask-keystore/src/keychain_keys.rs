@@ -11,7 +11,7 @@
 /// zed's `CredentialsProvider` uses. This matches the `credential_key` in
 /// `DATA_SERVICES` so `build_mcp_server_env` injects it as `HKASK_DB_PASSPHRASE`
 /// into MCP server child processes. There is ONE passphrase for ALL SQLCipher
-/// databases (curator, corpus, kanban, swarm memory) — no per-DB keys.
+/// databases (curator, corpus, kanban) — no per-DB keys.
 pub const KEY_DB_PASSPHRASE: &str = "hkask_db_passphrase";
 
 /// Keychain key for a scheduled database passphrase rotation.

@@ -193,7 +193,7 @@ pub struct FitnessRecordRequest {
     pub experiment_id: String,
     pub variant_id: String,
     /// Recorded report references (§P8.3). Each entry is expected to name a
-    /// real harness/evaluator report (e.g. a swarm_eval_agent_local run) —
+    /// real harness/evaluator report (e.g. a recorded eval-harness run) —
     /// the caller's assertion; this server stores refs, it does not verify them.
     pub runs: Vec<String>,
     /// The number of rollouts the referenced reports cover (§P8.9 step 2).
@@ -269,7 +269,7 @@ pub struct PopulationQueryRequest {
 #[tool_router(router = experimentation_router, vis = "pub")]
 impl ExperimentationServer {
     #[tool(
-        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | prompt_template | tool_schema | regulation_scalar | scientific_hypothesis), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the swarm evaluator vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional design_spec carries a typed, versioned scientific DesignSpec (a JSON object with a non-empty spec_version) for a scientific-hypothesis declaration — it is stored, exposed through lineage/population reads, and joins the seal fingerprint, so a post-seal design edit yields a different fingerprint rather than silently reusing a stale design; omit it for a legacy artifact experiment. Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
+        description = "Register an experiment (protocol step 1, Declare): hypothesis, artifact layer (skill | prompt_template | tool_schema | regulation_scalar | scientific_hypothesis), genotype refs, eval set, fitness function, noise band, a typed rubric bundle (the machine-checkable eval contract: non-empty, at least one metric rubric and one implementation or grounded_report rubric, stable snake_case ids, verification in the rubric vocabulary — contains / not_contains / regex / report_ref), pre-registered prediction with confidence in [0,1], and an energy budget that MUST carry max_runs (a positive integer the server enforces at fitness_record — recording past the ceiling is a typed budget_exhausted refusal, §P8.9 step 2). Optional design_spec carries a typed, versioned scientific DesignSpec (a JSON object with a non-empty spec_version) for a scientific-hypothesis declaration — it is stored, exposed through lineage/population reads, and joins the seal fingerprint, so a post-seal design edit yields a different fingerprint rather than silently reusing a stale design; omit it for a legacy artifact experiment. Optional linked_goal_id joins the experiment to the kanban goal that Brier-scores its claim. Returns the experiment record with status proposed. Optional experiment_key converges retried calls onto the existing record instead of duplicating it."
     )]
     pub async fn experiment_propose(
         &self,
@@ -309,7 +309,7 @@ impl ExperimentationServer {
             }
             // P1: the declaration carries a typed, machine-checkable eval
             // contract — the same grammar the execution harnesses verify
-            // against (the swarm evaluator vocabulary).
+            // against (the rubric verification vocabulary).
             validate_rubrics(&rubrics).map_err(map_experimentation_error)?;
             // The optional typed DesignSpec (task `f1a90cd2`) must be a
             // versioned JSON object when supplied — a design is a versioned
@@ -423,7 +423,7 @@ impl ExperimentationServer {
     }
 
     #[tool(
-        description = "Record fitness for a variant (protocol step 3, Test): runs are caller-asserted report references — each entry is expected to name a real harness or evaluator report (e.g. a swarm_eval_agent_local run); this server stores the declaration and enforces bookkeeping (ids, seal relations, budget sums), it does not authenticate the referenced reports — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs ceiling and refuses the record with a typed budget_exhausted error when it would exceed it, §P8.9 step 2) and per-objective scores computed from those runs. P2: pre-seal, only the baseline variant records fitness; post-seal, every record cites the active seal via seal_id. Immutable once written. A resolved experiment no longer accepts fitness."
+        description = "Record fitness for a variant (protocol step 3, Test): runs are caller-asserted report references — each entry is expected to name a real harness or evaluator report (e.g. a recorded eval-harness run); this server stores the declaration and enforces bookkeeping (ids, seal relations, budget sums), it does not authenticate the referenced reports — plus run_count (the number of rollouts those reports cover; the server sums run counts against the experiment's declared budget.max_runs ceiling and refuses the record with a typed budget_exhausted error when it would exceed it, §P8.9 step 2) and per-objective scores computed from those runs. P2: pre-seal, only the baseline variant records fitness; post-seal, every record cites the active seal via seal_id. Immutable once written. A resolved experiment no longer accepts fitness."
     )]
     pub async fn fitness_record(
         &self,

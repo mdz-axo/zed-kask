@@ -752,7 +752,7 @@ the real pruning and ingestion-independence controls remain green.
 
 **Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
 (spawn `:163`, core `distill_store` `:404`), started from the server
-factory (`hkask_mcp_curator.rs:1712-1716`).
+factory (`hkask_mcp_curator.rs:1625-1630`).
 
 The `curator_memory_extract` tool is on-demand ALWAYS-mode learning: an
 agent lists a thread's turns and inserts the lessons worth keeping. The

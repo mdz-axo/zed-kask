@@ -164,8 +164,8 @@ pub(crate) fn emit_corpus_template_root_env(
     data_dir: &str,
     env: &mut std::collections::HashMap<String, String>,
 ) {
-    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus,
-    // swarm) find templates in production where the CWD-relative default
+    // Always emit HKASK_TEMPLATE_ROOT so MCP servers (corpus)
+    // find templates in production where the CWD-relative default
     // does not exist.
     env.insert(
         "HKASK_TEMPLATE_ROOT".to_string(),
@@ -621,9 +621,4 @@ mod tests {
             Some("voyage/voyage-3")
         );
     }
-
-    // Swarm settings: `Default` is the single source of truth — default
-    // settings emit no optional swarm env vars (the always-on D28 data-dir
-    // vars are the exception). The removed ABW cloud config must never be
-    // re-emitted.
 }

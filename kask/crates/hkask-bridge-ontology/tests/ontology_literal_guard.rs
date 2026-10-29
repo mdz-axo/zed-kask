@@ -70,7 +70,6 @@ const ALLOWED_LITERALS: &[(&str, &str)] = &[
         "omc:Sequence",
     ),
     ("crates/hkask-scenarios-widget/src/view.rs", "pko:Procedure"),
-    ("crates/hkask-swarm-widget/src/block.rs", "pko:Procedure"),
     (
         "crates/hkask-viz-core/src/hkask_viz_core.rs",
         "dcterms:Dataset",

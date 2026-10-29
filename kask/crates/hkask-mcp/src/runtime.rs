@@ -518,8 +518,9 @@ impl McpRuntime {
     /// capability check: the prior gate compared a `resource_id` built
     /// from the same tool name passed to `invoke`, so it was a value against
     /// itself. Authority is enforced upstream — at the inference IPC
-    /// `tool_allowlist`, the swarm card `mcp_tools` allowlist, and per-server env
-    /// allowlists — not re-checked here. Must be called before the first invocation.
+    /// `tool_allowlist` and the per-server env allowlists (the former
+    /// swarm-card `mcp_tools` allowlist was removed 2026-10-28 with the
+    /// swarm capability) — not re-checked here. Must be called before the first invocation.
     #[must_use]
     pub fn with_governance(
         mut self,
@@ -1496,8 +1497,9 @@ impl Default for McpRuntime {
 // `resource_id` from the same tool name they passed to `invoke` — the
 // comparison was a value against itself and could not deny. Authority lives at
 // the boundaries that hold a list the caller cannot choose: the per-request
-// `tool_allowlist` on the inference IPC dispatch, each swarm card's `mcp_tools`
-// allowlist, and the per-server MCP env/credential allowlists.
+// `tool_allowlist` on the inference IPC dispatch and the per-server MCP
+// env/credential allowlists (the former swarm-card `mcp_tools` allowlist was
+// removed 2026-10-28 with the swarm capability).
 
 impl hkask_tool_port::ToolPort for McpRuntime {
     fn invoke<'a>(
@@ -2507,7 +2509,7 @@ mod metering_tests {
     }
 
     /// The regulation loop's own board-sensing polls (the 10s
-    /// awaiting-review-count reads under the swarm-panel persona) do not
+    /// awaiting-review-count reads under the kask-panel persona) do not
     /// journal `reg.tool.completed` records — measured 2026-10-02, those
     /// two tools are 89,631 of the persona's 91,355 records (98%), pure
     /// write-only audit volume. The call itself is untouched: it still
@@ -2543,7 +2545,7 @@ mod metering_tests {
             ],
         });
 
-        let panel = WebID::for_agent_name(hkask_types::event::SWARM_PANEL_PERSONA);
+        let panel = WebID::for_agent_name(hkask_types::event::KASK_PANEL_PERSONA);
         // The loop's sensing polls. Dispatch reports Unavailable (no live
         // connection) — irrelevant to the journal decision, which fires
         // after every settled call regardless of result.

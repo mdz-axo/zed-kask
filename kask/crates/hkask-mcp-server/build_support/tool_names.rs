@@ -95,9 +95,8 @@ pub fn write_if_changed(out_path: &Path, generated: &str, src_dir: &Path) {
 
 /// The build-script path plumbing shared by every tool-names generator: the
 /// crate's `src/` tree and the `tool_names.gen.rs` output path under cargo's
-/// `OUT_DIR`. Servers with extra generated sets (swarm's cloud-router split)
-/// build on this plus the part fns; every other server delegates to
-/// [`generate_tool_names`].
+/// `OUT_DIR`. Servers with extra generated sets build on this plus the part
+/// fns; every other server delegates to [`generate_tool_names`].
 pub fn src_and_out_paths() -> (PathBuf, PathBuf) {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
     let src_dir = Path::new(&manifest_dir).join("src");
@@ -116,10 +115,9 @@ pub fn src_and_out_paths() -> (PathBuf, PathBuf) {
 /// `tool_surface_pin!` in each server's test module.
 //
 // `allow(dead_code)`: this module is `#[path]`-included into every server's
-// build script, and not every including unit uses every fn — swarm's driver
-// builds on `src_and_out_paths` + the part fns instead of delegating, so its
-// compilation sees this as dead. The twelve delegating servers are the real
-// consumers.
+// build script, and not every including unit uses every fn — a driver that
+// builds on `src_and_out_paths` + the part fns instead of delegating sees
+// this as dead. The delegating servers are the real consumers.
 #[allow(dead_code)]
 pub fn generate_tool_names() {
     let (src_dir, out_path) = src_and_out_paths();

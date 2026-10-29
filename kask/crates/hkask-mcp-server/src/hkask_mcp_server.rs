@@ -157,7 +157,7 @@ macro_rules! tool_surface_pin {
 /// ```ignore
 /// // src/ontology.rs — the server's own mapping tables, then:
 /// fn is_tool_name(s: &str) -> bool {
-///     (s.starts_with("swarm_") || s.starts_with("local_"))
+///     (s.starts_with("corpus_") || s.starts_with("media_"))
 ///         && s.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
 /// }
 /// hkask_mcp_server::dual_axis_annotate!(
@@ -333,7 +333,7 @@ macro_rules! dual_axis_annotate {
             /// The combined mapping is defined only over the registered
             /// surface: an unknown name yields no dual-axis identity
             /// rather than a default pair. (Either axis may individually
-            /// be total by design — the swarm dc table's catch-all is
+            /// be total by design — a server's dc-table catch-all is
             /// legitimate; the COMBINED identity still requires the
             /// registered name to have both.)
             #[test]

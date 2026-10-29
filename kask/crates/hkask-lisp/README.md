@@ -141,16 +141,12 @@ No hKask crate dependencies — this is a standalone computation library.
   the old turn's cancellation state and weak pending-owner identity prevents stale
   writes/flushes into a successor. Raw/pure APIs are unchanged. Raw-output copying
   and bounded display formatting remain foreground (two counts, one emit).
-- H7 authorized IPC host calls offload only typed Lisp decode/eval through existing
-  Tokio `spawn_blocking` and the shared agent helper. Card/parent checks remain
-  before invocation (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1093-1124`).
-  The invocation guard exists before first poll/spawn; actual IPC EOF winning the
-  pending-dispatch select drops its owner and signals the flag
-  (`kask/crates/kask_bridge/src/host_skill_tools.rs:107-137`, `:149-190`, `:221-231`;
-  `inference_ipc_server.rs:827-840`). Tests observe eventual helper return/worker
-  exit, not immediate join, hard deadline, runtime-shutdown join or simultaneous
-  EOF/result priority. Held workers enter core only after release; H6A owns
-  mid-evaluation cancellation/scope-reclamation evidence.
+- H7 authorized IPC host calls (the delegated host decode/eval path through
+  `kask/crates/kask_bridge/src/host_skill_tools.rs` over the inference IPC
+  `tool_invoke` method) were removed 2026-10-28 with the swarm capability,
+  their only consumer. No host/IPC lisp path remains; the in-process native
+  decode/evaluation path is unchanged, and no host/IPC lisp promise survives
+  (see `kask/docs/reference/lisp-eval-dialect.md`).
 - H8 direct/routed corpus queries share one internal body; only Lisp-option work
   is offloaded. The pre-spawn guard and rmcp request-context cancellation cover
   evaluation/join only, leaving downstream inference/retrieval/generation alone

@@ -1,7 +1,7 @@
 //! Default DB passphrase for first-run provisioning.
 //!
 //! Every SQLCipher database the managed servers open (curator, corpus,
-//! experimentation, kata-kanban, research, swarm memory) defaults to
+//! experimentation, kata-kanban, research) defaults to
 //! `"allostery"` on first run — ONE passphrase for every DB. The user can
 //! change it later via the settings UI (which triggers atomic DB re-encryption)
 //! or the `HKASK_DB_PASSPHRASE` env var. There is no random generation — a

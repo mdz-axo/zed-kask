@@ -52,7 +52,7 @@ pub enum RolloutEventError {
 
 /// A read-and-write view of rollout events for impact verification and
 /// impact- verdict write-back (event-substrate phase 6). The regulation
-/// crate defines the port; the swarm side implements it over
+/// crate defines the port; the kask_bridge side implements it over
 /// `hkask-event-store`. This keeps the regulation crate dependency-light
 /// (no storage dep) while letting `verify_impact` answer "for rollout R,
 /// what was the metric before action A and after it?" as a query instead
