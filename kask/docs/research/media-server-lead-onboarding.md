@@ -52,7 +52,7 @@ semantics. A collage/caption/excerpt is a derived presentation, not new evidence
 ### Audio capture and transcription — 6 tools (`src/tools/audio.rs`)
 `transcribe_bundle`, `transcribe_and_store`, `audio_capture`, `record_and_transcribe`, `audio_trim`, `audio_concat`
 
-Whisper-optimized microphone capture (16 kHz mono WAV), transcription with word-level
+Microphone capture published as a canonical durable WAV asset (16 kHz mono), transcription with word-level
 timings, and lossless FFmpeg trim/concat that publish durable source-derived assets.
 Synthetic speech, image/video creation, and creative recipe execution are retired.
 
@@ -88,7 +88,7 @@ Per-tool descriptions condensed from the live `#[tool]` descriptors are in the r
 
 ### Process model and bootstrap
 
-The server is a thin binary over a library: `src/main.rs:6-9` is a one-line `#[tokio::main]` wrapper around `hkask_mcp_media::run()`. `run()` (`src/hkask_mcp_media.rs:548-665`) resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` — the shared server crate (`kask/crates/hkask-mcp-server`) that provides `run_server`, the `mcp_server!` macro, `McpToolError`, and the `execute_tool` dispatch wrapper (`kask/crates/hkask-mcp-server/src/server.rs:36-42`). All 13 built-in servers follow this same shape (`kask/docs/reference/mcp-servers/README.md`).
+The server is a thin binary over a library: `src/main.rs:6-9` is a one-line `#[tokio::main]` wrapper around `hkask_mcp_media::run()`. `run()` (`src/hkask_mcp_media.rs:548-665`) resolves the inference port, opens the gallery DB, and hands a `MediaServer` constructor closure to `hkask_mcp_server::run_server` — the shared server crate (`kask/crates/hkask-mcp-server`) that provides `run_server`, the `mcp_server!` macro, `McpToolError`, and the `execute_tool` dispatch wrapper (`kask/crates/hkask-mcp-server/src/server.rs:36-42`). All 8 built-in servers follow this same shape (`kask/docs/reference/mcp-servers/README.md`).
 
 ### How tools are registered
 

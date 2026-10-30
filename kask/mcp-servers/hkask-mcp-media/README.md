@@ -38,13 +38,12 @@ The table below is a partial quick-reference.
 | `video_concat` | Concatenate multiple video clips into one using ffmpeg |
 | `video_caption` | Generate a description of video content by extracting keyframes and analyzing them with a vision LLM |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
-| `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for Whisper transcription (16kHz mono) |
+| `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset (16kHz mono) |
 | `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
 
 ## Research annotations and recording retrieval
 
-The source inventory is 91 tools (102 − 20 creative operations + 9
-research operations), pinned against the real router and request schemas.
+The source inventory is 88 tools, pinned against the real router and request schemas.
 A running editor must rebuild/restart its media child to expose this inventory.
 
 | Tool | Required request fields |
