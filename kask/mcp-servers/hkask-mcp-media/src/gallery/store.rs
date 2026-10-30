@@ -477,6 +477,23 @@ impl GalleryStore {
                 created_at: row.get_str(5)?.into(), updated_at: row.get_str(6)?.into(),
              }))?.ok_or_else(|| GalleryStoreError::NotFound(NotFound { entity_type: "gallery".into(), id: gallery_id.into() }))
     }
+
+    /// The most recently organized gallery, or `None` when no gallery has
+    /// ever been organized. Startup uses this to re-activate the operator's
+    /// last gallery so a server restart does not leave the gallery dormant
+    /// until a manual `gallery_organize` call.
+    pub fn most_recently_organized(&self) -> Result<Option<GalleryRecord>, GalleryStoreError> {
+        let rows = query_map(
+            &*self.driver,
+            "SELECT g.id FROM galleries g ORDER BY g.updated_at DESC LIMIT 1",
+            &[],
+            |row| Ok(row.get_str(0)?.to_string()),
+        )?;
+        let Some(id) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        self.get(&id).map(Some)
+    }
     /// Add an image to the gallery index.
     ///
     /// expect: "The system provides durable storage for gallery data"

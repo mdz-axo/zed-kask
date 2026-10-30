@@ -646,10 +646,51 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                     voice_profiles::VoiceProfileRuntime::missing_credential(error.to_string())
                                 }
             };
+            // Re-activate the operator's most-recently-organized gallery
+            // so a server restart does not leave the gallery dormant until
+            // a manual gallery_organize call (the gallery papercut: two
+            // restarts in two days each required one re-organize call).
+            // The durable record is already in the gallery DB; only the
+            // in-memory activation is per-process.
+            let gallery_state = match gallery_store.most_recently_organized() {
+                Ok(Some(record)) => {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        gallery_id = %record.id,
+                        root_path = %record.root_path,
+                        mode = %record.mode,
+                        "Re-activating most-recently-organized gallery at startup"
+                    );
+                    let mode: crate::gallery::GalleryMode = record
+                        .mode
+                        .parse()
+                        .unwrap_or(crate::gallery::GalleryMode::ReadOnly);
+                    Arc::new(Mutex::new(Some(GalleryState {
+                        path: std::path::PathBuf::from(&record.root_path),
+                        mode,
+                        gallery_id: Some(record.id),
+                    })))
+                }
+                Ok(None) => {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        "No previously-organized gallery found — the gallery starts dormant until gallery_organize"
+                    );
+                    Arc::new(Mutex::new(None))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.media",
+                        %error,
+                        "Failed to look up the most-recently-organized gallery at startup — the gallery starts dormant; gallery_organize activates it"
+                    );
+                    Arc::new(Mutex::new(None))
+                }
+            };
             Ok(MediaServer::new(
                 ctx.webid,
                 vision_port.clone(),
-                Arc::new(Mutex::new(None)),
+                gallery_state,
                 gallery_store.clone(),
                 template_env,
                 FfmpegRunner::detect(),
