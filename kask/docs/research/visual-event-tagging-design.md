@@ -123,8 +123,8 @@ Not machine-checked: the ffprobe duration bound is simulated (the store enforces
 
 ## 10. Open questions for the operator
 
-1. The **inpainting ontology-anchor ruling** (coarse 5W1H today; the model report defines the term operationally from cited sources in the meantime — never a private definition).
-2. Do redaction decisions ride the landed t8 surface — researcher items via `layers_store`, composed by `layers_edl_compose` (one surface, redaction as a second payload vocabulary) — or a dedicated compose path? Proposal: ride t8.
-3. Registry-confirm `Qwen3 VL 8B Instruct` as the grounded-tagging model (per-call override vs new pass default — the cost trade is yours).
-4. Tier-2 timing (decision C stands; the serving-path decision — fal for masks vs RunPod runner, and the Python-runner allowlist exception — is the follow-up when taken).
-5. Track stitcher: default-on after S2, or opt-in per recording? Proposal: opt-in, like every other layer generator.
+1. **[resolved 2026-10-30]** The inpainting anchor ruling is ratified — a derived-registry entry now records the term with the operator's authority and resolves there ever after (research run `d68530a3a6bd1a1c`); the tier-1/tier-2 distinction (obscuring ≠ inpainting) is the entry's nameable violation.
+2. **[resolved 2026-10-30]** Confirmed: redaction rides the landed t8 surface (researcher items via `layers_store`, composed by `layers_edl_compose` — one surface, redaction as a second payload vocabulary). No dedicated compose path is built.
+3. **[resolved 2026-10-30]** Confirmed: the grounded-tagging default is ollama-served `qwen3-vl:8b` (local, zero per-call cost, private) per the operator's ollama steer, with the OpenRouter-hosted same-family model as speed fallback; the S2 build probe pins the exact variant and the one-pass latency on a real recording.
+4. **[resolved 2026-10-30]** Confirmed: keep tier 2 (true object-removal) postponed; tier 1 (cover) ships first. The serving-path question is corrected elsewhere: **no Python rule bars any tier-2 path** — the kask/ no-Python rule scopes the zed-kask codebase, not rented machines (RunPod containers run their own stacks; that is an API call from Rust, same as any hosted model). The real tier-2 questions, when it opens, are cost and ops (RunPod rented-GPU cost per redacted minute vs hosted SAM-3 per-use), never a policy bar.
+5. **[resolved 2026-10-30]** Confirmed: track stitcher is opt-in per recording, like every other layer generator. Default-off keeps the pass deterministic and the store clean; the operator turns it on per recording when they want tracks.

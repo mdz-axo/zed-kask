@@ -1987,6 +1987,19 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["information security"],
         authority: "operator ruling 2026-10-24 (card 8f69c30d: resolve the coarse security-review vocabulary under the operator's resolution grant); NIST CSRC glossary 'defense-in-depth' (CNSSI 4009 via NIST SP 800-30 Rev. 1; NIST SP 800-39), csrc.nist.gov/glossary/term/defense_in_depth",
     },
+    DerivedConcept {
+        term: "inpainting",
+        aliases: &[
+            "inpaint",
+            "image inpainting",
+            "video inpainting",
+            "image completion",
+        ],
+        identity: "the task of synthesizing replacement content for a designated (mask-delimited) region of an image or video, conditioned on the surrounding unmasked content — the region is regenerated as a coherent part of the scene, never merely obscured",
+        definition: "Bertalmio et al., 'Image Inpainting' (SIGGRAPH 2000, doi:10.1145/344779.344972) introduced the term for digital repair of damaged imagery that 'attempts to replicate the basic techniques used by professional restorators' — filling the mask-delimited region by propagating surrounding structure — with 'restoration of old photographs and damaged film, removal of superimposed text, and removal of objects' already named among its applications. The published range covers the restoration sense (reconstructing damaged or missing regions; LaMa, 'Resolution-robust Large Mask Inpainting', arXiv:2109.07161, addresses 'large missing areas' via large masks) and the object-removal sense (video object removal as 'physically-plausible inpainting' of content 'behind' the object and its physical interactions — VOID, arXiv:2604.02296; a video diffusion model 'to identify and remove scene effects caused by a specific object', finetuned from an existing video inpainting model — Generative Omnimatte, arXiv:2411.16683; 'Video inpainting modifies local regions in video while ensuring spatial and temporal coherence', with object removal a specific case of scene completion — ProPainter, arXiv:2309.03897). In zed-kask it grounds hkask-mcp-media's tier-2 redaction — mask_track targets composed to a configured mask/removal provider that renders what would plausibly appear without the object (visual-event-tagging-design.md, Section 6) — and the image-edit mask parameter (MediaGenerateParams.mask: white regions edited, black preserved, inference_port.rs:83-87). The nameable violation is calling pixel obscuring inpainting: blur/pixelate/black-box leave the object present and withhold only its pixels, while inpainting synthesizes replacement content so the object (and its interactions) is absent from the output.",
+        constituents: &["image", "video", "image restoration"],
+        authority: "operator ruling 2026-10-30 (the inpainting ontology-anchor ruling, ratified in the agent chat thread; content prepared from research run d68530a3a6bd1a1c at the operator's direction; requested by visual-event-tagging-design.md open question 1 and media-model-selection-report.md R3 open question 3); Bertalmio et al., 'Image Inpainting', SIGGRAPH 2000, doi:10.1145/344779.344972; LaMa, arXiv:2109.07161 (WACV 2022); ProPainter, arXiv:2309.03897 (ICCV 2023); VOID, arXiv:2604.02296; Generative Omnimatte, arXiv:2411.16683 (CVPR 2025)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -3236,6 +3249,48 @@ mod tests {
         assert_eq!(
             resolved.concept, "cso:information_security",
             "information security resolves to the CSO domain supplement"
+        );
+    }
+
+    #[test]
+    fn inpainting_ruling_resolves_with_authority() {
+        for (term, expected_term, marker) in [
+            ("inpainting", "inpainting", "Bertalmio"),
+            ("inpaint", "inpainting", "SIGGRAPH 2000"),
+            ("image inpainting", "inpainting", "d68530a3a6bd1a1c"),
+            ("video inpainting", "inpainting", "2026-10-30"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("the inpainting ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-10-30"),
+                "{term} cites the 2026-10-30 ruling"
+            );
+        }
+        // The constituents each resolve through the ladder — never fabricated.
+        let image = crate::term_resolution::resolve_term("image");
+        assert_eq!(
+            image.concept, "omc:Image",
+            "image resolves to the OMC vocabulary the media server carries"
+        );
+        let video = crate::term_resolution::resolve_term("video");
+        assert_eq!(
+            video.concept, "schema:video",
+            "video resolves to the schema.org supplement"
+        );
+        let restoration = crate::term_resolution::resolve_term("image restoration");
+        assert_eq!(
+            restoration.concept, "cso:image_restoration",
+            "image restoration resolves to the CSO domain supplement"
         );
     }
 }
