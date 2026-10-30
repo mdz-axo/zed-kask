@@ -273,10 +273,10 @@ removed record.
 
 - **Workspace**: one strict `educt_get_transcript` dispatch drives paragraph
   blocks (`build_pane_blocks`,
-  crates/media_panel/src/media_viewer.rs:5856@build_pane_blocks), speaker
+  crates/media_panel/src/media_viewer.rs:7750@build_pane_blocks), speaker
   labels, highlight overlays, and cut line-through marks. The workspace
   media body is the RECORDING's (`workspace_media_body`,
-  crates/media_panel/src/media_viewer.rs:4094@workspace_media_body):
+  crates/media_panel/src/media_viewer.rs:4851@workspace_media_body):
   a transcript linked to a live gallery recording renders the recording's
   asset body — a video-keyed transcript plays the video; an unlinked
   transcript falls to its stored media path, keeping the transcript and
@@ -284,7 +284,7 @@ removed record.
   recording title, bounded 140px player, Select text, transcript text,
   highlights/cuts, Create a reel — renders as ONE virtualized `gpui::list`
   (`render_transcript`,
-  crates/media_panel/src/media_viewer.rs:4018@render_transcript; item
+  crates/media_panel/src/media_viewer.rs:4860@render_transcript; item
   dispatch `render_workspace_list_item` :4094), so long recordings render
   only the visible blocks; the pending label editor stays pinned above the
   list. The presentation order is unchanged: recording title → player →
@@ -293,7 +293,7 @@ removed record.
   workflow; technical lineage remains available in Detail.
 - **Sync**: clicking a word seeks the bound shared player to its start
   (`seek_workspace_transcript`,
-  crates/media_panel/src/media_viewer.rs:2921@seek_workspace_transcript over
+  crates/media_panel/src/media_viewer.rs:3738@seek_workspace_transcript over
   `MediaWidget::seek_to_secs`); while playing, a 4 Hz GPUI-native follow-along
   marks the containing word and KEEPS IT VISIBLE — the marked paragraph block
   is scrolled into the list's viewport by an item-anchored scroll
@@ -382,7 +382,7 @@ dismissible status line rather than a full-pane takeover
 transcript workspace the `← Recordings` affordance is the workspace list's
 first row — the first thing in view — and a failed player never dead-ends
 navigation or transcript text (`render_workspace_header_item`,
-crates/media_panel/src/media_viewer.rs:4121@render_workspace_header_item). Playback speed,
+crates/media_panel/src/media_viewer.rs:4994@render_workspace_header_item). Playback speed,
 zoom, and fullscreen controls are not implemented in `media_panel` or the
 widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 `fullscreen`, `zoom` over `crates/media_panel/src/` and

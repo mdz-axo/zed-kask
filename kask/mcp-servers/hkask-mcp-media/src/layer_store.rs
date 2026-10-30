@@ -651,6 +651,43 @@ pub fn get_layer(
     Ok(Some(record))
 }
 
+/// Every stored layer for one recording, in store order (newest first):
+/// the shared read seam for the layer read tools (export, transcript,
+/// search) — the filter→list→get-per-summary loop lives here once, so
+/// every read surface iterates the same materialization (the S1 reading
+/// surface's substrate).
+pub fn recording_layers(
+    driver: &dyn DatabaseDriver,
+    media_path: &str,
+    kind: Option<MediaLayerKind>,
+) -> Result<Vec<MediaLayerRecord>, LayerStoreError> {
+    ensure_schema(driver)?;
+    let summaries = list_layers(
+        driver,
+        &MediaLayerFilter {
+            media_path: Some(media_path.to_string()),
+            kind,
+            limit: usize::MAX,
+        },
+    )?;
+    let mut records = Vec::with_capacity(summaries.len());
+    for summary in &summaries {
+        // A layer deleted between the list and the get is a benign race —
+        // skip it, name it, and let the read continue (the operator sees
+        // what exists at read time).
+        if let Some(record) = get_layer(driver, &summary.id)? {
+            records.push(record);
+        } else {
+            tracing::warn!(
+                target: "hkask.mcp.media.layer_store",
+                layer_id = %summary.id,
+                "layer listed but missing on read (deleted mid-read?)"
+            );
+        }
+    }
+    Ok(records)
+}
+
 /// Delete one layer. The FK cascade removes its items inside the same
 /// parent-row statement; the counts are taken first so the receipt reports
 /// what the cascade removed.

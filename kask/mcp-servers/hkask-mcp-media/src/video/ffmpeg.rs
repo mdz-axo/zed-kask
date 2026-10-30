@@ -446,11 +446,50 @@ impl FfmpegRunner {
         if audio_input {
             command.arg("-c:a").arg("pcm_s16le");
         } else {
-            command
-                .arg("-c")
-                .arg("copy")
-                .arg("-avoid_negative_ts")
-                .arg("make_zero");
+            // The keyframe probe is best-effort: a failed probe (missing
+            // input, probe error) falls back to the stream-copy path — the
+            // ffmpeg command itself reports the real failure for missing
+            // files (the rollback test's contract).
+            let (reencode_needed, codec) = match self.probe(input).await {
+                Ok(probe) if probe.has_video_stream => {
+                    match self.video_keyframe_times(input).await {
+                        Ok(keyframes) => {
+                            let aligned = |bound: f32| {
+                                keyframes.iter().any(|keyframe: &f64| {
+                                    (*keyframe - f64::from(bound)).abs() < 0.001
+                                })
+                            };
+                            (
+                                !(aligned(start_sec) && aligned(end_sec)),
+                                probe.codec.clone(),
+                            )
+                        }
+                        Err(_) => (false, String::new()),
+                    }
+                }
+                Ok(probe) => (false, probe.codec.clone()),
+                Err(_) => (false, String::new()),
+            };
+            if reencode_needed {
+                // The stream-copy B-frame bleed (pinned 2026-10-29, fixed
+                // 2026-10-30): a plain `-ss X -to Y -c copy` starts at the
+                // keyframe at-or-before X and the `-to` boundary lands
+                // reorder depth late (a `-to 1.0` on a 1s-GOP source
+                // yields 12 frames, not 10). Re-encode the exact window in
+                // the source's codec family — the operator's call: reels
+                // change output (they get correct, losing the bled
+                // frames).
+                command
+                    .arg("-c:v")
+                    .arg(if codec == "mpeg4" { "mpeg4" } else { "libx264" });
+                if codec != "mpeg4" {
+                    command.arg("-preset").arg("veryfast").arg("-crf").arg("18");
+                }
+                command.arg("-c:a").arg("copy");
+            } else {
+                command.arg("-c").arg("copy");
+            }
+            command.arg("-avoid_negative_ts").arg("make_zero");
         }
         command.arg(output.path());
         Self::run_to_completion(command, "clip").await?;
@@ -1464,6 +1503,54 @@ mod tests {
             .expect("clip must run ffmpeg to completion");
         let size = clipped.metadata().map(|m| m.len()).unwrap_or(0);
         assert!(size > 0, "clipped output is empty");
+    }
+
+    /// The clip exactness pin (2026-10-30): a non-keyframe-aligned clip must
+    /// carry exactly [start, end] — not the stream-copy B-frame bleed (the
+    /// copy starts at the keyframe at-or-before start; the `-to` boundary
+    /// lands reorder depth late). RED on the copy path (pinned live
+    /// 2026-10-29), GREEN on the reencode path.
+    #[tokio::test]
+    async fn clip_of_unaligned_bounds_is_exact_not_bled() {
+        let runner = FfmpegRunner::detect();
+        if !runner.available {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        runner.ensure_temp_dir().expect("temp dir");
+        let source = runner.output_path("mp4");
+        let mut generate = Command::new(&runner.ffmpeg_path);
+        generate
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("testsrc=duration=2:size=128x96:rate=10")
+            .arg("-g")
+            .arg("30")
+            .arg("-c:v")
+            .arg("mpeg4")
+            .arg("-y")
+            .arg(&source);
+        let generated = generate.output().await.expect("generate gop-30 source");
+        assert!(
+            generated.status.success(),
+            "gop-30 source generation failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let clipped = runner
+            .clip(source.to_str().expect("utf-8 temp path"), 0.4, 0.9)
+            .await
+            .expect("clip must run ffmpeg to completion");
+        let probed = runner
+            .probe(clipped.to_str().expect("utf-8 temp path"))
+            .await
+            .expect("probe the clipped output");
+        assert!(
+            (probed.duration_secs - 0.5).abs() < 0.05,
+            "clip of [0.4, 0.9] must carry exactly 0.5s, carried {}s — the \
+             stream-copy B-frame bleed",
+            probed.duration_secs
+        );
     }
 
     /// The reel render concatenates stream-copied clips — the second

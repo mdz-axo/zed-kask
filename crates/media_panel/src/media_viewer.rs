@@ -199,6 +199,10 @@ struct PaneEventRow {
     /// The object payload's own label (e.g. `"person"`), preferred over
     /// `searchable_text` as the redaction target's display label.
     object_label: Option<String>,
+    /// The S1 refinement's read-time corroboration: the sensory badges of
+    /// every overlapping event plus its own ("heard" via audio_event AND
+    /// "seen" via object/semantic; "spoken" via the transcript stream).
+    evidence: Vec<String>,
 }
 
 impl PaneEventRow {
@@ -5788,6 +5792,22 @@ impl MediaViewer {
                         ui::Color::Muted
                     }),
             );
+        // The S1 refinement's read-time corroboration badges: the sensory
+        // streams that confirm this event (the door slam "heard" AND
+        // "seen" renders both). Derived server-side at read time; a
+        // human-confirmed corroboration can be authored as a researcher
+        // item.
+        for badge in &row.evidence {
+            element = element.child(
+                Label::new(SharedString::from(format!("· {}", badge)))
+                    .size(LabelSize::XSmall)
+                    .color(if badge == "authored" {
+                        ui::Color::Muted
+                    } else {
+                        ui::Color::Accent
+                    }),
+            );
+        }
         // The redaction target arm: only rows carrying a normalized box
         // (machine object tags — the tier-1 spatial source). Arming stops
         // propagation so the click does not also seek.
@@ -7409,6 +7429,26 @@ fn parse_visual_events(payload: &Value) -> Result<VisualEventsState, String> {
                     .filter(|model| !model.is_empty())
                     .ok_or_else(|| "visual-transcript event provenance has no model.".to_string())?
                     .to_string();
+                // The S1 refinement's read-time corroboration: the sensory
+                // badges of every overlapping event plus its own. The server
+                // always emits `evidence`; a missing array is a contract
+                // break, not a silent empty.
+                let evidence = event
+                    .get("evidence")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "visual-transcript event has no evidence array.".to_string())?
+                    .iter()
+                    .map(|badge| {
+                        badge
+                            .as_str()
+                            .filter(|badge| !badge.is_empty())
+                            .map(str::to_string)
+                            .ok_or_else(|| {
+                                "visual-transcript event evidence entry is not a nonempty string."
+                                    .to_string()
+                            })
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
                 // The optional object payload: a well-formed normalized box
                 // arms the redaction target; anything else renders without
                 // the affordance (payloads are arbitrary JSON by contract).
@@ -7446,6 +7486,7 @@ fn parse_visual_events(payload: &Value) -> Result<VisualEventsState, String> {
                     model,
                     box_norm,
                     object_label,
+                    evidence,
                 });
             }
             let events_total = object
@@ -11557,7 +11598,8 @@ mod tests {
                     "label": null, "searchable_text": "shot 0",
                     "payload": {"shot_index": 0},
                     "frame_asset_ids": [],
-                    "provenance": {"model": "ffmpeg:scdet", "prompt_template": "ffmpeg:scdet", "created_at": "2026-10-30T00:00:00Z"}
+                    "provenance": {"model": "ffmpeg:scdet", "prompt_template": "ffmpeg:scdet", "created_at": "2026-10-30T00:00:00Z"},
+                    "evidence": ["seen"]
                 },
                 {
                     "start_sec": 3.5, "end_sec": 9.0, "kind": "object",
@@ -11565,7 +11607,8 @@ mod tests {
                     "label": "Grounded pass", "searchable_text": "object: person",
                     "payload": {"label": "person", "confidence": 0.9, "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4}, "frame_index": 2},
                     "frame_asset_ids": ["frame-1"],
-                    "provenance": {"model": "qwen3-vl", "prompt_template": "layers_semantic_pass_grounded", "created_at": "2026-10-30T00:00:00Z"}
+                    "provenance": {"model": "qwen3-vl", "prompt_template": "layers_semantic_pass_grounded", "created_at": "2026-10-30T00:00:00Z"},
+                    "evidence": ["heard", "seen"]
                 }
             ],
             "events_total": 2, "events_page": 2,
@@ -11813,6 +11856,7 @@ mod tests {
                         model: "qwen3-vl".into(),
                         box_norm: Some([0.1, 0.2, 0.3, 0.4]),
                         object_label: Some("person".into()),
+                        evidence: vec!["seen".into()],
                     },
                     PaneEventRow {
                         start_sec: 12.4,
@@ -11824,6 +11868,7 @@ mod tests {
                         model: "user".into(),
                         box_norm: None,
                         object_label: None,
+                        evidence: vec!["authored".into()],
                     },
                     PaneEventRow {
                         start_sec: 5.0,
@@ -11835,6 +11880,7 @@ mod tests {
                         model: "user".into(),
                         box_norm: None,
                         object_label: None,
+                        evidence: vec!["heard".into()],
                     },
                     PaneEventRow {
                         start_sec: 5.0,
@@ -11846,6 +11892,7 @@ mod tests {
                         model: "user".into(),
                         box_norm: None,
                         object_label: None,
+                        evidence: vec!["heard".into()],
                     },
                 ],
                 events_total: 4,
@@ -13164,6 +13211,7 @@ mod viewer_layout_tests {
                         model: "ffmpeg:scdet".into(),
                         box_norm: None,
                         object_label: None,
+                        evidence: vec!["seen".into()],
                     },
                     PaneEventRow {
                         start_sec: 3.5,
@@ -13175,6 +13223,7 @@ mod viewer_layout_tests {
                         model: "qwen3-vl".into(),
                         box_norm: Some([0.1, 0.2, 0.3, 0.4]),
                         object_label: Some("person".into()),
+                        evidence: vec!["seen".into()],
                     },
                 ],
                 events_total: 2,
