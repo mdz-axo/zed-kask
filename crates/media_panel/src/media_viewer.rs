@@ -13,7 +13,11 @@
 //!   (per-recording transcription status, the Transcribe affordance), and
 //!   the synced-recording workspace (follow-along viewport tracking,
 //!   word-click seek, two-click select → label editor → highlight
-//!   create/rename/delete, cuts, and reel compose+render).
+//!   create/rename/delete, cuts, and reel compose+render), plus the
+//!   visual-transcript event surface (S5 — a reading-surface toggle over
+//!   the same recording: the time-ordered event log with click-to-seek,
+//!   select-span → researcher tag authoring, and armed-target redaction
+//!   decision authoring + render dispatch with its review lines).
 //!
 //! All tool calls go through the process-global `ToolInvoker` (the governed
 //! McpRuntime dispatch) against the `media` server. Failures surface in a
@@ -44,11 +48,12 @@ const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// responsively without saturating the render loop.
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-/// The workspace list's fixed header items before the transcript blocks:
-/// back row, player, mode chips, alignment note, and the Transcript
-/// section label — the whole workspace scrolls as one piece, exactly as it
-/// did before virtualization (a pinned header taller than a tight pane
-/// would starve the reading area).
+/// The workspace list's fixed header items before the surface body:
+/// back row, player, mode chips (the surface toggle plus the select and
+/// follow toggles), the surface's status note, and the section label — the
+/// whole workspace scrolls as one piece, exactly as it did before
+/// virtualization (a pinned header taller than a tight pane would starve
+/// the reading area).
 const WORKSPACE_HEADER_ITEMS: usize = 5;
 
 /// The workspace list's fixed tail items after the transcript blocks:
@@ -56,6 +61,11 @@ const WORKSPACE_HEADER_ITEMS: usize = 5;
 /// item count (and with it the reading position) stays stable while the
 /// operator curates annotations.
 const WORKSPACE_LIST_TAIL_ITEMS: usize = 3;
+
+/// The events surface's fixed tail items after the event rows: the
+/// visual-transcript authoring section (span tag + redaction dispatch +
+/// last render review) — the events sibling of the words tail.
+const WORKSPACE_EVENTS_TAIL_ITEMS: usize = 1;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RequestOwner {
@@ -67,6 +77,7 @@ enum RequestOwner {
     DetailAnnotations(String),
     Transcript(String),
     TranscriptListing,
+    VisualEvents(String),
 }
 
 /// A strict-parsed `educt_list_transcripts` row — the fields the Detail
@@ -153,6 +164,145 @@ struct PaneStrike {
     start_word: usize,
     end_word: usize,
     annotation_id: String,
+}
+
+/// The workspace's reading surface (operator refinement 2026-10-30): the
+/// word-transcript pane and the visual-transcript event log are parallel
+/// annotations over the same recording — the operator switches surfaces
+/// while the click-to-seek discipline stays identical on both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TranscriptSurface {
+    #[default]
+    Words,
+    Events,
+}
+
+/// One visual-transcript event row (S5), strict-parsed from a
+/// `layers_transcript` response: a time-ordered layer item the operator
+/// reads, seeks playback from, selects spans over, and arms redaction
+/// targets on. `model` is the provenance model — `"user"` marks a
+/// researcher-authored event (the human/machine distinction, design §3).
+/// `box_norm` carries the object payload's normalized box when the row has
+/// one (tolerant: a payload is arbitrary JSON, so a malformed box renders
+/// the row without the target affordance rather than rejecting the whole
+/// event log).
+#[derive(Clone, Debug, PartialEq)]
+struct PaneEventRow {
+    start_sec: f64,
+    end_sec: Option<f64>,
+    kind: String,
+    layer_id: String,
+    item_id: String,
+    searchable_text: String,
+    model: String,
+    box_norm: Option<[f64; 4]>,
+    /// The object payload's own label (e.g. `"person"`), preferred over
+    /// `searchable_text` as the redaction target's display label.
+    object_label: Option<String>,
+}
+
+impl PaneEventRow {
+    /// The row's range end, falling back to its start for point-in-time
+    /// events (the store's point-item contract).
+    fn end_or_start(&self) -> f64 {
+        self.end_sec.unwrap_or(self.start_sec)
+    }
+
+    /// The stable source ref for redaction lineage (`source_tag_refs`,
+    /// design §6): `layer_id/item_id`.
+    fn source_ref(&self) -> String {
+        format!("{}/{}", self.layer_id, self.item_id)
+    }
+}
+
+/// The strict-parsed `layers_transcript` payload for the open recording
+/// (S1's reading surface). `status` is `"completed"` or the named
+/// `"no_layers"` degradation (with its note) — never silent.
+#[derive(Clone, Debug, PartialEq)]
+struct VisualEventsState {
+    status: String,
+    events: Vec<PaneEventRow>,
+    events_total: usize,
+    kinds_present: Vec<String>,
+    note: Option<String>,
+}
+
+/// The armed redaction target (S5 criterion 3): one event carrying a
+/// normalized box — the tier-1 decision's spatial target, keyed by its
+/// stable source ref so the authored decision carries the OMC lineage
+/// (`source_tag_refs`, design §6).
+#[derive(Clone, Debug, PartialEq)]
+struct RedactionTarget {
+    label: String,
+    box_norm: [f64; 4],
+    source_ref: String,
+}
+
+/// The tier-1 cover effect for the next authored redaction decision — the
+/// card's contract vocabulary (blur|pixelate|black; the server also serves
+/// delogo, which the panel leaves to direct tool use).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PaneRedactionEffect {
+    #[default]
+    Blur,
+    Pixelate,
+    Black,
+}
+
+impl PaneRedactionEffect {
+    fn as_str(&self) -> &'static str {
+        match self {
+            PaneRedactionEffect::Blur => "blur",
+            PaneRedactionEffect::Pixelate => "pixelate",
+            PaneRedactionEffect::Black => "black",
+        }
+    }
+
+    /// The effect chip cycles the vocabulary.
+    fn next(&self) -> Self {
+        match self {
+            PaneRedactionEffect::Blur => PaneRedactionEffect::Pixelate,
+            PaneRedactionEffect::Pixelate => PaneRedactionEffect::Black,
+            PaneRedactionEffect::Black => PaneRedactionEffect::Blur,
+        }
+    }
+}
+
+/// One rendered segment of the redaction plan (S3's `segments[]`): mode,
+/// source-PTS range, and how many decision items it applies.
+#[derive(Clone, Debug, PartialEq)]
+struct PaneRenderSegment {
+    mode: String,
+    start_sec: f64,
+    end_sec: f64,
+    items: usize,
+}
+
+/// One decision's applied rendering details (S3's `applied_items[]`) —
+/// what was drawn where, for review/lineage in the panel.
+#[derive(Clone, Debug, PartialEq)]
+struct PaneAppliedRedaction {
+    item_id: String,
+    effect: String,
+    pixel_x: u32,
+    pixel_y: u32,
+    pixel_w: u32,
+    pixel_h: u32,
+    local_start_sec: f64,
+    local_end_sec: f64,
+}
+
+/// The last redaction render's review/lineage summary, strict-parsed from
+/// `layers_render_redactions` (S5 criterion 3: render the result's
+/// `segments[]` and `applied_items[]` for review).
+#[derive(Clone, Debug, PartialEq)]
+struct RedactionRenderSummary {
+    decision_layer_id: String,
+    decisions_rendered: usize,
+    reencoded_segments: usize,
+    stream_copied_segments: usize,
+    segments: Vec<PaneRenderSegment>,
+    applied: Vec<PaneAppliedRedaction>,
 }
 
 /// A researcher tag/note row for the Detail tab's annotation surface
@@ -510,6 +660,28 @@ pub struct MediaViewer {
     /// selections whenever the workspace loads, toggled per clip by the
     /// operator (membership keys on provenance, never the label text).
     reel_selection: HashSet<(usize, usize)>,
+    /// The workspace's reading surface (operator refinement 2026-10-30):
+    /// the word-transcript pane or the visual-transcript event log.
+    transcript_surface: TranscriptSurface,
+    /// The visual-transcript event log for the open recording (from
+    /// `layers_transcript`) — `None` until the events surface first loads
+    /// it; the last-good log stays visible while a reload is in flight.
+    visual_events: Option<VisualEventsState>,
+    visual_events_request: RequestLifecycle,
+    /// The events surface's pending two-click span selection: the armed
+    /// first-click event index (S5, mirroring the word pane's anchor).
+    event_selection_anchor: Option<usize>,
+    /// The events surface's completed span, in source-PTS seconds — the
+    /// pending target of both authoring flows (tag, redaction).
+    event_selection_span: Option<(f64, f64)>,
+    /// The armed redaction target: one box-carrying event (criterion 3's
+    /// "select target"), keyed by its stable source ref.
+    redaction_target: Option<RedactionTarget>,
+    /// The effect for the next authored redaction decision (cycled chip).
+    redaction_effect: PaneRedactionEffect,
+    /// The last redaction render's review/lineage summary (S3's segments[]
+    /// + applied_items[]), rendered in the events tail.
+    redaction_render: Option<RedactionRenderSummary>,
     edit_request: RequestLifecycle,
     edit_progress: Option<String>,
     /// Two-step delete confirmation for Library rows: the armed asset row
@@ -575,6 +747,14 @@ impl MediaViewer {
             highlight_edit: None,
             label_input_focus: None,
             reel_selection: HashSet::new(),
+            transcript_surface: TranscriptSurface::default(),
+            visual_events: None,
+            visual_events_request: RequestLifecycle::new(),
+            event_selection_anchor: None,
+            event_selection_span: None,
+            redaction_target: None,
+            redaction_effect: PaneRedactionEffect::default(),
+            redaction_render: None,
             edit_request: RequestLifecycle::new(),
             edit_progress: None,
             confirm_delete: ConfirmArm::default(),
@@ -951,6 +1131,9 @@ impl MediaViewer {
                 if let Some(transcript) = self.transcript.as_ref() {
                     let transcript_id = transcript.transcript_id.clone();
                     self.load_transcript_with(transcript_id, cx);
+                    if self.transcript_surface == TranscriptSurface::Events {
+                        self.load_visual_events(cx);
+                    }
                 } else {
                     self.load_transcript_listing(cx);
                 }
@@ -1837,6 +2020,15 @@ impl MediaViewer {
         self.selection_anchor = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
+        // A fresh workspace starts on the word surface with no visual-event
+        // or redaction state carried over (S5).
+        self.transcript_surface = TranscriptSurface::Words;
+        self.visual_events = None;
+        self.visual_events_request.invalidate();
+        self.event_selection_anchor = None;
+        self.event_selection_span = None;
+        self.redaction_target = None;
+        self.redaction_render = None;
         // A fresh open starts the virtualized list from the top — a
         // previous workspace's reading position must not survive a
         // reopen (S3d).
@@ -1861,8 +2053,542 @@ impl MediaViewer {
         self.selection_anchor = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
+        self.transcript_surface = TranscriptSurface::Words;
+        self.visual_events = None;
+        self.visual_events_request.invalidate();
+        self.event_selection_anchor = None;
+        self.event_selection_span = None;
+        self.redaction_target = None;
+        self.redaction_render = None;
         self.status = Some("Back to the recordings browser.".into());
         self.load_transcript_listing(cx);
+        cx.notify();
+    }
+
+    // ── Visual-transcript surface (S5: the events reading surface) ───────
+
+    /// Switch the workspace's reading surface (operator refinement
+    /// 2026-10-30): word-transcript pane ⇄ visual-transcript event log —
+    /// parallel annotations over the same recording, one seek discipline.
+    /// The pending surface-local selections and any open label editor belong
+    /// to the surface being left. The first switch to Events loads the
+    /// event log for the open recording.
+    fn toggle_transcript_surface(&mut self, surface: TranscriptSurface, cx: &mut Context<Self>) {
+        if self.transcript_surface == surface {
+            return;
+        }
+        self.transcript_surface = surface;
+        self.selection_anchor = None;
+        self.highlight_edit = None;
+        self.event_selection_anchor = None;
+        self.event_selection_span = None;
+        self.status = Some(match surface {
+            TranscriptSurface::Words => {
+                "Word transcript — click a word to seek; Select text to annotate.".into()
+            }
+            TranscriptSurface::Events => {
+                "Visual transcript — click an event to seek; Select span to annotate.".into()
+            }
+        });
+        if surface == TranscriptSurface::Events && self.visual_events.is_none() {
+            self.load_visual_events(cx);
+        }
+        cx.notify();
+    }
+
+    /// Load the open recording's visual transcript via `layers_transcript`
+    /// (S1's reading surface): one time-ordered event list across layer
+    /// kinds. The last-good log stays visible while a reload is in flight;
+    /// a malformed payload rejects visibly and never degrades to an empty
+    /// success.
+    fn load_visual_events(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let media_path = state.media_path.clone();
+        let Some(epoch) = self
+            .visual_events_request
+            .begin(RequestOwner::VisualEvents(media_path.clone()))
+        else {
+            return;
+        };
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_visual_events_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot read the visual transcript.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "layers_transcript",
+            serde_json::json!({ "media_path": media_path }),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => match hkask_types::tool_response::parse_tool_response(&text) {
+                    Some(value) => parse_visual_events(&value),
+                    None => Err("layers_transcript returned no parsable data.".to_string()),
+                },
+                Err(error) => Err(format!("layers_transcript failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_visual_events_result(epoch, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// The event-log load's result gate: owned epochs only. A committed
+    /// reload clears the index-keyed span selection — the operator
+    /// re-clicks rather than selecting against shifted indexes.
+    fn apply_visual_events_result(
+        &mut self,
+        epoch: u64,
+        result: Result<VisualEventsState, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.visual_events_request.owns(epoch) {
+            return;
+        }
+        match result {
+            Ok(state) => {
+                self.event_selection_anchor = None;
+                self.event_selection_span = None;
+                self.visual_events = Some(state);
+                self.visual_events_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                self.visual_events_request.complete(epoch, Err(error));
+            }
+        }
+        cx.notify();
+    }
+
+    /// The event-click state machine under the same two-mode interaction
+    /// model as the word pane (S4 part-2): seek-only when selection mode is
+    /// off; anchor → span when on; a repeated click on the anchor clears
+    /// the pending selection; while the label editor is open, clicks are
+    /// inert. Pure so the state machine is pin-testable.
+    fn handle_event_click(&self, clicked: usize) -> EventClickOutcome {
+        if self.highlight_edit.is_some() {
+            return EventClickOutcome::EditorOpen;
+        }
+        if !self.selection_mode {
+            return EventClickOutcome::SeekOnly;
+        }
+        let Some(events) = self
+            .visual_events
+            .as_ref()
+            .map(|state| state.events.as_slice())
+        else {
+            return EventClickOutcome::SeekOnly;
+        };
+        match self.event_selection_anchor {
+            None => match events.get(clicked) {
+                Some(_) => EventClickOutcome::AnchorSet(clicked),
+                // A stale anchor index against a reloaded list re-anchors
+                // on the clicked row rather than guessing.
+                None => EventClickOutcome::SpanRejected,
+            },
+            Some(anchor) if anchor == clicked => EventClickOutcome::AnchorCleared,
+            Some(anchor) => match (events.get(anchor), events.get(clicked)) {
+                (Some(first), Some(last)) => {
+                    let start = first.start_sec.min(last.start_sec);
+                    let end = first.end_or_start().max(last.end_or_start());
+                    if end <= start {
+                        EventClickOutcome::SpanRejected
+                    } else {
+                        EventClickOutcome::SpanSelected {
+                            start_sec: start,
+                            end_sec: end,
+                        }
+                    }
+                }
+                _ => EventClickOutcome::SpanRejected,
+            },
+        }
+    }
+
+    /// An event row was clicked in the visual-transcript surface: dispatch
+    /// by the selection state machine — seek outside select mode (the
+    /// word pane's click-to-seek discipline over the same bound player),
+    /// build the span inside it, ignore clicks while the label editor is
+    /// open.
+    fn event_clicked(&mut self, index: usize, start_sec: f64, cx: &mut Context<Self>) {
+        match self.handle_event_click(index) {
+            EventClickOutcome::SeekOnly => {
+                self.seek_workspace_transcript((start_sec * 1000.0) as u64, cx);
+            }
+            EventClickOutcome::AnchorSet(event) => {
+                self.event_selection_anchor = Some(event);
+                self.status = Some(
+                    "Click the last event to finish the span, then tag it or redact it.".into(),
+                );
+                cx.notify();
+            }
+            EventClickOutcome::AnchorCleared => {
+                self.event_selection_anchor = None;
+                self.status = Some("Span selection cleared.".into());
+                cx.notify();
+            }
+            EventClickOutcome::EditorOpen => {
+                self.status = Some("Label editor open — Enter confirms, Escape cancels.".into());
+                cx.notify();
+            }
+            EventClickOutcome::SpanSelected { start_sec, end_sec } => {
+                self.event_selection_anchor = None;
+                self.event_selection_span = Some((start_sec, end_sec));
+                self.status = Some(
+                    "Span selected — Tag span names it; arm a Target and Redact span to redact."
+                        .into(),
+                );
+                cx.notify();
+            }
+            EventClickOutcome::SpanRejected => {
+                self.event_selection_anchor = None;
+                self.status =
+                    Some("That span is empty — pick two events whose ranges cover time.".into());
+                cx.notify();
+            }
+        }
+    }
+
+    /// Arm (or re-arm) the redaction target from one box-carrying event row
+    /// — criterion 3's "select target". Only events carrying a normalized
+    /// box can arm; the refusal names the requirement.
+    fn arm_redaction_target(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(row) = self
+            .visual_events
+            .as_ref()
+            .and_then(|state| state.events.get(index))
+        else {
+            return;
+        };
+        let Some(box_norm) = row.box_norm else {
+            self.status = Some("Only events carrying a box can arm a redaction target.".into());
+            cx.notify();
+            return;
+        };
+        let label = row
+            .object_label
+            .clone()
+            .unwrap_or_else(|| row.searchable_text.clone());
+        self.redaction_target = Some(RedactionTarget {
+            label: label.clone(),
+            box_norm,
+            source_ref: row.source_ref(),
+        });
+        self.status = Some(format!(
+            "Target armed: {label} — select a span, then Redact span."
+        ));
+        cx.notify();
+    }
+
+    /// Open the label editor over the pending event span (criterion 2's
+    /// authoring arm) — the same modal editor as the word pane's create
+    /// flow; Enter confirms, Escape cancels.
+    fn open_event_span_tag_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((start_sec, end_sec)) = self.event_selection_span else {
+            return;
+        };
+        self.open_label_editor(
+            HighlightEdit {
+                kind: HighlightEditKind::EventTag { start_sec, end_sec },
+                buffer: LabelBuffer::default(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Author a researcher tag over the selected span through
+    /// `layers_store` (criterion 2): kind `researcher`, provenance model
+    /// `"user"` — a human act, never machine-authored (design §3) — one
+    /// item over the span whose searchable text keys the label. The event
+    /// log reloads with the stored tag on success.
+    fn create_event_tag(
+        &mut self,
+        start_sec: f64,
+        end_sec: f64,
+        label: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let (media_path, gallery_asset_id) =
+            (state.media_path.clone(), state.gallery_asset_id.clone());
+        let epoch = match self.begin_edit("layers_store") {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some("Storing researcher tag…".into());
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_event_authoring_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot author tags.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "layers_store",
+            researcher_tag_params(
+                &media_path,
+                gallery_asset_id.as_deref(),
+                start_sec,
+                end_sec,
+                &label,
+            ),
+        );
+        cx.spawn(async move |this, cx| {
+            let result = match task.await {
+                Ok(text) => match hkask_types::tool_response::parse_tool_response(&text) {
+                    Some(value) => value
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .map(|_| String::new())
+                        .ok_or_else(|| {
+                            "layers_store returned no layer id for the tag.".to_string()
+                        }),
+                    None => Err("layers_store returned no parsable data.".to_string()),
+                },
+                Err(error) => Err(format!("layers_store failed: {}", error.message())),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_event_authoring_result(epoch, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// The tag authoring's result gate: owned epochs only; success clears
+    /// the consumed span and reloads the event log so the stored tag lands
+    /// in it (a researcher layer over the same recording).
+    fn apply_event_authoring_result(
+        &mut self,
+        epoch: u64,
+        result: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        self.edit_progress = None;
+        match result {
+            Ok(_acknowledgement) => {
+                self.status =
+                    Some("Researcher tag stored — the visual transcript reloads with it.".into());
+                self.edit_request.complete(epoch, Ok(()));
+                self.event_selection_anchor = None;
+                self.event_selection_span = None;
+                self.load_visual_events(cx);
+            }
+            Err(error) => {
+                self.status = Some(error);
+                self.edit_request
+                    .complete(epoch, Err("tag authoring failed".to_string()));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Author an approved redaction decision over the selected span and
+    /// dispatch the render (criterion 3): a two-invoke chain under the
+    /// single edit admission, exactly the reel-compose precedent — store
+    /// the decision layer via `layers_store` (kind `researcher`, model
+    /// `"user"`, one approved item carrying the S3 vocabulary: op redact,
+    /// status approved, effect, box target, source-tag lineage), then
+    /// render via `layers_render_redactions` with the STORED LAYER ID
+    /// (required — the render consumes an approved decision layer, never
+    /// free parameters). The armed target names the box; the pending span
+    /// names the range.
+    fn dispatch_redaction_render(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let Some(target) = self.redaction_target.clone() else {
+            self.status = Some("Arm a target first — click Target on an event with a box.".into());
+            cx.notify();
+            return;
+        };
+        let Some(span) = self.event_selection_span else {
+            self.status = Some("Select a span first — Select span, then click two events.".into());
+            cx.notify();
+            return;
+        };
+        let (media_path, gallery_asset_id) =
+            (state.media_path.clone(), state.gallery_asset_id.clone());
+        let effect = self.redaction_effect;
+        let epoch = match self.begin_edit("layers_store") {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some("Authoring redaction decision & rendering…".into());
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_redaction_render_result(
+                epoch,
+                Err("Tool invoker not wired — panel cannot redact.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let store_task = invoker.invoke_tool(
+            MEDIA_SERVER,
+            "layers_store",
+            redaction_decision_params(
+                &media_path,
+                gallery_asset_id.as_deref(),
+                &target,
+                span,
+                effect,
+            ),
+        );
+        cx.spawn(async move |this, cx| {
+            fn finish(
+                this: &gpui::WeakEntity<MediaViewer>,
+                epoch: u64,
+                result: Result<RedactionRenderOutcome, String>,
+                cx: &mut gpui::AsyncApp,
+            ) {
+                this.update(cx, |viewer, cx| {
+                    viewer.apply_redaction_render_result(epoch, result, cx)
+                })
+                .log_err();
+            }
+            let store_text = match store_task.await {
+                Ok(text) => text,
+                Err(error) => {
+                    finish(
+                        &this,
+                        epoch,
+                        Err(format!("layers_store failed: {}", error.message())),
+                        cx,
+                    );
+                    return;
+                }
+            };
+            let Some(layer_id) = hkask_types::tool_response::parse_tool_response(&store_text)
+                .and_then(|value| {
+                    value
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                })
+            else {
+                finish(
+                    &this,
+                    epoch,
+                    Err("layers_store returned no layer id for the redaction decision.".into()),
+                    cx,
+                );
+                return;
+            };
+            let render_task = invoker.invoke_tool(
+                MEDIA_SERVER,
+                "layers_render_redactions",
+                serde_json::json!({
+                    "media_path": media_path,
+                    "layer_id": layer_id,
+                }),
+            );
+            let render_text = match render_task.await {
+                Ok(text) => text,
+                Err(error) => {
+                    finish(
+                        &this,
+                        epoch,
+                        Err(format!(
+                            "layers_render_redactions failed: {}",
+                            error.message()
+                        )),
+                        cx,
+                    );
+                    return;
+                }
+            };
+            let outcome = match hkask_types::tool_response::parse_tool_response(&render_text) {
+                Some(value) => {
+                    parse_redaction_render(&value).map(|summary| RedactionRenderOutcome {
+                        // The raw render text rides along: the applied result
+                        // routes it through the display-hint ingestion so the
+                        // rendered asset lands as a playable panel asset,
+                        // exactly as a composed reel does.
+                        render_text,
+                        summary,
+                    })
+                }
+                None => Err("layers_render_redactions returned no parsable data.".to_string()),
+            };
+            finish(&this, epoch, outcome, cx);
+        })
+        .detach();
+    }
+
+    /// The redaction chain's result gate: owned epochs only. Success
+    /// commits the review/lineage summary, ingests the render's display
+    /// hints (landing the rendered asset), surfaces the render counts,
+    /// clears the consumed span, and reloads the event log (the decision
+    /// layer is a researcher layer over the same recording — its items
+    /// appear in the log).
+    fn apply_redaction_render_result(
+        &mut self,
+        epoch: u64,
+        result: Result<RedactionRenderOutcome, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        self.edit_progress = None;
+        match result {
+            Ok(outcome) => {
+                let RedactionRenderOutcome {
+                    render_text,
+                    summary,
+                } = outcome;
+                self.ingest_tool_result(
+                    &Value::String(render_text),
+                    "layers_render_redactions",
+                    cx,
+                );
+                self.status = Some(format!(
+                    "Redaction rendered — {} decision(s), {} segment(s) re-encoded, \
+                     {} stream-copied. The visual transcript reloads.",
+                    summary.decisions_rendered,
+                    summary.reencoded_segments,
+                    summary.stream_copied_segments
+                ));
+                self.redaction_render = Some(summary);
+                self.edit_request.complete(epoch, Ok(()));
+                self.event_selection_anchor = None;
+                self.event_selection_span = None;
+                self.load_visual_events(cx);
+            }
+            Err(error) => {
+                self.status = Some(error);
+                self.edit_request
+                    .complete(epoch, Err("redaction render failed".to_string()));
+            }
+        }
         cx.notify();
     }
 
@@ -1942,6 +2668,17 @@ impl MediaViewer {
                 self.transcript = Some(state);
                 self.current_word = None;
                 self.transcript_request.complete(epoch, Ok(()));
+                // A fresh workspace state re-reads the recording's layers:
+                // the visual-event log and its index-keyed selections do not
+                // survive it. While the events surface is live, the reload
+                // is dispatched immediately so the log never blanks.
+                self.visual_events = None;
+                self.visual_events_request.invalidate();
+                self.event_selection_anchor = None;
+                self.event_selection_span = None;
+                if self.transcript_surface == TranscriptSurface::Events {
+                    self.load_visual_events(cx);
+                }
                 self.start_transcript_follow(cx);
                 // A fresh workspace follows the mark: tracking on, and the
                 // scroll baseline re-anchored so the first tick cannot
@@ -2722,11 +3459,17 @@ impl MediaViewer {
             .label_input_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
-        let creating = matches!(edit.kind, HighlightEditKind::Create { .. });
-        self.status = Some(if creating {
-            "Name the highlight, or choose Cut selection. Enter confirms; Escape cancels.".into()
-        } else {
-            "Rename the highlight — Enter saves; Escape cancels.".into()
+        self.status = Some(match &edit.kind {
+            HighlightEditKind::Create { .. } => {
+                "Name the highlight, or choose Cut selection. Enter confirms; Escape cancels."
+                    .into()
+            }
+            HighlightEditKind::EventTag { .. } => {
+                "Name this event tag. Enter confirms; Escape cancels.".into()
+            }
+            HighlightEditKind::Rename { .. } => {
+                "Rename the highlight — Enter saves; Escape cancels.".into()
+            }
         });
         self.highlight_edit = Some(edit);
         focus.focus(window, cx);
@@ -2756,6 +3499,16 @@ impl MediaViewer {
             } => {
                 let label = resolve_create_label(edit.buffer.text().as_str());
                 self.create_workspace_highlight(*start_word, *end_word, label, cx);
+            }
+            HighlightEditKind::EventTag { start_sec, end_sec } => {
+                let label = edit.buffer.label();
+                if label.is_empty() {
+                    self.highlight_edit = Some(edit);
+                    self.status = Some("A tag needs a nonblank label — Escape cancels.".into());
+                    cx.notify();
+                    return;
+                }
+                self.create_event_tag(*start_sec, *end_sec, label, cx);
             }
             HighlightEditKind::Rename {
                 annotation_id,
@@ -2837,6 +3590,9 @@ impl MediaViewer {
                 "Create",
                 "Highlight name",
             ),
+            HighlightEditKind::EventTag { .. } => {
+                ("Name this event tag".to_string(), "Create tag", "Tag name")
+            }
             HighlightEditKind::Rename { .. } => {
                 ("Rename highlight".to_string(), "Save", "Highlight name")
             }
@@ -2952,7 +3708,7 @@ impl MediaViewer {
                         })),
                 )
             }
-            HighlightEditKind::Rename { .. } => editor,
+            HighlightEditKind::EventTag { .. } | HighlightEditKind::Rename { .. } => editor,
         };
         editor
             .child(
@@ -3073,7 +3829,9 @@ impl MediaViewer {
     /// fully within the list's viewport. Pure list-state work — callable
     /// from the follow task without a window.
     fn follow_marked_block_into_view(&mut self) {
-        if !self.follow_viewport {
+        // The reveal targets word blocks (S3d); on the events surface the
+        // body rows are events, so the word mark must not drive scrolling.
+        if !self.follow_viewport || self.transcript_surface != TranscriptSurface::Words {
             return;
         }
         let Some(word) = self.current_word else {
@@ -4132,16 +4890,32 @@ impl MediaViewer {
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
-        // The whole workspace content (header rows, transcript blocks,
+        // The whole workspace content (header rows, surface body rows,
         // annotation sections) renders as ONE virtualized list (S3d):
         // everything scrolls together exactly as the workspace always
-        // did. Timed blocks are interactive text — every word is a click
-        // range that seeks the bound player to its start (S3b-2), the
-        // word containing the playback position carries the follow-along
-        // mark (S3c), and the follow task keeps the marked block in view
-        // through the list state.
+        // did. On the word surface, timed blocks are interactive text —
+        // every word is a click range that seeks the bound player to its
+        // start (S3b-2), the word containing the playback position carries
+        // the follow-along mark (S3c), and the follow task keeps the marked
+        // block in view through the list state. On the events surface
+        // (S5) the body rows are the visual-transcript events — click an
+        // event to seek to its start, the same seek discipline — and the
+        // tail is the authoring section.
         let blocks = Arc::new(build_pane_blocks(state));
-        let item_count = WORKSPACE_HEADER_ITEMS + blocks.len() + WORKSPACE_LIST_TAIL_ITEMS;
+        let events = Arc::new(
+            self.visual_events
+                .as_ref()
+                .map(|state| state.events.clone())
+                .unwrap_or_default(),
+        );
+        let item_count = match self.transcript_surface {
+            TranscriptSurface::Words => {
+                WORKSPACE_HEADER_ITEMS + blocks.len() + WORKSPACE_LIST_TAIL_ITEMS
+            }
+            TranscriptSurface::Events => {
+                WORKSPACE_HEADER_ITEMS + events.len() + WORKSPACE_EVENTS_TAIL_ITEMS
+            }
+        };
         if self.transcript_list_count != item_count {
             self.transcript_list.reset(item_count);
             self.transcript_list_count = item_count;
@@ -4150,7 +4924,7 @@ impl MediaViewer {
         }
         let list_state = self.transcript_list.clone();
         let workspace_items = cx.processor(move |this, ix, _window, cx| {
-            this.render_workspace_list_item(ix, blocks.as_slice(), cx)
+            this.render_workspace_list_item(ix, blocks.as_slice(), events.as_slice(), cx)
         });
         let workspace_list = gpui::list(list_state, workspace_items)
             .flex_1()
@@ -4167,30 +4941,45 @@ impl MediaViewer {
         workspace.child(workspace_list).into_any_element()
     }
 
-    /// One workspace list item (S3d): a fixed header row, a transcript
-    /// block, or one of the fixed tail sections — highlights, cuts, reel
-    /// actions (the operator-ruled presentation order: transcript text
-    /// before annotation inventories).
+    /// One workspace list item (S3d): a fixed header row, one body row of
+    /// the active surface (a word block or a visual-transcript event), or
+    /// one of the fixed tail sections — highlights, cuts, reel actions on
+    /// the word surface; the visual-transcript authoring section on the
+    /// events surface.
     fn render_workspace_list_item(
         &self,
         ix: usize,
         blocks: &[PaneBlock],
+        events: &[PaneEventRow],
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if ix < WORKSPACE_HEADER_ITEMS {
             return self.render_workspace_header_item(ix, cx);
         }
-        let block_ix = ix - WORKSPACE_HEADER_ITEMS;
-        if let Some(block) = blocks.get(block_ix) {
-            return div()
-                .pb_2()
-                .child(self.render_workspace_block(block, block_ix, cx))
-                .into_any_element();
-        }
-        match ix - WORKSPACE_HEADER_ITEMS - blocks.len() {
-            0 => self.render_workspace_highlights_section(cx),
-            1 => self.render_workspace_cuts_section(cx),
-            _ => self.render_workspace_reel_section(cx),
+        let body_ix = ix - WORKSPACE_HEADER_ITEMS;
+        match self.transcript_surface {
+            TranscriptSurface::Words => {
+                if let Some(block) = blocks.get(body_ix) {
+                    return div()
+                        .pb_2()
+                        .child(self.render_workspace_block(block, body_ix, cx))
+                        .into_any_element();
+                }
+                match body_ix - blocks.len() {
+                    0 => self.render_workspace_highlights_section(cx),
+                    1 => self.render_workspace_cuts_section(cx),
+                    _ => self.render_workspace_reel_section(cx),
+                }
+            }
+            TranscriptSurface::Events => {
+                if let Some(row) = events.get(body_ix) {
+                    return div()
+                        .pb_1()
+                        .child(self.render_workspace_event_row(row, body_ix, cx))
+                        .into_any_element();
+                }
+                self.render_workspace_redaction_section(cx)
+            }
         }
     }
 
@@ -4259,8 +5048,55 @@ impl MediaViewer {
             2 => {
                 let selection_mode = self.selection_mode;
                 let following = self.follow_viewport;
+                let surface = self.transcript_surface;
+                // The reading-surface toggle (operator refinement
+                // 2026-10-30): word-transcript pane ⇄ visual-transcript
+                // event log — parallel annotations over the same recording;
+                // the active surface renders Default, the other Muted.
+                let words_chip = div()
+                    .id("media-transcript-surface-words")
+                    .debug_selector(|| "media-transcript-surface-words".into())
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Words"))
+                            .size(LabelSize::XSmall)
+                            .color(if surface == TranscriptSurface::Words {
+                                ui::Color::Default
+                            } else {
+                                ui::Color::Muted
+                            }),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_transcript_surface(TranscriptSurface::Words, cx);
+                    }));
+                let events_chip = div()
+                    .id("media-transcript-surface-events")
+                    .debug_selector(|| "media-transcript-surface-events".into())
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Events"))
+                            .size(LabelSize::XSmall)
+                            .color(if surface == TranscriptSurface::Events {
+                                ui::Color::Default
+                            } else {
+                                ui::Color::Muted
+                            }),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_transcript_surface(TranscriptSurface::Events, cx);
+                    }));
                 // S4 part-2: the select-range mode toggle — an explicit mode
-                // beats every-click-seek plus accidental creation.
+                // beats every-click-seek plus accidental creation. The same
+                // mode serves both surfaces: word ranges on the word surface,
+                // event spans on the events surface.
                 let select_chip = div()
                     .id("media-transcript-select-mode")
                     .debug_selector(|| "media-transcript-select-mode".into())
@@ -4272,6 +5108,8 @@ impl MediaViewer {
                     .child(
                         Label::new(SharedString::from(if selection_mode {
                             "Finish selection"
+                        } else if surface == TranscriptSurface::Events {
+                            "Select span"
                         } else {
                             "Select text"
                         }))
@@ -4282,58 +5120,102 @@ impl MediaViewer {
                             ui::Color::Muted
                         }),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.selection_mode = !this.selection_mode;
                         this.selection_anchor = None;
                         // Toggling the mode abandons any open label editor —
-                        // it is the tail of a selection this toggle ends.
+                        // it is the tail of a selection this toggle ends —
+                        // and any pending event span (the same rule on the
+                        // events surface).
                         this.highlight_edit = None;
+                        this.event_selection_anchor = None;
+                        this.event_selection_span = None;
                         this.status = Some(if this.selection_mode {
-                            "Select mode on — click the first word of the range.".into()
+                            if surface == TranscriptSurface::Events {
+                                "Select mode on — click the first event of the span.".into()
+                            } else {
+                                "Select mode on — click the first word of the range.".into()
+                            }
                         } else {
                             "Select mode off — clicks seek playback.".into()
                         });
                         cx.notify();
                     }));
+                let mut chips = h_flex().items_center().flex_wrap().gap_2();
+                chips = chips
+                    .child(words_chip)
+                    .child(events_chip)
+                    .child(select_chip);
                 // The Follow toggle (S3d): viewport tracking is on by
                 // default; a manual scroll suspends it and this affordance
-                // re-enables it.
-                let follow_chip = div()
-                    .id("media-transcript-follow-toggle")
-                    .debug_selector(|| "media-transcript-follow-toggle".into())
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(if following {
-                            "Following"
-                        } else {
-                            "Follow"
-                        }))
-                        .size(LabelSize::XSmall)
-                        .color(if following {
-                            ui::Color::Muted
-                        } else {
-                            ui::Color::Default
-                        }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.toggle_follow_viewport(cx);
-                    }));
-                h_flex()
-                    .items_center()
-                    .flex_wrap()
-                    .gap_2()
-                    .child(select_chip)
-                    .child(follow_chip)
-                    .into_any_element()
+                // re-enables it. A word-surface affordance — the mark and
+                // reveal target word blocks.
+                if surface == TranscriptSurface::Words {
+                    let follow_chip = div()
+                        .id("media-transcript-follow-toggle")
+                        .debug_selector(|| "media-transcript-follow-toggle".into())
+                        .cursor_pointer()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from(if following {
+                                "Following"
+                            } else {
+                                "Follow"
+                            }))
+                            .size(LabelSize::XSmall)
+                            .color(if following {
+                                ui::Color::Muted
+                            } else {
+                                ui::Color::Default
+                            }),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.toggle_follow_viewport(cx);
+                        }));
+                    chips = chips.child(follow_chip);
+                }
+                chips.into_any_element()
             }
             3 => {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
+                // On the events surface this row carries the event log's
+                // own load status — the named no_layers degradation and
+                // load failures surface here, never silently (design §8).
+                if self.transcript_surface == TranscriptSurface::Events {
+                    return match &self.visual_events_request.state {
+                        ResourceState::Loading => {
+                            Label::new(SharedString::from("Loading visual transcript…"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Muted)
+                                .into_any_element()
+                        }
+                        ResourceState::Failed(error) => Label::new(SharedString::from(format!(
+                            "Visual transcript unavailable — {error}"
+                        )))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Error)
+                        .into_any_element(),
+                        _ => match self.visual_events.as_ref() {
+                            Some(events) if events.status == "no_layers" => Label::new(
+                                SharedString::from(events.note.clone().unwrap_or_else(|| {
+                                    "No stored layers for this recording — run a layer pass \
+                                     (layers_shot_pass, layers_semantic_pass, layers_audio_pass) \
+                                     or author one (layers_store)."
+                                        .to_string()
+                                })),
+                            )
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted)
+                            .into_any_element(),
+                            _ => div().into_any_element(),
+                        },
+                    };
+                }
                 match state.alignment.as_str() {
                     "re_anchored" => Label::new(SharedString::from(
                         "Estimated timings — review existing ranges before creating a reel.",
@@ -4360,6 +5242,29 @@ impl MediaViewer {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
+                // The section label names the active reading surface: the
+                // word pane's review note, or the event log's counts and
+                // kinds.
+                if self.transcript_surface == TranscriptSurface::Events {
+                    let mut row = v_flex();
+                    row = row.child(Self::section_label("Visual transcript"));
+                    if let Some(events) = self.visual_events.as_ref()
+                        && events.status == "completed"
+                    {
+                        let kinds = events.kinds_present.join(", ");
+                        row = row.child(
+                            Label::new(SharedString::from(format!(
+                                "{} events across: {}",
+                                events.events.len(),
+                                if kinds.is_empty() { "no kinds" } else { &kinds }
+                            )))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted)
+                            .mt_1(),
+                        );
+                    }
+                    return div().pb_2().child(row).into_any_element();
+                }
                 let mut row = v_flex();
                 row = row.child(Self::section_label("Transcript"));
                 // Review flags (task 1a): the derived marker rides the
@@ -4823,6 +5728,278 @@ impl MediaViewer {
                         this.compose_workspace_reel(mode, cx);
                     })),
             );
+        }
+        section.into_any_element()
+    }
+
+    /// One visual-transcript event row (S5): kind, source-PTS range,
+    /// searchable text, and the provenance model — the row seeks playback
+    /// to its start on click (the word pane's click-to-seek discipline,
+    /// criterion 1). Box-carrying rows carry the Target arm chip (criterion
+    /// 3's "select target"); the anchored row and rows inside the pending
+    /// span highlight.
+    fn render_workspace_event_row(
+        &self,
+        row: &PaneEventRow,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let time = match row.end_sec {
+            Some(end) => format!("{:.1}s–{:.1}s", row.start_sec, end),
+            None => format!("{:.1}s", row.start_sec),
+        };
+        let anchored = self.event_selection_anchor == Some(index);
+        let in_span = self
+            .event_selection_span
+            .is_some_and(|(start, end)| row.start_sec < end && row.end_or_start() > start);
+        let row_id = SharedString::from(format!("media-event-row-{index}"));
+        let mut element = div()
+            .id(row_id)
+            .debug_selector(move || format!("media-event-row-{index}"))
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .when(anchored || in_span, |el| {
+                el.bg(cx.theme().colors().element_hover)
+            })
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from(row.kind.clone()))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                Label::new(SharedString::from(time))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                Label::new(SharedString::from(row.searchable_text.clone()))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Default),
+            )
+            .child(
+                Label::new(SharedString::from(format!("· {}", row.model)))
+                    .size(LabelSize::XSmall)
+                    .color(if row.model == "user" {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+            );
+        // The redaction target arm: only rows carrying a normalized box
+        // (machine object tags — the tier-1 spatial source). Arming stops
+        // propagation so the click does not also seek.
+        if let Some(_box_norm) = row.box_norm {
+            let armed = self
+                .redaction_target
+                .as_ref()
+                .is_some_and(|target| target.source_ref == row.source_ref());
+            let target_chip = div()
+                .id(SharedString::from(format!("media-event-target-{index}")))
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_active))
+                .child(
+                    Label::new(SharedString::from(if armed {
+                        "◎ Target"
+                    } else {
+                        "Target"
+                    }))
+                    .size(LabelSize::XSmall)
+                    .color(if armed {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+                )
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    cx.stop_propagation();
+                    this.arm_redaction_target(index, cx);
+                }));
+            element = element.child(target_chip);
+        }
+        let start_sec = row.start_sec;
+        element
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.event_clicked(index, start_sec, cx);
+            }))
+            .into_any_element()
+    }
+
+    /// The events surface's tail section (S5): the pending span, the
+    /// select-to-author tag flow (criterion 2), the redaction dispatch
+    /// (criterion 3 — armed target + effect + span → author the approved
+    /// decision and render it), and the last render's review/lineage lines
+    /// (S3's segments[] + applied_items[]).
+    fn render_workspace_redaction_section(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut section = v_flex()
+            .gap_2()
+            .debug_selector(|| "media-events-authoring-section".into());
+        section = section.child(Self::section_label("Visual-transcript actions"));
+        // The pending span: what both authoring flows consume.
+        match self.event_selection_span {
+            Some((start, end)) => {
+                let span_label = Label::new(SharedString::from(format!(
+                    "Selected span: {start:.1}s–{end:.1}s"
+                )))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Default);
+                let tag_chip = div()
+                    .id("media-event-tag-span")
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Tag span"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.open_event_span_tag_editor(window, cx);
+                    }));
+                section = section.child(
+                    h_flex()
+                        .items_center()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(span_label)
+                        .child(tag_chip),
+                );
+            }
+            None => {
+                let hint = if self.selection_mode {
+                    "Click two events to select a span."
+                } else {
+                    "Turn on Select span, then click two events to select a span."
+                };
+                section = section.child(
+                    Label::new(SharedString::from(hint))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
+                );
+            }
+        }
+        // The redaction block: armed target, effect cycle, dispatch.
+        let mut redaction = v_flex().gap_1();
+        redaction = redaction.child(
+            Label::new(SharedString::from("Redaction"))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+        );
+        let target_line = match self.redaction_target.as_ref() {
+            Some(target) => format!(
+                "Target: {} (box {:.2},{:.2} {:.0}%×{:.0}%)",
+                target.label,
+                target.box_norm[0],
+                target.box_norm[1],
+                target.box_norm[2] * 100.0,
+                target.box_norm[3] * 100.0
+            ),
+            None => "No target armed — click Target on an event with a box.".to_string(),
+        };
+        redaction = redaction.child(
+            Label::new(SharedString::from(target_line))
+                .size(LabelSize::XSmall)
+                .color(if self.redaction_target.is_some() {
+                    ui::Color::Default
+                } else {
+                    ui::Color::Muted
+                }),
+        );
+        let effect = self.redaction_effect;
+        let effect_chip = div()
+            .id("media-event-redaction-effect")
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from(format!("Effect: {}", effect.as_str())))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Default),
+            )
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.redaction_effect = this.redaction_effect.next();
+                cx.notify();
+            }));
+        let ready = self.redaction_target.is_some() && self.event_selection_span.is_some();
+        let redact_chip = div()
+            .id("media-event-redact-span")
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from("Redact span"))
+                    .size(LabelSize::XSmall)
+                    .color(if ready {
+                        ui::Color::Error
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.dispatch_redaction_render(cx);
+            }));
+        redaction = redaction.child(
+            h_flex()
+                .items_center()
+                .flex_wrap()
+                .gap_2()
+                .child(effect_chip)
+                .child(redact_chip),
+        );
+        section = section.child(redaction);
+        // The last render's review/lineage lines (S3's result rendered for
+        // review — criterion 3).
+        if let Some(summary) = self.redaction_render.as_ref() {
+            let mut render = v_flex().gap_1();
+            render = render.child(
+                Label::new(SharedString::from(format!(
+                    "Last render — {} decision(s) · {} re-encoded · {} stream-copied · layer {}",
+                    summary.decisions_rendered,
+                    summary.reencoded_segments,
+                    summary.stream_copied_segments,
+                    summary.decision_layer_id
+                )))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+            );
+            for segment in &summary.segments {
+                render = render.child(
+                    Label::new(SharedString::from(format!(
+                        "  {} {:.1}s–{:.1}s ({} item(s))",
+                        segment.mode, segment.start_sec, segment.end_sec, segment.items
+                    )))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
+            for applied in &summary.applied {
+                render = render.child(
+                    Label::new(SharedString::from(format!(
+                        "  {} {}×{} at {},{} over {:.1}s–{:.1}s",
+                        applied.effect,
+                        applied.pixel_w,
+                        applied.pixel_h,
+                        applied.pixel_x,
+                        applied.pixel_y,
+                        applied.local_start_sec,
+                        applied.local_end_sec
+                    )))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
+            section = section.child(render);
         }
         section.into_any_element()
     }
@@ -5611,9 +6788,11 @@ enum WordClickOutcome {
 }
 
 /// The label editor's open target (S4-3): a completed two-click range
-/// awaiting its label, or a researcher highlight being renamed (the range
-/// and note pass through `educt_annotation_update` unchanged — only the
-/// label is replaced).
+/// awaiting its label, a researcher highlight being renamed (the range and
+/// note pass through `educt_annotation_update` unchanged — only the label
+/// is replaced), or a completed visual-transcript span awaiting its tag
+/// name (S5 criterion 2 — dispatched through `layers_store`, kind
+/// `researcher`, model `"user"`).
 #[derive(Clone, Debug)]
 enum HighlightEditKind {
     Create {
@@ -5625,6 +6804,10 @@ enum HighlightEditKind {
         start_word: usize,
         end_word: usize,
         note: String,
+    },
+    EventTag {
+        start_sec: f64,
+        end_sec: f64,
     },
 }
 
@@ -6019,6 +7202,410 @@ fn union_word_ranges(ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
 /// the pane re-parses its own transcript. Membership keys on provenance
 /// and the toggle, never the label text: free-text labels name clips for
 /// the human without affecting reel composition.
+/// The event-click state machine's outcome (S5, mirroring the word pane's
+/// S4 part-2 model).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum EventClickOutcome {
+    /// Selection mode is off — the click seeks.
+    SeekOnly,
+    /// The click set the pending span's anchor.
+    AnchorSet(usize),
+    /// The click repeated the anchor — the pending selection cleared.
+    AnchorCleared,
+    /// The label editor is open — the click is inert.
+    EditorOpen,
+    /// The click completed a span — [start_sec, end_sec] in source-PTS
+    /// seconds, pending for both authoring flows.
+    SpanSelected { start_sec: f64, end_sec: f64 },
+    /// The two clicked events cover no time (or a stale anchor no longer
+    /// resolves) — the pending selection clears with a named refusal.
+    SpanRejected,
+}
+
+/// The redaction chain's success payload: the raw render response text
+/// (for display-hint ingestion — the rendered asset lands as a playable
+/// panel asset) plus its strict-parsed review/lineage summary.
+struct RedactionRenderOutcome {
+    render_text: String,
+    summary: RedactionRenderSummary,
+}
+
+/// The exact `layers_store` request for a select-to-authored researcher
+/// tag (S5 criterion 2): kind `researcher`, provenance model `"user"` — a
+/// human act, never machine-authored (design §3) — one item over the
+/// selected span whose searchable text keys the label for `layers_search`.
+fn researcher_tag_params(
+    media_path: &str,
+    gallery_asset_id: Option<&str>,
+    start_sec: f64,
+    end_sec: f64,
+    label: &str,
+) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "media_path": media_path,
+        "kind": "researcher",
+        "label": label,
+        "provenance": {
+            "model": "user",
+            "prompt_template": "media-panel:select-to-author",
+        },
+        "items": [{
+            "start_sec": start_sec,
+            "end_sec": end_sec,
+            "searchable_text": format!("tag: {label}"),
+            "payload": { "label": label },
+        }],
+    });
+    if let Some(asset_id) = gallery_asset_id {
+        params["gallery_asset_id"] = serde_json::json!(asset_id);
+    }
+    params
+}
+
+/// The exact `layers_store` request for an approved redaction decision
+/// (S5 criterion 3, the S3 contract): kind `researcher`, model `"user"`,
+/// one APPROVED item carrying the redaction vocabulary — op redact,
+/// status approved, effect, the armed target's box, and the source-tag
+/// lineage — over the selected span. Any unapproved item fails the whole
+/// layer's render, so the panel authors approved decisions only.
+fn redaction_decision_params(
+    media_path: &str,
+    gallery_asset_id: Option<&str>,
+    target: &RedactionTarget,
+    span: (f64, f64),
+    effect: PaneRedactionEffect,
+) -> serde_json::Value {
+    let [x, y, w, h] = target.box_norm;
+    let mut params = serde_json::json!({
+        "media_path": media_path,
+        "kind": "researcher",
+        "label": "redaction decisions",
+        "provenance": {
+            "model": "user",
+            "prompt_template": "media-panel:select-to-author",
+        },
+        "items": [{
+            "start_sec": span.0,
+            "end_sec": span.1,
+            "searchable_text": format!("redact: {} ({})", target.label, effect.as_str()),
+            "payload": {
+                "op": "redact",
+                "status": "approved",
+                "effect": effect.as_str(),
+                "target": {
+                    "kind": "box",
+                    "box": { "x": x, "y": y, "w": w, "h": h },
+                },
+                "source_tag_refs": [target.source_ref],
+            },
+        }],
+    });
+    if let Some(asset_id) = gallery_asset_id {
+        params["gallery_asset_id"] = serde_json::json!(asset_id);
+    }
+    params
+}
+
+/// Strict-parse a `layers_transcript` response (S1's reading surface) into
+/// the event log the panel renders: status, the time-ordered events, the
+/// total, and the kinds present. Contract fields reject the whole payload
+/// (a malformed event log never degrades to a partial success); the
+/// optional object box is parsed tolerantly because payloads are arbitrary
+/// JSON by contract (design §3) — a malformed box renders its row without
+/// the target affordance instead of rejecting the log.
+fn parse_visual_events(payload: &Value) -> Result<VisualEventsState, String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "layers_transcript returned no object data.".to_string())?;
+    let status = object
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "layers_transcript returned no status.".to_string())?;
+    let note = object
+        .get("note")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let events = object
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "layers_transcript returned no events array.".to_string())?;
+    match status {
+        "no_layers" => {
+            if !events.is_empty() {
+                return Err(
+                    "layers_transcript reported no_layers with nonempty events.".to_string()
+                );
+            }
+            Ok(VisualEventsState {
+                status: status.to_string(),
+                events: Vec::new(),
+                events_total: 0,
+                kinds_present: Vec::new(),
+                note,
+            })
+        }
+        "completed" => {
+            let mut rows = Vec::with_capacity(events.len());
+            for event in events {
+                let event = event
+                    .as_object()
+                    .ok_or_else(|| "visual-transcript event is not an object.".to_string())?;
+                let start_sec = event
+                    .get("start_sec")
+                    .and_then(Value::as_f64)
+                    .filter(|secs| secs.is_finite() && *secs >= 0.0)
+                    .ok_or_else(|| {
+                        "visual-transcript event has no nonnegative start_sec.".to_string()
+                    })?;
+                let end_sec =
+                    match event.get("end_sec") {
+                        None | Some(&Value::Null) => None,
+                        Some(value) => {
+                            let end = value.as_f64().filter(|secs| secs.is_finite()).ok_or_else(
+                                || "visual-transcript event end_sec is not a number.".to_string(),
+                            )?;
+                            if end < start_sec {
+                                return Err(
+                                    "visual-transcript event end_sec precedes its start_sec."
+                                        .to_string(),
+                                );
+                            }
+                            Some(end)
+                        }
+                    };
+                let kind = event
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .filter(|kind| !kind.trim().is_empty())
+                    .ok_or_else(|| "visual-transcript event has no kind.".to_string())?
+                    .to_string();
+                let layer_id = event
+                    .get("layer_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| "visual-transcript event has no layer_id.".to_string())?
+                    .to_string();
+                let item_id = event
+                    .get("item_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| "visual-transcript event has no item_id.".to_string())?
+                    .to_string();
+                let searchable_text = event
+                    .get("searchable_text")
+                    .and_then(Value::as_str)
+                    .filter(|text| !text.trim().is_empty())
+                    .ok_or_else(|| {
+                        "visual-transcript event has blank searchable_text.".to_string()
+                    })?
+                    .to_string();
+                let provenance = event
+                    .get("provenance")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| "visual-transcript event has no provenance.".to_string())?;
+                let model = provenance
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .filter(|model| !model.is_empty())
+                    .ok_or_else(|| "visual-transcript event provenance has no model.".to_string())?
+                    .to_string();
+                // The optional object payload: a well-formed normalized box
+                // arms the redaction target; anything else renders without
+                // the affordance (payloads are arbitrary JSON by contract).
+                let payload = event.get("payload");
+                let (box_norm, object_label) = match payload {
+                    None | Some(Value::Null) => (None, None),
+                    Some(value) => {
+                        let object_label = value
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .filter(|label| !label.trim().is_empty())
+                            .map(str::to_string);
+                        let r#box = value.get("box").and_then(Value::as_object);
+                        let box_norm = r#box.and_then(|r#box| {
+                            let mut values = [0.0; 4];
+                            for (slot, key) in values.iter_mut().zip(["x", "y", "w", "h"]) {
+                                *slot = r#box
+                                    .get(key)
+                                    .and_then(Value::as_f64)
+                                    .filter(|v| v.is_finite() && (0.0..=1.0).contains(v))?;
+                            }
+                            let [x, y, w, h] = values;
+                            (w > 0.0 && h > 0.0 && x + w <= 1.0 && y + h <= 1.0).then_some(values)
+                        });
+                        (box_norm, object_label)
+                    }
+                };
+                rows.push(PaneEventRow {
+                    start_sec,
+                    end_sec,
+                    kind,
+                    layer_id,
+                    item_id,
+                    searchable_text,
+                    model,
+                    box_norm,
+                    object_label,
+                });
+            }
+            let events_total = object
+                .get("events_total")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "layers_transcript returned no events_total.".to_string())?
+                as usize;
+            let kinds_present = object
+                .get("kinds_present")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "layers_transcript returned no kinds_present.".to_string())?
+                .iter()
+                .map(|kind| {
+                    kind.as_str()
+                        .filter(|kind| !kind.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| "kinds_present entry is not a kind string.".to_string())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(VisualEventsState {
+                status: status.to_string(),
+                events: rows,
+                events_total,
+                kinds_present,
+                note,
+            })
+        }
+        other => Err(format!(
+            "layers_transcript returned unknown status {other:?}."
+        )),
+    }
+}
+
+/// Strict-parse a `layers_render_redactions` response (S3's result JSON)
+/// into the review/lineage summary the events tail renders: the render
+/// plan's segments[] (mode + range + item count) and applied_items[] (what
+/// was drawn where). A malformed result rejects visibly.
+fn parse_redaction_render(payload: &Value) -> Result<RedactionRenderSummary, String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "layers_render_redactions returned no object data.".to_string())?;
+    if object.get("status").and_then(Value::as_str) != Some("rendered") {
+        return Err(format!(
+            "layers_render_redactions returned status {:?}, expected \"rendered\".",
+            object.get("status").and_then(Value::as_str)
+        ));
+    }
+    let decision_layer_id = object
+        .get("decision_layer_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "layers_render_redactions returned no decision_layer_id.".to_string())?
+        .to_string();
+    let decisions_rendered = object
+        .get("decisions_rendered")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "layers_render_redactions returned no decisions_rendered.".to_string())?
+        as usize;
+    let reencoded_segments = object
+        .get("reencoded_segments")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "layers_render_redactions returned no reencoded_segments.".to_string())?
+        as usize;
+    let stream_copied_segments = object
+        .get("stream_copied_segments")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "layers_render_redactions returned no stream_copied_segments.".to_string())?
+        as usize;
+    let segments = object
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "layers_render_redactions returned no segments.".to_string())?
+        .iter()
+        .map(|segment| {
+            let mode = segment
+                .get("mode")
+                .and_then(Value::as_str)
+                .filter(|mode| matches!(*mode, "stream_copy" | "reencode"))
+                .ok_or_else(|| "render segment has an unknown mode.".to_string())?
+                .to_string();
+            let start_sec = segment
+                .get("start_sec")
+                .and_then(Value::as_f64)
+                .filter(|secs| secs.is_finite() && *secs >= 0.0)
+                .ok_or_else(|| "render segment has no start_sec.".to_string())?;
+            let end_sec = segment
+                .get("end_sec")
+                .and_then(Value::as_f64)
+                .filter(|secs| secs.is_finite() && *secs > start_sec)
+                .ok_or_else(|| "render segment has no end beyond its start.".to_string())?;
+            let items = segment
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                .ok_or_else(|| "render segment has no items array.".to_string())?;
+            Ok(PaneRenderSegment {
+                mode,
+                start_sec,
+                end_sec,
+                items,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let applied = object
+        .get("applied_items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "layers_render_redactions returned no applied_items.".to_string())?
+        .iter()
+        .map(|item| {
+            let item_id = item
+                .get("item_id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .ok_or_else(|| "applied item has no item_id.".to_string())?
+                .to_string();
+            let effect = item
+                .get("effect")
+                .and_then(Value::as_str)
+                .filter(|effect| !effect.is_empty())
+                .ok_or_else(|| "applied item has no effect.".to_string())?
+                .to_string();
+            let pixel = |key: &str| {
+                item.get(key)
+                    .and_then(Value::as_u64)
+                    .filter(|v| *v <= u32::MAX as u64)
+                    .map(|v| v as u32)
+                    .ok_or_else(|| format!("applied item has no {key}."))
+            };
+            let local_start_sec = item
+                .get("local_start_sec")
+                .and_then(Value::as_f64)
+                .filter(|secs| secs.is_finite())
+                .ok_or_else(|| "applied item has no local_start_sec.".to_string())?;
+            let local_end_sec = item
+                .get("local_end_sec")
+                .and_then(Value::as_f64)
+                .filter(|secs| secs.is_finite())
+                .ok_or_else(|| "applied item has no local_end_sec.".to_string())?;
+            Ok(PaneAppliedRedaction {
+                item_id,
+                effect,
+                pixel_x: pixel("pixel_x")?,
+                pixel_y: pixel("pixel_y")?,
+                pixel_w: pixel("pixel_w")?,
+                pixel_h: pixel("pixel_h")?,
+                local_start_sec,
+                local_end_sec,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(RedactionRenderSummary {
+        decision_layer_id,
+        decisions_rendered,
+        reencoded_segments,
+        stream_copied_segments,
+        segments,
+        applied,
+    })
+}
+
 fn compose_reel_params(
     state: &TranscriptPaneState,
     selection: &HashSet<(usize, usize)>,
@@ -9953,6 +11540,719 @@ mod tests {
             assert_eq!(viewer.transcript.as_ref(), Some(&state));
         });
     }
+
+    // ── Visual-transcript surface (S5) ───────────────────────────────────
+
+    /// A canned `layers_transcript` response over two events: a shot row
+    /// (no box) and an object row carrying the box that arms a redaction
+    /// target.
+    fn visual_events_response() -> serde_json::Value {
+        serde_json::json!({
+            "status": "completed",
+            "media_path": "/rec/one.mp4",
+            "events": [
+                {
+                    "start_sec": 0.0, "end_sec": 4.2, "kind": "shot",
+                    "layer_id": "layer_shot", "item_id": "item_s0",
+                    "label": null, "searchable_text": "shot 0",
+                    "payload": {"shot_index": 0},
+                    "frame_asset_ids": [],
+                    "provenance": {"model": "ffmpeg:scdet", "prompt_template": "ffmpeg:scdet", "created_at": "2026-10-30T00:00:00Z"}
+                },
+                {
+                    "start_sec": 3.5, "end_sec": 9.0, "kind": "object",
+                    "layer_id": "layer_obj", "item_id": "item_a",
+                    "label": "Grounded pass", "searchable_text": "object: person",
+                    "payload": {"label": "person", "confidence": 0.9, "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4}, "frame_index": 2},
+                    "frame_asset_ids": ["frame-1"],
+                    "provenance": {"model": "qwen3-vl", "prompt_template": "layers_semantic_pass_grounded", "created_at": "2026-10-30T00:00:00Z"}
+                }
+            ],
+            "events_total": 2, "events_page": 2,
+            "kinds_present": ["shot", "object"],
+            "layers_included": ["layer_shot", "layer_obj"],
+            "resume_from": 0, "next_from": null,
+            "time_basis": "source_pts_seconds"
+        })
+    }
+
+    /// A viewer with an open transcript workspace over `/rec/one.mp4` —
+    /// the events-surface tests' shared fixture.
+    fn events_workspace_viewer() -> MediaViewer {
+        let mut viewer = MediaViewer::new();
+        viewer.transcript = Some(TranscriptPaneState {
+            transcript_id: "t-1".into(),
+            media_path: "/rec/one.mp4".into(),
+            gallery_asset_id: Some("ga-1".into()),
+            alignment: "original".into(),
+            alignment_note: None,
+            words: None,
+            working_text: String::new(),
+            paragraph_breaks: None,
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+        });
+        viewer
+    }
+
+    /// A scripted invoker for the S5 dispatches: records every (tool, args)
+    /// call and answers from a queue of canned response texts.
+    struct ScriptedInvoker {
+        calls: std::sync::Arc<std::sync::Mutex<Vec<(String, Value)>>>,
+        responses: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+    }
+
+    impl hkask_tool_invoker::ToolInvoker for ScriptedInvoker {
+        fn invoke_tool(
+            &self,
+            server: &str,
+            tool: &str,
+            args: Value,
+        ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
+            assert_eq!(server, MEDIA_SERVER);
+            self.calls
+                .lock()
+                .expect("calls lock")
+                .push((tool.to_string(), args));
+            let response = self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .unwrap_or_else(|| "{}".to_string());
+            gpui::Task::ready(Ok(response))
+        }
+    }
+
+    /// Install a scripted invoker, returning (recorded-calls, restore). The
+    /// caller holds INVOKER_TEST_LOCK for the test's lifetime — the same
+    /// serialization discipline as the inline RestoreInvoker tests.
+    struct InvokerRestore(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
+    impl Drop for InvokerRestore {
+        fn drop(&mut self) {
+            hkask_tool_invoker::set_tool_invoker(self.0.take());
+        }
+    }
+
+    fn install_scripted_invoker(
+        responses: Vec<String>,
+    ) -> (
+        std::sync::Arc<std::sync::Mutex<Vec<(String, Value)>>>,
+        InvokerRestore,
+    ) {
+        let restore = InvokerRestore(hkask_tool_invoker::shared_tool_invoker());
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(ScriptedInvoker {
+            calls: calls.clone(),
+            responses: std::sync::Arc::new(std::sync::Mutex::new(responses.into_iter().collect())),
+        })));
+        (calls, restore)
+    }
+
+    /// dcterms:identifier: `parse_visual_events`
+    /// expect: The event log parses strictly or rejects, never degrading to
+    /// a partial success; the no_layers state is its own named status.
+    #[test]
+    fn parse_visual_events_is_strict() {
+        let parsed =
+            parse_visual_events(&visual_events_response()).expect("the completed response parses");
+        assert_eq!(parsed.status, "completed");
+        assert_eq!(parsed.events_total, 2);
+        assert_eq!(
+            parsed.kinds_present,
+            vec!["shot".to_string(), "object".to_string()]
+        );
+        assert_eq!(parsed.events.len(), 2);
+        let object = &parsed.events[1];
+        assert_eq!(object.box_norm, Some([0.1, 0.2, 0.3, 0.4]));
+        assert_eq!(object.object_label.as_deref(), Some("person"));
+        assert_eq!(object.source_ref(), "layer_obj/item_a");
+        assert_eq!(object.model, "qwen3-vl");
+        let shot = &parsed.events[0];
+        assert_eq!(shot.box_norm, None);
+        assert_eq!(shot.end_or_start(), 4.2);
+
+        let no_layers = serde_json::json!({
+            "status": "no_layers", "media_path": "/rec/one.mp4", "events": [],
+            "note": "no stored layers for this recording"
+        });
+        let parsed = parse_visual_events(&no_layers).expect("no_layers parses");
+        assert_eq!(parsed.status, "no_layers");
+        assert!(parsed.events.is_empty());
+        assert_eq!(
+            parsed.note.as_deref(),
+            Some("no stored layers for this recording")
+        );
+
+        let object_event = &visual_events_response()["events"][1];
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"status": "pending", "events": []}),
+            serde_json::json!({"status": "completed"}),
+            serde_json::json!({"status": "no_layers", "events": [object_event.clone()]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "end_sec": 4.0, "kind": "shot", "layer_id": "l", "item_id": "i",
+                "searchable_text": "x", "provenance": {"model": "m"}
+            })]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "start_sec": -1.0, "end_sec": 4.0, "kind": "shot", "layer_id": "l", "item_id": "i",
+                "searchable_text": "x", "provenance": {"model": "m"}
+            })]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "start_sec": 5.0, "end_sec": 4.0, "kind": "shot", "layer_id": "l", "item_id": "i",
+                "searchable_text": "x", "provenance": {"model": "m"}
+            })]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "start_sec": 0.0, "end_sec": 4.0, "kind": "  ", "layer_id": "l", "item_id": "i",
+                "searchable_text": "x", "provenance": {"model": "m"}
+            })]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "start_sec": 0.0, "end_sec": 4.0, "kind": "shot", "layer_id": "l", "item_id": "i",
+                "searchable_text": "  ", "provenance": {"model": "m"}
+            })]}),
+            serde_json::json!({"status": "completed", "events": [serde_json::json!({
+                "start_sec": 0.0, "end_sec": 4.0, "kind": "shot", "layer_id": "l", "item_id": "i",
+                "searchable_text": "x"
+            })]}),
+            serde_json::json!({"status": "completed", "events": [object_event.clone()],
+                "events_total": 1}),
+        ] {
+            let err = parse_visual_events(&invalid)
+                .expect_err("malformed payloads must reject, never partially parse");
+            assert!(!err.is_empty(), "rejection names the failure");
+        }
+    }
+
+    /// dcterms:identifier: `parse_redaction_render`
+    /// expect: The S3 render result parses into the review/lineage summary
+    /// or rejects — segments and applied items carry their full detail.
+    #[test]
+    fn parse_redaction_render_is_strict() {
+        let render = serde_json::json!({
+            "status": "rendered",
+            "result": {"output": "/published/redacted.mp4", "kind": "video"},
+            "decision_layer_id": "layer-decision",
+            "media_path": "/rec/one.mp4",
+            "segments": [
+                {"mode": "stream_copy", "start_sec": 0.0, "end_sec": 12.0, "items": []},
+                {"mode": "reencode", "start_sec": 12.0, "end_sec": 18.0, "items": ["item_d1"]},
+                {"mode": "stream_copy", "start_sec": 18.0, "end_sec": 20.0, "items": []}
+            ],
+            "reencoded_segments": 1,
+            "stream_copied_segments": 2,
+            "decisions_rendered": 1,
+            "applied_items": [{
+                "item_id": "item_d1", "effect": "blur",
+                "pixel_x": 16, "pixel_y": 12, "pixel_w": 32, "pixel_h": 24,
+                "local_start_sec": 0.4, "local_end_sec": 5.6, "delogo_edge_inset": false
+            }]
+        });
+        let parsed = parse_redaction_render(&render).expect("the rendered result parses");
+        assert_eq!(parsed.decision_layer_id, "layer-decision");
+        assert_eq!(parsed.decisions_rendered, 1);
+        assert_eq!(parsed.reencoded_segments, 1);
+        assert_eq!(parsed.stream_copied_segments, 2);
+        assert_eq!(parsed.segments.len(), 3);
+        assert_eq!(
+            parsed.segments[1],
+            PaneRenderSegment {
+                mode: "reencode".into(),
+                start_sec: 12.0,
+                end_sec: 18.0,
+                items: 1,
+            }
+        );
+        assert_eq!(parsed.applied.len(), 1);
+        assert_eq!(parsed.applied[0].pixel_w, 32);
+        assert_eq!(parsed.applied[0].local_end_sec, 5.6);
+
+        for invalid in [
+            serde_json::json!({}),
+            serde_json::json!({"status": "failed"}),
+            serde_json::json!({"status": "rendered"}),
+            serde_json::json!({"status": "rendered", "decision_layer_id": "l"}),
+            serde_json::json!({"status": "rendered", "decision_layer_id": "l", "decisions_rendered": 1,
+                "reencoded_segments": 1, "stream_copied_segments": 1}),
+            serde_json::json!({"status": "rendered", "decision_layer_id": "l", "decisions_rendered": 1,
+                "reencoded_segments": 1, "stream_copied_segments": 1,
+                "segments": [{"mode": "teleport", "start_sec": 0.0, "end_sec": 1.0, "items": []}]}),
+            serde_json::json!({"status": "rendered", "decision_layer_id": "l", "decisions_rendered": 1,
+                "reencoded_segments": 1, "stream_copied_segments": 1,
+                "segments": [{"mode": "reencode", "start_sec": 0.0, "end_sec": 1.0, "items": []}],
+                "applied_items": [{"item_id": "i", "effect": "blur", "pixel_x": 1}]}),
+        ] {
+            assert!(
+                parse_redaction_render(&invalid).is_err(),
+                "malformed render results must reject"
+            );
+        }
+    }
+
+    /// dcterms:identifier: `MediaViewer::handle_event_click`
+    /// expect: The event-click state machine mirrors the word pane's —
+    /// seek outside select mode, anchor → span inside it, inert while the
+    /// editor is open — with span bounds over source-PTS ranges and a
+    /// named refusal for degenerate spans.
+    #[gpui::test]
+    fn event_click_state_machine_and_span_bounds(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.visual_events = Some(VisualEventsState {
+                status: "completed".into(),
+                events: vec![
+                    PaneEventRow {
+                        start_sec: 3.5,
+                        end_sec: Some(9.0),
+                        kind: "object".into(),
+                        layer_id: "layer_obj".into(),
+                        item_id: "item_a".into(),
+                        searchable_text: "object: person".into(),
+                        model: "qwen3-vl".into(),
+                        box_norm: Some([0.1, 0.2, 0.3, 0.4]),
+                        object_label: Some("person".into()),
+                    },
+                    PaneEventRow {
+                        start_sec: 12.4,
+                        end_sec: Some(17.6),
+                        kind: "researcher".into(),
+                        layer_id: "layer_dec".into(),
+                        item_id: "item_r1".into(),
+                        searchable_text: "redact: person (blur)".into(),
+                        model: "user".into(),
+                        box_norm: None,
+                        object_label: None,
+                    },
+                    PaneEventRow {
+                        start_sec: 5.0,
+                        end_sec: None,
+                        kind: "audio_event".into(),
+                        layer_id: "layer_a".into(),
+                        item_id: "item_p".into(),
+                        searchable_text: "sound: clap".into(),
+                        model: "user".into(),
+                        box_norm: None,
+                        object_label: None,
+                    },
+                    PaneEventRow {
+                        start_sec: 5.0,
+                        end_sec: None,
+                        kind: "audio_event".into(),
+                        layer_id: "layer_a".into(),
+                        item_id: "item_q".into(),
+                        searchable_text: "sound: clap".into(),
+                        model: "user".into(),
+                        box_norm: None,
+                        object_label: None,
+                    },
+                ],
+                events_total: 4,
+                kinds_present: vec!["object".into(), "researcher".into(), "audio_event".into()],
+                note: None,
+            });
+            viewer
+        });
+        // Outside select mode every click seeks (criterion 1's routing).
+        viewer.update(cx, |viewer, cx| {
+            assert_eq!(viewer.handle_event_click(0), EventClickOutcome::SeekOnly);
+            viewer.selection_mode = true;
+            assert_eq!(
+                viewer.handle_event_click(0),
+                EventClickOutcome::AnchorSet(0)
+            );
+            viewer.event_selection_anchor = Some(0);
+            assert_eq!(
+                viewer.handle_event_click(0),
+                EventClickOutcome::AnchorCleared
+            );
+            // The span covers from the earlier start to the later end,
+            // regardless of click order.
+            viewer.event_selection_anchor = Some(0);
+            assert_eq!(
+                viewer.handle_event_click(1),
+                EventClickOutcome::SpanSelected {
+                    start_sec: 3.5,
+                    end_sec: 17.6
+                }
+            );
+            viewer.event_selection_anchor = Some(1);
+            assert_eq!(
+                viewer.handle_event_click(0),
+                EventClickOutcome::SpanSelected {
+                    start_sec: 3.5,
+                    end_sec: 17.6
+                }
+            );
+            // A point event's end falls back to its start.
+            viewer.event_selection_anchor = Some(2);
+            assert_eq!(
+                viewer.handle_event_click(0),
+                EventClickOutcome::SpanSelected {
+                    start_sec: 3.5,
+                    end_sec: 9.0
+                }
+            );
+            // Two same-instant point events cover no time — the named refusal.
+            viewer.event_selection_anchor = Some(2);
+            assert_eq!(
+                viewer.handle_event_click(3),
+                EventClickOutcome::SpanRejected
+            );
+            // The label editor is modal to event clicks.
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::EventTag {
+                    start_sec: 1.0,
+                    end_sec: 2.0,
+                },
+                buffer: LabelBuffer::default(),
+            });
+            assert_eq!(viewer.handle_event_click(0), EventClickOutcome::EditorOpen);
+            // The degenerate-span refusal clears the anchor with a named status.
+            viewer.highlight_edit = None;
+            viewer.event_selection_anchor = Some(2);
+            viewer.event_selection_span = None;
+            viewer.event_clicked(3, 5.0, cx);
+            assert_eq!(viewer.event_selection_anchor, None);
+            assert_eq!(viewer.event_selection_span, None);
+            let status = viewer.status.clone().expect("refusal surfaces a status");
+            assert!(status.contains("span is empty"), "got: {status}");
+            // The completed span routes through with its own status.
+            viewer.event_selection_anchor = Some(0);
+            viewer.event_clicked(1, 12.4, cx);
+            assert_eq!(viewer.event_selection_span, Some((3.5, 17.6)));
+            assert_eq!(viewer.event_selection_anchor, None);
+        });
+    }
+
+    /// dcterms:identifier: `PaneRedactionEffect::next`
+    /// expect: The effect chip cycles the card's tier-1 vocabulary.
+    #[test]
+    fn redaction_effect_cycles_the_card_vocabulary() {
+        assert_eq!(
+            PaneRedactionEffect::Blur.next(),
+            PaneRedactionEffect::Pixelate
+        );
+        assert_eq!(
+            PaneRedactionEffect::Pixelate.next(),
+            PaneRedactionEffect::Black
+        );
+        assert_eq!(PaneRedactionEffect::Black.next(), PaneRedactionEffect::Blur);
+        assert_eq!(PaneRedactionEffect::Blur.as_str(), "blur");
+        assert_eq!(PaneRedactionEffect::Pixelate.as_str(), "pixelate");
+        assert_eq!(PaneRedactionEffect::Black.as_str(), "black");
+    }
+
+    /// dcterms:identifier: `MediaViewer::toggle_transcript_surface`
+    /// expect: Switching to Events dispatches exactly one pinned
+    /// `layers_transcript` call for the open recording; retained state means
+    /// switching back and forth re-dispatches nothing; the switch clears
+    /// pending surface-local selections.
+    #[gpui::test]
+    fn surface_toggle_switches_and_loads_events_once(cx: &mut gpui::TestAppContext) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (calls, _restore) = install_scripted_invoker(vec![
+            serde_json::json!({
+                "content": visual_events_response()
+            })
+            .to_string(),
+        ]);
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.selection_mode = true;
+            viewer.event_selection_anchor = Some(0);
+            viewer.event_selection_span = Some((1.0, 2.0));
+            viewer
+        });
+        assert_eq!(
+            viewer.read_with(cx, |viewer, _| viewer.transcript_surface),
+            TranscriptSurface::Words
+        );
+        viewer.update(cx, |viewer, cx| {
+            viewer.toggle_transcript_surface(TranscriptSurface::Events, cx)
+        });
+        assert_eq!(
+            viewer.read_with(cx, |viewer, _| viewer.transcript_surface),
+            TranscriptSurface::Events
+        );
+        // The switch cleared the pending selections that belonged to the
+        // words surface's select mode.
+        viewer.read_with(cx, |viewer, _| {
+            assert_eq!(viewer.selection_anchor, None);
+            assert_eq!(viewer.event_selection_anchor, None);
+            assert_eq!(viewer.event_selection_span, None);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            viewer.read_with(cx, |viewer, _| viewer.visual_events_request.state.clone()),
+            ResourceState::Ready
+        );
+        {
+            let recorded = calls.lock().expect("calls lock");
+            assert_eq!(recorded.len(), 1, "exactly one layers_transcript dispatch");
+            assert_eq!(recorded[0].0, "layers_transcript");
+            assert_eq!(
+                recorded[0].1,
+                serde_json::json!({ "media_path": "/rec/one.mp4" }),
+                "the reading surface dispatches the pinned payload"
+            );
+        }
+        // Retained state: back to words and again dispatches nothing.
+        viewer.update(cx, |viewer, cx| {
+            viewer.toggle_transcript_surface(TranscriptSurface::Words, cx)
+        });
+        viewer.update(cx, |viewer, cx| {
+            viewer.toggle_transcript_surface(TranscriptSurface::Events, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(calls.lock().expect("calls lock").len(), 1);
+    }
+
+    /// dcterms:identifier: `MediaViewer::create_event_tag`
+    /// expect: Selecting a span and confirming the label editor authors a
+    /// researcher tag through `layers_store` with the exact human-act
+    /// payload (kind researcher, model "user", one item over the span),
+    /// then reloads the event log.
+    #[gpui::test]
+    fn select_to_author_tag_dispatches_strict_researcher_payload(cx: &mut gpui::TestAppContext) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let store_response = serde_json::json!({
+            "content": {
+                "id": "layer-tag-1", "media_path": "/rec/one.mp4",
+                "gallery_asset_id": null, "detached_at": null,
+                "kind": "researcher", "label": "hot moment",
+                "provenance": {"model": "user", "prompt_template": "media-panel:select-to-author",
+                    "created_at": "2026-10-30T00:00:00Z", "parameters": null},
+                "items_count": 1, "created_at": "2026-10-30T00:00:00Z",
+                "probed_duration_secs": 20.0, "time_basis": "source_pts_seconds"
+            }
+        })
+        .to_string();
+        let (calls, _restore) = install_scripted_invoker(vec![
+            store_response,
+            serde_json::json!({"content": visual_events_response()}).to_string(),
+        ]);
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.event_selection_span = Some((3.5, 9.0));
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::EventTag {
+                    start_sec: 3.5,
+                    end_sec: 9.0,
+                },
+                buffer: LabelBuffer::from_str("hot moment"),
+            });
+            viewer
+        });
+        viewer.update(cx, |viewer, cx| viewer.confirm_label_edit(cx));
+        cx.run_until_parked();
+        let calls = calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 2, "store then reload");
+        assert_eq!(calls[0].0, "layers_store");
+        assert_eq!(
+            calls[0].1,
+            serde_json::json!({
+                "media_path": "/rec/one.mp4",
+                "gallery_asset_id": "ga-1",
+                "kind": "researcher",
+                "label": "hot moment",
+                "provenance": {"model": "user", "prompt_template": "media-panel:select-to-author"},
+                "items": [{
+                    "start_sec": 3.5,
+                    "end_sec": 9.0,
+                    "searchable_text": "tag: hot moment",
+                    "payload": {"label": "hot moment"},
+                }],
+            }),
+            "select-to-author dispatches the exact researcher payload"
+        );
+        assert_eq!(calls[1].0, "layers_transcript");
+        drop(calls);
+        viewer.read_with(cx, |viewer, _| {
+            assert_eq!(
+                viewer.event_selection_span, None,
+                "the consumed span clears"
+            );
+            assert!(viewer.highlight_edit.is_none(), "the editor closed");
+            let status = viewer.status.as_deref().expect("success surfaces a status");
+            assert!(status.contains("tag stored"), "got: {status}");
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::arm_redaction_target`
+    /// expect: Only box-carrying events arm the redaction target, and the
+    /// armed target carries the OMC lineage source ref.
+    #[gpui::test]
+    fn target_arming_requires_a_box(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.visual_events =
+                Some(parse_visual_events(&visual_events_response()).expect("fixture parses"));
+            viewer
+        });
+        viewer.update(cx, |viewer, cx| {
+            viewer.arm_redaction_target(0, cx);
+            assert_eq!(viewer.redaction_target, None, "the shot row has no box");
+            let status = viewer.status.as_deref().expect("the refusal surfaces");
+            assert!(status.contains("box"), "got: {status}");
+            viewer.status = None;
+            viewer.arm_redaction_target(1, cx);
+            assert_eq!(
+                viewer.redaction_target,
+                Some(RedactionTarget {
+                    label: "person".into(),
+                    box_norm: [0.1, 0.2, 0.3, 0.4],
+                    source_ref: "layer_obj/item_a".into(),
+                })
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::dispatch_redaction_render`
+    /// expect: With target and span armed, the dispatch runs the pinned
+    /// two-invoke chain — an approved decision layer through `layers_store`,
+    /// then `layers_render_redactions` with the STORED layer id — commits
+    /// the segments/applied-items summary, and reloads the event log.
+    #[gpui::test]
+    fn redaction_chain_pins_store_and_render_payloads(cx: &mut gpui::TestAppContext) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let decision_store_response = serde_json::json!({
+            "content": {
+                "id": "layer-decision", "media_path": "/rec/one.mp4",
+                "gallery_asset_id": null, "detached_at": null,
+                "kind": "researcher", "label": "redaction decisions",
+                "provenance": {"model": "user", "prompt_template": "media-panel:select-to-author",
+                    "created_at": "2026-10-30T00:00:00Z", "parameters": null},
+                "items_count": 1, "created_at": "2026-10-30T00:00:00Z",
+                "probed_duration_secs": 20.0, "time_basis": "source_pts_seconds"
+            }
+        })
+        .to_string();
+        let render_response = serde_json::json!({
+            "content": {
+                "status": "rendered",
+                "result": {"output": "/published/redacted.mp4", "kind": "video"},
+                "decision_layer_id": "layer-decision",
+                "media_path": "/rec/one.mp4",
+                "segments": [
+                    {"mode": "stream_copy", "start_sec": 0.0, "end_sec": 12.0, "items": []},
+                    {"mode": "reencode", "start_sec": 12.0, "end_sec": 18.0, "items": ["item-1"]},
+                    {"mode": "stream_copy", "start_sec": 18.0, "end_sec": 20.0, "items": []}
+                ],
+                "reencoded_segments": 1, "stream_copied_segments": 2, "decisions_rendered": 1,
+                "applied_items": [{
+                    "item_id": "item-1", "effect": "blur",
+                    "pixel_x": 16, "pixel_y": 12, "pixel_w": 32, "pixel_h": 24,
+                    "local_start_sec": 0.4, "local_end_sec": 5.6, "delogo_edge_inset": false
+                }]
+            }
+        })
+        .to_string();
+        let (calls, _restore) = install_scripted_invoker(vec![
+            decision_store_response,
+            render_response,
+            serde_json::json!({"content": visual_events_response()}).to_string(),
+        ]);
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.visual_events =
+                Some(parse_visual_events(&visual_events_response()).expect("fixture parses"));
+            viewer.event_selection_span = Some((3.5, 9.0));
+            viewer
+        });
+        viewer.update(cx, |viewer, cx| {
+            viewer.arm_redaction_target(1, cx);
+            viewer.dispatch_redaction_render(cx);
+        });
+        cx.run_until_parked();
+        let calls = calls.lock().expect("calls lock");
+        assert_eq!(calls.len(), 3, "store, render, then the event-log reload");
+        assert_eq!(calls[0].0, "layers_store");
+        assert_eq!(
+            calls[0].1,
+            serde_json::json!({
+                "media_path": "/rec/one.mp4",
+                "gallery_asset_id": "ga-1",
+                "kind": "researcher",
+                "label": "redaction decisions",
+                "provenance": {"model": "user", "prompt_template": "media-panel:select-to-author"},
+                "items": [{
+                    "start_sec": 3.5,
+                    "end_sec": 9.0,
+                    "searchable_text": "redact: person (blur)",
+                    "payload": {
+                        "op": "redact",
+                        "status": "approved",
+                        "effect": "blur",
+                        "target": {"kind": "box", "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4}},
+                        "source_tag_refs": ["layer_obj/item_a"],
+                    },
+                }],
+            }),
+            "the decision layer carries the exact S3 redaction vocabulary"
+        );
+        assert_eq!(calls[1].0, "layers_render_redactions");
+        assert_eq!(
+            calls[1].1,
+            serde_json::json!({
+                "media_path": "/rec/one.mp4",
+                "layer_id": "layer-decision",
+            }),
+            "the render dispatches the STORED decision layer id (required)"
+        );
+        assert_eq!(calls[2].0, "layers_transcript");
+        drop(calls);
+        viewer.read_with(cx, |viewer, _| {
+            let summary = viewer
+                .redaction_render
+                .as_ref()
+                .expect("the render summary commits for review/lineage");
+            assert_eq!(summary.decision_layer_id, "layer-decision");
+            assert_eq!(summary.decisions_rendered, 1);
+            assert_eq!(summary.reencoded_segments, 1);
+            assert_eq!(summary.stream_copied_segments, 2);
+            assert_eq!(summary.segments.len(), 3);
+            assert_eq!(summary.applied[0].pixel_w, 32);
+            assert_eq!(
+                viewer.event_selection_span, None,
+                "the consumed span clears"
+            );
+            let status = viewer.status.as_deref().expect("success surfaces a status");
+            assert!(status.contains("Redaction rendered"), "got: {status}");
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::dispatch_redaction_render`
+    /// expect: Missing target or span refuses with a named status and
+    /// dispatches nothing — the authoring gate runs before any tool call.
+    #[gpui::test]
+    fn redaction_refuses_without_target_or_span(cx: &mut gpui::TestAppContext) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (calls, _restore) = install_scripted_invoker(vec![]);
+        let viewer = cx.new(|_| {
+            let mut viewer = events_workspace_viewer();
+            viewer.visual_events =
+                Some(parse_visual_events(&visual_events_response()).expect("fixture parses"));
+            viewer.event_selection_span = Some((3.5, 9.0));
+            viewer
+        });
+        viewer.update(cx, |viewer, cx| {
+            viewer.dispatch_redaction_render(cx);
+            let status = viewer.status.as_deref().expect("the refusal surfaces");
+            assert!(status.contains("Arm a target"), "got: {status}");
+            viewer.arm_redaction_target(1, cx);
+            viewer.event_selection_span = None;
+            viewer.dispatch_redaction_render(cx);
+            let status = viewer.status.as_deref().expect("the refusal surfaces");
+            assert!(status.contains("Select a span"), "got: {status}");
+        });
+        assert_eq!(
+            calls.lock().expect("calls lock").len(),
+            0,
+            "refusals dispatch nothing"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -10824,6 +13124,104 @@ mod viewer_layout_tests {
             "the video area must stay within the pane's ~{pane_available:?} available \
              width, got {:?} — the pane inflated to its content's min-width",
             video_bounds.size.width
+        );
+    }
+
+    /// The events surface (S5) renders inside the same narrow-dock
+    /// workspace: the surface toggle chips, the time-ordered event rows,
+    /// and the authoring section all lay out within the pane — the toggle
+    /// is a reading-surface switch, not a new workspace.
+    #[gpui::test]
+    fn events_surface_renders_rows_and_authoring_section(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| {
+            let mut viewer = MediaViewer::new();
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-events".into(),
+                media_path: "/generated/one.mp4".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: None,
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.visual_events = Some(VisualEventsState {
+                status: "completed".into(),
+                events: vec![
+                    PaneEventRow {
+                        start_sec: 0.0,
+                        end_sec: Some(4.2),
+                        kind: "shot".into(),
+                        layer_id: "layer_shot".into(),
+                        item_id: "item_s0".into(),
+                        searchable_text: "shot 0".into(),
+                        model: "ffmpeg:scdet".into(),
+                        box_norm: None,
+                        object_label: None,
+                    },
+                    PaneEventRow {
+                        start_sec: 3.5,
+                        end_sec: Some(9.0),
+                        kind: "object".into(),
+                        layer_id: "layer_obj".into(),
+                        item_id: "item_a".into(),
+                        searchable_text: "object: person".into(),
+                        model: "qwen3-vl".into(),
+                        box_norm: Some([0.1, 0.2, 0.3, 0.4]),
+                        object_label: Some("person".into()),
+                    },
+                ],
+                events_total: 2,
+                kinds_present: vec!["shot".into(), "object".into()],
+                note: None,
+            });
+            viewer.transcript_surface = TranscriptSurface::Events;
+            viewer.active_tab = ViewerTab::Transcript;
+            viewer
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        // The list paints items only within its viewport (virtualized):
+        // the header (toggle chips) and the first event rows are what the
+        // first frame guarantees in view.
+        for selector in ["media-transcript-surface-events", "media-event-row-0"] {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} must lay out"));
+            assert!(
+                bounds.right() <= px(480.),
+                "{selector} fits the dock: {bounds:?}"
+            );
+        }
+
+        // Scrolling the virtualized list to the tail brings the authoring
+        // section into view — the section renders as a real laid-out row,
+        // not a phantom.
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(gpui::ListOffset {
+                item_ix: viewer.transcript_list_count.saturating_sub(1),
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds("media-events-authoring-section")
+            .expect("the authoring section must lay out");
+        assert!(
+            bounds.right() <= px(480.),
+            "the authoring section fits the dock: {bounds:?}"
         );
     }
 }

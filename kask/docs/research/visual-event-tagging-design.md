@@ -100,7 +100,7 @@ Degradation discipline (delivered, extended to the stitcher): no video stream �
 
 - **Review**: researcher items approve/reject/correct machine tags via `target_item_id`; machine items are immutable rows, so corrections are new researcher items — distinguishable by provenance at the data layer (`layer_store.rs:146-148`).
 - **Select and compose**: selections over time ranges or search hits compose into EDLs via `layers_edl_compose` (landed t8, `27b0829862`); tags compose the way highlights do.
-- **Redact**: select a tag span → author the decision item → dispatch the render; panel parity later (board card S5).
+- **Redact**: select a tag span → author the decision item → dispatch the render; panel parity landed 2026-10-30 (board card S5 — the media panel's visual-transcript surface: the event-log reading surface with the same click-to-seek discipline, select-span → researcher tag, and armed-target + span → decision authoring → `layers_render_redactions` with the segments/applied-items review lines).
 
 ## 8. Capability edge cases (each degrades visibly, never silently)
 
