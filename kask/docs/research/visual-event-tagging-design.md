@@ -10,10 +10,10 @@ mds_categories: [domain, research]
 
 # Visual-event tagging and object redaction — the non-word transcript (design)
 
-Status: **PROPOSAL — operator review required.** No code written, nothing committed, no tasks filed.
+Status: **Committed 2026-10-29 (`1a41dcfbc9`) as grounding for goal `a6c6fdf3`; the design below remains a proposal for its unbuilt parts** — cards S1/S2/S3/S5 on the Visual-transcript board carry the build, and the M1/M2 model adoptions are executing per the model report's dated brackets. Operator decisions: §10.
 Date: 2026-10-29 · Author: Z-K agent (glm-5.3:cloud), composed for the principal investigator.
-Companion deliverables: `kask/docs/research/media-model-selection-report.md` (model evidence, ledger run `29f97aa1cac697b3`), `kask/docs/research/media-models-task-breakdown.md` (sequencing).
-Line citations were verified against the tree as read during this run at HEAD `f95cb5356e` (2026-10-29); the shared tree moved to `27b0829862` (t8 EDL compose, concurrent stream) during finalization — see the task-breakdown proposal §1.
+Companion deliverables: `kask/docs/research/media-model-selection-report.md` (model evidence, ledger run `29f97aa1cac697b3`); the task-breakdown companion was executed and removed per the house lifecycle (`bc0a6c95d4`) — outcomes on the Visual-transcript board cards M1/M2/S1-S5 under goal `a6c6fdf3`.
+Line citations were verified against the tree as read during this run at HEAD `f95cb5356e` (2026-10-29); the tree has since advanced (t8 compose `27b0829862`, t9 render `3a11fa570d`, t10 docs `bcce7f1d42`, M1/M2 adoption `1a41dcfbc9`; HEAD `ddea5f7416`), and the citations drifted by those commits were re-verified and fixed 2026-10-29 at `ddea5f7416`.
 
 ## 1. Goal
 
@@ -34,7 +34,7 @@ Formally: extend the transcript-linked-media discipline from word series to visu
 | Deterministic gates on model output: boxes within 0..1 (`x+w<=1`, `y+h<=1`), confidences within 0..1, frame indices within attached frames — a violation rejects the whole pass, nothing stored | `kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs:327-381` |
 | Audio-event pass (t5, commit `b603570832`): `layers_audio_pass` via `chat_audio` (OpenRouter-only; DeepInfra refuses with a typed error naming the audio-chat route) | `kask/mcp-servers/hkask-mcp-media/src/layer_pass.rs:282-333`; `kask/crates/hkask-inference/src/media_providers.rs:459-465` |
 | Unified lexical search (t6, commit `4960ec126a`): `layers_search` — item `searchable_text` joined with the transcript's working text by media path; kind filter; ASCII case-insensitive substring; 4 MiB budget; resume offsets; `scope_notes` name what was skipped, never silent | `kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs:1467-1560` |
-| Corpus handoff (t7, commit `f95cb5356e`): `layers_export` corpus-text — one passage per item with stable id, time range, kind, label, confidence; ids resolve back via `layers_get` | `kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs:1757-1821` |
+| Corpus handoff (t7, commit `f95cb5356e`): `layers_export` corpus-text — one passage per item with stable id, time range, kind, label, confidence; ids resolve back via `layers_get` | `kask/mcp-servers/hkask-mcp-media/src/tools/layers.rs:2046-2049` (fn head; shifted by the t8/t9 insertions) |
 | Render primitives: `FfmpegRunner` builds filter graphs (`add_caption` drawtext, `-c:a copy`), lossless `clip`, `concat`, `probe` (`has_video_stream`/`has_audio_stream`) | `kask/mcp-servers/hkask-mcp-media/src/video/ffmpeg.rs:504-554`, `:422-461`, `:690-716`, `:316-400` |
 | Word-timed STT: `TimedWord` (word, start_ms, end_ms, confidence); 16 kHz mono capture | `kask/mcp-servers/hkask-mcp-media/src/transcript.rs:17-27`; `kask/mcp-servers/hkask-mcp-media/src/tools/audio.rs:4-5` |
 
@@ -52,7 +52,7 @@ Full reuse of the closed set (`layer_store.rs:102-110`). The richness lives in `
 | Audio events | `audio_event` | inference label | delivered |
 | Human review (approve/reject/correct) | `researcher` | `"user"` | `{decision, target_item_id, note?, corrected_label?}` |
 | Human redaction decisions | `researcher` | `"user"` | redaction vocabulary (§6) |
-| Composed edits/reels | `edl` | producer label | plan t8/t9 (pending) |
+| Composed edits/reels | `edl` | producer label | landed t8/t9 — `layers_edl_compose` + `layers_render_edl` (`27b0829862`, `3a11fa570d`) |
 
 Rationale: a dedicated `tag` or `redaction` kind would require the full closed-set sweep — `MediaLayerKind` enum + `VALID_VALUES` + `parse` (`layer_store.rs:89-137`), the request schemas and filters in `tools/layers.rs`, the `layers_search` kind filter (`:1527`), `layers_export`, docs/live-tool instructions, and every test pinning the vocabulary — in exchange for zero contract gain. **Proposed against; the operator can overrule.**
 
@@ -70,9 +70,9 @@ Degradation discipline (delivered, extended to the stitcher): no video stream �
 ## 5. Searchability and composition
 
 - **Lexical** — t6 `layers_search` matches `searchable_text` across kinds joined with the transcript (`:1467-1560`): tags are searchable like transcript words today.
-- **Semantic** — t7 `layers_export` emits one passage per item whose stable id resolves back via `layers_get` (`:1757-1821`): the corpus handoff makes visual events semantically searchable the way word-transcript exports are.
+- **Semantic** — t7 `layers_export` emits one passage per item whose stable id resolves back via `layers_get` (`:2046-2049`): the corpus handoff makes visual events semantically searchable the way word-transcript exports are.
 - **Visual-transcript view** (proposed; board card S1) — one time-ordered event list across all stored kinds per recording: the read surface. S1's export half is already landed as t7; S1's scope narrows to the view tool.
-- **Composition** — researcher selections compose into EDL Keep ops (plan t8) exactly the way transcript highlights compose into reels; redaction decisions (§6) compose through the same annotate surface.
+- **Composition** — researcher selections compose into EDL Keep ops via `layers_edl_compose` (landed t8, `27b0829862`) exactly the way transcript highlights compose into reels; redaction decisions (§6) compose through the same researcher-layer surface (`layers_store`, kind `researcher`).
 
 ## 6. Redaction as a composed edit
 
@@ -92,14 +92,14 @@ Degradation discipline (delivered, extended to the stitcher): no video stream �
 ```
 
   `target.kind: "mask_track"` (referencing a stitcher `track_id`) is **reserved vocabulary for tier 2** — representable now, renderable once tier 2 exists, so no store migration is owed later. `source_tag_refs` carries the originating tags' provenance (the OMC lineage discipline; annotation anchors on `omc:Annotation`, OMC 2.8, the vocabulary `omc.rs` already carries).
-- **The tier-1 render** (proposed; slots with plan t9's renderer): takes an **approved decision layer id** (never free parameters), builds the ffmpeg filter graph per decision — time-ranged via `enable='between(t,start,end)'` over the item's range, spatial over the normalized box scaled to the probed frame dimensions; effects `boxblur`/`gblur` (blur), `pixelize` (pixelate), `drawbox` filled black, `delogo` — all verified present on the local ffmpeg 8.0.1 (empirical `ffmpeg -filters`, 2026-10-29). Only affected segments re-encode; untouched segments stream-copy — the reel-render primitive (`clip` + `concat`, `video/ffmpeg.rs:422-461`, `:690-716`) re-used; pinned by test (existing card S3's AC).
+- **The tier-1 render** (proposed; slots with the landed t9 renderer `layers_render_edl`, `3a11fa570d`): takes an **approved decision layer id** (never free parameters), builds the ffmpeg filter graph per decision — time-ranged via `enable='between(t,start,end)'` over the item's range, spatial over the normalized box scaled to the probed frame dimensions; effects `boxblur`/`gblur` (blur), `pixelize` (pixelate), `drawbox` filled black, `delogo` — all verified present on the local ffmpeg 8.0.1 (empirical `ffmpeg -filters`, 2026-10-29). Only affected segments re-encode; untouched segments stream-copy — the reel-render primitive (`clip` + `concat`, `video/ffmpeg.rs:422-461`, `:690-716`) re-used; pinned by test (existing card S3's AC).
 - **Tier 2** (deferred per operator decision C): mask-track targets + a configured mask/removal provider (SAM 3 masks → VOID or Generative Omnimatte; model report R3). Requesting tier 2 without a configured provider fails as `permission_denied` naming the serving path — the `NotConfigured` precedent (`tools/layers.rs:317-320`) and the project's missing-credential contract.
 - **Human gate (hard):** no redaction renders without an approved researcher decision layer; unknown/empty/unapproved → typed `not_found`/`failed_precondition` naming the layer. Source media bytes are never modified — layers are database rows only (the store's contract, `layer_store.rs:162-165` and its test suite).
 
 ## 7. Human enablement
 
 - **Review**: researcher items approve/reject/correct machine tags via `target_item_id`; machine items are immutable rows, so corrections are new researcher items — distinguishable by provenance at the data layer (`layer_store.rs:146-148`).
-- **Select and compose**: selections over time ranges or search hits compose into EDLs (plan t8); tags compose the way highlights do.
+- **Select and compose**: selections over time ranges or search hits compose into EDLs via `layers_edl_compose` (landed t8, `27b0829862`); tags compose the way highlights do.
 - **Redact**: select a tag span → author the decision item → dispatch the render; panel parity later (board card S5).
 
 ## 8. Capability edge cases (each degrades visibly, never silently)
@@ -124,7 +124,7 @@ Not machine-checked: the ffprobe duration bound is simulated (the store enforces
 ## 10. Open questions for the operator
 
 1. The **inpainting ontology-anchor ruling** (coarse 5W1H today; the model report defines the term operationally from cited sources in the meantime — never a private definition).
-2. Do redaction decisions ride plan t8's `layers_annotate` (one annotate surface, redaction as a second vocabulary) or a dedicated compose path? Proposal: ride t8.
+2. Do redaction decisions ride the landed t8 surface — researcher items via `layers_store`, composed by `layers_edl_compose` (one surface, redaction as a second payload vocabulary) — or a dedicated compose path? Proposal: ride t8.
 3. Registry-confirm `Qwen3 VL 8B Instruct` as the grounded-tagging model (per-call override vs new pass default — the cost trade is yours).
 4. Tier-2 timing (decision C stands; the serving-path decision — fal for masks vs RunPod runner, and the Python-runner allowlist exception — is the follow-up when taken).
 5. Track stitcher: default-on after S2, or opt-in per recording? Proposal: opt-in, like every other layer generator.
