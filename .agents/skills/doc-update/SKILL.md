@@ -151,7 +151,7 @@ citations were not re-checked is unverified recomposition.
    `diataxis-diagram` skill on the code it describes (it classifies the
    type, extracts from source, and scores against the doc's Diataxis
    quadrant) — do not hand-draw it here. For quantity flows use
-   `sankey-flow`. Then apply steps 1–2 to its output before it is committed.
+   `diataxis-diagram`'s sankey type. Then apply steps 1–2 to its output before it is committed.
 
 ### Phase 5 — Reconcile
 

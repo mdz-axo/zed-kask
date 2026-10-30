@@ -956,6 +956,7 @@ const RETIRED_SKILL_NAMES: &[&str] = &[
     "qa-script-builder",
     "refactor-service-layer",
     "runtime-posture-monitor",
+    "sankey-flow",
     "scenario-builder",
     "self-critique-revision",
     "semantic-graph-audit",

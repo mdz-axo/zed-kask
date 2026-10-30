@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-28
+last_updated: 2026-10-30
 version: "0.45.0"
 status: "Active"
 domain: "Core"
@@ -43,7 +43,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-48:> plus a markdown body of process instructions. **58 skills** are authored here and available in every zed-kask install. **216 Jinja2 templates across 55
+48:> plus a markdown body of process instructions. **57 skills** are authored here and available in every zed-kask install. **212 Jinja2 templates across 54
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -61,12 +61,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (re-verified 2026-10-28)
+## Registry counts (re-verified 2026-10-30)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
-| Template namespaces (`kask/registry/templates/*/`) | **55** (**216** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **57** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
+| Template namespaces (`kask/registry/templates/*/`) | **54** (**212** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -80,7 +80,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (60)
+## Skills (57)
 
 ### Research, markets and forecasting
 
@@ -98,9 +98,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | Skill | Purpose |
 |-------|---------|
 | `transcript-reel` | Source-linked research recordings: transcribe, correct, annotate, search lexically with citations, select highlights, render excerpts/reels, and export |
-
 | `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
-| `sankey-flow` | Dynamic Sankey flow diagramming: classify domain, gather quantities, render Mermaid `sankey-beta` |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
 
 ### Decisions, research and evidence

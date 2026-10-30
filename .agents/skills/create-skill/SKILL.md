@@ -74,7 +74,7 @@ both regimes — it is the render contract, not the D/P marker. The stage's
 D/P character is declared in the `{# goal: ... #}` comment: a pure render
 (its rendered output is delivered as the step's result, no model call)
 states "Deterministic (no LLM call)" — the
-`sankey-flow/present-sankey.j2` pattern; a template whose rendered output
+`wardley-mapper/present-map.j2` pattern; a template whose rendered output
 is a prompt a model consumes states its LLM-bearing role. The render
 itself is D by construction in both cases (minijinja, no inference); the
 goal comment tells the reader whether the *stage* is D or P.

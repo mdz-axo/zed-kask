@@ -1294,8 +1294,8 @@ mod tests {
         // (e.g. sankey-beta config: showValues, width, height, linkColor).
         // Merman strips front-matter before detection; our matcher must too,
         // otherwise the first token is `---` and the diagram is silently
-        // skipped — shown as code instead of rendered. This pins the
-        // sankey-flow skill's primary output path.
+        // skipped — shown as code instead of rendered. This pins front-matter
+        // config extraction for the live sankey-beta diagram path.
         let markdown = concat!(
             "```mermaid\n",
             "---\n",

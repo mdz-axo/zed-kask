@@ -62,7 +62,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web/RSS retrieval, evidence scoring, run ledger, and paper identity. |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (22 tools; the provider-free forecast loop moved here from the removed companies server, and `scenario_from_markets_set` bridges prediction-market records into event trees). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 58 skills, 55 template namespaces, and 216 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 57 skills, 54 template namespaces, and 212 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the experimentation protocol, L25 experimentation-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |

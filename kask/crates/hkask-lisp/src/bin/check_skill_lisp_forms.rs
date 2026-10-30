@@ -719,24 +719,6 @@ form: "(= (+ a b) 3)"
             json!(false)
         );
 
-        let sankey = skill_candidate("sankey-flow", "all-edges-ok");
-        let valid_sankey = json!({
-            "nodes": [{"id":"Revenue"},{"id":"Profit"}],
-            "edges": [{"source":"Revenue","target":"Profit","weight":5000,"weight_source":"statement"}]
-        });
-        assert_eq!(
-            eval_sandboxed(&sankey, &valid_sankey).expect("valid Sankey form"),
-            json!(true)
-        );
-        let invalid_sankey = json!({
-            "nodes": [{"id":"Revenue"},{"id":"Revenue"}],
-            "edges": [{"source":"Revenue","target":"Ghost","weight":"5000"}]
-        });
-        assert_eq!(
-            eval_sandboxed(&sankey, &invalid_sankey).expect("invalid Sankey form"),
-            json!(false)
-        );
-
         // Prompt-enhance attempt, rating and blocking-defect cases are consolidated
         // in prompt_enhance_state_contract_uses_authored_form below.
 

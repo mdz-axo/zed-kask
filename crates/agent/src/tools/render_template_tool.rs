@@ -969,31 +969,6 @@ mod tests {
         .expect("excessive criteria intake renders");
         assert!(excessive_criteria.contains("\"field\":\"acceptance_criteria\""));
 
-        let sankey = render_template_for_test(
-            "sankey-flow/present-sankey",
-            serde_json::json!({
-                "subject": "fixture",
-                "domain": "resource-allocation",
-                "weight_unit": "USD",
-                "conservation_mode": "mandatory",
-                "conservation_check": "observed_balanced",
-                "nodes": [{"id":"Revenue"},{"id":"Profit"},{"id":"Costs"},{"id":"Payroll"}],
-                "edges": [
-                    {"source":"Revenue","target":"Profit","weight":5000,"weight_source":"statement"},
-                    {"source":"Revenue","target":"Costs","weight":3000,"weight_source":"statement"},
-                    {"source":"Costs","target":"Payroll","weight":2000,"weight_source":"ledger"}
-                ]
-            }),
-        )
-        .expect("Sankey render succeeds");
-        for row in [
-            "Revenue,Profit,5000",
-            "Revenue,Costs,3000",
-            "Costs,Payroll,2000",
-        ] {
-            assert_eq!(sankey.matches(row).count(), 1, "row drift: {row}\n{sankey}");
-        }
-
         let approved_only = render_template_for_test(
             "therapy/report",
             serde_json::json!({
