@@ -184,7 +184,7 @@ mds_categories: [domain]
 |--------|-------|---------|------:|
 | Demo | `kask/mcp-servers/hkask-mcp-demo` | Demo | 7 |
 
-Live pin sites: demo 7 (`hkask_mcp_demo.rs:7`).
+Live pin sites: demo 7 (`hkask_mcp_demo.rs` → `tool_surface_is_exactly_7_registered_tools`).
 
 Arithmetic: `7 = 7`.
 MD

@@ -2,8 +2,10 @@
 # check-mcp-readme-counts-selftest.sh — RED/GREEN proof for
 # check-mcp-readme-counts.sh: a consistent fixture passes, and every
 # drift class the gate exists for — catalog table row, Live pin sites
-# count, dead pin-site citation, arithmetic total, pin name/argument
-# divergence — blocks with a message naming the server and the surface.
+# count, pin-site symbol absent from the server file, symbol-less entry,
+# missing pin-site file, stale symbol number, arithmetic total, pin
+# name/argument divergence — blocks with a message naming the server and
+# the surface.
 # The known-positive discipline (the .rules zero-match instrument trap):
 # a gate that cannot be shown red is a gate that silently rots green.
 #
@@ -51,7 +53,7 @@ RS
 |--------|-------|---------|------:|
 | Demo | `kask/mcp-servers/hkask-mcp-demo` | Demo | 7 |
 
-Live pin sites: demo 7 (`hkask_mcp_demo.rs:7`).
+Live pin sites: demo 7 (`hkask_mcp_demo.rs` → `tool_surface_is_exactly_7_registered_tools`).
 
 Arithmetic: `7 = 7`.
 MD
@@ -82,11 +84,31 @@ sed -i 's/demo 7 (/demo 8 (/' "$WORK/fixture/readme.md"
 run_gate; rc=$?
 expect "drifted pin-site count blocks" 1 "$rc" "Live pin sites entry says 8 but the pin says 7"
 
-echo "Case 4: a dead pin-site citation blocks."
+echo "Case 4a: a pin-site symbol absent from the server file blocks."
 build_fixture
-sed -i 's/hkask_mcp_demo.rs:7/hkask_mcp_demo.rs:99/' "$WORK/fixture/readme.md"
+sed -i 's/`tool_surface_is_exactly_7_registered_tools`/`tool_surface_is_exactly_9_registered_tools`/' "$WORK/fixture/readme.md"
 run_gate; rc=$?
-expect "dead citation blocks, naming the drift" 1 "$rc" "does not name the pin test"
+expect "absent symbol blocks, naming the file" 1 "$rc" "not found in hkask_mcp_demo.rs"
+
+echo "Case 4b: a Live pin sites entry missing the symbol blocks."
+build_fixture
+sed -i 's/ → `tool_surface_is_exactly_7_registered_tools`//' "$WORK/fixture/readme.md"
+run_gate; rc=$?
+expect "symbol-less entry blocks" 1 "$rc" "does not name the pin test"
+
+echo "Case 4c: a cited pin-site file missing from the server blocks."
+build_fixture
+sed -i 's/`hkask_mcp_demo.rs`/`hkask_mcp_gone.rs`/' "$WORK/fixture/readme.md"
+run_gate; rc=$?
+expect "missing pin-site file blocks" 1 "$rc" "names a missing file"
+
+echo "Case 4d: a stale symbol number present in the cited file blocks."
+build_fixture
+printf '//! Historical surface: tool_surface_is_exactly_9_registered_tools (retired).\n' \
+    >> "$WORK/fixture/servers/hkask-mcp-demo/src/hkask_mcp_demo.rs"
+sed -i 's/`tool_surface_is_exactly_7_registered_tools`/`tool_surface_is_exactly_9_registered_tools`/' "$WORK/fixture/readme.md"
+run_gate; rc=$?
+expect "stale symbol number blocks, naming both numbers" 1 "$rc" "pin-test symbol says 9 but the pin says 7"
 
 echo "Case 5: a drifted arithmetic total blocks."
 build_fixture
@@ -108,7 +130,7 @@ expect "restored fixture passes" 0 "$rc" ""
 
 echo "----"
 if [ "$failures" -eq 0 ]; then
-    echo "SELFTEST OK: check-mcp-readme-counts blocks every drift class and passes consistency (7 cases)"
+    echo "SELFTEST OK: check-mcp-readme-counts blocks every drift class and passes consistency (10 cases)"
     exit 0
 fi
 echo "SELFTEST FAIL: $failures case(s) did not behave as expected." >&2

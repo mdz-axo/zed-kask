@@ -11,8 +11,13 @@
 # registration change that forgets the README fails the gate instead of
 # shipping silently:
 #   1. the catalog table row's trailing `| N |` for the server,
-#   2. the "Live pin sites" entry `<id> N (`file:line`)` — N matches the
-#      pin AND the cited line names that server's pin test,
+#   2. the "Live pin sites" entry `<id> N (`file.rs` → `pin-test symbol`)`
+#      — N matches the pin, the cited file exists, and the cited
+#      tool_surface_is_exactly_N_registered_tools symbol occurs in that
+#      file with the same embedded count (symbol form since 2026-10-30:
+#      the former `file:line` form carried no invariant — any edit above
+#      the cited line silently rotted the citation, the kata-kanban
+#      1632→1630 drift this gate caught on its first push),
 #   3. the "Arithmetic" line — its terms are exactly the live pin counts
 #      and its stated total is their sum.
 #
@@ -69,23 +74,36 @@ while IFS= read -r pkg; do
     fi
     pins+=("$arg_n")
 
-    # Surface 2: the Live pin sites entry — N matches the pin and the
-    # cited line names the pin test.
+    # Surface 2: the Live pin sites entry — N matches the pin, the cited
+    # file exists, and the cited pin-test symbol occurs in it with the
+    # same embedded count. Symbol form (2026-10-30): the former file:line
+    # form carried no invariant — any edit above the cited line silently
+    # rotted the citation (the kata-kanban 1632→1630 drift this gate
+    # caught on its first push); the symbol names the pin test and
+    # cannot drift.
     entry=$(grep -oE "$id $arg_n \([^)]+\)" "$README" | head -1)
     if [ -z "$entry" ]; then
         readme_n=$(grep -oE "$id [0-9]+ \(" "$README" | grep -oE '[0-9]+' | head -1)
         echo "FAIL: $id — Live pin sites entry says ${readme_n:-<missing>} but the pin says $arg_n"
         fail=$((fail + 1))
     else
-        cited=$(printf '%s' "$entry" | grep -oE '[a-z_0-9]+\.rs:[0-9]+' | head -1)
-        cited_file=${cited%:*}
-        cited_line=${cited##*:}
-        if [ ! -f "$SERVERS_DIR/$pkg/src/$cited_file" ]; then
+        cited_file=$(printf '%s' "$entry" | grep -oE '[a-z_0-9]+\.rs' | head -1)
+        cited_sym=$(printf '%s' "$entry" | grep -oE 'tool_surface_is_exactly_[0-9]+_registered_tools' | head -1)
+        if [ -z "$cited_file" ] || [ -z "$cited_sym" ]; then
+            echo "FAIL: $id — Live pin sites entry does not name the pin test (expected file.rs and tool_surface_is_exactly_N_registered_tools)"
+            fail=$((fail + 1))
+        elif [ ! -f "$SERVERS_DIR/$pkg/src/$cited_file" ]; then
             echo "FAIL: $id — pin-site citation names a missing file: $cited_file"
             fail=$((fail + 1))
-        elif ! sed -n "${cited_line}p" "$SERVERS_DIR/$pkg/src/$cited_file" | grep -qE "tool_surface_is_exactly_${arg_n}_registered_tools"; then
-            echo "FAIL: $id — pin-site citation $cited does not name the pin test (line drift?)"
+        elif ! grep -qF -- "$cited_sym" "$SERVERS_DIR/$pkg/src/$cited_file"; then
+            echo "FAIL: $id — pin-site symbol $cited_sym not found in $cited_file (renamed?)"
             fail=$((fail + 1))
+        else
+            sym_n=$(printf '%s' "$cited_sym" | sed -E 's/tool_surface_is_exactly_([0-9]+)_registered_tools/\1/')
+            if [ "$sym_n" != "$arg_n" ]; then
+                echo "FAIL: $id — pin-test symbol says $sym_n but the pin says $arg_n"
+                fail=$((fail + 1))
+            fi
         fi
     fi
 
