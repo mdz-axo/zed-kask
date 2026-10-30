@@ -17,9 +17,10 @@
 #
 # Like pre-push, the gates read the working tree: another stream's
 # uncommitted drift can surface here — the gate output names its exact
-# finding, and the same drift would block the operator's push later
-# anyway; this only moves the discovery earlier, to the stream that
-# introduced it. --no-verify is the explicit bypass.
+# finding, and that same uncommitted drift would stop the operator's
+# push later at pre-push's object-alignment precondition; this only
+# moves the discovery earlier, to the stream that introduced it.
+# --no-verify is the explicit bypass.
 #
 # Self-test: kask/scripts/check-pre-commit-selftest.sh (runs in CI via
 # the gate-selftest glob).

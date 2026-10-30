@@ -8,6 +8,16 @@
 # a push; printing the number is its whole job. The invariant gates below
 # BLOCK: a red gate tree does not leave this machine.
 #
+# Object alignment (2026-10-30): the gates read the working tree, but a
+# push ships commits — so the hook first refuses any push whose tree is
+# not exactly the pushed commit: uncommitted changes (staged, tracked,
+# or untracked), or a pushed sha other than HEAD. A green gate run then
+# attests exactly what ships; the false-green class — an uncommitted
+# fix greening a red tree while the push ships the stale commit behind
+# it (observed 2026-10-30, the kata-kanban citation fix at dry-run) — is
+# structurally gone. Historical-sha and tag pushes are refused for the
+# same reason: the tree gates cannot see them.
+#
 # Gate set (each blocks; --no-verify is the operator's explicit bypass):
 # - check-diagram-registry-parity.sh (2026-10-23, EUREKA-1): mermaid fences
 #   == DIAGRAM_ALIGNMENT records == DIAGRAMS_INDEX rows.
@@ -65,6 +75,35 @@ for line in "${ref_lines[@]}"; do
     break
   fi
 done
+
+# ── Object-alignment precondition ─────────────────────────────────
+# The gates below read the working tree; this push ships $local_sha.
+# They attest the push only when the tree IS the pushed commit. Refuse
+# loudly on divergence instead of gating the wrong object — in both
+# directions: an uncommitted fix makes a red tree read green while the
+# push ships the stale commit behind a green gate run, and another
+# stream's in-flight red blocks a push of clean commits with findings
+# nobody can attribute to a commit. --no-verify remains the operator's
+# explicit bypass.
+head_sha="$(git rev-parse HEAD 2>/dev/null)"
+alignment_failed=0
+for line in "${ref_lines[@]}"; do
+  read -r local_ref local_sha remote_ref remote_sha <<<"$line"
+  [ "$local_sha" = "$ZERO" ] && continue # a deletion ships nothing to attest
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "pre-push: object alignment — the working tree has uncommitted changes." >&2
+    echo "The gates read the tree; they would attest it, not commit $local_sha ($local_ref)." >&2
+    echo "Commit or remove them, then push; or push with --no-verify as the explicit choice." >&2
+    alignment_failed=1
+    break
+  fi
+  if [ "$local_sha" != "$head_sha" ]; then
+    echo "pre-push: object alignment — pushed $local_ref at $local_sha is not the current tree (HEAD $head_sha)." >&2
+    echo "The gates read the tree and cannot attest this push; push HEAD itself, or use --no-verify." >&2
+    alignment_failed=1
+  fi
+done
+[ "$alignment_failed" -ne 0 ] && exit 1
 
 # ── Invariant gates (blocking) ─────────────────────────────────────────────
 gate_failures=()
