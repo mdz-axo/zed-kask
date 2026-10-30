@@ -167,26 +167,30 @@ pub struct EductSearchTranscriptsRequest {
     pub gallery_asset_id: Option<String>,
 }
 
-fn validate_transcript_search(
-    request: &EductSearchTranscriptsRequest,
+pub(crate) fn validate_lexical_search(
+    mode: &str,
+    query: &str,
+    limit: Option<usize>,
+    recording_limit: Option<usize>,
+    recording_offset: Option<usize>,
 ) -> Result<(usize, usize, usize), McpToolError> {
-    let limit = request.limit.unwrap_or(20);
-    let recordings = request.recording_limit.unwrap_or(100);
-    let offset = request.recording_offset.unwrap_or(0);
-    if request.mode != "lexical" || request.query.trim().is_empty() || request.query.len() > 256 {
+    let limit = limit.unwrap_or(20);
+    let recording_limit = recording_limit.unwrap_or(100);
+    let recording_offset = recording_offset.unwrap_or(0);
+    if mode != "lexical" || query.trim().is_empty() || query.len() > 256 {
         return Err(McpToolError::invalid_argument(
             "mode must be lexical; query must be nonblank and at most 256 UTF-8 bytes",
         ));
     }
     if !(1..=100).contains(&limit)
-        || !(1..=500).contains(&recordings)
-        || offset > i64::MAX as usize - 501
+        || !(1..=500).contains(&recording_limit)
+        || recording_offset > i64::MAX as usize - 501
     {
         return Err(McpToolError::invalid_argument(
             "limit must be 1..=100, recording_limit 1..=500, recording_offset within SQLite integer range",
         ));
     }
-    Ok((limit, recordings, offset))
+    Ok((limit, recording_limit, recording_offset))
 }
 
 // Safety budget for literal matching, independent of recording count or result
@@ -209,29 +213,12 @@ pub(crate) fn lexical_citations(
     if query.is_empty() || limit == 0 {
         return hits;
     }
-    let mut lookahead_end = end_byte
-        .saturating_add(query.len() - 1)
-        .min(working.text.len());
-    while !working.text.is_char_boundary(lookahead_end) {
-        lookahead_end -= 1;
-    }
-    // ASCII folding preserves UTF-8 byte offsets. Fold only this bounded window
-    // and use the standard substring search instead of comparing the full query
-    // at every input character. Advancing one character preserves overlaps.
-    let haystack = working.text[start_byte..lookahead_end].to_ascii_lowercase();
-    let needle = query.to_ascii_lowercase();
-    let mut search_byte = 0;
     // Each source word is passed at most once, not again for every citation.
     let mut word_cursor = 0;
     let mut word_byte = 0;
-    while let Some(relative_match) = haystack[search_byte..].find(&needle) {
-        let start = start_byte + search_byte + relative_match;
-        if start >= end_byte {
-            break;
-        }
+    for start in lexical_item_matches(&working.text, query, start_byte, end_byte) {
         let end = start + query.len();
         let matched = &working.text[start..end];
-        search_byte = start - start_byte + matched.chars().next().map_or(1, char::len_utf8);
         let range = working.words.as_ref().and_then(|words| {
             while let Some(word) = words.get(word_cursor) {
                 if word_byte + word.word.len() > start {
@@ -279,6 +266,44 @@ pub(crate) fn lexical_citations(
         }
     }
     hits
+}
+
+/// Literal ASCII case-insensitive substring match starts in
+/// [local_lo, local_hi) of `text` — the one matcher shared by
+/// `educt_search_transcripts` and `layers_search` (their S1 pin requires
+/// identical matching semantics; this is the single implementation).
+/// The same fold-and-find core as `lexical_citations` and the same
+/// <=query-len lookahead past the window end; a phrase crossing the
+/// SEGMENT end is not eligible — segments match in isolation.
+pub(crate) fn lexical_item_matches(
+    text: &str,
+    query: &str,
+    local_lo: usize,
+    local_hi: usize,
+) -> Vec<usize> {
+    let mut starts = Vec::new();
+    if query.is_empty() || local_lo >= local_hi {
+        return starts;
+    }
+    let mut lookahead_end = (local_hi + query.len() - 1).min(text.len());
+    while !text.is_char_boundary(lookahead_end) {
+        lookahead_end -= 1;
+    }
+    if local_lo > lookahead_end {
+        return starts;
+    }
+    let haystack = text[local_lo..lookahead_end].to_ascii_lowercase();
+    let needle = query.to_ascii_lowercase();
+    let mut search_byte = 0;
+    while let Some(relative) = haystack[search_byte..].find(&needle) {
+        let start = local_lo + search_byte + relative;
+        if start >= local_hi {
+            break;
+        }
+        starts.push(start);
+        search_byte = start - local_lo + text[start..].chars().next().map_or(1, char::len_utf8);
+    }
+    starts
 }
 
 #[derive(serde::Serialize)]
@@ -795,7 +820,13 @@ impl MediaServer {
         Parameters(request): Parameters<EductSearchTranscriptsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_search_transcripts", async {
-            let (limit, recording_limit, offset) = validate_transcript_search(&request)?;
+            let (limit, recording_limit, offset) = validate_lexical_search(
+                &request.mode,
+                &request.query,
+                request.limit,
+                request.recording_limit,
+                request.recording_offset,
+            )?;
             let driver = &**self.gallery_store.driver();
             let mut summaries = transcript_store::list_transcripts_page(driver, &TranscriptFilter {
                 media_path: None, gallery_asset_id: request.gallery_asset_id.clone(), limit: recording_limit + 1,

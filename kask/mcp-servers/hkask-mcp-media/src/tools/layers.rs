@@ -17,8 +17,8 @@ use crate::layer_store::{
 };
 use crate::redaction::{self, RedactionDecision, RedactionDecisionError, SegmentMode};
 use crate::tools::educt::{
-    SEARCH_TEXT_BYTE_BUDGET, WorkingTranscript, lexical_citations, map_store_error,
-    working_transcript,
+    SEARCH_TEXT_BYTE_BUDGET, WorkingTranscript, lexical_citations, lexical_item_matches,
+    map_store_error, validate_lexical_search, working_transcript,
 };
 use crate::tools::educt::{is_audio_path, parse_json_value};
 use crate::tools::processing::SourceSnapshot;
@@ -109,37 +109,6 @@ fn stream_is_char_boundary(segments: &[ScanSegment<'_>], pos: usize) -> bool {
         base += len;
     }
     pos == base
-}
-
-/// Literal ASCII case-insensitive substring match starts in
-/// [local_lo, local_hi) of `text` — the item-segment form of
-/// `lexical_citations`' matcher (the same fold-and-find core and the
-/// same <=query-len lookahead past the window end; a phrase crossing the
-/// SEGMENT end is not eligible — segments match in isolation).
-fn lexical_item_matches(text: &str, query: &str, local_lo: usize, local_hi: usize) -> Vec<usize> {
-    let mut starts = Vec::new();
-    if query.is_empty() || local_lo >= local_hi {
-        return starts;
-    }
-    let mut lookahead_end = (local_hi + query.len() - 1).min(text.len());
-    while !text.is_char_boundary(lookahead_end) {
-        lookahead_end -= 1;
-    }
-    if local_lo > lookahead_end {
-        return starts;
-    }
-    let haystack = text[local_lo..lookahead_end].to_ascii_lowercase();
-    let needle = query.to_ascii_lowercase();
-    let mut search_byte = 0;
-    while let Some(relative) = haystack[search_byte..].find(&needle) {
-        let start = local_lo + search_byte + relative;
-        if start >= local_hi {
-            break;
-        }
-        starts.push(start);
-        search_byte = start - local_lo + text[start..].chars().next().map_or(1, char::len_utf8);
-    }
-    starts
 }
 
 /// Map store errors to MCP wire-level kinds per-variant (never a blanket
@@ -1790,25 +1759,13 @@ impl MediaServer {
         Parameters(request): Parameters<LayersSearchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_search", async {
-            let limit = request.limit.unwrap_or(20);
-            let recording_limit = request.recording_limit.unwrap_or(100);
-            let offset = request.recording_offset.unwrap_or(0);
-            if request.mode != "lexical"
-                || request.query.trim().is_empty()
-                || request.query.len() > 256
-            {
-                return Err(McpToolError::invalid_argument(
-                    "mode must be lexical; query must be nonblank and at most 256 UTF-8 bytes",
-                ));
-            }
-            if !(1..=100).contains(&limit)
-                || !(1..=500).contains(&recording_limit)
-                || offset > i64::MAX as usize - 501
-            {
-                return Err(McpToolError::invalid_argument(
-                    "limit must be 1..=100, recording_limit 1..=500, recording_offset within SQLite integer range",
-                ));
-            }
+            let (limit, recording_limit, offset) = validate_lexical_search(
+                &request.mode,
+                &request.query,
+                request.limit,
+                request.recording_limit,
+                request.recording_offset,
+            )?;
             let driver = &**self.gallery_store.driver();
             let mut recordings = layer_store::list_unified_recordings(
                 driver,
