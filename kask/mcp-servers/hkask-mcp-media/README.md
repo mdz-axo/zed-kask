@@ -43,7 +43,7 @@ The table below is a partial quick-reference.
 
 ## Research annotations and recording retrieval
 
-The source inventory is 88 tools, pinned against the real router and request schemas.
+The source inventory is 90 tools, pinned against the real router and request schemas.
 A running editor must rebuild/restart its media child to expose this inventory.
 
 | Tool | Required request fields |
