@@ -54,6 +54,10 @@
 #   tool_surface_pin! registration pin (count + TOOL_NAMES-vs-router) — a
 #   silent registration drop, unrouted #[tool] fn, or same-count rename
 #   fails CI instead of degrading to tool-not-found at dispatch.
+# - check-mcp-readme-counts.sh: the README's three prose count surfaces
+#   (catalog row, Live pin sites entry, arithmetic) agree with every
+#   server's live pin — a registration change that forgets the README
+#   fails CI instead of drifting (three recurrences, 2026-10-29/30).
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
 # - check-skill-crossrefs.sh, check-skill-crate-refs.sh,
@@ -214,6 +218,8 @@ jobs:
         run: bash kask/scripts/check-mcp-servers.sh
       - name: MCP registration pins — every server carries tool_surface_pin!
         run: bash kask/scripts/check-mcp-registration.sh
+      - name: MCP registration pins — README count surfaces agree with the pins
+        run: bash kask/scripts/check-mcp-readme-counts.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
       - name: Skills — references resolve; Lisp gates parse and discriminate; forecasting and template contracts agree

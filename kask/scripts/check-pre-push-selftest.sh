@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Self-test for the pre-push hook (kask/githooks/pre-push): the net-lines
-# reporting and the six invariant gates.
+# reporting and the seven invariant gates.
 #
 # The reporting job's RED proof is that the reported numbers are the TRUE
 # numbers for a known range. The gates' RED proof (parity 2026-10-23,
@@ -8,7 +8,7 @@
 # gate tree BLOCKS the push and a green or restored tree does not:
 #   1. A range with known content reports the true net line count and the
 #      true DIVERGENCE.md seam delta (+1 added / -1 retired → net 0), and
-#      exits 0 (all six gates green on the fixture).
+#      exits 0 (all seven gates green on the fixture).
 #   2. A new-branch push (zero remote sha) with no upstream remote
 #      degrades VISIBLY (names the skip) instead of guessing a range.
 #   3. A ref deletion (zero local sha) measures nothing; the range-based
@@ -19,7 +19,7 @@
 #   6. Balance restored → the hook allows again (exit 0).
 #   7. A red docs-count tree (the README's recorded count drifted) BLOCKS:
 #      exit 1 with the docs-count-gate named in the failure list.
-#   8. Containment: the hook names all six gate scripts explicitly —
+#   8. Containment: the hook names all seven gate scripts explicitly —
 #      the blocking steps are greppable, never implicit.
 #
 # Runs in CI via the kask/scripts/check-*-selftest.sh glob.
@@ -58,12 +58,13 @@ git -C "$WORK" commit -qm tip
 TIP="$(git -C "$WORK" rev-parse HEAD)"
 
 # ── The gate fixtures ────────────────────────────────────────────────────────
-# The real gate scripts against a minimal green tree: 4 files under
+# The real gate scripts against a minimal green tree: 5 files under
 # kask/docs (all frontmatter-complete), the count-gate's README/STANDARDS
 # anchor lines carrying the canonical cap (85) and target (75), the
-# retired-skill record, and the parity fixture's registered diagram.
+# retired-skill record, the parity fixture's registered diagram, and
+# the mcp-readme-counts gate's demo server plus agreeing README.
 mkdir -p "$WORK/kask/scripts" "$WORK/kask/docs/architecture" "$WORK/crates/agent_skills"
-for s in check-diagram-registry-parity check-docs-count-gate check-skill-crossrefs check-docs-frontmatter check-retired-record check-docs-citations; do
+for s in check-diagram-registry-parity check-docs-count-gate check-skill-crossrefs check-docs-frontmatter check-retired-record check-docs-citations check-mcp-readme-counts; do
   cp "$KASK_ROOT/scripts/$s.sh" "$WORK/kask/scripts/"
 done
 
@@ -122,9 +123,9 @@ mds_categories: [domain]
 
 # README
 
-**Corpus size (measured 2026-10-24):** 4 files total — under the fewer-than-85 cap (working target 75)
+**Corpus size (measured 2026-10-24):** 5 files total — under the fewer-than-85 cap (working target 75)
 
-- [x] Document count is 4, under the fewer-than-85 cap (working target 75)
+- [x] Document count is 5, under the fewer-than-85 cap (working target 75)
 EOF
 
 cat > "$WORK/kask/docs/architecture/DOCUMENTATION_STANDARDS.md" <<'EOF'
@@ -150,6 +151,48 @@ The docs tree is capped at **fewer than 85 files** with a working **target of 75
 EOF
 
 printf 'const RETIRED_SKILL_NAMES: &[&str] = &[\n    "kata-coaching",\n];\n' > "$WORK/crates/agent_skills/agent_skills.rs"
+
+# The mcp-readme-counts gate's minimal green tree: one demo server whose
+# pin is 7, and the README's three count surfaces agreeing with it.
+mkdir -p "$WORK/kask/scripts/build" "$WORK/kask/mcp-servers/hkask-mcp-demo/src" \
+  "$WORK/kask/docs/reference/mcp-servers"
+printf 'hkask-mcp-demo\n' > "$WORK/kask/scripts/build/mcp-servers.txt"
+cat > "$WORK/kask/mcp-servers/hkask-mcp-demo/src/hkask_mcp_demo.rs" <<'RS'
+//! Demo fixture server for the pre-push selftest's counts gate.
+
+hkask_mcp_server::tool_surface_pin!(
+    DemoServer::combined_router(),
+    "combined_router",
+    7,
+    tool_surface_is_exactly_7_registered_tools,
+);
+RS
+cat > "$WORK/kask/docs/reference/mcp-servers/README.md" <<'MD'
+---
+title: "Demo Registry"
+audience: [developers]
+last_updated: 2026-10-30
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain]
+---
+
+# Demo registry
+
+| Server | Crate | Purpose | Tools |
+|--------|-------|---------|------:|
+| Demo | `kask/mcp-servers/hkask-mcp-demo` | Demo | 7 |
+
+Live pin sites: demo 7 (`hkask_mcp_demo.rs:7`).
+
+Arithmetic: `7 = 7`.
+MD
+
+# The citations gate resolves file:line citations against tracked files —
+# stage the fixture tree so the demo citation resolves (the base..tip
+# commit range the net-lines reporting reads is unchanged by staging).
+git -C "$WORK" add -A
 
 ZERO=0000000000000000000000000000000000000000
 
@@ -227,14 +270,23 @@ out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
 expect_exit "hook allows once parity is restored" 0 "$rc"
 
 # Case 7: a red docs-count tree (the README's recorded count drifted) BLOCKS.
-sed -i 's/4 files total/5 files total/' "$WORK/kask/docs/README.md"
+sed -i 's/5 files total/6 files total/' "$WORK/kask/docs/README.md"
 out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
 expect_exit "hook blocks a red docs-count tree" 1 "$rc"
 expect_contains "red rejection names the docs-count gate in the failure list" \
   "invariant gate(s) red: docs-count-gate" "$out"
-sed -i 's/5 files total/4 files total/' "$WORK/kask/docs/README.md"
+sed -i 's/6 files total/5 files total/' "$WORK/kask/docs/README.md"
 
-# Case 8: containment — the hook names all six gate scripts explicitly.
+# Case 7b: a red mcp-readme-counts tree (the README's server count drifted
+# from the pin) BLOCKS.
+sed -i 's/| Demo | 7 |/| Demo | 8 |/' "$WORK/kask/docs/reference/mcp-servers/README.md"
+out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a red mcp-readme-counts tree" 1 "$rc"
+expect_contains "red rejection names the mcp-readme-counts gate in the failure list" \
+  "invariant gate(s) red: mcp-readme-counts" "$out"
+sed -i 's/| Demo | 8 |/| Demo | 7 |/' "$WORK/kask/docs/reference/mcp-servers/README.md"
+
+# Case 8: containment — the hook names all seven gate scripts explicitly.
 hook_src="$(cat "$HOOK_SRC")"
 expect_contains "hook names the parity gate script"        "check-diagram-registry-parity.sh" "$hook_src"
 expect_contains "hook names the docs-count gate script"    "check-docs-count-gate.sh" "$hook_src"
@@ -242,10 +294,11 @@ expect_contains "hook names the crossrefs gate script"      "check-skill-crossre
 expect_contains "hook names the frontmatter gate script"    "check-docs-frontmatter.sh" "$hook_src"
 expect_contains "hook names the retired-record gate script" "check-retired-record.sh" "$hook_src"
 expect_contains "hook names the citations gate script"      "check-docs-citations.sh" "$hook_src"
+expect_contains "hook names the readme-counts gate script" "check-mcp-readme-counts.sh" "$hook_src"
 
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-push hook reports true numbers, and the six invariant gates block red and allow green (report RED + skip + deletion + malformed + parity/count red + containment all pinned)"
+  echo "SELFTEST OK: pre-push hook reports true numbers, and the seven invariant gates block red and allow green (report RED + skip + deletion + malformed + parity/count/readme-counts red + containment all pinned)"
   exit 0
 fi
 echo "" >&2

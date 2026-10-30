@@ -13,12 +13,16 @@
 #   == DIAGRAM_ALIGNMENT records == DIAGRAMS_INDEX rows.
 # - check-docs-count-gate.sh, check-skill-crossrefs.sh,
 #   check-docs-frontmatter.sh, check-retired-record.sh,
-#   check-docs-citations.sh (2026-10-24, EUREKA-2): the five gate families
+# - check-docs-citations.sh (2026-10-24, EUREKA-2): the five gate families
 #   whose drift classes shipped through the wired-but-non-blocking CI
 #   exposure (measured evidence on the EUREKA-2 card). The four cheap gates
 #   run all-and-report (one push shows every drift class); citations runs
 #   last and only when the cheap set is green — its ~12s cost is never paid
 #   on an already-red push.
+# - check-mcp-readme-counts.sh (2026-10-30, media audit): the README's
+#   prose tool counts (catalog row, Live pin sites, arithmetic) agree
+#   with every server's live pin — the drift class that recurred three
+#   times while the pin stayed green.
 #
 # stdin (git pre-push protocol), one line per ref being pushed:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
@@ -79,10 +83,11 @@ GATES_DIR="$REPO_ROOT/kask/scripts"
 # Diagram-registry parity (EUREKA-1, the proven pattern).
 run_gate "diagram-registry-parity" "$GATES_DIR/check-diagram-registry-parity.sh"
 
-# The four cheap docs/skills gates — run all, report all.
+# The five cheap docs/skills/registration gates — run all, report all.
 run_gate "docs-count-gate"  "$GATES_DIR/check-docs-count-gate.sh"
 run_gate "skill-crossrefs"  "$GATES_DIR/check-skill-crossrefs.sh"
 run_gate "docs-frontmatter" "$GATES_DIR/check-docs-frontmatter.sh"
+run_gate "mcp-readme-counts" "$GATES_DIR/check-mcp-readme-counts.sh"
 if [ -n "$range_base" ]; then
   run_gate "retired-record" "$GATES_DIR/check-retired-record.sh" --range "$range_base" "$range_head"
 else
