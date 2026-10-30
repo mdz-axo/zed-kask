@@ -61,8 +61,8 @@ Synthetic speech, image/video creation, and creative recipe execution are retire
 
 A local transcript-editing system modeled on Reduct.video's published interaction model: immutable word-level time anchors, text selections as media ranges, labeled highlights, ordered Keep ranges composed into an EDL ("Reel"), deterministic FFmpeg rendering, and durable SRT/highlight-CSV/corpus-text exports (`README.md:230-249`). LLM "passes" (paragraph, speaker, correction, highlight) store validated layers over the immutable word timeline. Researcher annotations are separate supplied observations, not authenticated human identity or verified evidence: gallery CRUD uses stable `gallery_asset_id`, `kind` (`tag`/`note`) and `value`; transcript CRUD uses immutable-source word ranges, label/note and stable annotation IDs. `educt_search_transcripts` is bounded lexical substring matching with exact excerpts, source/timing citations and continuation offsets, not semantic retrieval. Missing/unaligned timing stays visible. See the media reference for exact request fields and bounds.
 
-### Media layers — 3 tools (`src/tools/layers.rs`)
-`layers_store`, `layers_list`, `layers_get`
+### Media layers — 11 tools (`src/tools/layers.rs`)
+`layers_store`, `layers_list`, `layers_get`, `layers_shot_pass`, `layers_semantic_pass`, `layers_audio_pass`, `layers_search`, `layers_transcript`, `layers_edl_compose`, `layers_render_edl`, `layers_export`
 
 Time-keyed layers over an immutable media file — the media sibling of the word-indexed educt layers: items anchor to source-PTS second ranges validated against the ffprobe-anchored duration, over a closed kind vocabulary (shot, semantic, object, ocr, audio_event, researcher, edl). Persistence is SQLite in the server's existing database (`layer_store.rs`); layers are database rows only, source media bytes are never modified. Landed 2026-10-28 (commit `512ac8723a`).
 

@@ -1851,11 +1851,7 @@ impl MediaServer {
 
             // Union-merge overlapping ranges into ordered Keep ops.
             let mut sorted = ranges.clone();
-            sorted.sort_by(|a, b| {
-                a.0.partial_cmp(&b.0)
-                    .unwrap()
-                    .then(a.1.partial_cmp(&b.1).unwrap())
-            });
+            sorted.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
             let mut merged: Vec<(f64, f64)> = Vec::new();
             for &(start, end) in &sorted {
                 if start < 0.0 || end > duration_secs + 1e-6 {
