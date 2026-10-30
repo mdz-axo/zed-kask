@@ -1,6 +1,7 @@
 ---
 name: therapy
 description: Memory therapy session — scans curator memory for contradictions, fragmentation, and miscalibrated confidence; resolves them; then reifies useful lessons as skills, templates, or rules and purges/condenses the source memories. The user approves all modifications. Therapy is the process of re-organizing memory to be useful and reifying learned experience into proactive guidance.
+audience: curator
 ---
 
 # Therapy

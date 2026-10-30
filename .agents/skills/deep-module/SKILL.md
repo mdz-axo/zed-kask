@@ -2,6 +2,7 @@
 name: deep-module
 core: true
 description: "Module design discipline based on Ousterhout's 'A Philosophy of Software Design.' Apply the deletion test to evaluate whether a module deserves to exist. Enforces depth, interface minimalism, and dependency direction."
+audience: user
 ---
 
 

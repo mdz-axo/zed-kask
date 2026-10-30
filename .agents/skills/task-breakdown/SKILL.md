@@ -2,6 +2,7 @@
 name: task-breakdown
 core: true
 description: "Decompose work into small, verifiable, vertically-sliced tasks with explicit acceptance criteria and checkpoints. Convergent PDCA: gather context and dependency graph, decompose, evaluate against criteria, iterate until stable, then finalize plan."
+audience: user
 ---
 
 # Task Breakdown

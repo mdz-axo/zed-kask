@@ -5,6 +5,7 @@ description: >-
   benchmarks, including gpui::bench, BenchAppContext, renderer and task
   benchmarks, headless Metal frame data, responsiveness and hang regressions,
   feature isolation from test-support, and before/after performance evidence.
+audience: platform
 ---
 
 # GPUI Benchmarks

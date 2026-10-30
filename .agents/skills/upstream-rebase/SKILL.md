@@ -1,6 +1,7 @@
 ---
 name: upstream-rebase
 description: "Manage upstream Zed merges for zed-kask. Decides per D-seam whether its user-visible purpose still needs fork divergence (retire, simplify, retain), then per retained file whether to git-merge or mapped-re-apply, verifies the result against both parents, and updates DIVERGENCE.md."
+audience: platform
 ---
 
 # Upstream Rebase

@@ -1,6 +1,7 @@
 ---
 name: onto-anchor
 description: Anchor domain terms via the onto_anchor tool and the P8.3 ladder — pinned domain sources (including RDF Data Cube `qb:`), derived, full SUMO, full schema.org, published DC/BIBO/CiTO state-axis senses, 5W1H core. Returns source definitions when supplied and alternative senses; nothing is ever untagged.
+audience: user
 ---
 
 # Onto-Anchor

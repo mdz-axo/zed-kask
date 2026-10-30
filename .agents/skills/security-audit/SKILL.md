@@ -1,6 +1,7 @@
 ---
 name: security-audit
 description: "Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A, with deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop that proposes ratchet entries (.rules traps + selftest-pinned check scripts + regression tests) for operator ratification."
+audience: platform
 ---
 
 # Security Audit

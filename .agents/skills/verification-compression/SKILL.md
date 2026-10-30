@@ -1,6 +1,7 @@
 ---
 name: verification-compression
 description: "Compress and accelerate a software verification workflow without losing current expectation coverage, falsifiers, failure visibility, provenance strength, or fault-detection signal. First retires historical tombstones that lack a live disturbance channel; then builds a typed verification graph, composes kata-improvement, falsifiability, refactor-architecture, essentialist, and lean-prover, proves graph-preservation obligations in Lean, and accepts reductions only after fixed-oracle before/after experiments."
+audience: platform
 ---
 
 # Verification Compression

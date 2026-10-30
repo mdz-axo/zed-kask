@@ -2,6 +2,7 @@
 name: essentialist
 core: true
 description: "General-purpose recursive eliminative interrogation. Enforces 'always take away, never add' through a 3-gate challenge loop (Exist, Surface, Contract) that every artifact must survive before being committed."
+audience: platform
 ---
 
 

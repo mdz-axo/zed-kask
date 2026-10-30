@@ -1,6 +1,7 @@
 ---
 name: skill-discovery
 description: "Match tasks to installed skills and acquire NEW skills when none fits. Route a task or gap against the catalog with fit scores, detect and classify capability gaps, and evaluate candidate skills against format/quality/safety criteria before installation."
+audience: platform
 ---
 
 # Skill Discovery

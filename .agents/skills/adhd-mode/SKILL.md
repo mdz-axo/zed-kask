@@ -1,6 +1,7 @@
 ---
 name: adhd-mode
 description: "Shape output for a reader with ADHD: lead with the next action, number multi-step work, restate state across turns, suppress tangents, cap lists at five, no preamble or closers. Session-scoped output mode with a deterministic pre-send gate (render_template + lisp_eval) and an optional caveman compression variant for connective prose. Activate with 'adhd mode on'; add compression with 'compressed'; deactivate with 'adhd mode off'."
+audience: user
 ---
 
 # ADHD Mode

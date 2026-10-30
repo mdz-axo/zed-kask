@@ -1610,12 +1610,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 detail: e.to_string(),
             })
         },
-        vec![
-            hkask_mcp_server::CredentialRequirement::required(
-                "HKASK_DB_PASSPHRASE",
-                "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
-            ),
-        ],
+        vec![hkask_mcp_server::CredentialRequirement::required(
+            "HKASK_DB_PASSPHRASE",
+            "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
+        )],
     )
     .await
 }

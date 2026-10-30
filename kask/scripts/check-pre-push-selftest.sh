@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Self-test for the pre-push hook (kask/githooks/pre-push): the net-lines
-# reporting and the seven invariant gates.
+# reporting and the eight invariant gates.
 #
 # The reporting job's RED proof is that the reported numbers are the TRUE
 # numbers for a known range. The gates' RED proof (parity 2026-10-23,
@@ -8,7 +8,7 @@
 # gate tree BLOCKS the push and a green or restored tree does not:
 #   1. A range with known content reports the true net line count and the
 #      true DIVERGENCE.md seam delta (+1 added / -1 retired → net 0), and
-#      exits 0 (all seven gates green on the fixture).
+#      exits 0 (all eight gates green on the fixture).
 #   2. A new-branch push (zero remote sha) with no upstream remote
 #      degrades VISIBLY (names the skip) instead of guessing a range.
 #   3. A ref deletion (zero local sha) measures nothing; the range-based
@@ -19,7 +19,7 @@
 #   6. Balance restored → the hook allows again (exit 0).
 #   7. A red docs-count tree (the README's recorded count drifted) BLOCKS:
 #      exit 1 with the docs-count-gate named in the failure list.
-#   8. Containment: the hook names all seven gate scripts explicitly —
+#   8. Containment: the hook names all eight gate scripts explicitly —
 #      the blocking steps are greppable, never implicit.
 #
 # Runs in CI via the kask/scripts/check-*-selftest.sh glob.
@@ -64,7 +64,7 @@ TIP="$(git -C "$WORK" rev-parse HEAD)"
 # retired-skill record, the parity fixture's registered diagram, and
 # the mcp-readme-counts gate's demo server plus agreeing README.
 mkdir -p "$WORK/kask/scripts" "$WORK/kask/docs/architecture" "$WORK/crates/agent_skills"
-for s in check-diagram-registry-parity check-docs-count-gate check-skill-crossrefs check-docs-frontmatter check-retired-record check-docs-citations check-mcp-readme-counts; do
+for s in check-diagram-registry-parity check-docs-count-gate check-skill-crossrefs check-docs-frontmatter check-retired-record check-rustfmt check-docs-citations check-mcp-readme-counts; do
   cp "$KASK_ROOT/scripts/$s.sh" "$WORK/kask/scripts/"
 done
 
@@ -189,6 +189,20 @@ Live pin sites: demo 7 (`hkask_mcp_demo.rs:7`).
 Arithmetic: `7 = 7`.
 MD
 
+# The rustfmt gate's minimal green tree: a single-crate workspace whose one
+# lib file is formatted (check-rustfmt.sh runs the CI check job's exact
+# command, cargo fmt --all -- --check, from the fixture repo root).
+cat > "$WORK/Cargo.toml" <<'EOF'
+[package]
+name = "fixture"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+path = "fixture.rs"
+EOF
+printf 'pub fn fixture() {}\n' > "$WORK/fixture.rs"
+
 # The citations gate resolves file:line citations against tracked files —
 # stage the fixture tree so the demo citation resolves (the base..tip
 # commit range the net-lines reporting reads is unchanged by staging).
@@ -286,7 +300,15 @@ expect_contains "red rejection names the mcp-readme-counts gate in the failure l
   "invariant gate(s) red: mcp-readme-counts" "$out"
 sed -i 's/| Demo | 8 |/| Demo | 7 |/' "$WORK/kask/docs/reference/mcp-servers/README.md"
 
-# Case 8: containment — the hook names all seven gate scripts explicitly.
+# Case 7c: a red rustfmt tree (an unformatted lib file) BLOCKS.
+printf 'pub fn fixture(){}\n' > "$WORK/fixture.rs"
+out="$(run_hook "refs/heads/main $TIP refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a red rustfmt tree" 1 "$rc"
+expect_contains "red rejection names the rustfmt gate in the failure list" \
+  "invariant gate(s) red: rustfmt" "$out"
+printf 'pub fn fixture() {}\n' > "$WORK/fixture.rs"
+
+# Case 8: containment — the hook names all eight gate scripts explicitly.
 hook_src="$(cat "$HOOK_SRC")"
 expect_contains "hook names the parity gate script"        "check-diagram-registry-parity.sh" "$hook_src"
 expect_contains "hook names the docs-count gate script"    "check-docs-count-gate.sh" "$hook_src"
@@ -295,10 +317,11 @@ expect_contains "hook names the frontmatter gate script"    "check-docs-frontmat
 expect_contains "hook names the retired-record gate script" "check-retired-record.sh" "$hook_src"
 expect_contains "hook names the citations gate script"      "check-docs-citations.sh" "$hook_src"
 expect_contains "hook names the readme-counts gate script" "check-mcp-readme-counts.sh" "$hook_src"
+expect_contains "hook names the rustfmt gate script"        "check-rustfmt.sh" "$hook_src"
 
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-push hook reports true numbers, and the seven invariant gates block red and allow green (report RED + skip + deletion + malformed + parity/count/readme-counts red + containment all pinned)"
+  echo "SELFTEST OK: pre-push hook reports true numbers, and the eight invariant gates block red and allow green (report RED + skip + deletion + malformed + parity/count/readme-counts/rustfmt red + containment all pinned)"
   exit 0
 fi
 echo "" >&2

@@ -23,6 +23,12 @@
 #   prose tool counts (catalog row, Live pin sites, arithmetic) agree
 #   with every server's live pin — the drift class that recurred three
 #   times while the pin stayed green.
+# - check-rustfmt.sh (2026-10-30): cargo fmt --all -- --check — the CI
+#   check job's Formatting step moved to the pre-push point. Fmt drift
+#   was the one invariant enforced only after the push: 18 consecutive
+#   pushes went red on GitHub while every local gate stayed green
+#   (2026-10-29/30). Runs in the green-only tail ahead of citations;
+#   check-only, never mutates the tree.
 #
 # stdin (git pre-push protocol), one line per ref being pushed:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
@@ -94,7 +100,12 @@ else
   echo "[pre-push] note: no resolvable pushed range — retired-record unchecked on this push" >&2
 fi
 
-# Citations last, only on an otherwise-green push (fail-fast on cost).
+# Rustfmt, then citations — the green-only tail (fail-fast on cost): the
+# ~25s fmt check and the ~12s citations ladder are never paid on a push
+# that is already red.
+if [ "${#gate_failures[@]}" -eq 0 ]; then
+  run_gate "rustfmt" "$GATES_DIR/check-rustfmt.sh"
+fi
 if [ "${#gate_failures[@]}" -eq 0 ]; then
   run_gate "docs-citations" "$GATES_DIR/check-docs-citations.sh"
 fi

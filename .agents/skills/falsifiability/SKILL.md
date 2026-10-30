@@ -1,6 +1,7 @@
 ---
 name: falsifiability
 description: "Domain-agnostic eliminative inference engine. Rules out untestable questions (admissibility gate), generates multiple falsifiable hypotheses, constructs minimal counterfactuals, designs discriminating tests, and eliminates hypotheses that fail."
+audience: user
 ---
 
 # Falsifiability

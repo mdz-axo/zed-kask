@@ -1,6 +1,7 @@
 ---
 name: lean-prover
 description: "Machine-checked proof construction. Anchor proof obligations against the Prop/Type discipline, construct proofs via tactics and term mode, challenge through counterexample search, and converge toward proofs that compile and erase."
+audience: user
 ---
 
 # Lean Prover

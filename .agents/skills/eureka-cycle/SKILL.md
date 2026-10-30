@@ -1,6 +1,7 @@
 ---
 name: eureka-cycle
 description: "Run one human-chaired discovery cycle over the Open Questions board: intake and routing (research-resolvable vs experiment-requiring vs forecasting), recall-cited candidate generation, the PI funding gate, delegated lifecycles (hypothesis-testing, self-improvement, research runs), sealed pre-registered experiments, resolution at the algedonic review, and a study report. A loop orchestrator and router — it owns no lifecycle."
+audience: user
 ---
 
 # Eureka Cycle

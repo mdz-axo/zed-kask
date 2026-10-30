@@ -1,6 +1,7 @@
 ---
 name: diagnose
 description: "Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic debugging: build feedback loop → reproduce → hypothesise → instrument → fix → regression-test. Aligned with Regulation sense→orient→decide→act."
+audience: user
 ---
 
 

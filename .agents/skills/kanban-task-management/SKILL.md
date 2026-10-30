@@ -2,6 +2,7 @@
 name: kanban-task-management
 core: true
 description: "Unified kanban task management across the full task lifecycle. Decompose projects into INVEST-compliant tasks, delegate to subagents with spawn configuration, monitor boards, coordinate agents, verify completion, and escalate."
+audience: user
 ---
 
 # Kanban Task Management

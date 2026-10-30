@@ -82,7 +82,11 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ## Skills (57)
 
-### Research, markets and forecasting
+### Capabilities you invoke (32)
+
+The bench instruments — what a zed-kask user (the principal investigator) invokes for their research, coding, and creative work.
+
+#### Research, markets and forecasting
 
 | Skill | Purpose |
 |-------|---------|
@@ -93,7 +97,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `scenario-planning` | Complete scenario project: Schwartz framing, forces and divergent 2x2 narratives with a quality gate and early-warning indicators, Tetlock quantification and propagation, Brier-scored resolution, Chermack assessment |
 | `eqm` | Explanation Quality Markers: score forecast rationales against the predictive 12 of the 60 EQMs via `market_score_rationale`, validate against realized outcomes (Brier), and improve a rationale in-session without changing its probability |
 
-### Media, writing and diagrams
+#### Media, writing and diagrams
 
 | Skill | Purpose |
 |-------|---------|
@@ -101,7 +105,7 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `writing-style` | Compose or rewrite prose from curated style corpora and validate the result against measured style centroids |
 | `diataxis-diagram` | Generate Mermaid diagrams from code using Diataxis methodology |
 
-### Decisions, research and evidence
+#### Decisions, research and evidence
 
 | Skill | Purpose |
 |-------|---------|
@@ -112,22 +116,18 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `grounding-verify` | Verify factual claims in text against source data: extract claims, assign provenance, scan narrative, compute fact_score |
 | `build-corpus-pipeline` | 10-stage corpus pipeline: convert → chunk → tag → embed → query → build_prompts → ingest_qa → assemble_dataset |
 
-### Working with the agent
+#### Working with the agent
 
 | Skill | Purpose |
 |-------|---------|
-| `algedonic-review` | Human-in-the-loop review with the operator and Curator: alert triage, then the gemba walk — the only place skills are evaluated |
-| `therapy` | Memory therapy session — scan curator memory for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
 | `adhd-mode` | Session-scoped output mode shaping responses for a reader with ADHD: next-action-first, numbered steps, state restated across turns, capped lists, deterministic pre-send gate (render_template + lisp_eval), optional caveman compression variant (absorbed 2026-09-09) |
 | `grill-me` | Socratic questioning to stress-test understanding |
-| `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
+| `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
 | `task-breakdown` | Convergent planning: vertical task slicing with acceptance criteria, checkpoints, and skill_match_query routing |
-| `region-routing` | Route task steps across the syntax-semantic x deterministic-probabilistic 2x2 regions: named tools per step, a deterministic gate per generating step, role checkpoints at semantic and dependency boundaries |
 | `kanban-task-management` | Unified kanban task management across the full task lifecycle |
 | `prompt-enhance` | General-purpose prompt enhancement: 7-type taxonomy routing with 3-tier effort knob |
-| `system-maintenance` | Weekly system maintenance for this machine over the `~/system-maintenance/` scripts: run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items, verify with reconciled measurements, and report a ledger |
 
-### Coding in your project
+#### Coding in your project
 
 | Skill | Purpose |
 |-------|---------|
@@ -138,25 +138,57 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `refactor-architecture` | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity |
 | `idiomatic-rust` | Type-driven Rust design through Graydon Hoare's principles |
 
-### Disciplines the agent applies on its own
+#### Disciplines and methods for your work
 
 | Skill | Purpose |
 |-------|---------|
-| `coding-guidelines` | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution |
 | `deep-module` | Module design via Ousterhout's depth criteria (kask-operationalized deletion test, depth score, ≤7 surface cap) |
-| `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
-| `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance; route computation steps to deterministic or probabilistic machines (D/P labelling, P8.4) |
-| `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |
 | `falsifiability` | Eliminative inference: Popper falsifiability gate, Chamberlin multiple hypotheses, Platt strong inference, Pearl counterfactuals |
-| `metacognition` | Improvement-Kata self-reflection: grasp, target, predict, experiment (including branching inquiry with delegation), measure the gap; predictions recorded for operator scoring |
 | `gradient-hunter` | Find steep gradients between populated and unpopulated regions of a codebase/telemetry/test field |
 | `lean-prover` | Machine-checked proof construction through Curry-Howard/de Bruijn/Carneiro lens. Sibling to falsifiability |
 | `onto-anchor` | Resolve domain terms through the published-ontology fallback ladder before naming, classifying, or computing with them |
-| `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
-| `kata-improvement` | 4-step Improvement Kata PDCA pattern, the five-question Coaching Kata (coach role), and beginner_mode drills |
+
+### Platform machinery (agent/operator-facing) (25)
+
+These maintain the platform itself — the skill system, the Curator role, this fork's codebase, and this machine. They ship to every install like everything else (P5.1); this section labels their purpose, not their availability.
+
+#### Fork-codebase development
+
+| Skill | Purpose |
+|-------|---------|
+| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
+| `security-audit` | Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A: deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop proposing ratchet entries for operator ratification (added 2026-10-24 with its four templates) |
+| `mcp-tool-review` | Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators |
+| `provider-audit` | Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at `kask/registry/providers/`; carries the provider lifecycle — adoption gate, drift trigger, scheduled cadence, announcement trigger, retirement pass |
+| `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
+| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
+| `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
 | `verification-compression` | Compress a verification workflow without losing expectation coverage, falsifiers, failure visibility, provenance, or fault-detection signal; Lean-checked graph preservation |
 
-### Skill authoring and zed-kask development
+#### Machine maintenance
+
+| Skill | Purpose |
+|-------|---------|
+| `system-maintenance` | Weekly system maintenance for this machine over the `~/system-maintenance/` scripts: run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items, verify with reconciled measurements, and report a ledger |
+
+#### Governance and roles
+
+| Skill | Purpose |
+|-------|---------|
+| `program-manager` | The agent's side of the Division of Responsibilities: recover the spec before building, design before coding, execute surgically, verify against a real definition of done |
+| `product-manager` | The operator's side of the Division of Responsibilities: requirements as falsifiable outcome claims, spec provenance, acceptance criteria that can fail, ground-truth confirmation |
+| `algedonic-review` | Human-in-the-loop review with the operator and Curator: alert triage, then the gemba walk — the only place skills are evaluated |
+
+#### Curator methods and memory
+
+| Skill | Purpose |
+|-------|---------|
+| `metacognition` | Improvement-Kata self-reflection: grasp, target, predict, experiment (including branching inquiry with delegation), measure the gap; predictions recorded for operator scoring |
+| `pragmatic-cybernetics` | Feedback loops, variety engineering, system homeostasis |
+| `pragmatic-semantics` | Classify statements by certainty, constraint force, provenance; route computation steps to deterministic or probabilistic machines (D/P labelling, P8.4) |
+| `therapy` | Memory therapy session — scan curator memory for contradictions, fragmentation, and miscalibrated confidence; resolve, then reify lessons as skills/templates/rules |
+
+#### Skill-system meta
 
 | Skill | Purpose |
 |-------|---------|
@@ -165,12 +197,13 @@ annual. The embedded seed payload equals the authored tree (pinned in
 | `skill-discovery` | Route tasks to installed skills (fit-scored recommendations), detect capability gaps, evaluate candidates before installation |
 | `skill-bundler` | Merge peer-level skill outputs into one grounded unified report (per-skill summaries, cross-skill insights, explicit conflicts, one bounded correction) |
 | `self-improvement` | Unified self-induced update operator: nested PDCA + outer Improvement Kata across two pathways — Foundation Model (θ) and Scaffolding (Σ), including the GEPA prompt-evolution sub-loop |
-| `gpui-bench` | Design, write, review, run, and interpret production-shaped GPUI Criterion benchmarks (renderer/task benches, responsiveness, hang regressions, before/after evidence) |
-| `kask-seam-audit` | Convergent multi-skill audit of the zed-kask Kask-Zed seam (`DIVERGENCE.md` is the current numbered-seam authority); its measured-layout loop also runs standalone for GPUI cards and panels |
-| `mcp-tool-review` | Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators |
-| `security-audit` | Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A: deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop proposing ratchet entries for operator ratification (added 2026-10-24 with its four templates) |
-| `upstream-rebase` | Manage upstream Zed rebases for zed-kask: per-D-seam-file strategy, mapped re-application, test-pin, DIVERGENCE.md update |
-| `provider-audit` | Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at `kask/registry/providers/`; carries the provider lifecycle — adoption gate, drift trigger, scheduled cadence, announcement trigger, retirement pass |
-| `doc-update` | Realign the kask/docs tree with the code: condensation triage (<85 cap, working target 75), ground-compare-recompose per docs-set, file:line citation gates, corpus-tool decision point |
-| `improv` | Agent interaction grammar (Plussing, Yes And, Freestyling, Riffing) |
+
+#### Agent behavioral disciplines
+
+| Skill | Purpose |
+|-------|---------|
+| `coding-guidelines` | Enforce Karpathy's four coding principles: Think Before Coding, Simplicity First, Surgical Changes, Goal-Driven Execution |
+| `essentialist` | Recursive eliminative interrogation (Exist → Surface → Contract) |
+| `region-routing` | Route task steps across the syntax-semantic x deterministic-probabilistic 2x2 regions: named tools per step, a deterministic gate per generating step, role checkpoints at semantic and dependency boundaries |
+| `kata-improvement` | 4-step Improvement Kata PDCA pattern, the five-question Coaching Kata (coach role), and beginner_mode drills |
 

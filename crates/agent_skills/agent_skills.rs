@@ -130,6 +130,10 @@ pub struct Skill {
     /// startup, locked against editing, undisableable, and unshadowable.
     /// See `SkillMetadata::core` for the full contract.
     pub core: bool,
+    /// Purpose classification for discovery (`user` | `platform` |
+    /// `curator`) — see `SkillMetadata::audience`. Labels purpose only;
+    /// availability is unchanged.
+    pub audience: Option<String>,
 }
 
 /// Indicates where a skill was loaded from.
@@ -341,13 +345,24 @@ pub struct SkillMetadata {
     /// dependency, regardless of source.
     #[serde(default)]
     pub dependencies: Vec<String>,
-    /// When `true`, this skill is a core skill: always-on, re-seeded on every
+    /// When `true`, this is a core skill: always-on, re-seeded on every
     /// startup (overwriting user edits), locked against editing, and
     /// undisableable. Only global skills with a registered core name may
     /// declare this status; project-local claims fail during loading. Core
     /// skills cannot be shadowed by project-local skills of the same name.
     #[serde(default)]
     pub core: bool,
+    /// Purpose classification for discovery: `user`, `platform`, or
+    /// `curator`. Labels who a skill serves WITHOUT gating availability —
+    /// every skill ships to every install and every user (P5.1, unchanged).
+    /// `user` marks capabilities a zed-kask user invokes for their own work;
+    /// `platform` marks machinery that develops or maintains zed-kask itself
+    /// (skill-system meta, agent disciplines, fork-codebase audits);
+    /// `curator` marks the Curator role's own methods and governance.
+    /// Not the removed `visibility` field: visibility gated who could see a
+    /// skill; audience only classifies purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<String>,
 }
 
 /// Minimal skill info for system prompt.
@@ -431,6 +446,7 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         dependencies: metadata.dependencies,
         core: metadata.core,
+        audience: metadata.audience,
     })
 }
 
@@ -2516,6 +2532,28 @@ Content.
     }
 
     #[test]
+    fn test_audience_frontmatter_field_round_trips() {
+        let tagged = parse_skill_frontmatter(
+            Path::new("/skills/test/SKILL.md"),
+            "---\nname: test\ndescription: A tagged skill.\naudience: platform\n---\n\nContent.\n",
+            SkillSource::Global,
+        )
+        .expect("tagged skill should load");
+
+        assert_eq!(tagged.audience.as_deref(), Some("platform"));
+        assert!(tagged.load_warnings.is_empty());
+
+        let untagged = parse_skill_frontmatter(
+            Path::new("/skills/test/SKILL.md"),
+            "---\nname: test\ndescription: An untagged skill.\n---\n\nContent.\n",
+            SkillSource::Global,
+        )
+        .expect("untagged skill should load");
+
+        assert_eq!(untagged.audience, None);
+    }
+
+    #[test]
     fn test_parse_skill_file_content_rejects_description_too_long() {
         let long_desc = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
@@ -2942,6 +2980,7 @@ description: A skill with no body content
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
 
         let summary = SkillSummary::from(&skill);

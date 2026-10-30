@@ -1,6 +1,7 @@
 ---
 name: eqm
 description: "Explanation Quality Markers: score the predictive 12 with market_score_rationale, retain the 60-marker reference catalog (the paper's verbatim pattern set), aggregate complete results, validate against realized outcomes, and improve a rationale through a bounded evidence-grounded loop."
+audience: user
 ---
 
 # EQM — Explanation Quality Markers (Measure and Improve)

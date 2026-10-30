@@ -2,6 +2,7 @@
 name: refactor-architecture
 core: true
 description: "End-to-end architecture refactoring: discover friction, rank deepening candidates, walk the design tree, audit duplication, plan strangler-fig migration, and verify integrity. Composes tdd, coding-guidelines, pragmatic-semantics, deep-module."
+audience: user
 ---
 
 # Refactor Architecture

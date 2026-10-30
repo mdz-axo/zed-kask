@@ -1,6 +1,7 @@
 ---
 name: tdd
 description: "Test-driven development: red → green, one vertical slice at a time, tests only at agreed seams. Use to build a feature or fix a bug test-first, or when the user mentions red-green or integration tests."
+audience: user
 ---
 
 # TDD

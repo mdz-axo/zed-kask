@@ -146,7 +146,17 @@ hkask_mcp_server::dual_axis_annotate!(
     tool_to_dc,
     PkoConcept,
     DcConcept,
-    &["web_", "rss_", "begin_", "finish_", "get_", "annotate_", "resolve_", "evaluate_", "cite_"],
+    &[
+        "web_",
+        "rss_",
+        "begin_",
+        "finish_",
+        "get_",
+        "annotate_",
+        "resolve_",
+        "evaluate_",
+        "cite_"
+    ],
     &[],
 );
 

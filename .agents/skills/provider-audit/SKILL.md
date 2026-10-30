@@ -1,6 +1,7 @@
 ---
 name: provider-audit
 description: "Two-directional provider contract audit over kask-adopted vendors: inbound (provider alignment with principles P1–P4 and values V1–V8) and outbound (our code's alignment with provider capabilities), over the profile layer at kask/registry/providers/. Carries the provider lifecycle: adoption gate, drift trigger, scheduled cadence, announcement trigger, and a retirement pass."
+audience: platform
 ---
 
 # Provider Audit

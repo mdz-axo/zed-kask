@@ -1,6 +1,7 @@
 ---
 name: system-maintenance
 description: Weekly system maintenance for this machine (Ubuntu 26.04, Framework laptop) over the ~/system-maintenance/ scripts — run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items as exact commands, hand off sudo-gated work, verify with reconciled measurements, and report a ledger. The scripts are the executables; this skill is the orchestration and judgment layer.
+audience: platform
 ---
 
 # System Maintenance

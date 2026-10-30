@@ -1,6 +1,7 @@
 ---
 name: transcript-reel
 description: "Distill a recording into a highlight reel over the media server's educt layer system: record and transcribe with word-level timings, run correction and speaker passes, select highlights semantically, compose and render an EDL, and export captions or corpus text. Reifies the Reduct.video transcript-linked-media discipline (operator ruling 2026-09-25) over the educt transcript tools, with MovieLabs OMC provenance vocabulary."
+audience: user
 ---
 
 # Transcript Reel

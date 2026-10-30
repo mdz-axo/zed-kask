@@ -1,6 +1,7 @@
 ---
 name: hypothesis-testing
 description: "Orchestrate one human-gated hypothesis-testing lifecycle: framing, falsifiability, experimental design, preregistration, executor-backed measurement, sealed findings, independent grounding audit, and human review."
+audience: user
 ---
 
 # Hypothesis Testing

@@ -1,6 +1,7 @@
 ---
 name: wardley-mapper
 description: "Generic Wardley mapping methodology. Given components and their relationships, classifies each on the evolution axis (Genesis to Custom to Product to Commodity), maps them on the value chain, identifies strategic movement, and produces a Wardley map."
+audience: user
 ---
 
 # Wardley Mapper

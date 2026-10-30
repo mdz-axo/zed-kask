@@ -1,6 +1,7 @@
 ---
 name: improv
 description: "Composable interaction grammar for hKask agents. Five improv modes (Plussing, Yes And, Yes But, Freestyling, Riffing) provide constructive-by-default communication protocols for dual-presence chat, ensemble sessions, and kata coaching loops."
+audience: user
 ---
 
 # Improv

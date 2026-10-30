@@ -1413,10 +1413,7 @@ mod tests {
         assert_eq!(fitness.variant_id, challenger.id);
         assert_eq!(fitness.run_count, 3);
         assert_eq!(fitness.seal_id.as_deref(), Some(seal.id.as_str()));
-        assert_eq!(
-            fitness.runs,
-            vec!["eval_harness run 42".to_string()]
-        );
+        assert_eq!(fitness.runs, vec!["eval_harness run 42".to_string()]);
 
         let (selection, updated) = store
             .record_selection(

@@ -1,6 +1,7 @@
 ---
 name: scenario-planning
 description: "Run a complete scenario-planning project: Schwartz framing, forces and divergent 2x2 narratives with an independent quality gate and early-warning indicators, then Tetlock quantification and Bayesian propagation, Brier-scored resolution, calibration tracking, and Chermack assessment, over the scenarios MCP server."
+audience: user
 ---
 
 # Scenario Planning

@@ -207,10 +207,7 @@ async fn full_protocol_runs_through_the_tool_seam() {
     assert_eq!(fitness["fitness"]["variant_id"], challenger_id.as_str());
     assert_eq!(fitness["fitness"]["run_count"], 3);
     assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
-    assert_eq!(
-        fitness["fitness"]["runs"][0],
-        "eval_harness run 42"
-    );
+    assert_eq!(fitness["fitness"]["runs"][0], "eval_harness run 42");
 
     // Select — the fossil resolves the experiment.
     let selection = server

@@ -1,6 +1,7 @@
 ---
 name: writing-style
 description: "Compose or rewrite prose in a curated literary style using the live style registry — Hemingway, Woolf, Agatha Eliot, Jane Wilde, Ulysses S. Twain, plus Gentle Lovelace and Dunning technical corpora. Three modes: conversational turns, fresh composition, and recomposition of existing documents. Compose/rewrite generations are centroid-validated against measured style signatures, not vibes; paths without a validation instrument are labeled unvalidated."
+audience: user
 ---
 
 # Writing Style

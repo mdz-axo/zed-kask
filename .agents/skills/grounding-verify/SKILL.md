@@ -1,6 +1,7 @@
 ---
 name: grounding-verify
 description: "Verify that factual claims in a text are grounded in provided source data, in the discipline of published verification practice: ISA 500 assertion-orientation and the evidence reliability hierarchy, vouching (claim → source) and tracing (source → text) direction of testing, ISA 320 materiality scoping, ISA 230 working-paper documentation. Extracts load-bearing claims, classifies provenance on a strength lattice (tool_verified > platform_derived > model_inference > unavailable), verifies citations and arithmetic via lisp_eval, traces sources for material omissions, detects cross-source conflicts with a precedence hierarchy, and emits findings with severity — never a verified label. Standalone or as a pipeline component."
+audience: user
 ---
 
 # Grounding Verify

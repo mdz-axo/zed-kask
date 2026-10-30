@@ -1,6 +1,7 @@
 ---
 name: kata-improvement
 description: "4-step Improvement Kata templates for scientific capability development: Understand Direction, Grasp Current Condition, Establish Target Condition, Experiment (PDCA). Includes the Coaching Kata (the five coach questions, a separate coach role) and beginner_mode drills for foundational scientific thinking habit-building."
+audience: platform
 ---
 
 # Kata Improvement

@@ -2,6 +2,7 @@
 name: algedonic-review
 core: true
 description: "Human-in-the-loop algedonic review and skill gemba walk through the Algedonic review kanban board. The board is the worklist and durable review record; skill evaluation happens only in this review."
+audience: curator
 ---
 
 # Algedonic Review

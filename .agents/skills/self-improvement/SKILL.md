@@ -1,6 +1,7 @@
 ---
 name: self-improvement
 description: "General self-improvement skill for FM-based agents. Drives persistent, endogenous adaptation of the operational scaffold (prompts, memory, tools, control logic) via intrinsic demonstrations, evaluative feedback, and extrinsic exploratory experience. Runs GEPA prompt experimentation under a measured rollout harness; files proposals, never commits."
+audience: platform
 ---
 
 # Self-Improvement

@@ -1,6 +1,7 @@
 ---
 name: gradient-hunter
 description: "Establish a task-relevant expectation before a substantive inquiry; investigate surprises or vague predictions with discriminating probes, and diagnose measured gradients in code, telemetry, or tests."
+audience: user
 ---
 
 # Gradient Hunter

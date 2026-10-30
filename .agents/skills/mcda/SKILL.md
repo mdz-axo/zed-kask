@@ -2,6 +2,7 @@
 name: mcda
 description: "Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scores alternatives, ranks options with compensation masking detection, and performs sensitivity analysis to assess decision robustness.
 "
+audience: user
 ---
 
 # Mcda

@@ -2,6 +2,7 @@
 name: metacognition
 core: true
 description: "Metacognitive Improvement Kata: ground the current and task-specific target conditions, predict and test one calibration, measure the gap, and keep measured evidence separate from human closure and optional forecast resolution."
+audience: curator
 ---
 
 # Metacognition

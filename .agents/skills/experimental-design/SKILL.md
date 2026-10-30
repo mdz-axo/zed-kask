@@ -1,6 +1,7 @@
 ---
 name: experimental-design
 description: "Design discriminating hypothesis tests before scientific spend: preserve provenance, compare candidate designs through evidence and limitations, specify analysis and stopping, bind a real executor, and produce versioned DesignSpec and FindingsSpec artifacts without machine admission."
+audience: user
 ---
 
 # Experimental Design

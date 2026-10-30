@@ -1,6 +1,7 @@
 ---
 name: program-manager
 description: Fit code-producing work to the user's requirements, implement surgically, remove obsolete paths, run real verification and report evidence honestly. The user owns functional decisions and acceptance; the agent owns technical implementation and trade-offs.
+audience: curator
 ---
 
 # Program Manager

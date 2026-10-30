@@ -1,6 +1,7 @@
 ---
 name: mcp-tool-review
 description: Anchor a built-in MCP server's tools to published reference models and audit their functionality and quality — inventory reconciliation, fidelity-labeled checks, measured probes, bounded passes, and a findings artifact whose file:line citations are script-verified and routed to actuators.
+audience: platform
 ---
 
 # mcp-tool-review

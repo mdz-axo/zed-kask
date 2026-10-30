@@ -6,6 +6,10 @@
 # RETIRED_SKILL_NAMES array. A name in the derived set but not the array is a
 # retirement that skipped its required append.
 set -euo pipefail
+# Byte collation for the sort/comm pipelines: under a UTF-8 locale `sort -u`
+# produces collation order `comm` rejects ("file 2 is not in sorted order",
+# exit 1 on a fully consistent record). LC_ALL=C makes both byte-ordered.
+export LC_ALL=C
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$repo_root"
 

@@ -1,6 +1,7 @@
 ---
 name: build-corpus-pipeline
 description: "Build or refresh a source-complete corpus from a caller-selected folder through conversion, chunking and retrieval, with optional classification, evidence-carrying QA and centroids. Bind run-specific identities, parameters and approvals at intake; verify each required stage before expansion."
+audience: user
 ---
 
 # Build Corpus Pipeline

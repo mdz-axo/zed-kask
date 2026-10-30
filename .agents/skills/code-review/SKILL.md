@@ -2,6 +2,7 @@
 name: code-review
 core: true
 description: "Convergent code review of a change against its stated spec. Multi-axis detection with an AI-code annex, machine checks first when runnable, IS/OUGHT adjudication, falsifier, file:line no-fiction, decoupling disclosure. Optional implement phase via fix_mode context. Grounded in Fagan, PERFECT, Ousterhout."
+audience: user
 ---
 
 # Code Review

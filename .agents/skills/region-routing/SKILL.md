@@ -1,6 +1,7 @@
 ---
 name: region-routing
 description: Classify a task's steps into the syntax-semantic x deterministic-probabilistic 2x2 regions and emit a routing plan — named tools, a deterministic gate per generating step, and human/curator role assignments with checkpoints at semantic and dependency boundaries. Use when planning or reviewing a multi-step task whose work spans formal and semantic regions.
+audience: platform
 ---
 
 # Region Routing
