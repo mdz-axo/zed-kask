@@ -15,6 +15,7 @@ use crate::layer_store::{
     self, LayerProvenance, MediaLayerFilter, MediaLayerItem, MediaLayerKind, MediaLayerRecord,
     NewMediaLayer, StoredMediaLayerItem,
 };
+use crate::redaction::{self, RedactionDecision, RedactionDecisionError, SegmentMode};
 use crate::tools::educt::{
     SEARCH_TEXT_BYTE_BUDGET, WorkingTranscript, lexical_citations, map_store_error,
     working_transcript,
@@ -24,8 +25,9 @@ use crate::tools::processing::SourceSnapshot;
 use crate::transcript_pass::PassMode;
 use crate::types::{
     LayersAudioPassRequest, LayersExportRequest, LayersGetRequest, LayersListRequest,
-    LayersSearchRequest, LayersSemanticPassRequest, LayersShotPassRequest,
-    LayersStitchTracksRequest, LayersStoreItemRequest, LayersStoreRequest, LayersTranscriptRequest,
+    LayersRenderRedactionsRequest, LayersSearchRequest, LayersSemanticPassRequest,
+    LayersShotPassRequest, LayersStitchTracksRequest, LayersStoreItemRequest, LayersStoreRequest,
+    LayersTranscriptRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -2350,6 +2352,257 @@ impl MediaServer {
                 "result": result,
                 "edl_layer_id": record.id,
                 "media_path": request.media_path,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Render approved redaction decisions over one recording into a durable playable gallery asset — tier 1 (cover: blur, pixelate, black, delogo) of the visual-event-tagging design §6. Takes a media_path and the REQUIRED layer_id of a researcher-authored redaction decision layer (provenance model \"user\") whose items carry the vocabulary {op: redact, status: approved, effect: blur|pixelate|black|delogo, target: {kind: box, box: {x,y,w,h} in 0..1}}. No redaction renders without an approved decision layer — the hard human gate: unknown layers fail as not_found, wrong-kind/unapproved/malformed items as failed_precondition, and machine-authored layers never render; every failure names the layer. Only the affected segments re-encode through the ffmpeg filter graph (time-ranged per item via enable=between over its range, spatial over the normalized box scaled to the probed frame dimensions), keyed to keyframe-aligned segment boundaries so the output timeline tiles the source exactly; untouched segments stream-copy. Source media bytes are never modified — the render publishes a new gallery asset with lineage. A mask_track target is reserved tier-2 vocabulary (representable now, renderable once tier 2 exists); requesting it fails as permission_denied naming the mask/removal serving path."
+    )]
+    pub async fn layers_render_redactions(
+        &self,
+        Parameters(request): Parameters<LayersRenderRedactionsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_render_redactions", async {
+            let _admission = self.admit_heavy_operation()?;
+            ensure_local_input_exists(&request.media_path)?;
+            if !crate::is_local_media_path(&request.media_path) {
+                validate_tool_url_with_dns(&request.media_path).await?;
+            }
+            let ffmpeg = self.require_ffmpeg()?;
+            let probe = ffmpeg
+                .probe(&request.media_path)
+                .await
+                .map_err(map_media_error)?;
+            if !probe.has_video_stream {
+                return Err(McpToolError::failed_precondition(format!(
+                    "redaction render requires a video stream; {} has none",
+                    request.media_path
+                )));
+            }
+            let driver = &**self.gallery_store.driver();
+            // The hard human gate (design §6): no redaction renders without
+            // an approved researcher-authored decision layer. Every
+            // rejection names the layer.
+            let Some(record) =
+                layer_store::get_layer(driver, &request.layer_id).map_err(map_layer_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "redaction decision layer {} not found",
+                    request.layer_id
+                )));
+            };
+            if record.kind != MediaLayerKind::Researcher {
+                return Err(McpToolError::invalid_argument(format!(
+                    "layer {} must be a researcher-authored redaction decision \
+                     layer, got kind {}",
+                    request.layer_id,
+                    record.kind.as_str()
+                )));
+            }
+            if record.provenance.model != redaction::RESEARCHER_MODEL {
+                return Err(McpToolError::failed_precondition(format!(
+                    "redaction decision layer {} was authored by model \
+                     \"{}\" — redaction decisions are human acts (provenance \
+                     model \"user\"), never machine-authored",
+                    request.layer_id, record.provenance.model
+                )));
+            }
+            if record.media_path != request.media_path {
+                return Err(McpToolError::not_found(format!(
+                    "redaction decision layer {} is not a decision layer for {} \
+                     (it annotates {})",
+                    request.layer_id, request.media_path, record.media_path
+                )));
+            }
+            if record.items.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "redaction decision layer {} is empty — nothing to render",
+                    request.layer_id
+                )));
+            }
+            let duration_secs = probe.duration_secs as f64;
+            let mut decisions = Vec::with_capacity(record.items.len());
+            for item in &record.items {
+                match redaction::parse_decision(&record.id, item, duration_secs) {
+                    Ok(decision) => decisions.push(decision),
+                    Err(RedactionDecisionError::NotARedactionDecision(reason)) => {
+                        return Err(McpToolError::failed_precondition(reason));
+                    }
+                    Err(RedactionDecisionError::Tier2NotConfigured) => {
+                        // Reserved tier-2 vocabulary: permission_denied
+                        // naming the serving path (the missing-credential
+                        // contract; the `NotConfigured` precedent at the
+                        // pass error mapper).
+                        return Err(McpToolError::permission_denied(format!(
+                            "redaction decision layer {} item {} targets kind \
+                             mask_track — reserved tier-2 vocabulary \
+                             (representable now, renderable once tier 2 exists); \
+                             no mask/removal provider is configured on the \
+                             tier-2 serving path (the postponed SAM-3 mask → \
+                             removal pipeline, model report R3); tier-1 renders \
+                             cover box targets only",
+                            record.id, item.id
+                        )));
+                    }
+                }
+            }
+            // Re-encoded segments keep the source's codec family so the
+            // concat demuxer's uniform-stream contract holds; an unmapped
+            // codec is a visible degradation, never a silent mixed-codec
+            // concat.
+            let encoder_args = redaction::tier1_encoder_args(&probe.codec).ok_or_else(|| {
+                McpToolError::failed_precondition(format!(
+                    "tier-1 redaction render re-encodes affected segments in the \
+                     source's codec family; source {} is {} — extend the tier-1 \
+                     encoder map before redacting this recording",
+                    request.media_path, probe.codec
+                ))
+            })?;
+            let keyframe_times = ffmpeg
+                .video_keyframe_times(&request.media_path)
+                .await
+                .map_err(map_media_error)?;
+            let plan = redaction::build_segment_plan(&decisions, duration_secs, &keyframe_times);
+            let mut intermediates =
+                crate::assets::ScratchIntermediates::new("layers_render_redactions");
+            // One seek-free segment-muxer split produces every stream-copied
+            // part at the plan's keyframe-aligned boundaries; the parts tile
+            // the source exactly (a `-ss`/`-to` copy cannot — its video read
+            // overshoots by the reorder depth and its audio seek lands whole
+            // frames off). The parts map 1:1 onto the plan segments in time
+            // order; the re-encoding segments' parts are discarded in favor
+            // of the filtered renders below.
+            let boundaries: Vec<f64> = plan
+                .iter()
+                .skip(1)
+                .map(|segment| segment.start_sec)
+                .collect();
+            let split_parts = if plan
+                .iter()
+                .any(|segment| segment.mode == SegmentMode::StreamCopy)
+            {
+                let parts = ffmpeg
+                    .segment_split(&request.media_path, &boundaries)
+                    .await
+                    .map_err(map_media_error)?;
+                if parts.len() != plan.len() {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "the segment split produced {} parts for a {}-segment plan \
+                         — the keyframe boundaries diverged; refusing to render a \
+                         misaligned timeline",
+                        parts.len(),
+                        plan.len()
+                    )));
+                }
+                for part in &parts {
+                    intermediates.track(part.clone());
+                }
+                parts
+            } else {
+                Vec::new()
+            };
+            let mut segment_paths: Vec<std::path::PathBuf> = Vec::with_capacity(plan.len());
+            let mut applied_items = Vec::new();
+            for (index, segment) in plan.iter().enumerate() {
+                let path = match segment.mode {
+                    SegmentMode::StreamCopy => {
+                        split_parts.get(index).cloned().ok_or_else(|| {
+                            McpToolError::internal(
+                                "the segment split is missing a planned copy part",
+                            )
+                        })?
+                    }
+                    SegmentMode::Reencode => {
+                        let in_segment: Vec<&RedactionDecision> = decisions
+                            .iter()
+                            .filter(|decision| segment.item_ids.contains(&decision.item_id))
+                            .collect();
+                        let (graph, applied) = redaction::build_filter_graph(
+                            &in_segment,
+                            segment.start_sec,
+                            probe.width,
+                            probe.height,
+                        )
+                        .map_err(McpToolError::failed_precondition)?;
+                        applied_items.extend(applied);
+                        let rendered = ffmpeg
+                            .clip_filtered(
+                                &request.media_path,
+                                segment.start_sec as f32,
+                                segment.end_sec as f32,
+                                &graph,
+                                encoder_args,
+                            )
+                            .await
+                            .map_err(map_media_error)?;
+                        intermediates.track(rendered.clone());
+                        rendered
+                    }
+                };
+                segment_paths.push(path);
+            }
+            let output = if segment_paths.len() == 1 {
+                segment_paths.first().cloned().ok_or_else(|| {
+                    McpToolError::internal(
+                        "redaction render produced no segment after a non-empty plan",
+                    )
+                })?
+            } else {
+                let segment_sources = segment_paths
+                    .iter()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>();
+                ffmpeg
+                    .concat(&segment_sources)
+                    .await
+                    .map_err(map_media_error)?
+            };
+            let segments_json: Vec<serde_json::Value> = plan
+                .iter()
+                .map(|segment| {
+                    serde_json::json!({
+                        "mode": segment.mode.as_str(),
+                        "start_sec": segment.start_sec,
+                        "end_sec": segment.end_sec,
+                        "items": segment.item_ids,
+                    })
+                })
+                .collect();
+            let reencoded_segments = plan
+                .iter()
+                .filter(|segment| segment.mode == SegmentMode::Reencode)
+                .count();
+            let stream_copied_segments = plan.len() - reencoded_segments;
+            let effective_params = serde_json::json!({
+                "media_path": &request.media_path,
+                "source": &request.media_path,
+                "decision_layer_id": &record.id,
+                "segments": &segments_json,
+                "decisions_rendered": decisions.len(),
+                "reencoded_segments": reencoded_segments,
+                "stream_copied_segments": stream_copied_segments,
+            });
+            let result = crate::assets::publish_local_media(
+                &self.gallery_store,
+                &output,
+                "layers_render_redactions",
+                "rendered",
+                crate::assets::LocalMediaFormat::Mp4,
+                &effective_params,
+            )?;
+            intermediates.cleanup().map_err(map_media_error)?;
+            Ok(serde_json::json!({
+                "status": "rendered",
+                "result": result,
+                "decision_layer_id": record.id,
+                "media_path": request.media_path,
+                "segments": segments_json,
+                "reencoded_segments": reencoded_segments,
+                "stream_copied_segments": stream_copied_segments,
+                "decisions_rendered": decisions.len(),
+                "applied_items": applied_items,
             }))
         })
         .await

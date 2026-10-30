@@ -1,7 +1,7 @@
 ---
 title: "Visual-event tagging and object redaction — the non-word transcript (design)"
 audience: [developers, architects, operators]
-last_updated: 2026-10-29
+last_updated: 2026-10-30
 version: "1.0.0"
 status: "Proposed design — unbuilt parts await operator decisions in the final section"
 domain: "Media / hkask-mcp-media"
@@ -92,7 +92,7 @@ Degradation discipline (delivered, extended to the stitcher): no video stream �
 ```
 
   `target.kind: "mask_track"` (referencing a stitcher `track_id`) is **reserved vocabulary for tier 2** — representable now, renderable once tier 2 exists, so no store migration is owed later. `source_tag_refs` carries the originating tags' provenance (the OMC lineage discipline; annotation anchors on `omc:Annotation`, OMC 2.8, the vocabulary `omc.rs` already carries).
-- **The tier-1 render** (proposed; slots with the landed t9 renderer `layers_render_edl`, `3a11fa570d`): takes an **approved decision layer id** (never free parameters), builds the ffmpeg filter graph per decision — time-ranged via `enable='between(t,start,end)'` over the item's range, spatial over the normalized box scaled to the probed frame dimensions; effects `boxblur`/`gblur` (blur), `pixelize` (pixelate), `drawbox` filled black, `delogo` — all verified present on the local ffmpeg 8.0.1 (empirical `ffmpeg -filters`, 2026-10-29). Only affected segments re-encode; untouched segments stream-copy — the reel-render primitive (`clip` + `concat`, `video/ffmpeg.rs:422-461`, `:690-716`) re-used; pinned by test (existing card S3's AC).
+- **The tier-1 render** (landed 2026-10-30, goal `a6c6fdf3` card S3 — the tool `layers_render_redactions`, `src/redaction.rs`; slots with the landed t9 renderer `layers_render_edl`, `3a11fa570d`): takes an **approved decision layer id** (never free parameters), builds the ffmpeg filter graph per decision — time-ranged via `enable='between(t,start,end)'` over the item's range, spatial over the normalized box scaled to the probed frame dimensions; effects `boxblur`/`gblur` (blur), `pixelize` (pixelate), `drawbox` filled black, `delogo` — all verified present on the local ffmpeg 8.0.1 (empirical `ffmpeg -filters`, 2026-10-29). Only affected segments re-encode; untouched segments stream-copy — pinned by test (S3's AC; the landed render goes further than the reel-render primitive: stream-copy segments come from the segment muxer at keyframe-aligned boundaries, because a plain `-ss`/`-to` copy overshoots its end by the frame-reorder depth on B-frame sources and its audio seek lands whole frames off, both pinned empirically on ffmpeg 8.0.1, 2026-10-29).
 - **Tier 2** (deferred per operator decision C): mask-track targets + a configured mask/removal provider (SAM 3 masks → VOID or Generative Omnimatte; model report R3). Requesting tier 2 without a configured provider fails as `permission_denied` naming the serving path — the `NotConfigured` precedent (`tools/layers.rs:317-320`) and the project's missing-credential contract.
 - **Human gate (hard):** no redaction renders without an approved researcher decision layer; unknown/empty/unapproved → typed `not_found`/`failed_precondition` naming the layer. Source media bytes are never modified — layers are database rows only (the store's contract, `layer_store.rs:162-165` and its test suite).
 

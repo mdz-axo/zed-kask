@@ -715,6 +715,225 @@ impl FfmpegRunner {
         Ok(output)
     }
 
+    /// Enumerate the video stream's keyframe PTS seconds, ascending — the
+    /// stream-copy boundary anchor for the redaction segment plan. A
+    /// stream-copy read starts at the previous keyframe (empirical ffmpeg
+    /// 8.0.1, 2026-10-29: `-ss 2.5 -to 3.5 -c copy` on a 1s-GOP source yields
+    /// the 1.5s `[2.0, 3.5]`), so every copy-segment boundary must be a
+    /// keyframe for the rendered timeline to tile the source exactly.
+    pub async fn video_keyframe_times(&self, input: &str) -> Result<Vec<f64>, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        let output = Command::new("ffprobe")
+            .arg("-v")
+            .arg("error")
+            .arg("-select_streams")
+            .arg("v:0")
+            .arg("-skip_frame")
+            .arg("nokey")
+            .arg("-show_entries")
+            .arg("frame=pts_time")
+            .arg("-of")
+            .arg("csv=p=0")
+            .arg(input)
+            .output()
+            .await
+            .map_err(|e| {
+                crate::MediaError::FfmpegFailed(format!("ffprobe keyframe scan spawn failed: {e}"))
+            })?;
+        if !output.status.success() {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "ffprobe keyframe scan failed with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        let mut times = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().parse::<f64>().ok())
+            .filter(|t| t.is_finite() && *t >= 0.0)
+            .collect::<Vec<f64>>();
+        times.sort_by(f64::total_cmp);
+        times.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        Ok(times)
+    }
+
+    /// Render one re-encoded segment of a redaction render: clip
+    /// `[start_sec, end_sec]` from `input` applying the `filter_complex`
+    /// graph (built for the segment's local timeline — input `-ss` shifts `t`
+    /// to 0, verified empirically: `enable='between(t,…)'` windows are exact
+    /// to the frame). Video re-encodes with the caller-supplied encoder
+    /// arguments (the render keeps one codec family per output so the
+    /// concat demuxer's uniform-stream contract holds); audio stream-copies
+    /// (`-map 0:a?` — sources without audio copy nothing).
+    pub async fn clip_filtered(
+        &self,
+        input: &str,
+        start_sec: f32,
+        end_sec: f32,
+        filter_complex: &str,
+        video_encoder_args: &[&str],
+    ) -> Result<PathBuf, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        self.ensure_temp_dir()?;
+
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{:.3}", start_sec))
+            .arg("-to")
+            .arg(format!("{:.3}", end_sec))
+            .arg("-i")
+            .arg(input)
+            .arg("-filter_complex")
+            .arg(filter_complex)
+            .arg("-map")
+            .arg("[vout]")
+            .arg("-map")
+            .arg("0:a?")
+            .arg("-c:a")
+            .arg("copy");
+        if video_encoder_args.is_empty() {
+            return Err(crate::MediaError::FfmpegFailed(
+                "filtered clip requires explicit video encoder arguments".to_string(),
+            ));
+        }
+        for arg in video_encoder_args {
+            command.arg(arg);
+        }
+        command.arg(output.path());
+        Self::run_to_completion(command, "redact filtered clip").await?;
+
+        let output = output.commit();
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            start = start_sec,
+            end = end_sec,
+            output = %output.display(),
+            "Redaction segment re-encoded"
+        );
+        Ok(output)
+    }
+
+    /// Split `input` into consecutive stream-copied parts at the given
+    /// keyframe-aligned boundary times (one part per boundary, plus the
+    /// trailing part), using the segment muxer — the lossless, seek-free
+    /// split whose parts tile the source exactly.
+    ///
+    /// A `-ss`/`-to` stream copy cannot do this: its video read overshoots
+    /// by the frame-reorder depth on B-frame sources (empirically pinned
+    /// 2026-10-29: a `-to 1.0` copy on an H.264 source yields 12 frames,
+    /// not 10) and its audio seek lands whole frames off, which would
+    /// duplicate redacted-range frames and drift the concatenated timeline.
+    /// The muxer reads linearly from zero and cuts at the first keyframe at
+    /// or after each boundary — each boundary is lowered by 1 ms so float
+    /// drift between ffprobe's and the muxer's keyframe timestamps can only
+    /// select the intended keyframe, never the next one. Returns the part
+    /// paths in time order.
+    pub async fn segment_split(
+        &self,
+        input: &str,
+        boundaries: &[f64],
+    ) -> Result<Vec<PathBuf>, crate::MediaError> {
+        if !self.available {
+            return Err(crate::MediaError::FfmpegUnavailable);
+        }
+        self.ensure_temp_dir()?;
+
+        // A unique scratch directory per call: the muxer writes numbered
+        // parts there; each is promoted into the runner's temp root.
+        let scratch = self.temp_dir.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&scratch).map_err(|error| {
+            crate::MediaError::Io(format!(
+                "Failed to create segment-split scratch directory {}: {error}",
+                scratch.display()
+            ))
+        })?;
+        let pattern = scratch.join("part_%03d.mp4");
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-y")
+            .arg("-i")
+            .arg(input)
+            .arg("-c")
+            .arg("copy")
+            .arg("-f")
+            .arg("segment")
+            .arg("-reset_timestamps")
+            .arg("1");
+        if !boundaries.is_empty() {
+            let times = boundaries
+                .iter()
+                .map(|t| format!("{:.3}", (t - 0.001).max(0.0)))
+                .collect::<Vec<_>>()
+                .join(",");
+            command.arg("-segment_times").arg(times);
+        }
+        command.arg(&pattern);
+        let run = Self::run_to_completion(command, "segment split").await;
+        if let Err(error) = run {
+            if let Err(cleanup_error) = std::fs::remove_dir_all(&scratch) {
+                tracing::warn!(
+                    target: "hkask.mcp.media.ffmpeg",
+                    path = %scratch.display(),
+                    %cleanup_error,
+                    "Failed to remove segment-split scratch directory after a failed run"
+                );
+            }
+            return Err(error);
+        }
+
+        let mut parts = Vec::new();
+        for index in 0u32.. {
+            let part = scratch.join(format!("part_{index:03}.mp4"));
+            if !part.is_file() {
+                break;
+            }
+            let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+            if let Err(error) = std::fs::rename(&part, output.path()) {
+                if let Err(cleanup_error) = std::fs::remove_dir_all(&scratch) {
+                    tracing::warn!(
+                        target: "hkask.mcp.media.ffmpeg",
+                        path = %scratch.display(),
+                        %cleanup_error,
+                        "Failed to remove segment-split scratch directory after a failed promote"
+                    );
+                }
+                return Err(crate::MediaError::Io(format!(
+                    "Failed to promote split part {}: {error}",
+                    part.display()
+                )));
+            }
+            parts.push(output.commit());
+        }
+        if let Err(error) = std::fs::remove_dir_all(&scratch) {
+            tracing::warn!(
+                target: "hkask.mcp.media.ffmpeg",
+                path = %scratch.display(),
+                %error,
+                "Failed to remove segment-split scratch directory"
+            );
+        }
+        if parts.is_empty() {
+            return Err(crate::MediaError::FfmpegFailed(
+                "segment split produced no parts".to_string(),
+            ));
+        }
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            boundaries = boundaries.len(),
+            parts = parts.len(),
+            "Media split into stream-copied parts"
+        );
+        Ok(parts)
+    }
+
     /// Sample original decoded frames at least `interval_sec` apart.
     /// `showinfo` runs after selection and before encoding: its PTS belongs to
     /// the source frame, not an fps filter's synthetic output timeline.

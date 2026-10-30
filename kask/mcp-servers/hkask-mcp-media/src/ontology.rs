@@ -97,6 +97,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "layers_transcript"
         | "layers_edl_compose"
         | "layers_render_edl"
+        | "layers_render_redactions"
         | "layers_export" => Some(DATASET),
         _ => None,
     }

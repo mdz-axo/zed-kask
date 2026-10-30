@@ -1026,6 +1026,23 @@ pub struct LayersRenderEdlRequest {
     pub layer_id: Option<String>,
 }
 
+/// Request to render approved redaction decisions over one recording into
+/// a durable gallery asset (S3, tier 1 of the visual-event-tagging design
+/// §6). The layer id is REQUIRED — the render consumes an approved,
+/// researcher-authored decision layer, never free parameters (the hard
+/// human gate: no redaction renders without one).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersRenderRedactionsRequest {
+    /// Absolute local path (or URL) of the source media. Never modified:
+    /// the render publishes a new gallery asset; layers are database rows.
+    pub media_path: String,
+    /// Layer ID of the researcher-authored redaction decision layer
+    /// (provenance model "user") whose approved items carry the redaction
+    /// vocabulary {op: redact, status: approved, effect: blur|pixelate|
+    /// black|delogo, target: {kind: box, box: {x,y,w,h} in 0..1}}.
+    pub layer_id: String,
+}
+
 /// Request to stitch an object layer's detections into deterministic
 /// tracks (S2, design §4 delta 3) — a derived object-kind layer.
 #[derive(Debug, Deserialize, JsonSchema)]

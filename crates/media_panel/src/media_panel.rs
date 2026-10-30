@@ -478,7 +478,7 @@ mod tests {
     /// while retaining source processing, annotations, retrieval, and history.
     #[test]
     fn steer_prompt_carries_research_scope_and_boundaries() {
-        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 88);
+        assert_eq!(hkask_mcp_media::TOOL_NAMES.len(), 90);
         let prompt = steer_system_prompt();
         for required in [
             "gallery_annotation_create",

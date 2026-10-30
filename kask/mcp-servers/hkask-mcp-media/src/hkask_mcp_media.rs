@@ -197,6 +197,7 @@ hkask_mcp_server::mcp_server!(
 
 pub mod layer_pass;
 pub mod layer_store;
+pub mod redaction;
 pub mod track_stitcher;
 pub mod transcript;
 pub mod transcript_export;
@@ -481,8 +482,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        89,
-        tool_surface_is_exactly_89_registered_tools,
+        90,
+        tool_surface_is_exactly_90_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -7760,6 +7761,765 @@ mod tool_behavior_tests {
         assert!(
             wrong_kind.to_string().contains("kind=object"),
             "names the required kind: {wrong_kind}"
+        );
+        Ok(())
+    }
+
+    // ── Redaction render contract tests (S3, design §6) ───────────────
+
+    /// A real 4s 10fps fixture with known content (testsrc2) and a keyframe
+    /// every second — the plan's alignment points are exactly 0, 1, 2, 3.
+    async fn create_redaction_mpeg4_video(
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=64x48:d=4:r=10",
+                "-c:v",
+                "mpeg4",
+                "-g",
+                "10",
+                path.to_str().ok_or("redaction fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "redaction mpeg4 fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    /// The H.264 fixture with B-frames and an audio track — the harder
+    /// stream-copy case: copy segments must come from the segment muxer
+    /// (a plain `-to` copy overshoots by the reorder depth), the re-encoded
+    /// segment repeats in-band parameter sets for the concatenated output,
+    /// and audio stream-copies through both segment kinds.
+    async fn create_redaction_h264_video(
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=s=64x48:d=4:r=10",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=4",
+                "-c:v",
+                "libx264",
+                "-g",
+                "10",
+                "-c:a",
+                "aac",
+                path.to_str().ok_or("redaction fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "redaction h264 fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    /// Extract one decoded frame at `ts` as grayscale rawvideo bytes —
+    /// the pixel-level ground truth for the only-affected-segments pin
+    /// (a stream-copied frame decodes bit-identical to the source; a
+    /// re-encoded frame does not).
+    async fn redaction_frame_bytes(
+        path: &str,
+        ts: f64,
+        crop: Option<(u32, u32, u32, u32)>,
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut command = tokio::process::Command::new("ffmpeg");
+        command
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-ss")
+            .arg(format!("{ts}"))
+            .arg("-i")
+            .arg(path)
+            .arg("-frames:v")
+            .arg("1");
+        if let Some((w, h, x, y)) = crop {
+            command.arg("-vf").arg(format!("crop={w}:{h}:{x}:{y}"));
+        }
+        let output = command
+            .arg("-f")
+            .arg("rawvideo")
+            .arg("-pix_fmt")
+            .arg("gray")
+            .arg("-")
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "frame extraction at {ts}s failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(output.stdout)
+    }
+
+    fn gray_mean(bytes: &[u8]) -> f64 {
+        if bytes.is_empty() {
+            return f64::NAN;
+        }
+        bytes.iter().copied().map(u64::from).sum::<u64>() as f64 / bytes.len() as f64
+    }
+
+    /// Mean absolute difference between horizontally adjacent pixels — the
+    /// blur discriminator. gblur collapses per-pixel detail (source region
+    /// ≈ 9.6, blurred ≈ 0.8, empirically on the fixture), while a re-encoded
+    /// unfiltered region keeps it.
+    fn gray_adjacent_mean_difference(bytes: &[u8], width: usize) -> f64 {
+        if width < 2 || bytes.len() < width {
+            return f64::NAN;
+        }
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        for row in bytes.chunks(width) {
+            for pair in row.windows(2) {
+                sum += u64::from(pair[0].abs_diff(pair[1]));
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return f64::NAN;
+        }
+        sum as f64 / count as f64
+    }
+
+    async fn store_layer(
+        server: &MediaServer,
+        media_path: &str,
+        kind: crate::layer_store::MediaLayerKind,
+        model: &str,
+        items: Vec<LayersStoreItemRequest>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let result = content_of(
+            &server
+                .layers_store(Parameters(LayersStoreRequest {
+                    media_path: media_path.to_string(),
+                    gallery_asset_id: None,
+                    kind,
+                    label: None,
+                    provenance: LayersProvenanceRequest {
+                        model: model.to_string(),
+                        prompt_template: "redaction-test".to_string(),
+                    },
+                    items,
+                }))
+                .await?,
+        );
+        Ok(result["id"].as_str().ok_or("layer id")?.to_string())
+    }
+
+    fn redaction_item(start: f64, end: f64, payload: serde_json::Value) -> LayersStoreItemRequest {
+        LayersStoreItemRequest {
+            start_sec: start,
+            end_sec: Some(end),
+            searchable_text: format!("redact: fixture {start}-{end}"),
+            payload: hkask_types::AnyJsonValue(payload),
+            frame_asset_ids: None,
+        }
+    }
+
+    fn approved_redaction_payload(effect: &str, target: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "op": "redact",
+            "tier": "ffmpeg",
+            "effect": effect,
+            "target": target,
+            "source_tag_refs": [],
+            "status": "approved",
+        })
+    }
+
+    fn approved_box_target() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "box",
+            "box": {"x": 0.25, "y": 0.25, "w": 0.5, "h": 0.5},
+        })
+    }
+
+    fn render_redactions(
+        media_path: &str,
+        layer_id: &str,
+    ) -> Parameters<crate::types::LayersRenderRedactionsRequest> {
+        Parameters(crate::types::LayersRenderRedactionsRequest {
+            media_path: media_path.to_string(),
+            layer_id: layer_id.to_string(),
+        })
+    }
+
+    /// dcterms:identifier: `MediaServer::layers_render_redactions`
+    /// expect: No redaction renders without an approved, human-authored
+    /// decision layer — every gate failure is typed and names the layer.
+    /// [P1] Motivating: the hard human gate (design §6) blocks machine
+    /// redaction and unapproved decisions before any ffmpeg work.
+    /// [P1] Constraining: mask_track is reserved tier-2 vocabulary and
+    /// fails as permission_denied naming the serving path.
+    #[tokio::test]
+    async fn layers_render_redactions_gates_require_an_approved_human_decision()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let fixture = gallery_root.path().join("redaction-gates.mp4");
+        create_redaction_mpeg4_video(&fixture).await?;
+        let media_path = fixture.to_string_lossy().into_owned();
+
+        let unknown = server
+            .layers_render_redactions(render_redactions(&media_path, "no-such-decision-layer"))
+            .await
+            .expect_err("an unknown layer id fails");
+        assert!(
+            unknown.to_string().contains("not_found"),
+            "classified not_found: {unknown}"
+        );
+        assert!(
+            unknown.to_string().contains("no-such-decision-layer"),
+            "names the missing layer: {unknown}"
+        );
+
+        let wrong_kind = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Object,
+            "user",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                approved_redaction_payload("black", approved_box_target()),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &wrong_kind))
+            .await
+            .expect_err("a wrong-kind layer fails");
+        assert!(
+            error.to_string().contains("invalid_argument"),
+            "classified invalid_argument: {error}"
+        );
+        assert!(
+            error.to_string().contains("researcher"),
+            "names the required kind: {error}"
+        );
+
+        let machine_authored = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "test-inference-label",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                approved_redaction_payload("black", approved_box_target()),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &machine_authored))
+            .await
+            .expect_err("a machine-authored decision layer never renders");
+        assert!(
+            error.to_string().contains("failed_precondition"),
+            "classified failed_precondition: {error}"
+        );
+        assert!(
+            error.to_string().contains("never machine-authored"),
+            "names the human-act contract: {error}"
+        );
+        assert!(
+            error.to_string().contains(&machine_authored),
+            "names the layer: {error}"
+        );
+
+        let other_fixture = gallery_root.path().join("redaction-other.mp4");
+        create_redaction_mpeg4_video(&other_fixture).await?;
+        let other_path = other_fixture.to_string_lossy().into_owned();
+        let approved_on_source = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                approved_redaction_payload("black", approved_box_target()),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&other_path, &approved_on_source))
+            .await
+            .expect_err("a decision layer for another recording fails");
+        assert!(
+            error.to_string().contains("not_found"),
+            "classified not_found: {error}"
+        );
+        assert!(
+            error.to_string().contains(&approved_on_source)
+                && error.to_string().contains(&other_path),
+            "names the layer and the requested recording: {error}"
+        );
+
+        let empty = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &empty))
+            .await
+            .expect_err("an empty decision layer has nothing to render");
+        assert!(
+            error.to_string().contains("not_found") && error.to_string().contains("empty"),
+            "names the empty layer: {error}"
+        );
+
+        let pending = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                serde_json::json!({
+                    "op": "redact", "tier": "ffmpeg", "effect": "black",
+                    "target": approved_box_target(), "status": "pending",
+                }),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &pending))
+            .await
+            .expect_err("an unapproved decision never renders");
+        assert!(
+            error.to_string().contains("failed_precondition"),
+            "classified failed_precondition: {error}"
+        );
+        assert!(
+            error.to_string().contains("approved"),
+            "names the approval contract: {error}"
+        );
+
+        let bad_effect = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                approved_redaction_payload("vaporize", approved_box_target()),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &bad_effect))
+            .await
+            .expect_err("an unknown effect rejects");
+        assert!(
+            error.to_string().contains("failed_precondition")
+                && error.to_string().contains("blur|pixelate|black|delogo"),
+            "names the valid effects: {error}"
+        );
+
+        let mask_track = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.0,
+                2.0,
+                approved_redaction_payload(
+                    "blur",
+                    serde_json::json!({
+                        "kind": "mask_track", "track_id": "track_1",
+                    }),
+                ),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&media_path, &mask_track))
+            .await
+            .expect_err("a mask_track target is tier-2 vocabulary");
+        assert!(
+            error.to_string().contains("permission_denied"),
+            "classified permission_denied: {error}"
+        );
+        assert!(
+            error.to_string().contains("mask/removal"),
+            "names the serving path: {error}"
+        );
+        assert!(
+            error.to_string().contains("tier-2"),
+            "names the reserved tier: {error}"
+        );
+        assert!(
+            error.to_string().contains(&mask_track),
+            "names the layer: {error}"
+        );
+
+        let audio_fixture = gallery_root.path().join("redaction-gates.wav");
+        create_real_audio(&audio_fixture).await?;
+        let audio_path = audio_fixture.to_string_lossy().into_owned();
+        let audio_decision = store_layer(
+            &server,
+            &audio_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                0.0,
+                1.0,
+                approved_redaction_payload("black", approved_box_target()),
+            )],
+        )
+        .await?;
+        let error = server
+            .layers_render_redactions(render_redactions(&audio_path, &audio_decision))
+            .await
+            .expect_err("an audio-only source cannot be redacted");
+        assert!(
+            error.to_string().contains("failed_precondition")
+                && error.to_string().contains("video stream"),
+            "names the video-stream requirement: {error}"
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::layers_render_redactions`
+    /// expect: An approved black-box decision renders a durable redacted
+    /// copy whose timeline tiles the source — only the affected segment
+    /// re-encodes, untouched segments stream-copy bit-stably, and the box is
+    /// drawn exactly inside the decision's time window.
+    /// [P1] Motivating: the operator's approved redaction appears in a
+    /// playable asset while everything they did not redact stays untouched.
+    /// [P1] Constraining: source media bytes are never modified.
+    #[tokio::test]
+    async fn layers_render_redactions_end_to_end_black_box()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let fixture = gallery_root.path().join("redaction-e2e.mp4");
+        create_redaction_mpeg4_video(&fixture).await?;
+        let media_path = fixture.to_string_lossy().into_owned();
+        let source_bytes_before = std::fs::read(&fixture)?;
+
+        // The box {0.25, 0.25, 0.5, 0.5} on the 64x48 fixture is the
+        // 32x24 pixel region at (16, 12); the redaction window [1.2, 1.8]
+        // keyframe-aligns the re-encoding segment to [1.0, 2.0].
+        let layer_id = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.2,
+                1.8,
+                approved_redaction_payload("black", approved_box_target()),
+            )],
+        )
+        .await?;
+        let rendered = content_of(
+            &server
+                .layers_render_redactions(render_redactions(&media_path, &layer_id))
+                .await?,
+        );
+        assert_eq!(rendered["status"], serde_json::json!("rendered"));
+        assert_eq!(rendered["decision_layer_id"], serde_json::json!(layer_id));
+        let segments = rendered["segments"]
+            .as_array()
+            .ok_or("segments array")?
+            .iter()
+            .map(|segment| {
+                Ok((
+                    segment["mode"].as_str().ok_or("mode")?,
+                    segment["start_sec"].as_f64().ok_or("start")?,
+                    segment["end_sec"].as_f64().ok_or("end")?,
+                ))
+            })
+            .collect::<Result<Vec<(&str, f64, f64)>, Box<dyn std::error::Error>>>()?;
+        assert_eq!(
+            segments,
+            vec![
+                ("stream_copy", 0.0, 1.0),
+                ("reencode", 1.0, 2.0),
+                ("stream_copy", 2.0, 4.0)
+            ],
+            "the plan tiles the source with one keyframe-aligned re-encode \
+             segment around the redaction window"
+        );
+        assert_eq!(rendered["reencoded_segments"], serde_json::json!(1));
+        assert_eq!(rendered["stream_copied_segments"], serde_json::json!(2));
+        assert_eq!(rendered["decisions_rendered"], serde_json::json!(1));
+        assert_eq!(
+            rendered["applied_items"][0]["pixel_x"],
+            serde_json::json!(16)
+        );
+        assert_eq!(
+            rendered["applied_items"][0]["pixel_y"],
+            serde_json::json!(12)
+        );
+        assert_eq!(
+            rendered["applied_items"][0]["pixel_w"],
+            serde_json::json!(32)
+        );
+        assert_eq!(
+            rendered["applied_items"][0]["pixel_h"],
+            serde_json::json!(24)
+        );
+        let local_start = rendered["applied_items"][0]["local_start_sec"]
+            .as_f64()
+            .ok_or("local_start_sec")?;
+        let local_end = rendered["applied_items"][0]["local_end_sec"]
+            .as_f64()
+            .ok_or("local_end_sec")?;
+        assert!(
+            (local_start - 0.2).abs() < 1e-6,
+            "window starts at 0.2: {local_start}"
+        );
+        assert!(
+            (local_end - 0.8).abs() < 1e-6,
+            "window ends at 0.8: {local_end}"
+        );
+
+        let output_path = rendered["result"]["output"]
+            .as_str()
+            .ok_or("published output path")?
+            .to_string();
+        assert!(
+            std::path::Path::new(&output_path).is_file(),
+            "the render is published"
+        );
+        let probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let duration: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse()?;
+        assert!(
+            (duration - 4.0).abs() < 0.05,
+            "the rendered timeline tiles the source duration: {duration}"
+        );
+
+        // THE pin: untouched segments stream-copy — decoded frames in the
+        // copy spans are bit-identical to the source; any re-encode there
+        // would change them (the source is lossy mpeg4, so a second
+        // encode never reproduces the same pixels).
+        for ts in [0.5, 3.5] {
+            let source_frame = redaction_frame_bytes(&media_path, ts, None).await?;
+            let output_frame = redaction_frame_bytes(&output_path, ts, None).await?;
+            assert!(!source_frame.is_empty(), "source frame at {ts}s extracted");
+            assert_eq!(
+                source_frame, output_frame,
+                "the untouched frame at {ts}s is a bit-stable stream copy"
+            );
+        }
+
+        // The box region: black inside the decision window, source content
+        // everywhere else — including after the window inside the
+        // re-encoded segment (the enable-window tail) and inside the copy
+        // segments.
+        let crop = Some((32, 24, 16, 12));
+        let in_window = redaction_frame_bytes(&output_path, 1.5, crop).await?;
+        assert!(
+            gray_mean(&in_window) < 10.0,
+            "the box is black inside the decision window: {}",
+            gray_mean(&in_window)
+        );
+        for ts in [1.0, 1.9, 2.5] {
+            let region = redaction_frame_bytes(&output_path, ts, crop).await?;
+            assert!(
+                gray_mean(&region) > 20.0,
+                "the box region is untouched outside the window at {ts}s: {}",
+                gray_mean(&region)
+            );
+        }
+
+        assert_eq!(
+            std::fs::read(&fixture)?,
+            source_bytes_before,
+            "source media bytes are never modified"
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::layers_render_redactions`
+    /// expect: An approved blur decision renders over an H.264 source with
+    /// B-frames and audio — the segment-muxer copy path holds the timeline,
+    /// the re-encoded segment repeats in-band parameter sets for the
+    /// concat, and the blurred region is visibly smoothed only inside the
+    /// window.
+    /// [P1] Motivating: real recordings (H.264 with audio) redact as
+    /// correctly as the simple case.
+    #[tokio::test]
+    async fn layers_render_redactions_end_to_end_h264_blur()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let fixture = gallery_root.path().join("redaction-e2e-h264.mp4");
+        create_redaction_h264_video(&fixture).await?;
+        let media_path = fixture.to_string_lossy().into_owned();
+
+        let layer_id = store_layer(
+            &server,
+            &media_path,
+            crate::layer_store::MediaLayerKind::Researcher,
+            "user",
+            vec![redaction_item(
+                1.2,
+                1.8,
+                approved_redaction_payload("blur", approved_box_target()),
+            )],
+        )
+        .await?;
+        let rendered = content_of(
+            &server
+                .layers_render_redactions(render_redactions(&media_path, &layer_id))
+                .await?,
+        );
+        assert_eq!(rendered["status"], serde_json::json!("rendered"));
+        assert_eq!(rendered["reencoded_segments"], serde_json::json!(1));
+        assert_eq!(rendered["stream_copied_segments"], serde_json::json!(2));
+
+        let output_path = rendered["result"]["output"]
+            .as_str()
+            .ok_or("published output path")?
+            .to_string();
+        // Audio stream-copied through both segment kinds.
+        let audio_probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        assert_eq!(
+            String::from_utf8_lossy(&audio_probe.stdout).trim(),
+            "aac",
+            "the audio track survived the render: {}",
+            String::from_utf8_lossy(&audio_probe.stdout)
+        );
+        let probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let container_duration: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse()?;
+        let video_probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=duration",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let video_duration: f64 = String::from_utf8_lossy(&video_probe.stdout)
+            .trim()
+            .parse()?;
+        assert!(
+            (video_duration - 4.0).abs() < 0.05,
+            "the B-frame source still tiles its video timeline: {video_duration}"
+        );
+        // The container duration carries the audio-cut granularity (one
+        // AAC frame per boundary) — bounded, never drifting by a segment.
+        assert!(
+            (container_duration - 4.0).abs() < 0.25,
+            "the container duration stays within the audio-cut granularity: \
+             {container_duration}"
+        );
+
+        // The untouched spans are bit-stable even on the B-frame source —
+        // the segment-muxer copy path, not the overshooting `-to` clip.
+        for ts in [0.5, 3.5] {
+            let source_frame = redaction_frame_bytes(&media_path, ts, None).await?;
+            let output_frame = redaction_frame_bytes(&output_path, ts, None).await?;
+            assert!(!source_frame.is_empty(), "source frame at {ts}s extracted");
+            assert_eq!(
+                source_frame, output_frame,
+                "the untouched frame at {ts}s is a bit-stable stream copy"
+            );
+        }
+
+        // The blur: inside the window the region is smoothed — adjacent-
+        // pixel detail collapses under gblur — and after the window, inside
+        // the same re-encoded segment, it is not.
+        let crop = Some((32, 24, 16, 12));
+        let source_region = redaction_frame_bytes(&media_path, 1.5, crop).await?;
+        let blurred_region = redaction_frame_bytes(&output_path, 1.5, crop).await?;
+        assert_ne!(
+            source_region, blurred_region,
+            "the window region is blurred"
+        );
+        let source_detail = gray_adjacent_mean_difference(&source_region, 32);
+        let blurred_detail = gray_adjacent_mean_difference(&blurred_region, 32);
+        assert!(
+            blurred_detail * 3.0 < source_detail,
+            "gblur collapses the region's adjacent-pixel detail: blurred \
+             {blurred_detail} vs source {source_detail}"
+        );
+        let after_window = redaction_frame_bytes(&output_path, 1.9, crop).await?;
+        let after_detail = gray_adjacent_mean_difference(&after_window, 32);
+        assert!(
+            after_detail > 3.0 * blurred_detail,
+            "the region after the window is not smoothed: after {after_detail} \
+             vs blurred {blurred_detail}"
         );
         Ok(())
     }
