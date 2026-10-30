@@ -1,3 +1,13 @@
+---
+title: "Media-model selection report — STT, audio events, visual-event tagging, object redaction"
+audience: [developers, architects, operators]
+last_updated: 2026-10-29
+version: "1.0.0"
+status: "Proposed — model review for operator decision; adoptions and outcomes recorded in dated brackets"
+domain: "Media / hkask-mcp-media"
+mds_categories: [domain, research]
+---
+
 # Media-model selection report — STT, audio events, visual-event tagging, object redaction
 
 Status: **PROPOSAL — operator review required.** Nothing here is adopted, wired, or committed.

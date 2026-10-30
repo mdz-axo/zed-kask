@@ -1,3 +1,13 @@
+---
+title: "Visual-event tagging and object redaction — the non-word transcript (design)"
+audience: [developers, architects, operators]
+last_updated: 2026-10-29
+version: "1.0.0"
+status: "Proposed design — unbuilt parts await operator decisions in the final section"
+domain: "Media / hkask-mcp-media"
+mds_categories: [domain, research]
+---
+
 # Visual-event tagging and object redaction — the non-word transcript (design)
 
 Status: **PROPOSAL — operator review required.** No code written, nothing committed, no tasks filed.
