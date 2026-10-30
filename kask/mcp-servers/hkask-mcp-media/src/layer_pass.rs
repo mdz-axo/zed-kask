@@ -75,6 +75,25 @@ fn resolve_layer_model(model_override: Option<&str>) -> Result<String, LayerPass
         })
 }
 
+/// Resolve the audio-pass model — the audio-role chain (operator steer
+/// 2026-10-30, card 9fc54490): an explicit per-call override, then the
+/// sound-annotation setting (`HKASK_MEDIA_SOUND_ANNOTATION_MODEL`); `None`
+/// when nothing is configured (the caller fails visibly naming the
+/// setting). Audio-only models never route via `HKASK_MEDIA_PASS_MODEL` —
+/// the shared pass-model env serves the text/vision passes, and routing an
+/// audio-only model through it would break them; the vision default is not
+/// audio-capable, so it is not a fallback here.
+fn resolve_audio_layer_model(model_override: Option<&str>) -> Result<String, LayerPassError> {
+    model_override
+        .map(str::to_string)
+        .or_else(crate::models::sound_annotation_model)
+        .filter(|model| !model.trim().is_empty())
+        .ok_or(LayerPassError::NotConfigured {
+            kind: "media audio layer pass",
+            env: "HKASK_MEDIA_SOUND_ANNOTATION_MODEL (the sound annotation model setting)",
+        })
+}
+
 /// The bounded chunk/resume result: per-chunk typed outputs in chunk
 /// order, the chunk index a follow-up call should resume from (`None`
 /// when the plan is fully processed), and the resolved model (recorded in
@@ -291,7 +310,7 @@ pub async fn run_layer_pass_audio<TOutput: serde::de::DeserializeOwned>(
     expected: &'static str,
 ) -> Result<LayerPassResult<TOutput>, LayerPassError> {
     let range = plan_chunk_range(chunks.len(), resume_from, max_chunks)?;
-    let model = resolve_layer_model(model_override)?;
+    let model = resolve_audio_layer_model(model_override)?;
     let mut outputs = Vec::with_capacity(range.len());
     for chunk in &chunks[range.clone()] {
         let params = hkask_types::MediaGenerateParams {

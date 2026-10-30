@@ -228,6 +228,18 @@ pub(crate) fn emit_media_env(
             media.vision_model.clone(),
         );
     }
+    if !media.sound_annotation_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_SOUND_ANNOTATION_MODEL".to_string(),
+            media.sound_annotation_model.clone(),
+        );
+    }
+    if !media.tagging_model.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_TAGGING_MODEL".to_string(),
+            media.tagging_model.clone(),
+        );
+    }
 }
 
 /// Settings-struct-backed `config_env` keys emitted by `KaskSettings::mcp_env`.
@@ -256,6 +268,8 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
+    "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+    "HKASK_MEDIA_TAGGING_MODEL",
     "HKASK_DEFAULT_MODEL",
     "HKASK_CLASSIFIER_MODEL",
     hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
@@ -416,6 +430,28 @@ mod tests {
             env.get("HKASK_MEDIA_VISION_MODEL").map(String::as_str),
             Some(hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL),
             "default settings emit the code-default vision model"
+        );
+        // The media role models (settings > kask > models, operator ruling
+        // 2026-10-30) are emitted for the same reason: the audio pass and the
+        // grounded tagging pass resolve them with no other fallback.
+        assert!(
+            env.contains_key("HKASK_MEDIA_SOUND_ANNOTATION_MODEL"),
+            "default sound_annotation_model must be emitted — the audio pass has no fallback"
+        );
+        assert_eq!(
+            env.get("HKASK_MEDIA_SOUND_ANNOTATION_MODEL")
+                .map(String::as_str),
+            Some(hkask_inference::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL),
+            "default settings emit the code-default sound-annotation model"
+        );
+        assert!(
+            env.contains_key("HKASK_MEDIA_TAGGING_MODEL"),
+            "default tagging_model must be emitted — the grounded pass has no fallback"
+        );
+        assert_eq!(
+            env.get("HKASK_MEDIA_TAGGING_MODEL").map(String::as_str),
+            Some(hkask_inference::model_constants::DEFAULT_MEDIA_TAGGING_MODEL),
+            "default settings emit the code-default tagging model"
         );
         // The per-server data-dir env vars are now always emitted (resolved
         // from `data_dir` per the Standardized Artifact Storage layout), so

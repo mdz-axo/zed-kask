@@ -400,6 +400,12 @@ pub(crate) fn kask_string_input(
                 ("media", "vision_model") => {
                     kask.media.get_or_insert_default().vision_model = Some(parsed);
                 }
+                ("media", "sound_annotation_model") => {
+                    kask.media.get_or_insert_default().sound_annotation_model = Some(parsed);
+                }
+                ("media", "tagging_model") => {
+                    kask.media.get_or_insert_default().tagging_model = Some(parsed);
+                }
 
                 ("models", "default_model") => {
                     kask.models.get_or_insert_default().default_model = Some(parsed);
@@ -704,11 +710,12 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.media"),
             description: Some(
-                "Configure the media MCP server: model overrides for TTS, \
-                 speech-to-text, vision, and image generation, plus the gallery \
-                 storage path.".into(),
+                "Configure the media MCP server: speech-to-text and vision \
+                 model overrides. The media role models (sound annotation, \
+                 grounded tagging) render on the Models sub-page."
+                    .into(),
             ),
-            search_aliases: &["media", "image", "video", "voice", "tts", "gallery", "transcribe"],
+            search_aliases: &["media", "image", "video", "voice", "gallery", "transcribe"],
             in_json: true,
             files: USER,
             render: render_media_page,
@@ -720,7 +727,8 @@ pub(crate) fn kask_page() -> SettingsPage {
             description: Some(
                 "Configure kask-wide model defaults: default inference model, \
                  embedding model for corpus/memory, classifier model for \
-                 guard/regulation, and OCR model for scanned document OCR. \
+                 guard/regulation, OCR model for scanned document OCR, and \
+                 the media role models (sound annotation, grounded tagging). \
                  These are provider-prefixed strings (e.g. \
                  \"openrouter/z-ai/glm-5.2\") that override the kask built-in defaults."
                     .into(),
@@ -732,6 +740,8 @@ pub(crate) fn kask_page() -> SettingsPage {
                 "classifier model",
                 "inference model",
                 "ocr model",
+                "sound annotation model",
+                "tagging model",
             ],
             in_json: true,
             files: USER,

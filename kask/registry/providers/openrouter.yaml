@@ -25,6 +25,13 @@ consumed_capabilities:
     note: the reviewed Nemotron-Transcribe flip (DeepInfra) is prepared and
       pinned but held 2026-10-29 — the endpoint's word chunking was unstable
       same-day (one success, then 0/7); the live probe re-checks it
+  - capability: sound annotation (audio-chat) — qwen/qwen3.8-omni-flash
+    source: kask/crates/hkask-inference/src/model_constants.rs
+    note: the sound_annotation_model settings default (Settings > Kask >
+      Models, env HKASK_MEDIA_SOUND_ANNOTATION_MODEL) — the input_audio probe
+      2026-10-29 (goal a6c6fdf3, card M2) produced a labeled audio_event layer
+      in one call on a real recording; mistralai/voxtral-small-24b-2507 is the
+      recorded fallback
   - capability: vision — openai/gpt-4o-mini
     source: kask/crates/hkask-inference/src/model_constants.rs
   - capability: edit predictions — z-ai/glm-5.2

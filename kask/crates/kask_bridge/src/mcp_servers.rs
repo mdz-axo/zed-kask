@@ -305,6 +305,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // Research model overrides, supplied by settings-layer defaults.
             "HKASK_MEDIA_STT_MODEL",
             "HKASK_MEDIA_VISION_MODEL",
+            // Media role models (settings > kask > models) — the audio pass
+            // resolves per-call → HKASK_MEDIA_SOUND_ANNOTATION_MODEL →
+            // NotConfigured (audio-only models never route via the shared
+            // pass-model env); the grounded tagging pass resolves per-call →
+            // HKASK_MEDIA_TAGGING_MODEL → the vision default.
+            "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+            "HKASK_MEDIA_TAGGING_MODEL",
             // Text-layer pass model override (operator process env — no
             // settings field yet; the media server falls back to the
             // vision/analysis model when unset).
@@ -1007,14 +1014,24 @@ mod tests {
     /// variables cannot re-enable retired pipelines through child injection.
     #[test]
     fn media_models_are_research_only_and_round_trip_to_child() {
-        let content: settings_content::KaskMediaSettingsContent = serde_json::from_value(
-            serde_json::json!({"stt_model":"OpenRouter/research-stt", "vision_model":"OpenRouter/research-vision"}),
-        ).expect("research media content");
+        let content: settings_content::KaskMediaSettingsContent =
+            serde_json::from_value(serde_json::json!({
+                "stt_model":"OpenRouter/research-stt",
+                "vision_model":"OpenRouter/research-vision",
+                "sound_annotation_model":"OpenRouter/research-sound",
+                "tagging_model":"ollama/research-tagging"
+            }))
+            .expect("research media content");
         let mut settings = crate::KaskSettings::default();
         settings.media = content.into();
         let env = settings.mcp_env();
         let media_env = filter_config_env_for_server("media", &env);
-        for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+        for key in [
+            "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_VISION_MODEL",
+            "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+            "HKASK_MEDIA_TAGGING_MODEL",
+        ] {
             assert_eq!(media_env.get(key), env.get(key));
             assert!(media_env.contains_key(key));
             for server in BUILT_IN_MCP_SERVERS
@@ -1025,11 +1042,18 @@ mod tests {
             }
         }
         let cleared: settings_content::KaskMediaSettingsContent =
-            serde_json::from_value(serde_json::json!({"stt_model":"", "vision_model":""}))
+            serde_json::from_value(
+                serde_json::json!({"stt_model":"", "vision_model":"", "sound_annotation_model":"", "tagging_model":""})
+            )
                 .expect("explicitly cleared models");
         settings.media = cleared.into();
         let cleared_env = settings.mcp_env();
-        for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+        for key in [
+            "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_VISION_MODEL",
+            "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+            "HKASK_MEDIA_TAGGING_MODEL",
+        ] {
             assert!(!cleared_env.contains_key(key));
         }
         let retired: std::collections::HashMap<String, String> = [
@@ -1816,6 +1840,11 @@ mod tests {
                     ("configured(STT_ENV)", "HKASK_MEDIA_STT_MODEL"),
                     ("configured(VISION_ENV)", "HKASK_MEDIA_VISION_MODEL"),
                     ("configured(PASS_ENV)", "HKASK_MEDIA_PASS_MODEL"),
+                    (
+                        "configured(SOUND_ANNOTATION_ENV)",
+                        "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+                    ),
+                    ("configured(TAGGING_ENV)", "HKASK_MEDIA_TAGGING_MODEL"),
                 ] {
                     if prod_content.contains(const_ref) {
                         read_vars.insert(env_name.to_string());

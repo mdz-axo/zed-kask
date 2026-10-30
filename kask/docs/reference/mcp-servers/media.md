@@ -107,27 +107,37 @@ research model settings and remove retired creative model overrides. See the
 | `HKASK_MEDIA_STT_MODEL` | STT model — transcription (`models::stt_model()`) | not configured — STT calls fail visibly |
 | `HKASK_MEDIA_PASS_MODEL` | Text-layer pass model (correction/paragraph/highlight/speaker); an explicit per-call model override wins over it (`models::pass_model()`) | falls back to the configured analysis model `HKASK_MEDIA_VISION_MODEL` |
 | `HKASK_MEDIA_VISION_MODEL` | Vision model (`models::vision_model()`) | not configured — vision calls fail visibly |
+| `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` | Sound-annotation model for the audio passes (`models::sound_annotation_model()`) — the audio-event pass and the speaker pass's audio source | not configured — audio passes fail visibly (never via `HKASK_MEDIA_PASS_MODEL`) |
+| `HKASK_MEDIA_TAGGING_MODEL` | Grounded-tagging model for the grounded mode of the vision pass (`models::tagging_model()`) | the grounded pass falls back to the configured analysis model `HKASK_MEDIA_VISION_MODEL` |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for gallery similarity search (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:396-408`) | not configured — embedding-dependent calls fail visibly naming `kask.models.embedding_model` |
 | `HKASK_SERPAPI_API_KEY` | SerpApi credential for `youtube_search` metadata | `youtube_search` returns `permission_denied` naming the missing key |
 
 `build_model_list` lists only configured models — an unset modality is absent from the list, never a hidden default (`kask/mcp-servers/hkask-mcp-media/src/tools/models.rs:15-30`).
 
-Settings → Kask → Media configures only `stt_model` and `vision_model` via
-`KaskMediaSettings` → `emit_media_env`. Absent settings use settings-layer
-constants; explicitly empty values clear those defaults and fail visibly.
+Settings → Kask → Models and Settings → Kask → Media configure the four
+`KaskMediaSettings` fields via `emit_media_env` — the two role models
+(sound annotation, grounded tagging) render on the Models page per the
+operator's 2026-10-30 ruling, and save through the `"media"` section.
+Absent settings use settings-layer constants; explicitly empty values clear
+those defaults and fail visibly.
 There is no TTS/image-generation/video-generation setting or hidden fallback.
 Text-layer passes (correction, paragraph, highlight, speaker) resolve their
 model as an explicit per-call override, then `HKASK_MEDIA_PASS_MODEL`
 (operator process env — no settings field yet), then the configured
 analysis model (`HKASK_MEDIA_VISION_MODEL`); the STT model serves
 transcription only (2026-10-25 repair, commit `f6a786cdcb`).
-Audio-input passes (`layers_audio_pass`, the speaker pass's audio source)
-take the same per-call override; the verified audio-capable model is
-`OpenRouter/qwen/qwen3.8-omni-flash` (input_audio probe 2026-10-29 — one
-call on a real recording, labeled audio_event items), with
-`OpenRouter/mistralai/voxtral-small-24b-2507` as the named fallback.
-Audio-only models are passed per-call only, never via `HKASK_MEDIA_PASS_MODEL`
-(there is no pass settings field, and the env is shared with vision passes).
+Audio-input passes (`layers_audio_pass` and the speaker pass's audio source)
+resolve an explicit per-call override, then the sound-annotation setting
+(`HKASK_MEDIA_SOUND_ANNOTATION_MODEL`, default
+`OpenRouter/qwen/qwen3.8-omni-flash` — the input_audio probe 2026-10-29,
+goal a6c6fdf3 card M2, produced a labeled audio_event layer in one call on
+a real recording, with `OpenRouter/mistralai/voxtral-small-24b-2507` as the
+recorded fallback); an unset setting fails visibly (NotConfigured names it).
+Audio-only models never route via `HKASK_MEDIA_PASS_MODEL` — the shared
+pass-model env serves the text/vision passes, and routing an audio-only
+model through it would break them. The grounded mode of the vision pass
+resolves its model per-call, then the tagging setting
+(`HKASK_MEDIA_TAGGING_MODEL`), then the configured analysis model.
 
 **System dependencies:**
 

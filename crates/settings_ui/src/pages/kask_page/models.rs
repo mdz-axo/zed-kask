@@ -1,6 +1,8 @@
 //! Models sub-page — kask-wide model defaults (default inference model,
 //! embedding model, classifier model, dedicated QA generator, OCR model,
-//! rerank model).
+//! rerank model) plus the media role models (sound annotation, grounded
+//! tagging — `kask.media` fields rendered here per the operator's
+//! settings > kask > models ruling, saved through the media section).
 
 use super::*;
 
@@ -13,7 +15,8 @@ pub(crate) fn render_models_page(
     let raw = raw_kask_settings(cx);
     // Resolve via `From` so the UI shows the same defaults the runtime uses.
     let models: kask_bridge::KaskModelsSettings = raw
-        .and_then(|c| c.models)
+        .as_ref()
+        .and_then(|c| c.models.clone())
         .map(Into::into)
         .unwrap_or_default();
     let default_model = models.default_model;
@@ -22,6 +25,17 @@ pub(crate) fn render_models_page(
     let qa_generation_model = models.qa_generation_model;
     let ocr_model = models.ocr_model;
     let rerank_model = models.rerank_model;
+    // The media role models (settings > kask > models, operator ruling
+    // 2026-10-30): resolved via `From` so the inputs show the same defaults
+    // the runtime uses; saved through the `"media"` settings section.
+    let media: kask_bridge::KaskMediaSettings = raw
+        .as_ref()
+        .and_then(|c| c.media.clone())
+        .map(Into::into)
+        .unwrap_or_default();
+    let sound_annotation_model = media.sound_annotation_model;
+    let tagging_model = media.tagging_model;
+    let media_code_defaults = kask_bridge::KaskMediaSettings::default();
     // The code defaults (what applies when a field is left empty) — rendered
     // from the `Default` impls so the help text can never drift from the
     // actual defaults (operator ruling 2026-09-04: defaults in code,
@@ -77,6 +91,22 @@ pub(crate) fn render_models_page(
         rerank_model,
         "models",
         "rerank_model",
+    );
+    let sound_annotation_input = kask_string_input(
+        "kask-models-sound-annotation",
+        "Sound Annotation Model",
+        "Provider/model-id (clear to disable audio passes)",
+        sound_annotation_model,
+        "media",
+        "sound_annotation_model",
+    );
+    let tagging_input = kask_string_input(
+        "kask-models-tagging",
+        "Tagging Model",
+        "Provider/model-id (clear to disable grounded tagging)",
+        tagging_model,
+        "media",
+        "tagging_model",
     );
 
     v_flex()
@@ -203,6 +233,43 @@ pub(crate) fn render_models_page(
                 )
                 .child(rerank_model_input),
         )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Sound Annotation Model"))
+                .child(
+                    Label::new(format!(
+                        "Provider-prefixed audio model for the audio-event pass \
+                         (layers_audio_pass) and the speaker pass's audio source. Leave \
+                         empty to use the kask default ({}); clearing it disables audio \
+                         passes with a visible configuration error.",
+                        media_code_defaults.sound_annotation_model
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(sound_annotation_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Tagging Model"))
+                .child(
+                    Label::new(format!(
+                        "Provider-prefixed vision model for the grounded tagging pass \
+                         (the grounded mode of layers_semantic_pass). Leave empty to \
+                         use the kask default ({}); an explicit per-call override wins. \
+                         Clearing it disables grounded tagging with a visible \
+                         configuration error.",
+                        media_code_defaults.tagging_model
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(tagging_input),
+        )
         .into_any_element()
 }
 
@@ -237,6 +304,21 @@ mod tests {
             "kask.models.get_or_insert_default().",
             "rerank_model ="
         )));
+    }
+
+    /// D9, same discipline for the media role models (operator ruling
+    /// 2026-10-30): both controls render on the Models page but save through
+    /// the `"media"` settings section — pin each control's save arm so the
+    /// page/dispatcher pair cannot drift apart.
+    #[test]
+    fn media_role_model_controls_have_save_dispatch_arms() {
+        let page = include_str!("models.rs");
+        let dispatcher = include_str!("../kask_page.rs");
+        for field in ["sound_annotation_model", "tagging_model"] {
+            assert!(page.contains(&format!("\"media\",\n        \"{field}\",")));
+            assert!(dispatcher.contains(&format!("(\"media\", \"{field}\") => {{")));
+            assert!(dispatcher.contains(&format!("kask.media.get_or_insert_default().{field} =")));
+        }
     }
 
     /// Exercise the host's real settings file writer and reload path on FakeFs

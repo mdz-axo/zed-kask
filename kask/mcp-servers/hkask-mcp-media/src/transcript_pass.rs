@@ -698,14 +698,17 @@ pub async fn run_speaker_pass_audio(
     if bundle.words.is_empty() {
         return Err(PassError::NoWordTimings);
     }
+    // The audio-role chain (card 9fc54490): per-call override → the
+    // sound-annotation setting → NotConfigured. Audio-only models never
+    // route via HKASK_MEDIA_PASS_MODEL (the shared pass env serves the
+    // text passes), and the vision default is not audio-capable.
     let resolved_model = model_override
         .map(str::to_string)
-        .or_else(crate::models::pass_model)
-        .or_else(crate::models::vision_model)
+        .or_else(crate::models::sound_annotation_model)
         .filter(|model| !model.trim().is_empty())
         .ok_or(PassError::NotConfigured {
             kind: "speaker-audio pass",
-            env: "HKASK_MEDIA_PASS_MODEL or HKASK_MEDIA_VISION_MODEL (the configured analysis model)",
+            env: "HKASK_MEDIA_SOUND_ANNOTATION_MODEL (the sound annotation model setting)",
         })?;
     let schema = serde_json::to_string(&schemars::schema_for!(SpeakerPassOutput))
         .map_err(|e| PassError::Prompt(format!("schema serialization: {e}")))?;

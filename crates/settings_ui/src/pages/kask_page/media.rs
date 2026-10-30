@@ -3,8 +3,11 @@
 //! Reads from `kask_bridge::KaskMediaSettings` (the `"kask.media"` section
 //! in settings.json) and writes via `kask_string_input` — the same pattern
 //! as every other kask settings sub-page. The media MCP server reads these
-//! as env vars (`HKASK_MEDIA_STT_MODEL`, `HKASK_MEDIA_VISION_MODEL`) emitted by
-//! `mcp_env::emit_media_env` at server launch.
+//! as env vars (`HKASK_MEDIA_STT_MODEL`, `HKASK_MEDIA_VISION_MODEL`,
+//! `HKASK_MEDIA_SOUND_ANNOTATION_MODEL`, `HKASK_MEDIA_TAGGING_MODEL`)
+//! emitted by `mcp_env::emit_media_env` at server launch. The role models
+//! (sound annotation, grounded tagging) render on the Models sub-page per
+//! the operator's settings > kask > models ruling.
 
 use super::*;
 
@@ -107,6 +110,8 @@ mod tests {
                             .get_or_insert_default();
                         media.stt_model = Some(value.into());
                         media.vision_model = Some(value.into());
+                        media.sound_annotation_model = Some(value.into());
+                        media.tagging_model = Some(value.into());
                     },
                 )
             });
@@ -128,8 +133,15 @@ mod tests {
                 let resolved: kask_bridge::KaskSettings = content.into();
                 assert_eq!(resolved.media.stt_model, value);
                 assert_eq!(resolved.media.vision_model, value);
+                assert_eq!(resolved.media.sound_annotation_model, value);
+                assert_eq!(resolved.media.tagging_model, value);
                 let env = resolved.mcp_env();
-                for key in ["HKASK_MEDIA_STT_MODEL", "HKASK_MEDIA_VISION_MODEL"] {
+                for key in [
+                    "HKASK_MEDIA_STT_MODEL",
+                    "HKASK_MEDIA_VISION_MODEL",
+                    "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+                    "HKASK_MEDIA_TAGGING_MODEL",
+                ] {
                     assert_eq!(
                         env.get(key).map(String::as_str),
                         (!value.is_empty()).then_some(value)

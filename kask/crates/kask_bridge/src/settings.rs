@@ -387,8 +387,8 @@ pub struct KaskScenariosSettings {}
 
 /// Media MCP server configuration.
 ///
-/// Research transcription and vision model overrides. Both carry
-/// settings-layer defaults (`hkask_inference::model_constants::
+/// Research transcription, vision, and media role-model overrides. All
+/// four carry settings-layer defaults (`hkask_inference::model_constants::
 /// DEFAULT_MEDIA_*`) — the media server has no in-server fallback, so
 /// without an injected value those pipelines fail visibly (NotConfigured).
 /// An explicitly empty string in settings.json clears a default: the env
@@ -400,6 +400,13 @@ pub struct KaskMediaSettings {
     pub stt_model: String,
     /// Vision model override (env `HKASK_MEDIA_VISION_MODEL`).
     pub vision_model: String,
+    /// Sound-annotation model for the audio passes (env
+    /// `HKASK_MEDIA_SOUND_ANNOTATION_MODEL`) — audio-only; resolved per-call
+    /// or from this setting, never via the shared pass-model env.
+    pub sound_annotation_model: String,
+    /// Grounded-tagging model for the vision pass's grounded mode (env
+    /// `HKASK_MEDIA_TAGGING_MODEL`).
+    pub tagging_model: String,
 }
 
 impl Default for KaskMediaSettings {
@@ -407,6 +414,10 @@ impl Default for KaskMediaSettings {
         Self {
             stt_model: hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL.to_string(),
             vision_model: hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL.to_string(),
+            sound_annotation_model:
+                hkask_inference::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL.to_string(),
+            tagging_model: hkask_inference::model_constants::DEFAULT_MEDIA_TAGGING_MODEL
+                .to_string(),
         }
     }
 }
@@ -863,6 +874,10 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
         Self {
             stt_model: c.stt_model.unwrap_or(default.stt_model),
             vision_model: c.vision_model.unwrap_or(default.vision_model),
+            sound_annotation_model: c
+                .sound_annotation_model
+                .unwrap_or(default.sound_annotation_model),
+            tagging_model: c.tagging_model.unwrap_or(default.tagging_model),
         }
     }
 }
@@ -952,13 +967,17 @@ mod tests {
     }
 
     // The media server has no in-server model fallback — the settings
-    // default is the only thing that feeds HKASK_MEDIA_STT_MODEL /
-    // HKASK_MEDIA_VISION_MODEL into the server child. Before 2026-09-04 both
-    // fields defaulted to empty and the transcribe + gallery-analysis
-    // pipelines shipped dead (NotConfigured on every call). This test pins
-    // the wiring: STT and vision carry the model_constants defaults.
+    // default is the only thing that feeds HKASK_MEDIA_* into the server
+    // child. Before 2026-09-04 both fields defaulted to empty and the
+    // transcribe + gallery-analysis pipelines shipped dead (NotConfigured
+    // on every call). This test pins the wiring: every media model field —
+    // STT, vision, and the two role models (sound annotation, grounded
+    // tagging; operator ruling 2026-10-30) — carries its model_constants
+    // default, and the struct exposes exactly those four fields (defaults
+    // live in `Default` impls only, never serde(default) or From<Content>
+    // literals).
     #[test]
-    fn media_settings_default_carries_stt_and_vision_models() {
+    fn media_settings_default_carries_stt_vision_and_role_models() {
         let default = KaskMediaSettings::default();
         assert_eq!(
             default.stt_model,
@@ -970,11 +989,23 @@ mod tests {
             hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL,
             "default vision_model must carry the settings-layer constant"
         );
+        assert_eq!(
+            default.sound_annotation_model,
+            hkask_inference::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL,
+            "default sound_annotation_model must carry the settings-layer constant"
+        );
+        assert_eq!(
+            default.tagging_model,
+            hkask_inference::model_constants::DEFAULT_MEDIA_TAGGING_MODEL,
+            "default tagging_model must carry the settings-layer constant"
+        );
         let serialized = serde_json::to_value(default).expect("serialize research media settings");
         let fields = serialized.as_object().expect("media settings object");
-        assert_eq!(fields.len(), 2);
+        assert_eq!(fields.len(), 4);
         assert!(fields.contains_key("stt_model"));
         assert!(fields.contains_key("vision_model"));
+        assert!(fields.contains_key("sound_annotation_model"));
+        assert!(fields.contains_key("tagging_model"));
     }
 
     // Regression test for the silent `embedding_dim == 0` bug. A user

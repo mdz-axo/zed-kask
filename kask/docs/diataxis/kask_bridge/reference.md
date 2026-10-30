@@ -105,7 +105,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:226-291`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:299-318` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:332-352` |
-| `KaskMediaSettings` | STT and vision use shared constants; TTS/image/video empty | `kask/crates/kask_bridge/src/settings.rs:443-456` |
+| `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:398-424` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:489-561` |
 
 ## Built-in MCP registry

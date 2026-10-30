@@ -1000,12 +1000,11 @@ pub struct LayersAudioPassRequest {
     /// the response names the mode actually used. Default false (v1).
     pub structured: Option<bool>,
     /// Optional model override (provider-prefixed). Default:
-    /// HKASK_MEDIA_PASS_MODEL, falling back to HKASK_MEDIA_VISION_MODEL —
-    /// an explicit per-call override wins. The verified audio-capable
-    /// override is OpenRouter/qwen/qwen3.8-omni-flash (input_audio probe
-    /// 2026-10-29), with OpenRouter/mistralai/voxtral-small-24b-2507 as
-    /// the named fallback; audio-only models are passed per-call only,
-    /// never via the shared pass-model env.
+    /// the sound-annotation model setting (env
+    /// `HKASK_MEDIA_SOUND_ANNOTATION_MODEL`) — an explicit per-call override
+    /// wins. Audio passes never route audio-only models via the shared
+    /// pass-model env (`HKASK_MEDIA_PASS_MODEL` serves the text/vision
+    /// passes); an unset setting fails visibly (NotConfigured names it).
     pub model: Option<String>,
 }
 

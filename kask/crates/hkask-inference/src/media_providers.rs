@@ -457,14 +457,15 @@ impl MediaProvider for DeepInfraMediaProvider {
                 // Not claimed by `supports` — the registry never routes
                 // chat_audio here. The named error is defense-in-depth for
                 // direct calls: audio-input chat is served by OpenRouter's
-                // `input_audio` content-part format.
-                MediaOp::ChatAudio => Err(InferenceError::Connection(
-                    "deepinfra does not support chat_audio — route via an \
-                     OpenRouter audio-chat model (e.g. OpenRouter/qwen/qwen3.8-omni-flash, \
-                     verified against the endpoint 2026-10-29, or \
-                     OpenRouter/mistralai/voxtral-small-24b-2507)"
-                        .into(),
-                )),
+                // `input_audio` content-part format. The role model is the
+                // settings-layer default (card 9fc54490) — the name lives in
+                // `model_constants`, not in this message.
+                MediaOp::ChatAudio => Err(InferenceError::Connection(format!(
+                    "deepinfra does not support chat_audio — route via the configured \
+                     sound-annotation model (env HKASK_MEDIA_SOUND_ANNOTATION_MODEL, \
+                     default {}) or another OpenRouter audio-chat model",
+                    crate::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL
+                ))),
                 // Same discipline for structured outputs: served by
                 // OpenRouter's response_format passthrough.
                 MediaOp::ChatJson => Err(InferenceError::Connection(

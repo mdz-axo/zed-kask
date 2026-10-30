@@ -221,6 +221,26 @@ pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-tu
 /// tagging workload's shape.
 pub const DEFAULT_MEDIA_VISION_MODEL: &str = "OpenRouter/openai/gpt-4o-mini";
 
+/// Default sound-annotation model for the audio layer pass (env
+/// `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` via
+/// `KaskMediaSettings::sound_annotation_model`). Omni Flash via OpenRouter —
+/// the M2 input_audio probe (2026-10-29, goal a6c6fdf3 card M2) produced a
+/// labeled audio_event layer in one call on a real recording. Audio passes
+/// resolve the model per-call or through this setting only — audio-only
+/// models never route via the shared pass-model env (the text/vision passes
+/// share it), and the vision default is not audio-capable. Voxtral-small is
+/// the recorded fallback (media server reference).
+pub const DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL: &str = "OpenRouter/qwen/qwen3.8-omni-flash";
+
+/// Default grounded-tagging model for the vision pass's grounded mode (env
+/// `HKASK_MEDIA_TAGGING_MODEL` via `KaskMediaSettings::tagging_model`).
+/// ollama/qwen3-vl:8b — the operator's ollama steer (2026-10-30): local,
+/// zero per-call cost, private; registry-confirmed vision-capable. Passes
+/// send non-reasoning requests, so reasoning-mandatory editions are out;
+/// the S2 probe pins the exact served variant, with the OpenRouter-hosted
+/// same-family instruct model as the speed fallback.
+pub const DEFAULT_MEDIA_TAGGING_MODEL: &str = "ollama/qwen3-vl:8b";
+
 /// Default rerank model for the research server's deep-search rerank stage
 /// (env `HKASK_RERANK_MODEL` via `KaskModelsSettings::rerank_model`). The
 /// rerank stage sends non-reasoning relevance-scoring requests. Verified on

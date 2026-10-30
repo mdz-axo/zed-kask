@@ -90,6 +90,8 @@ pub mod models {
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
     pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
+    pub const SOUND_ANNOTATION_ENV: &str = "HKASK_MEDIA_SOUND_ANNOTATION_MODEL";
+    pub const TAGGING_ENV: &str = "HKASK_MEDIA_TAGGING_MODEL";
 
     /// Resolve a configured media model from its env var — `None` when
     /// unset (the operator's no-hidden-models spec: no constant fallback;
@@ -106,6 +108,18 @@ pub mod models {
     }
     pub fn pass_model() -> Option<String> {
         configured(PASS_ENV)
+    }
+    /// The audio passes' role model (settings > kask > models) — audio-only;
+    /// `layers_audio_pass` resolves per-call → this setting → NotConfigured,
+    /// never via the shared pass-model env.
+    pub fn sound_annotation_model() -> Option<String> {
+        configured(SOUND_ANNOTATION_ENV)
+    }
+    /// The grounded-tagging role model (settings > kask > models) — the
+    /// grounded vision pass resolves per-call → this setting → the vision
+    /// default.
+    pub fn tagging_model() -> Option<String> {
+        configured(TAGGING_ENV)
     }
 }
 
@@ -6989,6 +7003,136 @@ mod tool_behavior_tests {
             assert!(
                 message.contains("HKASK_MEDIA_VISION_MODEL"),
                 "names the vision fallback env var: {message}"
+            );
+        }
+    }
+
+    /// Sets the sound-annotation model env var for one test and restores
+    /// the prior value on drop (missing restored by removal) — the same
+    /// discipline as `ModelEnvGuard`, for the audio role-model chain.
+    struct SoundAnnotationEnvGuard {
+        prior: Option<String>,
+    }
+
+    impl SoundAnnotationEnvGuard {
+        fn set(value: Option<&str>) -> Self {
+            let guard = Self {
+                prior: std::env::var(crate::models::SOUND_ANNOTATION_ENV).ok(),
+            };
+            match value {
+                Some(value) => unsafe {
+                    std::env::set_var(crate::models::SOUND_ANNOTATION_ENV, value)
+                },
+                None => unsafe { std::env::remove_var(crate::models::SOUND_ANNOTATION_ENV) },
+            }
+            guard
+        }
+    }
+
+    impl Drop for SoundAnnotationEnvGuard {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(value) => unsafe {
+                    std::env::set_var(crate::models::SOUND_ANNOTATION_ENV, value)
+                },
+                None => unsafe { std::env::remove_var(crate::models::SOUND_ANNOTATION_ENV) },
+            }
+        }
+    }
+
+    /// The audio-role resolution chain (card 9fc54490): per-call override →
+    /// the sound-annotation setting (`HKASK_MEDIA_SOUND_ANNOTATION_MODEL`) →
+    /// typed NotConfigured naming the setting — and never the shared pass
+    /// env or the vision default. The guard is the audio-only-model rule:
+    /// an audio-only model routed via `HKASK_MEDIA_PASS_MODEL` would break
+    /// the text/vision passes that share it, and the vision default is not
+    /// audio-capable, so even a configured pass/vision env must not resolve
+    /// an audio pass.
+    #[tokio::test]
+    async fn audio_layer_pass_model_resolution_uses_the_sound_annotation_setting_only() {
+        let _env_lock = MODEL_ENV_LOCK.lock().await;
+        let inference = mock_layer_inference(String::new(), "{\"events\": []}".to_string(), false);
+        let chunks = vec![crate::layer_pass::LayerAudioChunk {
+            prompt: "analyze chunk 0".to_string(),
+            audio_path: "/tmp/audio-chain-fixture.wav".to_string(),
+        }];
+        let expected = "AudioPassOutput {\"events\": [...]}";
+
+        {
+            // The per-call override wins over the sound-annotation setting.
+            let _sound = SoundAnnotationEnvGuard::set(Some("sound-annotation-env-model"));
+            let result =
+                crate::layer_pass::run_layer_pass_audio::<crate::tools::layers::AudioPassOutput>(
+                    &inference,
+                    PassMode::PromptSchema,
+                    Some("per-call-audio-override"),
+                    &chunks,
+                    0,
+                    1,
+                    &AtomicU64::new(0),
+                    &AtomicU64::new(0),
+                    expected,
+                )
+                .await
+                .expect("override resolves");
+            assert_eq!(result.model, "per-call-audio-override", "the override wins");
+        }
+        {
+            // No override: the sound-annotation setting serves.
+            let _sound = SoundAnnotationEnvGuard::set(Some("sound-annotation-env-model"));
+            let result =
+                crate::layer_pass::run_layer_pass_audio::<crate::tools::layers::AudioPassOutput>(
+                    &inference,
+                    PassMode::PromptSchema,
+                    None,
+                    &chunks,
+                    0,
+                    1,
+                    &AtomicU64::new(0),
+                    &AtomicU64::new(0),
+                    expected,
+                )
+                .await
+                .expect("the sound-annotation setting resolves");
+            assert_eq!(
+                result.model, "sound-annotation-env-model",
+                "HKASK_MEDIA_SOUND_ANNOTATION_MODEL serves the audio pass"
+            );
+        }
+        {
+            // The audio-only-model guard: even with the shared pass env and
+            // the vision default configured, an audio pass without an
+            // override or setting fails visibly naming the setting — it
+            // never resolves through HKASK_MEDIA_PASS_MODEL or
+            // HKASK_MEDIA_VISION_MODEL.
+            let _env = ModelEnvGuard::set(Some("pass-env-model"), Some("vision-env-model"));
+            let _sound = SoundAnnotationEnvGuard::set(None);
+            let error =
+                crate::layer_pass::run_layer_pass_audio::<crate::tools::layers::AudioPassOutput>(
+                    &inference,
+                    PassMode::PromptSchema,
+                    None,
+                    &chunks,
+                    0,
+                    1,
+                    &AtomicU64::new(0),
+                    &AtomicU64::new(0),
+                    expected,
+                )
+                .await
+                .expect_err("nothing configured fails visibly");
+            let message = error.to_string();
+            assert!(
+                message.contains("HKASK_MEDIA_SOUND_ANNOTATION_MODEL"),
+                "names the sound-annotation setting: {message}"
+            );
+            assert!(
+                !message.contains("HKASK_MEDIA_PASS_MODEL"),
+                "the audio pass never routes via the shared pass env: {message}"
+            );
+            assert!(
+                !message.contains("HKASK_MEDIA_VISION_MODEL"),
+                "the vision default is not an audio fallback: {message}"
             );
         }
     }

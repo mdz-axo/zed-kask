@@ -18,6 +18,12 @@ consumed_capabilities:
     source: crates/language_models/src/provider/ollama.rs
   - capability: local embeddings (/v1/embeddings)
     source: kask/crates/kask_bridge/src/inference_providers.rs
+  - capability: local vision tagging — qwen3-vl:8b
+    source: kask/crates/hkask-inference/src/model_constants.rs
+    note: the tagging_model settings default (Settings > Kask > Models, env
+      HKASK_MEDIA_TAGGING_MODEL) per the operator's ollama steer 2026-10-30 —
+      local, zero per-call cost, private; the S2 grounded-pass probe pins the
+      served variant (the tag's instruct-ness was unverified at steer time)
 deliberate_non_consumption: []
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)

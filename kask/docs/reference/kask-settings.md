@@ -321,16 +321,29 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 |-------|------|---------|-------------------|-------|
 | `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
 
+## Media (`KaskMediaSettings`)
+
+Research media model configuration — the media MCP server's model roles
+(`kask/crates/kask_bridge/src/settings.rs`; the role models render on
+Settings → Kask → Models per the operator's 2026-10-30 ruling). Defaults live
+in `Default` impls only, sourced from shared inference constants
+(`kask/crates/hkask-inference/src/model_constants.rs`).
 
 | Field | Type | Default | Env var |
 |-------|------|---------|---------|
-| `tts_model` | `String` | `""` | `HKASK_MEDIA_TTS_MODEL` |
 | `stt_model` | `String` | `"OpenRouter/openai/whisper-large-v3-turbo"` | `HKASK_MEDIA_STT_MODEL` |
 | `vision_model` | `String` | `"OpenRouter/openai/gpt-4o-mini"` | `HKASK_MEDIA_VISION_MODEL` |
-| `image_gen_model` | `String` | `""` | `HKASK_MEDIA_IMAGE_GEN_MODEL` |
-| `video_model` | `String` | `""` | `HKASK_MEDIA_VIDEO_MODEL` |
+| `sound_annotation_model` | `String` | `"OpenRouter/qwen/qwen3.8-omni-flash"` | `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` |
+| `tagging_model` | `String` | `"ollama/qwen3-vl:8b"` | `HKASK_MEDIA_TAGGING_MODEL` |
 
-Empty TTS, image, or video values remain unconfigured and fail visibly; STT and vision defaults come from shared inference constants (`kask/crates/kask_bridge/src/settings.rs:531-567`, `kask/crates/hkask-inference/src/model_constants.rs:191-229`).
+An explicitly empty value clears a default (the env var is not injected and
+the pipeline fails visibly). The former creative model settings (`tts_model`,
+`image_gen_model`, `video_model`) were removed with the creative ops — there
+are no settings fields and no hidden fallbacks for them. The sound-annotation
+model serves the audio passes only (per-call override → the setting →
+NotConfigured — audio-only models never route via the shared
+`HKASK_MEDIA_PASS_MODEL`); the tagging model serves the grounded tagging pass
+(per-call override → the setting → the vision default).
 
 ## Models (`KaskModelsSettings`)
 

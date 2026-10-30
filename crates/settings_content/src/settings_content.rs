@@ -1878,6 +1878,8 @@ pub struct KaskPredictionMarketsSettingsContent {
 pub struct KaskMediaSettingsContent {
     pub stt_model: Option<String>,
     pub vision_model: Option<String>,
+    pub sound_annotation_model: Option<String>,
+    pub tagging_model: Option<String>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).
