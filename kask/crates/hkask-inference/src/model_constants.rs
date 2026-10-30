@@ -234,12 +234,19 @@ pub const DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL: &str = "OpenRouter/qwen/qwen3.8-
 
 /// Default grounded-tagging model for the vision pass's grounded mode (env
 /// `HKASK_MEDIA_TAGGING_MODEL` via `KaskMediaSettings::tagging_model`).
-/// ollama/qwen3-vl:8b — the operator's ollama steer (2026-10-30): local,
-/// zero per-call cost, private; registry-confirmed vision-capable. Passes
-/// send non-reasoning requests, so reasoning-mandatory editions are out;
-/// the S2 probe pins the exact served variant, with the OpenRouter-hosted
-/// same-family instruct model as the speed fallback.
-pub const DEFAULT_MEDIA_TAGGING_MODEL: &str = "ollama/qwen3-vl:8b";
+/// Qwen3 VL 8B Instruct via OpenRouter — non-reasoning Instruct edition
+/// (passes send non-reasoning requests). The S2 probe (2026-10-30, goal
+/// a6c6fdf3, card 15ee05ae) swapped the operator-steered ollama default to
+/// this OpenRouter-hosted same-family model on measured evidence: local
+/// ollama/qwen3-vl:8b (8.8B, Q4_K_M) took >300s cold and 206s warm-best
+/// per 4-frame chunk (two of three probe calls exceeded the 300s bridge
+/// timeout; the one completed response held an out-of-frame box the
+/// validation gate rejected), while this model completed the same range
+/// in 12.0s with four validated, time-anchored detections — a ~17x
+/// per-chunk difference that makes local untenable for per-recording
+/// tagging. The ollama entry stays recorded as deliberate non-consumption
+/// for this role (`kask/registry/providers/ollama.yaml`).
+pub const DEFAULT_MEDIA_TAGGING_MODEL: &str = "openrouter/Qwen3 VL 8B Instruct";
 
 /// Default rerank model for the research server's deep-search rerank stage
 /// (env `HKASK_RERANK_MODEL` via `KaskModelsSettings::rerank_model`). The

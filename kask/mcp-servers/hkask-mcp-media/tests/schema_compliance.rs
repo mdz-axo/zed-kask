@@ -39,11 +39,11 @@ use hkask_mcp_media::types::{
     GalleryRefreshRequest, GalleryRemoveFromAlbumRequest, GallerySearchRequest,
     GalleryTimelineRequest, JobCancelRequest, JobListRequest, JobStatusRequest, JobSubmitRequest,
     LayersGetRequest, LayersListRequest, LayersSemanticPassRequest, LayersShotPassRequest,
-    LayersStoreRequest, ModelInfoRequest, ModelListRequest, RecordAndTranscribeRequest,
-    TranscribeAndStoreRequest, TranscribeBundleRequest, VideoAddCaptionRequest, VideoClipRequest,
-    VideoConcatRequest, VideoExtractFramesRequest, VideoFetchRequest, VideoInfoRequest,
-    VideoToGifRequest, VoiceEnrollRequest, VoiceListRequest, VoicePruneRequest, VoiceRemoveRequest,
-    YoutubeSearchRequest,
+    LayersStitchTracksRequest, LayersStoreRequest, ModelInfoRequest, ModelListRequest,
+    RecordAndTranscribeRequest, TranscribeAndStoreRequest, TranscribeBundleRequest,
+    VideoAddCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoExtractFramesRequest,
+    VideoFetchRequest, VideoInfoRequest, VideoToGifRequest, VoiceEnrollRequest, VoiceListRequest,
+    VoicePruneRequest, VoiceRemoveRequest, YoutubeSearchRequest,
 };
 use hkask_types::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -55,8 +55,8 @@ fn live_router_schema_inventory_is_complete_and_clean() {
     let tools = hkask_mcp_media::MediaServer::combined_router().list_all();
     assert_eq!(
         tools.len(),
-        88,
-        "approved surface: 92 - 20 Reduct cloud tools + 5 media-layer tools + 1 section re-transcribe + 4 voice-profile tools + 1 voice identification + 1 audio pass + 1 layers search + 1 layers transcript + 1 layers edl compose + 1 layers export + 1 layers render edl"
+        89,
+        "approved surface: 92 - 20 Reduct cloud tools + 5 media-layer tools + 1 section re-transcribe + 4 voice-profile tools + 1 voice identification + 1 audio pass + 1 layers search + 1 layers transcript + 1 layers edl compose + 1 layers export + 1 layers render edl + 1 track stitcher"
     );
     let actual = tools
         .iter()
@@ -326,6 +326,10 @@ schema_clean_test!(layers_shot_pass_request_schema, LayersShotPassRequest);
 schema_clean_test!(
     layers_semantic_pass_request_schema,
     LayersSemanticPassRequest
+);
+schema_clean_test!(
+    layers_stitch_tracks_request_schema,
+    LayersStitchTracksRequest
 );
 schema_clean_test!(voice_enroll_request_schema, VoiceEnrollRequest);
 schema_clean_test!(voice_list_request_schema, VoiceListRequest);

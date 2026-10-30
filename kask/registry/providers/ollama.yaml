@@ -18,13 +18,17 @@ consumed_capabilities:
     source: crates/language_models/src/provider/ollama.rs
   - capability: local embeddings (/v1/embeddings)
     source: kask/crates/kask_bridge/src/inference_providers.rs
-  - capability: local vision tagging — qwen3-vl:8b
+deliberate_non_consumption:
+  - capability: local vision tagging (qwen3-vl:8b) for the grounded-tagging
+      role — probed 2026-10-30 (goal a6c6fdf3, card 15ee05ae) and measured
+      too slow: >300s cold and 206s warm-best per 4-frame chunk (two of
+      three probe calls exceeded the 300s MCP bridge timeout; the one
+      completed response held an out-of-frame box the validation gate
+      rejected). The tagging_model settings default points at the
+      OpenRouter-hosted same-family Instruct model (12.0s for the same
+      range); the local model remains a per-call override choice, never
+      the settings default.
     source: kask/crates/hkask-inference/src/model_constants.rs
-    note: the tagging_model settings default (Settings > Kask > Models, env
-      HKASK_MEDIA_TAGGING_MODEL) per the operator's ollama steer 2026-10-30 —
-      local, zero per-call cost, private; the S2 grounded-pass probe pins the
-      served variant (the tag's instruct-ness was unverified at steer time)
-deliberate_non_consumption: []
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"

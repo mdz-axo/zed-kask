@@ -171,6 +171,7 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         | "layers_shot_pass"
         | "layers_semantic_pass"
         | "layers_audio_pass"
+        | "layers_stitch_tracks"
         | "layers_search"
         | "layers_transcript"
         | "layers_edl_compose"

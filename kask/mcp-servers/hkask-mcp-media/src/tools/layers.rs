@@ -24,8 +24,8 @@ use crate::tools::processing::SourceSnapshot;
 use crate::transcript_pass::PassMode;
 use crate::types::{
     LayersAudioPassRequest, LayersExportRequest, LayersGetRequest, LayersListRequest,
-    LayersSearchRequest, LayersSemanticPassRequest, LayersShotPassRequest, LayersStoreItemRequest,
-    LayersStoreRequest, LayersTranscriptRequest,
+    LayersSearchRequest, LayersSemanticPassRequest, LayersShotPassRequest,
+    LayersStitchTracksRequest, LayersStoreItemRequest, LayersStoreRequest, LayersTranscriptRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -326,8 +326,13 @@ pub(crate) fn map_layer_pass_error(error: LayerPassError) -> McpToolError {
 
 /// Validate a model-produced normalized box — the deterministic gate on
 /// the vision pass's hallucination risk: a box outside the frame is a
-/// named rejection of the whole pass, never a silent clamp.
-fn validate_box(chunk_index: usize, what: &str, r#box: &NormalizedBox) -> Result<(), McpToolError> {
+/// named rejection of the whole pass, never a silent clamp. Shared by the
+/// track stitcher (design §8: extended to stitcher-derived items).
+pub(crate) fn validate_box(
+    chunk_index: usize,
+    what: &str,
+    r#box: &NormalizedBox,
+) -> Result<(), McpToolError> {
     for (name, value) in [
         ("x", r#box.x),
         ("y", r#box.y),
@@ -353,7 +358,7 @@ fn validate_box(chunk_index: usize, what: &str, r#box: &NormalizedBox) -> Result
 /// semantic allowance.
 const BOX_EPSILON: f64 = 1e-9;
 
-fn validate_confidence(
+pub(crate) fn validate_confidence(
     chunk_index: usize,
     what: &str,
     confidence: f64,
@@ -693,7 +698,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. Media without a video stream fails as failed_precondition naming the requirement; a missing file as not_found naming the path; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
+        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. grounded=true (default false) switches to the grounded template — the identical output schema with raised box density and label specificity — and resolves the model per-call, then the tagging model setting (HKASK_MEDIA_TAGGING_MODEL), then the configured analysis model; provenance records layers_semantic_pass_grounded so the modes stay distinguishable. Media without a video stream fails as failed_precondition naming the requirement; a missing file as not_found naming the path; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
     )]
     pub async fn layers_semantic_pass(
         &self,
@@ -733,6 +738,24 @@ impl MediaServer {
                 PassMode::Structured
             } else {
                 PassMode::PromptSchema
+            };
+            let grounded = request.grounded.unwrap_or(false);
+            // The grounded mode (S2, design §4 delta 2): the grounded
+            // template over the identical output schema, and the
+            // tagging-role model chain — per-call override, then the
+            // tagging setting (HKASK_MEDIA_TAGGING_MODEL), then the
+            // configured analysis model. The template name rides
+            // provenance, so the modes stay distinguishable at the data
+            // layer.
+            let template_name = if grounded {
+                "layers_semantic_pass_grounded"
+            } else {
+                "layers_semantic_pass"
+            };
+            let model_chain = if grounded {
+                crate::layer_pass::LayerPassModelChain::Tagging
+            } else {
+                crate::layer_pass::LayerPassModelChain::Shared
             };
 
             let probe = ffmpeg
@@ -886,7 +909,7 @@ impl MediaServer {
                 vars.insert("frame_pts", &pts_text);
                 let prompt = crate::templates::render(
                     &self.template_env,
-                    "layers_semantic_pass",
+                    template_name,
                     &vars,
                 )
                 .map_err(|e| McpToolError::internal(format!("Template render failed: {e}")))?;
@@ -919,6 +942,7 @@ impl MediaServer {
                 &self.vision_port,
                 mode,
                 request.model.as_deref(),
+                model_chain,
                 &vision_chunks,
                 0,
                 vision_chunks.len(),
@@ -1075,7 +1099,7 @@ impl MediaServer {
                 .collect();
             let provenance = LayerProvenance {
                 model: result.model,
-                prompt_template: "layers_semantic_pass".to_string(),
+                prompt_template: template_name.to_string(),
                 created_at: hkask_types::time::now_rfc3339(),
                 parameters: Some(serde_json::json!({
                     "sampling": {
@@ -1094,6 +1118,7 @@ impl MediaServer {
                         "processed_chunks": sampled.len(),
                     },
                     "structured": structured,
+                    "grounded": grounded,
                 })),
             };
             let mut kinds = Vec::new();
@@ -1458,6 +1483,297 @@ impl MediaServer {
                     "rejections": AUDIO_PASS_REJECTIONS.load(Ordering::Relaxed),
                 },
                 "probed_duration_secs": probe.duration_secs,
+                "time_basis": "source_pts_seconds",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Stitch one stored object layer's detections into deterministic tracks — a derived kind=object layer whose items carry track_id, span identity, and the per-frame detections in payload (S2 of the visual-event-tagging design, §4 delta 3). Opt-in per recording: nothing runs automatically. Detections link when the same label recurs within max_gap_secs and the boxes' IoU clears iou_threshold; an occlusion gap keeps the track with disjoint spans (counted in stats, never smoothed); cross_shot=false (default) refuses merges across shot boundaries when the source pass was shot-chunked; singleton detections stay unlinked and are named in stats. Span ranges tighten to the source frame's PTS ± half the sampling interval. Boxes and confidences are re-validated (a violation rejects the whole stitch, nothing stored); a malformed source layer — wrong kind, missing box/frame anchor, or an item whose frame asset has no generation params with source_pts_sec — fails as invalid_argument naming the layer; a source with no detections returns a named no_detections note and stores nothing. The derived layer records provenance model deterministic:track-stitcher with the versioned algorithm label and every parameter; source media bytes are never modified."
+    )]
+    pub async fn layers_stitch_tracks(
+        &self,
+        Parameters(request): Parameters<LayersStitchTracksRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_stitch_tracks", async {
+            ensure_local_input_exists(&request.media_path)?;
+            if !crate::is_local_media_path(&request.media_path) {
+                validate_tool_url_with_dns(&request.media_path).await?;
+            }
+            let ffmpeg = self.require_ffmpeg()?;
+            let iou_threshold = request
+                .iou_threshold
+                .unwrap_or(crate::track_stitcher::DEFAULT_IOU_THRESHOLD);
+            if !iou_threshold.is_finite() || !(0.0..=1.0).contains(&iou_threshold) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "iou_threshold must be within 0..1, got {iou_threshold}"
+                )));
+            }
+            let max_gap_secs = request
+                .max_gap_secs
+                .unwrap_or(crate::track_stitcher::DEFAULT_MAX_GAP_SECS);
+            if !max_gap_secs.is_finite() || max_gap_secs <= 0.0 {
+                return Err(McpToolError::invalid_argument(format!(
+                    "max_gap_secs must be finite and > 0, got {max_gap_secs}"
+                )));
+            }
+            let cross_shot = request.cross_shot.unwrap_or(false);
+
+            let probe = ffmpeg
+                .probe(&request.media_path)
+                .await
+                .map_err(map_media_error)?;
+            let duration_secs = probe.duration_secs as f64;
+
+            let driver = &**self.gallery_store.driver();
+            let Some(record) = layer_store::get_layer(driver, &request.layer_id)
+                .map_err(map_layer_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "layer {} not found",
+                    request.layer_id
+                )));
+            };
+            if record.kind != layer_store::MediaLayerKind::Object {
+                return Err(McpToolError::invalid_argument(format!(
+                    "layer {} has kind {} — the stitcher requires a kind=object source layer \
+                     (a layers_semantic_pass output)",
+                    request.layer_id,
+                    record.kind.as_str()
+                )));
+            }
+            if record.items.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_detections",
+                    "note": "the source layer holds no detections; no layer stored",
+                    "layer_id": request.layer_id,
+                }));
+            }
+            // The source pass's chunking mode — cross_shot only guards when
+            // chunks are shots; for time-range sources there is no shot
+            // structure to guard and the parameter is recorded as inert.
+            let source_chunking_mode = record
+                .provenance
+                .parameters
+                .as_ref()
+                .and_then(|p| p.get("chunking").and_then(|c| c.get("mode")))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("time_range")
+                .to_string();
+            let source_chunked_by_shots = source_chunking_mode == "shot_layer";
+
+            // Parse detections — each item carries {label, confidence, box,
+            // frame_index} plus its frame anchor; the frame PTS and sampling
+            // interval come from the frame asset's generation params (the
+            // pass always stamps them). A malformed item names the layer.
+            let mut detections: Vec<crate::track_stitcher::Detection> = Vec::new();
+            for (index, stored) in record.items.iter().enumerate() {
+                let item = &stored.item;
+                let what = format!("source item {} (index {index})", stored.id);
+                let label = item
+                    .payload
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} carries no nonblank label payload — the stitcher requires pass-produced object items",
+                            request.layer_id
+                        ))
+                    })?;
+                let confidence = item
+                    .payload
+                    .get("confidence")
+                    .and_then(serde_json::Value::as_f64)
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} carries no confidence payload",
+                            request.layer_id
+                        ))
+                    })?;
+                validate_confidence(index, &what, confidence)?;
+                let box_json = item
+                    .payload
+                    .get("box")
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} carries no box payload",
+                            request.layer_id
+                        ))
+                    })?;
+                let box_struct = NormalizedBox {
+                    x: box_json
+                        .get("x")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(format!(
+                                "layer {}: {what} box carries no x",
+                                request.layer_id
+                            ))
+                        })?,
+                    y: box_json
+                        .get("y")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(format!(
+                                "layer {}: {what} box carries no y",
+                                request.layer_id
+                            ))
+                        })?,
+                    w: box_json
+                        .get("w")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(format!(
+                                "layer {}: {what} box carries no w",
+                                request.layer_id
+                            ))
+                        })?,
+                    h: box_json
+                        .get("h")
+                        .and_then(serde_json::Value::as_f64)
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(format!(
+                                "layer {}: {what} box carries no h",
+                                request.layer_id
+                            ))
+                        })?,
+                };
+                validate_box(index, &what, &box_struct)?;
+                let frame_index = item
+                    .payload
+                    .get("frame_index")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} carries no frame_index payload",
+                            request.layer_id
+                        ))
+                    })? as u32;
+                let frame_asset_id = item
+                    .frame_asset_ids
+                    .as_ref()
+                    .and_then(|ids| ids.first())
+                    .cloned()
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} references no frame asset — the stitcher requires the detection's frame anchor",
+                            request.layer_id
+                        ))
+                    })?;
+                let generation = self
+                    .gallery_store
+                    .get_generation(&frame_asset_id)
+                    .map_err(map_gallery_store_error)?
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} frame asset {frame_asset_id} has no generation record — the stitcher requires pass-produced layers whose frames carry source_pts_sec",
+                            request.layer_id
+                        ))
+                    })?;
+                let params_json: Option<serde_json::Value> = match generation.params.as_deref() {
+                    Some(p) => match serde_json::from_str::<serde_json::Value>(p) {
+                        Ok(value) => Some(value),
+                        Err(e) => {
+                            return Err(McpToolError::invalid_argument(format!(
+                                "layer {}: {what} frame asset {frame_asset_id} generation params are unparseable: {e}",
+                                request.layer_id
+                            )));
+                        }
+                    },
+                    None => None,
+                };
+                let frame_pts = params_json
+                    .as_ref()
+                    .and_then(|p| p.get("source_pts_sec"))
+                    .and_then(serde_json::Value::as_f64)
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} frame asset {frame_asset_id} generation params carry no source_pts_sec",
+                            request.layer_id
+                        ))
+                    })?;
+                let sampling_interval = params_json
+                    .as_ref()
+                    .and_then(|p| p.get("sampling_interval_sec"))
+                    .and_then(serde_json::Value::as_f64)
+                    .ok_or_else(|| {
+                        McpToolError::invalid_argument(format!(
+                            "layer {}: {what} frame asset {frame_asset_id} generation params carry no sampling_interval_sec",
+                            request.layer_id
+                        ))
+                    })?;
+                detections.push(crate::track_stitcher::Detection {
+                    label: label.to_string(),
+                    confidence,
+                    r#box: [box_struct.x, box_struct.y, box_struct.w, box_struct.h],
+                    frame_pts,
+                    sampling_interval,
+                    source_item_id: stored.id.clone(),
+                    frame_index,
+                    frame_asset_id: Some(frame_asset_id),
+                });
+            }
+
+            let result = crate::track_stitcher::stitch(
+                &detections,
+                crate::track_stitcher::StitchParams {
+                    iou_threshold,
+                    max_gap_secs,
+                    cross_shot,
+                },
+                source_chunked_by_shots,
+                duration_secs,
+            );
+            if result.items.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_tracks",
+                    "note": "no detection linked into a track (singletons stay unlinked in the source layer); no layer stored",
+                    "layer_id": request.layer_id,
+                    "stats": result.stats,
+                }));
+            }
+            let provenance = LayerProvenance {
+                model: "deterministic:track-stitcher".to_string(),
+                prompt_template: "layers_stitch_tracks:v1".to_string(),
+                created_at: hkask_types::time::now_rfc3339(),
+                parameters: Some(serde_json::json!({
+                    "iou_threshold": iou_threshold,
+                    "max_gap_secs": max_gap_secs,
+                    "cross_shot": cross_shot,
+                    "source_layer_id": request.layer_id,
+                    "source_chunking_mode": source_chunking_mode,
+                    "detections_parsed": detections.len(),
+                })),
+            };
+            let summary = layer_store::store_layer(
+                driver,
+                &NewMediaLayer {
+                    media_path: request.media_path.clone(),
+                    gallery_asset_id: record.gallery_asset_id,
+                    kind: layer_store::MediaLayerKind::Object,
+                    label: Some("stitched tracks".to_string()),
+                    provenance,
+                    duration_secs,
+                    items: result.items,
+                },
+            )
+            .map_err(map_layer_store_error)?;
+            Ok(serde_json::json!({
+                "status": "completed",
+                "layer": summary,
+                "stats": result.stats,
+                "source_layer_id": request.layer_id,
+                "cross_shot": if source_chunked_by_shots {
+                    serde_json::json!(cross_shot)
+                } else {
+                    serde_json::json!({
+                        "value": cross_shot,
+                        "note": "the source pass was time-range chunked — shot boundaries were not observable, so cross_shot had no guard to apply",
+                    })
+                },
                 "time_basis": "source_pts_seconds",
             }))
         })

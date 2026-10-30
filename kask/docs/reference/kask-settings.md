@@ -334,7 +334,7 @@ in `Default` impls only, sourced from shared inference constants
 | `stt_model` | `String` | `"OpenRouter/openai/whisper-large-v3-turbo"` | `HKASK_MEDIA_STT_MODEL` |
 | `vision_model` | `String` | `"OpenRouter/openai/gpt-4o-mini"` | `HKASK_MEDIA_VISION_MODEL` |
 | `sound_annotation_model` | `String` | `"OpenRouter/qwen/qwen3.8-omni-flash"` | `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` |
-| `tagging_model` | `String` | `"ollama/qwen3-vl:8b"` | `HKASK_MEDIA_TAGGING_MODEL` |
+| `tagging_model` | `String` | `"openrouter/Qwen3 VL 8B Instruct"` | `HKASK_MEDIA_TAGGING_MODEL` |
 
 An explicitly empty value clears a default (the env var is not injected and
 the pipeline fails visibly). The former creative model settings (`tts_model`,

@@ -34,6 +34,15 @@ consumed_capabilities:
       recorded fallback
   - capability: vision — openai/gpt-4o-mini
     source: kask/crates/hkask-inference/src/model_constants.rs
+  - capability: grounded tagging — Qwen3 VL 8B Instruct
+    source: kask/crates/hkask-inference/src/model_constants.rs
+    note: the tagging_model settings default (Settings > Kask > Models, env
+      HKASK_MEDIA_TAGGING_MODEL) — the S2 probe 2026-10-30 (goal a6c6fdf3,
+      card 15ee05ae) completed one 4-frame chunk on a real recording in
+      12.0s with four validated, time-anchored detections; the probed local
+      ollama same-family model measured 206s–>300s per chunk (see
+      kask/registry/providers/ollama.yaml) and was recorded as deliberate
+      non-consumption for this role
   - capability: edit predictions — z-ai/glm-5.2
     source: DIVERGENCE.md D24
 deliberate_non_consumption: []

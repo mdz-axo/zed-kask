@@ -924,6 +924,14 @@ pub struct LayersSemanticPassRequest {
     /// provider-enforced strict-schema path (chat_json is text-only), so
     /// the response names the mode actually used. Default false (v1).
     pub structured: Option<bool>,
+    /// Opt into the grounded mode (default false): the grounded template
+    /// raises box density and label specificity over the identical output
+    /// schema, and the pass resolves its model per-call, then the tagging
+    /// model setting (`HKASK_MEDIA_TAGGING_MODEL`), then the configured
+    /// analysis model — the tagging-role chain (settings card 9fc54490).
+    /// Provenance records `layers_semantic_pass_grounded` so the modes stay
+    /// distinguishable.
+    pub grounded: Option<bool>,
     /// Optional model override (provider-prefixed). Default:
     /// HKASK_MEDIA_PASS_MODEL, falling back to HKASK_MEDIA_VISION_MODEL —
     /// an explicit per-call override wins.
@@ -1016,6 +1024,29 @@ pub struct LayersRenderEdlRequest {
     /// Layer ID of the EDL layer to render. If omitted, renders the
     /// latest EDL layer for the given media path.
     pub layer_id: Option<String>,
+}
+
+/// Request to stitch an object layer's detections into deterministic
+/// tracks (S2, design §4 delta 3) — a derived object-kind layer.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersStitchTracksRequest {
+    /// Absolute local path (or URL) of the source media the layer
+    /// annotates (duration anchor for validation).
+    pub media_path: String,
+    /// Layer ID of the kind=object source layer to stitch (the
+    /// layers_semantic_pass output).
+    pub layer_id: String,
+    /// Box IoU threshold for linking consecutive detections of the same
+    /// label into one track (default 0.3; 0..1).
+    pub iou_threshold: Option<f64>,
+    /// Maximum frame-PTS gap in seconds that still links two detections
+    /// into one track (default 2.0; a larger gap ends the track — the
+    /// object is treated as gone and returned).
+    pub max_gap_secs: Option<f64>,
+    /// Allow tracks to merge across shot boundaries when the source pass
+    /// was chunked by shots (default false — shot boundaries are hard
+    /// cuts by construction; a blocked merge is counted in stats).
+    pub cross_shot: Option<bool>,
 }
 
 /// Request for the unified lexical search over media layers plus

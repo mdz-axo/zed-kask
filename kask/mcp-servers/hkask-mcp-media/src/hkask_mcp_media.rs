@@ -197,6 +197,7 @@ hkask_mcp_server::mcp_server!(
 
 pub mod layer_pass;
 pub mod layer_store;
+pub mod track_stitcher;
 pub mod transcript;
 pub mod transcript_export;
 pub mod transcript_layers;
@@ -480,8 +481,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        88,
-        tool_surface_is_exactly_88_registered_tools,
+        89,
+        tool_surface_is_exactly_89_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -7040,6 +7041,35 @@ mod tool_behavior_tests {
         }
     }
 
+    /// Sets the tagging model env var for one test and restores the prior
+    /// value on drop — the same discipline as `ModelEnvGuard`, for the
+    /// tagging-role chain (S2).
+    struct TaggingEnvGuard {
+        prior: Option<String>,
+    }
+
+    impl TaggingEnvGuard {
+        fn set(value: Option<&str>) -> Self {
+            let guard = Self {
+                prior: std::env::var(crate::models::TAGGING_ENV).ok(),
+            };
+            match value {
+                Some(value) => unsafe { std::env::set_var(crate::models::TAGGING_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::TAGGING_ENV) },
+            }
+            guard
+        }
+    }
+
+    impl Drop for TaggingEnvGuard {
+        fn drop(&mut self) {
+            match self.prior.take() {
+                Some(value) => unsafe { std::env::set_var(crate::models::TAGGING_ENV, value) },
+                None => unsafe { std::env::remove_var(crate::models::TAGGING_ENV) },
+            }
+        }
+    }
+
     /// The audio-role resolution chain (card 9fc54490): per-call override →
     /// the sound-annotation setting (`HKASK_MEDIA_SOUND_ANNOTATION_MODEL`) →
     /// typed NotConfigured naming the setting — and never the shared pass
@@ -7133,6 +7163,120 @@ mod tool_behavior_tests {
             assert!(
                 !message.contains("HKASK_MEDIA_VISION_MODEL"),
                 "the vision default is not an audio fallback: {message}"
+            );
+        }
+    }
+
+    /// The tagging-role chain (S2, the settings card's named seam): per-call
+    /// override → `HKASK_MEDIA_TAGGING_MODEL` → the vision default → typed
+    /// NotConfigured naming both envs. A vision-capable workload, so the
+    /// vision default IS a legitimate fallback — unlike the audio chain,
+    /// which never reaches it.
+    #[tokio::test]
+    async fn tagging_chain_resolution_prefers_override_then_tagging_env_then_vision_env() {
+        let _env_lock = MODEL_ENV_LOCK.lock().await;
+        let inference: Arc<dyn hkask_types::InferencePort> = Arc::new(VisionLayerMockPort {
+            vision_response: mock_layer_response(),
+        });
+        let expected = "MockLayerPassOutput {\"items\": [...]}";
+        {
+            let _tagging = TaggingEnvGuard::set(Some("tagging-env-model"));
+            let result = crate::layer_pass::run_layer_pass_vision::<MockLayerPassOutput>(
+                &inference,
+                PassMode::PromptSchema,
+                Some("per-call-override"),
+                crate::layer_pass::LayerPassModelChain::Tagging,
+                &[crate::layer_pass::LayerVisionChunk {
+                    prompt: "analyze chunk 0".to_string(),
+                    images: vec![],
+                }],
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("the override resolves through the tagging chain");
+            assert_eq!(result.model, "per-call-override", "the override wins");
+        }
+        {
+            let _tagging = TaggingEnvGuard::set(Some("tagging-env-model"));
+            let result = crate::layer_pass::run_layer_pass_vision::<MockLayerPassOutput>(
+                &inference,
+                PassMode::PromptSchema,
+                None,
+                crate::layer_pass::LayerPassModelChain::Tagging,
+                &[crate::layer_pass::LayerVisionChunk {
+                    prompt: "analyze chunk 0".to_string(),
+                    images: vec![],
+                }],
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("the tagging setting resolves");
+            assert_eq!(
+                result.model, "tagging-env-model",
+                "HKASK_MEDIA_TAGGING_MODEL serves the grounded pass"
+            );
+        }
+        {
+            let _tagging = TaggingEnvGuard::set(None);
+            let _env = ModelEnvGuard::set(None, Some("vision-env-model"));
+            let result = crate::layer_pass::run_layer_pass_vision::<MockLayerPassOutput>(
+                &inference,
+                PassMode::PromptSchema,
+                None,
+                crate::layer_pass::LayerPassModelChain::Tagging,
+                &[crate::layer_pass::LayerVisionChunk {
+                    prompt: "analyze chunk 0".to_string(),
+                    images: vec![],
+                }],
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect("the vision fallback resolves");
+            assert_eq!(
+                result.model, "vision-env-model",
+                "the vision default is a legitimate tagging fallback"
+            );
+        }
+        {
+            let _tagging = TaggingEnvGuard::set(None);
+            let _env = ModelEnvGuard::set(None, None);
+            let error = crate::layer_pass::run_layer_pass_vision::<MockLayerPassOutput>(
+                &inference,
+                PassMode::PromptSchema,
+                None,
+                crate::layer_pass::LayerPassModelChain::Tagging,
+                &[crate::layer_pass::LayerVisionChunk {
+                    prompt: "analyze chunk 0".to_string(),
+                    images: vec![],
+                }],
+                0,
+                1,
+                &AtomicU64::new(0),
+                &AtomicU64::new(0),
+                expected,
+            )
+            .await
+            .expect_err("nothing configured fails visibly");
+            let message = error.to_string();
+            assert!(
+                message.contains("HKASK_MEDIA_TAGGING_MODEL"),
+                "names the tagging setting: {message}"
+            );
+            assert!(
+                message.contains("HKASK_MEDIA_VISION_MODEL"),
+                "names the vision fallback: {message}"
             );
         }
     }
@@ -7361,6 +7505,31 @@ mod tool_behavior_tests {
         .to_string()
     }
 
+    /// The canned two-detection grounded output (S2): the same object seen
+    /// in frames 0 and 1 with a slightly moved box — the stitchable shape.
+    fn canned_grounded_response() -> String {
+        serde_json::json!({
+            "caption": {"text": "a blue test frame with a moving square", "confidence": 0.9},
+            "events": [],
+            "objects": [
+                {
+                    "label": "blue square",
+                    "confidence": 0.7,
+                    "box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4},
+                    "frame_index": 0
+                },
+                {
+                    "label": "blue square",
+                    "confidence": 0.72,
+                    "box": {"x": 0.12, "y": 0.2, "w": 0.3, "h": 0.4},
+                    "frame_index": 1
+                }
+            ],
+            "ocr": []
+        })
+        .to_string()
+    }
+
     fn semantic_pass_request(media_path: String) -> crate::types::LayersSemanticPassRequest {
         crate::types::LayersSemanticPassRequest {
             media_path,
@@ -7375,8 +7544,224 @@ mod tool_behavior_tests {
             max_chunks: None,
             resume_from: None,
             structured: None,
+            grounded: None,
             model: Some("mock-vision-model".to_string()),
         }
+    }
+
+    /// S2 AC1: the grounded mode renders the grounded template and records
+    /// it in provenance (modes distinguishable at the data layer), with
+    /// grounded=true in the recorded parameters and the same output schema
+    /// — two same-label detections land as time-anchored object items with
+    /// boxes in payload.
+    #[tokio::test]
+    async fn layers_semantic_pass_grounded_mode_records_grounded_provenance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env(canned_grounded_response()).await?;
+        let mut request = semantic_pass_request(source.to_string_lossy().into_owned());
+        request.grounded = Some(true);
+        let result = content_of(&server.layers_semantic_pass(Parameters(request)).await?);
+        assert_eq!(result["status"], serde_json::json!("completed"));
+        let object_layer = result["layers"]
+            .as_array()
+            .ok_or("layers array")?
+            .iter()
+            .find(|layer| layer["kind"] == serde_json::json!("object"))
+            .ok_or("an object layer was stored")?;
+        let layer_id = object_layer["id"].as_str().ok_or("layer id")?.to_string();
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        );
+        assert_eq!(
+            fetched["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("layers_semantic_pass_grounded"),
+            "the grounded mode rides provenance"
+        );
+        assert_eq!(
+            fetched["layer"]["provenance"]["model"],
+            serde_json::json!("mock-vision-model")
+        );
+        assert_eq!(
+            fetched["layer"]["provenance"]["parameters"]["grounded"],
+            serde_json::json!(true)
+        );
+        let items = fetched["layer"]["items"].as_array().ok_or("object items")?;
+        assert_eq!(
+            items.len(),
+            2,
+            "both detections land as time-anchored items"
+        );
+        for item in items {
+            assert!(
+                item["payload"]["box"].get("x").is_some(),
+                "every grounded detection carries its box: {}",
+                item["payload"]
+            );
+        }
+        Ok(())
+    }
+
+    /// S2 (design §4 delta 3): stitching the stored object layer produces
+    /// a derived kind=object layer whose items carry track_id in payload,
+    /// provenance model deterministic:track-stitcher with the versioned
+    /// algorithm label, and stats naming the linking outcome — opt-in per
+    /// recording, nothing automatic.
+    #[tokio::test]
+    async fn layers_stitch_tracks_derives_a_track_layer_from_stored_detections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, _gallery_root, source, server) =
+            vision_pass_env(canned_grounded_response()).await?;
+        let media_path = source.to_string_lossy().into_owned();
+        let result = content_of(
+            &server
+                .layers_semantic_pass(Parameters(semantic_pass_request(media_path.clone())))
+                .await?,
+        );
+        let object_layer = result["layers"]
+            .as_array()
+            .ok_or("layers array")?
+            .iter()
+            .find(|layer| layer["kind"] == serde_json::json!("object"))
+            .ok_or("an object layer was stored")?;
+        let layer_id = object_layer["id"].as_str().ok_or("layer id")?.to_string();
+
+        let stitched = content_of(
+            &server
+                .layers_stitch_tracks(Parameters(crate::types::LayersStitchTracksRequest {
+                    media_path,
+                    layer_id: layer_id.clone(),
+                    iou_threshold: None,
+                    max_gap_secs: None,
+                    cross_shot: None,
+                }))
+                .await?,
+        );
+        assert_eq!(stitched["status"], serde_json::json!("completed"));
+        assert_eq!(stitched["stats"]["tracks"], serde_json::json!(1));
+        assert_eq!(stitched["stats"]["spans"], serde_json::json!(1));
+        assert_eq!(
+            stitched["stats"]["unlinked_detections"],
+            serde_json::json!(0)
+        );
+        assert_eq!(stitched["source_layer_id"], serde_json::json!(layer_id));
+        let derived = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: stitched["layer"]["id"]
+                        .as_str()
+                        .ok_or("derived layer id")?
+                        .to_string(),
+                }))
+                .await?,
+        );
+        assert_eq!(derived["layer"]["kind"], serde_json::json!("object"));
+        assert_eq!(
+            derived["layer"]["provenance"]["model"],
+            serde_json::json!("deterministic:track-stitcher")
+        );
+        assert_eq!(
+            derived["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("layers_stitch_tracks:v1")
+        );
+        let item = &derived["layer"]["items"][0];
+        assert_eq!(
+            item["searchable_text"],
+            serde_json::json!("object: blue square")
+        );
+        assert!(
+            item["payload"]["track_id"].is_string(),
+            "the derived item carries track identity"
+        );
+        assert_eq!(
+            item["payload"]["detections"].as_array().map(Vec::len),
+            Some(2),
+            "the span's per-frame detections are addressable in payload"
+        );
+        let start = item["start_sec"].as_f64().ok_or("start")?;
+        let end = item["end_sec"].as_f64().ok_or("end")?;
+        assert!(
+            start >= 0.0 && end <= 2.0,
+            "the tightened span lies inside the source chunk range: {start}..{end}"
+        );
+        Ok(())
+    }
+
+    /// S2 degradation discipline: the stitcher is opt-in and fails or
+    /// degrades visibly — a wrong-kind source names the layer, a missing
+    /// layer id is not_found, and a source layer with no detections
+    /// returns the named no_detections note and stores nothing.
+    #[tokio::test]
+    async fn layers_stitch_tracks_degradations_name_the_layer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let media_path = gallery_root
+            .path()
+            .join("stitch-degradation.wav")
+            .to_string_lossy()
+            .into_owned();
+        create_real_audio(std::path::Path::new(&media_path)).await?;
+
+        let not_found = server
+            .layers_stitch_tracks(Parameters(crate::types::LayersStitchTracksRequest {
+                media_path: media_path.clone(),
+                layer_id: "no-such-layer".to_string(),
+                iou_threshold: None,
+                max_gap_secs: None,
+                cross_shot: None,
+            }))
+            .await
+            .expect_err("an unknown layer id fails");
+        assert!(
+            not_found.to_string().contains("no-such-layer"),
+            "names the missing layer: {not_found}"
+        );
+
+        let researcher_layer = content_of(
+            &server
+                .layers_store(Parameters(LayersStoreRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::Researcher,
+                    label: None,
+                    provenance: LayersProvenanceRequest {
+                        model: "user".to_string(),
+                        prompt_template: "stitch-degradation-test".to_string(),
+                    },
+                    items: vec![LayersStoreItemRequest {
+                        start_sec: 0.0,
+                        end_sec: Some(0.5),
+                        searchable_text: "a moment".to_string(),
+                        payload: hkask_types::AnyJsonValue(serde_json::json!({})),
+                        frame_asset_ids: None,
+                    }],
+                }))
+                .await?,
+        );
+        let wrong_kind = server
+            .layers_stitch_tracks(Parameters(crate::types::LayersStitchTracksRequest {
+                media_path: media_path.clone(),
+                layer_id: researcher_layer["id"]
+                    .as_str()
+                    .ok_or("researcher layer id")?
+                    .to_string(),
+                iou_threshold: None,
+                max_gap_secs: None,
+                cross_shot: None,
+            }))
+            .await
+            .expect_err("a wrong-kind source fails");
+        assert!(
+            wrong_kind.to_string().contains("kind=object"),
+            "names the required kind: {wrong_kind}"
+        );
+        Ok(())
     }
 
     // ── Audio pass contract tests (t5) ────────────────────────────────

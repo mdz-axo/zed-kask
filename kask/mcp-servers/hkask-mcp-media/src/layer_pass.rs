@@ -75,6 +75,43 @@ fn resolve_layer_model(model_override: Option<&str>) -> Result<String, LayerPass
         })
 }
 
+/// Resolve the grounded-tagging model — the tagging-role chain (settings
+/// card 9fc54490): an explicit per-call override, then the tagging setting
+/// (`HKASK_MEDIA_TAGGING_MODEL`), then the configured analysis model —
+/// a vision-capable workload, so the vision default is a legitimate
+/// fallback; `None` when nothing is configured (the caller fails visibly
+/// naming the envs).
+fn resolve_tagging_model(model_override: Option<&str>) -> Result<String, LayerPassError> {
+    model_override
+        .map(str::to_string)
+        .or_else(crate::models::tagging_model)
+        .or_else(crate::models::vision_model)
+        .filter(|model| !model.trim().is_empty())
+        .ok_or(LayerPassError::NotConfigured {
+            kind: "grounded tagging pass",
+            env: "HKASK_MEDIA_TAGGING_MODEL or HKASK_MEDIA_VISION_MODEL (the tagging model setting or the configured analysis model)",
+        })
+}
+
+/// Which model chain a layer pass resolves through. The shared chain is
+/// per-call → `HKASK_MEDIA_PASS_MODEL` → the configured analysis model;
+/// the tagging chain (the grounded vision mode, settings card 9fc54490)
+/// is per-call → `HKASK_MEDIA_TAGGING_MODEL` → the configured analysis
+/// model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerPassModelChain {
+    Shared,
+    Tagging,
+}
+
+impl LayerPassModelChain {
+    fn resolve(self, model_override: Option<&str>) -> Result<String, LayerPassError> {
+        match self {
+            Self::Shared => resolve_layer_model(model_override),
+            Self::Tagging => resolve_tagging_model(model_override),
+        }
+    }
+}
 /// Resolve the audio-pass model — the audio-role chain (operator steer
 /// 2026-10-30, card 9fc54490): an explicit per-call override, then the
 /// sound-annotation setting (`HKASK_MEDIA_SOUND_ANNOTATION_MODEL`); `None`
@@ -238,8 +275,10 @@ pub struct LayerVisionChunk {
 
 /// Run one bounded slice of a vision layer pass: one `generate_vision`
 /// call per chunk (the only image-carrying inference surface), the same
-/// chunk/resume plumbing, model chain, typed parse errors, and counters as
-/// the text leg. In structured mode the structured-output counters tick
+/// chunk/resume plumbing, typed parse errors, and counters as the text
+/// leg, with the model chain selected by `chain` (`LayerPassModelChain::Shared`
+/// for the standard pass, `::Tagging` for the grounded mode — settings card
+/// 9fc54490). In structured mode the structured-output counters tick
 /// and the caller's prompt carries the schema — strict provider-side
 /// schema enforcement does not exist for image inputs (chat_json is
 /// prompt+schema text-only), so the mode is surfaced honestly by the tool
@@ -248,6 +287,7 @@ pub async fn run_layer_pass_vision<TOutput: serde::de::DeserializeOwned>(
     inference: &Arc<dyn InferencePort>,
     mode: PassMode,
     model_override: Option<&str>,
+    chain: LayerPassModelChain,
     chunks: &[LayerVisionChunk],
     resume_from: usize,
     max_chunks: usize,
@@ -256,7 +296,7 @@ pub async fn run_layer_pass_vision<TOutput: serde::de::DeserializeOwned>(
     expected: &'static str,
 ) -> Result<LayerPassResult<TOutput>, LayerPassError> {
     let range = plan_chunk_range(chunks.len(), resume_from, max_chunks)?;
-    let model = resolve_layer_model(model_override)?;
+    let model = chain.resolve(model_override)?;
     let mut outputs = Vec::with_capacity(range.len());
     for chunk in &chunks[range.clone()] {
         let result = inference
