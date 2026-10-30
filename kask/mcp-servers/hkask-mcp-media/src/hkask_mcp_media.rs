@@ -466,8 +466,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         MediaServer::combined_router(),
         "combined_router",
-        87,
-        tool_surface_is_exactly_87_registered_tools,
+        88,
+        tool_surface_is_exactly_88_registered_tools,
     );
 
     // Coverage: every registered tool must map to an OMC concept. Catches
@@ -5984,6 +5984,150 @@ mod tool_behavior_tests {
             },
             items,
         }
+    }
+
+    /// S1: layers_transcript reads one recording's stored layer items as
+    /// one time-ordered event surface — kinds merged (audio_event before
+    /// the later researcher item), machine/human provenance surfaced
+    /// (model "user" on the researcher layer), with kind filter, source-
+    /// PTS window, limit pagination, and the named no_layers degradation.
+    #[tokio::test]
+    async fn layers_transcript_reads_one_time_ordered_surface_across_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let server = &env.server;
+        content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(1.0, Some(1.5))],
+                )))
+                .await?,
+        );
+        content_of(
+            &server
+                .layers_store(Parameters(crate::types::LayersStoreRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::AudioEvent,
+                    label: Some("audio events".to_string()),
+                    provenance: crate::types::LayersProvenanceRequest {
+                        model: "OpenRouter/qwen/qwen3.8-omni-flash".to_string(),
+                        prompt_template: "layers_audio_pass".to_string(),
+                    },
+                    items: vec![wire_item(0.0, Some(0.5))],
+                }))
+                .await?,
+        );
+        let read = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(read["status"], serde_json::json!("completed"));
+        assert_eq!(read["events_total"], serde_json::json!(2));
+        assert_eq!(
+            read["kinds_present"],
+            serde_json::json!(["audio_event", "researcher"])
+        );
+        let events = read["events"].as_array().expect("events array");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["kind"], serde_json::json!("audio_event"));
+        assert_eq!(events[0]["start_sec"], serde_json::json!(0.0));
+        assert_eq!(events[0]["end_sec"], serde_json::json!(0.5));
+        assert_eq!(
+            events[0]["searchable_text"],
+            serde_json::json!("a labeled moment")
+        );
+        assert_eq!(
+            events[0]["provenance"]["model"],
+            serde_json::json!("OpenRouter/qwen/qwen3.8-omni-flash")
+        );
+        assert_eq!(events[1]["kind"], serde_json::json!("researcher"));
+        assert_eq!(events[1]["provenance"]["model"], serde_json::json!("user"));
+        assert!(read["next_from"].is_null());
+
+        // Kind filter reads only the audio events.
+        let only = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: Some(crate::layer_store::MediaLayerKind::AudioEvent),
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(only["events_total"], serde_json::json!(1));
+        assert_eq!(only["kinds_present"], serde_json::json!(["audio_event"]));
+
+        // Source-PTS window keeps only overlapping events (the researcher
+        // item starts past the window's end).
+        let windowed = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                    time_range: Some(crate::types::LayersTimeRangeRequest {
+                        start_sec: 0.0,
+                        end_sec: Some(0.4),
+                    }),
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(windowed["events_total"], serde_json::json!(1));
+        assert_eq!(
+            windowed["kinds_present"],
+            serde_json::json!(["audio_event"])
+        );
+
+        // Limit pages and hands back a resume cursor.
+        let page = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                    time_range: None,
+                    limit: Some(1),
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        let page_events = page["events"].as_array().expect("page events");
+        assert_eq!(page_events.len(), 1);
+        assert_eq!(page["events_total"], serde_json::json!(2));
+        assert_eq!(page["next_from"], serde_json::json!(1));
+
+        // No stored layers is the named degradation, never a silent empty.
+        let missing = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: "no-such-recording.mp4".to_string(),
+                    kind: None,
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(missing["status"], serde_json::json!("no_layers"));
+        assert!(
+            missing["note"]
+                .as_str()
+                .expect("note")
+                .contains("layers_shot_pass")
+        );
+        Ok(())
     }
 
     /// t1 AC1: a researcher layer with items round-trips store -> list ->

@@ -25,7 +25,7 @@ use crate::transcript_pass::PassMode;
 use crate::types::{
     LayersAudioPassRequest, LayersExportRequest, LayersGetRequest, LayersListRequest,
     LayersSearchRequest, LayersSemanticPassRequest, LayersShotPassRequest, LayersStoreItemRequest,
-    LayersStoreRequest,
+    LayersStoreRequest, LayersTranscriptRequest,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -2104,6 +2104,125 @@ impl MediaServer {
                 "items": items_exported,
                 "passages": passages,
                 "composition": "run corpus_convert → corpus_chunk → corpus_embed on the passages; each item id resolves back via layers_get",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read a recording's visual transcript: every stored layer item merged into one time-ordered event list across layer kinds — the media sibling of reading a word transcript. Events carry stable item ids (resolvable via layers_get), source-PTS second ranges, kind, layer label, searchable text, payload, frame asset ids and provenance (researcher layers record model \"user\" — the human/machine distinction). No stored layers is the named no_layers state naming the passes that create layers; nothing is silent. Optional kind filter, source-PTS window (events overlapping the window are returned), limit (default 500, 1..=5000) and resume cursor; a longer transcript returns next_from. Source media bytes are never modified."
+    )]
+    pub async fn layers_transcript(
+        &self,
+        Parameters(request): Parameters<LayersTranscriptRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "layers_transcript", async {
+            let driver = &**self.gallery_store.driver();
+            let filter = MediaLayerFilter {
+                media_path: Some(request.media_path.clone()),
+                kind: request.kind,
+                limit: MAX_LAYERS_PER_RECORDING,
+            };
+            let summaries =
+                layer_store::list_layers(driver, &filter).map_err(map_layer_store_error)?;
+            if summaries.is_empty() {
+                return Ok(serde_json::json!({
+                    "status": "no_layers",
+                    "media_path": request.media_path,
+                    "events": [],
+                    "note":
+                        "no stored layers for this recording — run a layer pass \
+                         (layers_shot_pass, layers_semantic_pass, layers_audio_pass) \
+                         or author one (layers_store)",
+                }));
+            }
+            let mut events: Vec<(f64, String, String, serde_json::Value)> = Vec::new();
+            for summary in &summaries {
+                let Some(record) =
+                    layer_store::get_layer(driver, &summary.id).map_err(map_layer_store_error)?
+                else {
+                    return Err(McpToolError::not_found(format!(
+                        "layer {} disappeared during the read",
+                        summary.id
+                    )));
+                };
+                let kind = record.kind.as_str().to_string();
+                let layer_id = record.id.clone();
+                let label = record.label.clone();
+                let provenance = serde_json::to_value(&record.provenance).map_err(|error| {
+                    McpToolError::internal(format!("encode provenance: {error}"))
+                })?;
+                for stored in &record.items {
+                    let start = stored.item.start_sec;
+                    let end = stored.item.end_sec.unwrap_or(start);
+                    if let Some(range) = &request.time_range {
+                        if end < range.start_sec {
+                            continue;
+                        }
+                        if let Some(window_end) = range.end_sec {
+                            if start > window_end {
+                                continue;
+                            }
+                        }
+                    }
+                    events.push((
+                        start,
+                        kind.clone(),
+                        stored.id.clone(),
+                        serde_json::json!({
+                            "start_sec": start,
+                            "end_sec": stored.item.end_sec,
+                            "kind": kind.clone(),
+                            "layer_id": layer_id.clone(),
+                            "item_id": stored.id.clone(),
+                            "label": label.clone(),
+                            "searchable_text": stored.item.searchable_text.clone(),
+                            "payload": stored.item.payload.clone(),
+                            "frame_asset_ids": stored.item.frame_asset_ids.clone(),
+                            "provenance": provenance.clone(),
+                        }),
+                    ));
+                }
+            }
+            events.sort_by(|a, b| {
+                a.0.partial_cmp(&b.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.1.cmp(&b.1))
+                    .then_with(|| a.2.cmp(&b.2))
+            });
+            let total = events.len();
+            let kinds_present: Vec<String> = events
+                .iter()
+                .map(|event| event.1.clone())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            let resume_from = (request.resume_from.unwrap_or(0) as usize).min(total);
+            let limit = (request.limit.unwrap_or(500).clamp(1, 5000)) as usize;
+            let page_end = (resume_from + limit).min(total);
+            let values: Vec<serde_json::Value> = events[resume_from..page_end]
+                .iter()
+                .map(|event| event.3.clone())
+                .collect();
+            let next_from = if page_end < total {
+                Some(page_end as u64)
+            } else {
+                None
+            };
+            Ok(serde_json::json!({
+                "status": "completed",
+                "media_path": request.media_path,
+                "events": values,
+                "events_total": total,
+                "events_page": page_end - resume_from,
+                "kinds_present": kinds_present,
+                "layers_included": summaries
+                    .iter()
+                    .map(|summary| summary.id.clone())
+                    .collect::<Vec<String>>(),
+                "resume_from": resume_from as u64,
+                "next_from": next_from,
+                "time_basis": "source_pts_seconds",
             }))
         })
         .await

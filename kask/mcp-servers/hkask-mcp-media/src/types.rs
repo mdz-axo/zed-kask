@@ -939,6 +939,26 @@ pub struct LayersExportRequest {
     pub kind: Option<crate::layer_store::MediaLayerKind>,
 }
 
+/// Request to read a recording's visual transcript: every stored layer
+/// item as one time-ordered event list across layer kinds (S1).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LayersTranscriptRequest {
+    /// Absolute local path (or URL) of the annotated media.
+    pub media_path: String,
+    /// Optional kind filter (same closed set as layers_store); omitted
+    /// reads every stored layer kind.
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+    /// Optional source-PTS window; events overlapping the window are
+    /// returned (point-in-time items intersect it); omitted reads the
+    /// full recording.
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Maximum events returned (default 500, 1..=5000); a longer
+    /// transcript returns a resume cursor.
+    pub limit: Option<u32>,
+    /// Event index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+}
+
 /// Request to compose researcher selections into a media EDL layer (t8).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LayersEdlComposeRequest {

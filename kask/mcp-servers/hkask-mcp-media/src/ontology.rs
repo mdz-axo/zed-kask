@@ -93,6 +93,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "layers_semantic_pass"
         | "layers_audio_pass"
         | "layers_search"
+        | "layers_transcript"
         | "layers_edl_compose"
         | "layers_render_edl"
         | "layers_export" => Some(DATASET),
