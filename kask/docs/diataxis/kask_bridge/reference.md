@@ -176,10 +176,10 @@ inference socket, and an optional timeout
    provisioning for the shared database passphrase
    (`kask/crates/kask_bridge/src/mcp_servers.rs:589-721@build_mcp_server_env`);
 3. adds the inference socket and timeout
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:472@build_mcp_server_env`).
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:479@build_mcp_server_env`).
 
 Unknown IDs receive neither credentials nor configuration
-(`kask/crates/kask_bridge/src/mcp_servers.rs:414@filter_credentials_for_server,803@filter_config_env_for_server`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:421@filter_credentials_for_server,810@filter_config_env_for_server`).
 
 ## Nonblocking composition
 
@@ -230,17 +230,17 @@ non-optional, so every server declares its credential boundary explicitly
 (`kask/crates/kask_bridge/src/mcp_servers.rs:37-44`).
 
 `filter_credentials_for_server` passes only the declared names and gives an
-unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:414@filter_credentials_for_server`).
+unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:421@filter_credentials_for_server`).
 Add an allowlist-alignment test beside the existing per-server tests, such as
 `research_allowlist_matches_actual_reads`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1196@research_allowlist_matches_actual_reads`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1220@research_allowlist_matches_actual_reads`).
 
 #### 3. Declare the non-secret configuration boundary
 
 Set `config_env` to `&[]` or an exact list of non-secret variables emitted
 by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:662`). The
 config filter also fails closed for unknown IDs
-(`kask/crates/kask_bridge/src/mcp_servers.rs:803@filter_config_env_for_server`). Do not place database
+(`kask/crates/kask_bridge/src/mcp_servers.rs:810@filter_config_env_for_server`). Do not place database
 passphrases or API keys in this list.
 
 The current `media` descriptor is the worked example: three credentials
@@ -284,7 +284,7 @@ Run the focused server tests, the bridge allowlist tests, and then
 
 The composed-path regression test is
 `build_mcp_server_env_composition_respects_allowlists`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1370@build_mcp_server_env_composition_respects_allowlists`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1394@build_mcp_server_env_composition_respects_allowlists`).
 
 ## Further reading
 

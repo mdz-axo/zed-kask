@@ -95,7 +95,7 @@ load-bearing because configuration and credentials are disjoint key sets
 
 Every built-in descriptor carries explicit `credentials` and `config_env`
 allowlists. Unknown server IDs fail closed in both filters
-(`kask/crates/kask_bridge/src/mcp_servers.rs:414@filter_credentials_for_server,803@filter_config_env_for_server`). This makes a
+(`kask/crates/kask_bridge/src/mcp_servers.rs:421@filter_credentials_for_server,810@filter_config_env_for_server`). This makes a
 server's child environment an attenuated capability rather than a copy of the
 parent environment.
 
