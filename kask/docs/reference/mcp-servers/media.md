@@ -484,7 +484,7 @@ No routing or layout change is part of this repair.
 | `video_to_gif` | Convert a video segment to GIF using local ffmpeg, then durably publish it in the generated gallery. |
 | `video_add_caption` | Add a text caption overlay with local ffmpeg, then durably publish the MP4 in the generated gallery. |
 | `video_concat` | Concatenate clips with ffmpeg, then durably publish the MP4 in the generated gallery. |
-| `video_caption` | Describe video content by extracting keyframes and analyzing them with a vision LLM. |
+| `video_caption` | Describe video content by extracting keyframes and analyzing them with a vision LLM resolved through the pass-model chain (per-call override absent, then `HKASK_MEDIA_PASS_MODEL`, then `HKASK_MEDIA_VISION_MODEL`) — the same resolution as the layers vision pass, not the analysis-only path. |
 | `video_extract_frames` | Publish sampled source frames as searchable assets, recording source identity/hash, matching indexed parent when available, and actual source PTS. Returns stable asset IDs and explicit partial failures; no timestamps are inferred from ordinal position. |
 | `video_info` | Probe a video file for metadata — duration, dimensions, codec, fps, bit rate — via ffprobe. |
 | `video_fetch` | Validate a selected public video URL, download through yt-dlp, and atomically publish one durable indexed gallery asset. Download, file, lineage, or OMC failure leaves no residue; successful degradation is returned as a warning. |

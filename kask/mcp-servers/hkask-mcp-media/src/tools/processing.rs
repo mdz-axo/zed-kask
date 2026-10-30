@@ -769,20 +769,26 @@ impl MediaServer {
                 return Err(McpToolError::failed_precondition("No keyframes extracted from video."));
             }
 
-            let mut image_urls = Vec::new();
+            let mut image_b64s = Vec::new();
             let mut frame_read_failures = Vec::new();
             let mut observed_timestamps = Vec::new();
             for (frame, timestamp) in (&frames).into_iter().zip(&frames.timestamps_sec) {
-                match std::fs::read(frame) {
-                    Ok(data) => {
-                        let b64 = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &data,
-                        );
-                        image_urls.push(format!("data:image/jpeg;base64,{b64}"));
+                // The pass core's frame-encode primitive — the same helper
+                // the layers vision pass uses over its published frame
+                // assets: one encode per frame, no intermediate base64
+                // data-URL round trip (T7 strangler-fig).
+                match crate::gallery::vision::load_image_as_png_base64(
+                    &frame.to_string_lossy(),
+                )
+                .await
+                {
+                    Ok(image) => {
+                        image_b64s.push(image);
                         observed_timestamps.push(*timestamp);
                     }
-                    Err(error) => frame_read_failures.push(format!("{}: {error}", frame.display())),
+                    Err(error) => {
+                        frame_read_failures.push(format!("{}: {error}", frame.display()))
+                    }
                 }
             }
             if !frame_read_failures.is_empty() {
@@ -794,7 +800,7 @@ impl MediaServer {
                 );
             }
 
-            if image_urls.is_empty() {
+            if image_b64s.is_empty() {
                 return Err(McpToolError::internal(format!("No sampled frames readable: {}", frame_read_failures.join("; "))));
             }
             let coverage = sampled_coverage(interval_sec, max_frames, &observed_timestamps);
@@ -805,16 +811,14 @@ impl MediaServer {
                 .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
 
             let prompt = format!("{prompt}\nDescribe ONLY the supplied sampled visual frames. Do not infer audio, speech, unseen events or whole-recording coverage. Source frame timestamps in image order (seconds): {observed_timestamps:?}. State the sampled-only limitation in the description.");
-            let (vision_model, _vision_label) = self.require_vision()?;
+            // The pass-model chain (T7): the same resolution as the layers
+            // vision pass — per-call override absent, then
+            // HKASK_MEDIA_PASS_MODEL, then HKASK_MEDIA_VISION_MODEL — not
+            // the analysis-only require_vision path.
+            let vision_model = crate::layer_pass::LayerPassModelChain::Shared
+                .resolve(None)
+                .map_err(crate::tools::layers::map_layer_pass_error)?;
             let params = hkask_types::template::LLMParameters::default();
-            let mut image_b64s = Vec::with_capacity(image_urls.len());
-            for url in &image_urls {
-                image_b64s.push(
-                    crate::gallery::vision::load_image_as_png_base64(url)
-                        .await
-                        .map_err(crate::error::map_media_error)?,
-                );
-            }
             let result = self
                 .vision_port
                 .generate_vision(&prompt, &image_b64s, &params, Some(vision_model.as_str()))
@@ -824,7 +828,7 @@ impl MediaServer {
                 Ok(r) => Ok(serde_json::json!({
                     "caption": r.text.trim(),
                     "style": style_str,
-                    "frames_analyzed": image_urls.len(),
+                    "frames_analyzed": image_b64s.len(),
                     "source": source.identity,
                     "sampling": coverage,
                     "frame_read_failures": frame_read_failures,

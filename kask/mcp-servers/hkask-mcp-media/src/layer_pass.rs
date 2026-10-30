@@ -105,7 +105,11 @@ pub enum LayerPassModelChain {
 }
 
 impl LayerPassModelChain {
-    fn resolve(self, model_override: Option<&str>) -> Result<String, LayerPassError> {
+    /// Resolve the chain's model for one pass call. `pub(crate)` for the
+    /// tool surfaces that run a single bounded vision call through the
+    /// same chain as the chunked passes (video_caption, T7) — the resolve
+    /// stays crate-internal; no `pub` surface is added.
+    pub(crate) fn resolve(self, model_override: Option<&str>) -> Result<String, LayerPassError> {
         match self {
             Self::Shared => resolve_layer_model(model_override),
             Self::Tagging => resolve_tagging_model(model_override),

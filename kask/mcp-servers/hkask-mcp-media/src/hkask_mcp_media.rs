@@ -9125,6 +9125,169 @@ mod tool_behavior_tests {
         Ok(rendered)
     }
 
+    /// The prompt-capturing vision mock for the sampled-frame caption tool:
+    /// the vision arm records the prompt it served and returns the canned
+    /// caption text — the parity pin for the one-call shape.
+    struct CaptionCaptureMockPort {
+        response: String,
+        captured: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    crate::test_support::media_inference_stub! {
+        CaptionCaptureMockPort,
+        generate(self, _prompt): {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Connection(
+                    "text generate unused — video_caption calls generate_vision".into(),
+                ))
+            })
+        },
+        generate_vision(self, prompt, _images): {
+            self.captured
+                .lock()
+                .expect("captured prompts lock")
+                .push(prompt.to_string());
+            let result = hkask_types::InferenceResult {
+                text: self.response.clone(),
+                model: "mock-vision-model".to_string(),
+                usage: hkask_types::InferenceUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                    reported: true,
+                },
+                finish_reason: "stop".to_string(),
+                tool_calls: Vec::new(),
+                reasoning: None,
+                cost_usd: None,
+            };
+            Box::pin(async move { Ok(result) })
+        },
+    }
+
+    /// T7 parity (pinned before the migration, held after): the sampled-
+    /// frame caption call keeps its envelope — trimmed caption text,
+    /// style, frames analyzed, source identity, sampling coverage — and
+    /// its one bounded vision call carries the rendered template plus
+    /// the sampled-only limitation and the observed source timestamps.
+    #[tokio::test]
+    async fn video_caption_parity_pins_the_response_envelope_and_prompt()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let _model_env_lock = MODEL_ENV_LOCK.lock().await;
+        let _model_env = ModelEnvGuard::set(None, Some("vision-env-model"));
+        let captured: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let port: std::sync::Arc<dyn hkask_types::InferencePort> =
+            std::sync::Arc::new(CaptionCaptureMockPort {
+                response: "a blue test video".to_string(),
+                captured: captured.clone(),
+            });
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port,
+            std::sync::Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.path().to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery.id.clone()),
+            }))),
+            store.clone(),
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            Default::default(),
+        );
+        let source = gallery_root.path().join("caption-parity.mp4");
+        create_real_video(&source).await?;
+        let result = content_of(
+            &server
+                .video_caption(Parameters(
+                    crate::tools::processing::SampledVideoCaptionRequest {
+                        video_url: source.to_string_lossy().into_owned(),
+                        style: Some("descriptive".to_string()),
+                        interval_sec: 1.0,
+                        max_frames: 4,
+                    },
+                ))
+                .await?,
+        );
+        assert_eq!(result["caption"], serde_json::json!("a blue test video"));
+        assert_eq!(result["style"], serde_json::json!("descriptive"));
+        assert!(result["frames_analyzed"].as_u64().unwrap_or(0) >= 1);
+        assert!(result["sampling"].is_object());
+        assert!(result["source"].is_object());
+        let prompts = captured.lock().expect("captured prompts").clone();
+        assert_eq!(prompts.len(), 1, "one bounded vision call");
+        assert!(
+            prompts[0].contains("Describe ONLY the supplied sampled visual frames"),
+            "the prompt carries the sampled-only limitation: {}",
+            prompts[0]
+        );
+        assert!(
+            prompts[0].contains("Source frame timestamps in image order"),
+            "the prompt carries the observed source timestamps: {}",
+            prompts[0]
+        );
+        Ok(())
+    }
+
+    /// T7: the sampled-frame caption resolves its vision model through
+    /// the pass chain — per-call override absent, HKASK_MEDIA_PASS_MODEL
+    /// set, HKASK_MEDIA_VISION_MODEL unset — where the former
+    /// analysis-only require_vision path failed closed naming the vision
+    /// env. Red before the migration, green after: the discriminating
+    /// oracle for the resolution change.
+    #[tokio::test]
+    async fn video_caption_resolves_through_the_pass_chain()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let _model_env_lock = MODEL_ENV_LOCK.lock().await;
+        let _model_env = ModelEnvGuard::set(Some("pass-env-model"), None);
+        let port: std::sync::Arc<dyn hkask_types::InferencePort> =
+            std::sync::Arc::new(VisionLayerMockPort {
+                vision_response: "caption via the pass chain".to_string(),
+            });
+        let server = MediaServer::new(
+            hkask_types::WebID::new(),
+            port,
+            std::sync::Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.path().to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery.id.clone()),
+            }))),
+            store.clone(),
+            templates::create_env().expect("media templates must compile"),
+            video::ffmpeg::FfmpegRunner::detect(),
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            Default::default(),
+        );
+        let source = gallery_root.path().join("caption-chain.mp4");
+        create_real_video(&source).await?;
+        let result = content_of(
+            &server
+                .video_caption(Parameters(
+                    crate::tools::processing::SampledVideoCaptionRequest {
+                        video_url: source.to_string_lossy().into_owned(),
+                        style: None,
+                        interval_sec: 1.0,
+                        max_frames: 2,
+                    },
+                ))
+                .await?,
+        );
+        assert_eq!(
+            result["caption"],
+            serde_json::json!("caption via the pass chain")
+        );
+        Ok(())
+    }
+
     /// t6 AC2: matching, cap and resume behavior match
     /// educt_search_transcripts — over a corpus with no layers the hits
     /// and cursor are identical; a layer item prefix shifts the
