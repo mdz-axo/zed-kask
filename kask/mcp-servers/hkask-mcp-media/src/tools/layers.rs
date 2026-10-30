@@ -2332,7 +2332,14 @@ impl MediaServer {
                 }).collect::<Vec<_>>(),
                 "clips": clip_paths.len(),
             });
-            let result = crate::assets::publish_local_media_with_transcript_render(
+            // A media-layer EDL is not a transcript render: record_render
+            // requires the EDL layer id to exist in transcript_layers (a
+            // word-transcript concept) and a media_layers id never can —
+            // passing one rolled back the whole render when the recording
+            // carried a transcript (live failure 2026-10-30). The
+            // lineage-only publish carries the EDL layer id and clip plan in
+            // effective_params, which is the media surface's contract.
+            let result = crate::assets::publish_local_media(
                 &self.gallery_store,
                 &output,
                 "layers_render_edl",
@@ -2343,8 +2350,6 @@ impl MediaServer {
                     crate::assets::LocalMediaFormat::Mp4
                 },
                 &effective_params,
-                &record.id,
-                &record.id,
             )?;
             intermediates.cleanup().map_err(map_media_error)?;
             Ok(serde_json::json!({

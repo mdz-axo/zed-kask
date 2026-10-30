@@ -8905,6 +8905,226 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// t8 AC1+AC2: overlapping researcher selections compose into one
+    /// union-merged Keep op with no duplicates, and the composed layer's
+    /// provenance records the source layer. The card's criteria originally
+    /// shipped without these tests; they land with the render fix that
+    /// closes the family's test debt.
+    #[tokio::test]
+    async fn layers_edl_compose_union_merges_overlapping_selections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let recording = gallery_root.path().join("compose-fixture.wav");
+        create_real_audio(&recording).await?;
+        let media_path = recording.to_string_lossy().into_owned();
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(0.2, Some(1.4)), wire_item(1.0, Some(1.8))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let composed = content_of(
+            &server
+                .layers_edl_compose(Parameters(crate::types::LayersEdlComposeRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    layer_id: Some(layer_id.clone()),
+                    query: None,
+                }))
+                .await?,
+        );
+        assert_eq!(composed["status"], serde_json::json!("composed"));
+        assert_eq!(
+            composed["ops"],
+            serde_json::json!(1),
+            "two overlapping ranges union-merge into one Keep op"
+        );
+        assert_eq!(composed["input_ranges"], serde_json::json!(2));
+        let edl_layer_id = composed["layer"]["id"]
+            .as_str()
+            .ok_or("composed layer id")?
+            .to_string();
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: edl_layer_id.clone(),
+                }))
+                .await?,
+        );
+        let ops = fetched["layer"]["items"].as_array().ok_or("edl items")?;
+        assert_eq!(ops.len(), 1, "no duplicate Keep ops survive the merge");
+        assert_eq!(ops[0]["start_sec"], serde_json::json!(0.2));
+        assert_eq!(ops[0]["end_sec"], serde_json::json!(1.8));
+        assert_eq!(
+            fetched["layer"]["provenance"]["parameters"]["source"],
+            serde_json::json!(format!("layer:{layer_id}")),
+            "provenance records the source layer"
+        );
+        Ok(())
+    }
+
+    /// t9 AC1: a composed EDL renders to a published gallery asset and the
+    /// render works when the recording has no transcript — the media layer
+    /// family is transcript-independent.
+    #[tokio::test]
+    async fn layers_render_edl_publishes_a_reel_without_a_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let recording = gallery_root.path().join("render-no-transcript.wav");
+        create_real_audio(&recording).await?;
+        let media_path = recording.to_string_lossy().into_owned();
+        let reel = compose_and_render(&server, &media_path).await?;
+        let asset_id = reel["result"]["gallery_asset_id"]
+            .as_str()
+            .ok_or("published gallery asset id")?;
+        assert!(!asset_id.is_empty());
+        Ok(())
+    }
+
+    /// Regression (live failure 2026-10-30): rendering a media EDL over a
+    /// recording that carries a stored transcript failed at publication —
+    /// the render passed the EDL layer id as a transcript id and the
+    /// relationship lookup rolled back the whole render. The media-layer
+    /// publish is lineage-only; the transcript must be irrelevant.
+    #[tokio::test]
+    async fn layers_render_edl_succeeds_with_a_linked_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let recording = gallery_root.path().join("render-with-transcript.wav");
+        create_real_audio(&recording).await?;
+        let media_path = recording.to_string_lossy().into_owned();
+        let bundle = crate::transcript::TranscriptBundle {
+            words: vec![crate::transcript::TimedWord {
+                word: "kept".to_string(),
+                start_ms: 200,
+                end_ms: 400,
+                confidence: None,
+            }],
+            ..crate::transcript::TranscriptBundle::new(
+                media_path.to_string(),
+                1.0,
+                "kept".to_string(),
+            )
+        };
+        let _ = content_of(
+            &server
+                .educt_store_transcript(Parameters(crate::types::EductStoreTranscriptRequest {
+                    transcript: hkask_types::AnyJsonValue(serde_json::to_value(&bundle).unwrap()),
+                    gallery_asset_id: None,
+                }))
+                .await?,
+        );
+        let reel = compose_and_render(&server, &media_path).await?;
+        assert_eq!(reel["status"], serde_json::json!("rendered"));
+        let asset_id = reel["result"]["gallery_asset_id"]
+            .as_str()
+            .ok_or("published gallery asset id")?;
+        assert!(!asset_id.is_empty());
+        Ok(())
+    }
+
+    /// t7 AC2: every exported passage's item id resolves through layers_get
+    /// to the same item — the corpus handoff's round trip.
+    #[tokio::test]
+    async fn layers_export_ids_resolve_through_layers_get() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let recording = gallery_root.path().join("export-roundtrip.wav");
+        create_real_audio(&recording).await?;
+        let media_path = recording.to_string_lossy().into_owned();
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(0.2, Some(1.2))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest {
+                    layer_id: layer_id.clone(),
+                }))
+                .await?,
+        );
+        let items = fetched["layer"]["items"].as_array().ok_or("items array")?;
+        let exported = content_of(
+            &server
+                .layers_export(Parameters(crate::types::LayersExportRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                }))
+                .await?,
+        );
+        let passages = exported["passages"].as_str().ok_or("passages text")?;
+        assert_eq!(items.len(), 1);
+        let item_id = items[0]["id"].as_str().ok_or("stored item id")?;
+        assert!(
+            passages.contains(&format!("### item: {item_id} ")),
+            "the export carries the stable item id {item_id}"
+        );
+        assert!(
+            passages.contains(items[0]["searchable_text"].as_str().unwrap_or_default()),
+            "the export carries the item's searchable text"
+        );
+        Ok(())
+    }
+
+    /// Compose a researcher selection into an EDL and render it — the
+    /// shared body of the render tests.
+    async fn compose_and_render(
+        server: &MediaServer,
+        media_path: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.to_string(),
+                    vec![wire_item(0.2, Some(1.2))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let composed = content_of(
+            &server
+                .layers_edl_compose(Parameters(crate::types::LayersEdlComposeRequest {
+                    media_path: media_path.to_string(),
+                    gallery_asset_id: None,
+                    layer_id: Some(layer_id),
+                    query: None,
+                }))
+                .await?,
+        );
+        assert_eq!(composed["status"], serde_json::json!("composed"));
+        let edl_layer_id = composed["layer"]["id"]
+            .as_str()
+            .ok_or("composed layer id")?
+            .to_string();
+        let rendered = content_of(
+            &server
+                .layers_render_edl(Parameters(crate::types::LayersRenderEdlRequest {
+                    media_path: media_path.to_string(),
+                    layer_id: Some(edl_layer_id.clone()),
+                }))
+                .await?,
+        );
+        assert_eq!(rendered["status"], serde_json::json!("rendered"));
+        assert_eq!(rendered["edl_layer_id"], serde_json::json!(edl_layer_id));
+        Ok(rendered)
+    }
+
     /// t6 AC2: matching, cap and resume behavior match
     /// educt_search_transcripts — over a corpus with no layers the hits
     /// and cursor are identical; a layer item prefix shifts the
