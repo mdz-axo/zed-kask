@@ -140,6 +140,18 @@ pub(crate) enum RedactionDecisionError {
     Tier2NotConfigured,
 }
 
+impl std::fmt::Display for RedactionDecisionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotARedactionDecision(reason) => f.write_str(reason),
+            Self::Tier2NotConfigured => f.write_str(
+                "mask_track target — reserved tier-2 vocabulary with no configured \
+                 serving provider; tier-1 renders cover box targets only",
+            ),
+        }
+    }
+}
+
 /// Tolerance for floating comparisons in the range/boundary arithmetic.
 pub(crate) const RANGE_EPS: f64 = 1e-6;
 
@@ -549,23 +561,23 @@ pub(crate) fn build_filter_graph(
     segment_start_sec: f64,
     width: u32,
     height: u32,
-) -> Result<(String, Vec<AppliedRedaction>), String> {
+) -> Result<(String, Vec<AppliedRedaction>), RedactionDecisionError> {
     let mut graph = String::new();
     let mut current = "0:v".to_string();
     let mut applied = Vec::new();
     for (ordinal, decision) in decisions.iter().enumerate() {
         if decision.target_kind != RedactionTargetKind::Box {
-            return Err(format!(
+            return Err(RedactionDecisionError::NotARedactionDecision(format!(
                 "item {}: target kind {} is not box-renderable in tier 1",
                 decision.item_id,
                 decision.target_kind.as_str()
-            ));
+            )));
         }
         let Some(box_norm) = decision.box_norm else {
-            return Err(format!(
+            return Err(RedactionDecisionError::NotARedactionDecision(format!(
                 "item {}: missing the normalized box",
                 decision.item_id
-            ));
+            )));
         };
         let mut rect = scale_box_to_pixels(&box_norm, width, height);
         let local_start = (decision.start_sec - segment_start_sec).max(0.0);
@@ -609,11 +621,11 @@ pub(crate) fn build_filter_graph(
                     delogo_edge_inset = true;
                 }
                 if dw < 2 || dh < 2 {
-                    return Err(format!(
+                    return Err(RedactionDecisionError::NotARedactionDecision(format!(
                         "item {}: the delogo box is too small after the frame-edge \
                          inset ({}x{} at {},{}) — enlarge the target box",
                         decision.item_id, dw, dh, dx, dy
-                    ));
+                    )));
                 }
                 rect = PixelRect {
                     x: dx,
@@ -1145,7 +1157,8 @@ mod tests {
 
         edge_decision.box_norm = Some([0.99, 0.0, 0.01, 0.01]);
         let error = build_filter_graph(&[&edge_decision], 1.0, 64, 48)
-            .expect_err("a box too small for the inset rejects");
+            .expect_err("a box too small for the inset rejects")
+            .to_string();
         assert!(
             error.contains("too small"),
             "the too-small inset rejection names the condition: {error}"
@@ -1165,7 +1178,8 @@ mod tests {
             source_tag_refs: Vec::new(),
         };
         let error = build_filter_graph(&[&track_decision], 1.0, 64, 48)
-            .expect_err("a mask_track target refuses at graph build");
+            .expect_err("a mask_track target refuses at graph build")
+            .to_string();
         assert!(
             error.contains("mask_track"),
             "the refusal names the target kind: {error}"
@@ -1173,7 +1187,8 @@ mod tests {
 
         track_decision.target_kind = RedactionTargetKind::Box;
         let error = build_filter_graph(&[&track_decision], 1.0, 64, 48)
-            .expect_err("a box target without a box refuses at graph build");
+            .expect_err("a box target without a box refuses at graph build")
+            .to_string();
         assert!(
             error.contains("missing the normalized box"),
             "the refusal names the missing box: {error}"

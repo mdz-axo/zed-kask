@@ -171,7 +171,12 @@ pub(crate) struct AssessmentClaim {
 pub struct AssessmentAttempt {
     pub input: GoalAssessmentInput,
     pub started_at: DateTime<Utc>,
-    pub result: Option<Result<AssessmentResult, String>>,
+    /// The attempt's outcome as a human-readable audit record. The `Err`
+    /// message is produced across the D8 kask_bridge seam — the artifact
+    /// capture and the independent assessor both live there, where String
+    /// errors are the accepted contract (check-string-errors gate scope
+    /// note) — and is persisted as-is; no consumer matches on variants.
+    pub result: Option<Result<AssessmentResult, String>>, // string-error-ok
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -285,8 +290,16 @@ pub struct GoalVerdict {
     pub judged_at: DateTime<Utc>,
 }
 
+/// The artifact-locator rejection is a display message, not a dispatch
+/// surface: it is re-exported across the D8 kask_bridge seam
+/// (`kask_bridge/src/goals/artifacts.rs` imports this as `local_path`),
+/// where String errors are the accepted contract (check-string-errors gate
+/// scope note). Alias-carried marker — a trailing marker on the `fn`
+/// signature line does not survive rustfmt (the build.rs precedent).
+pub type LocalArtifactPathResult = Result<std::path::PathBuf, String>; // string-error-ok
+
 /// Parse only; safe to display before approval. Never touches the filesystem.
-pub fn local_artifact_path(locator: &str) -> Result<std::path::PathBuf, String> {
+pub fn local_artifact_path(locator: &str) -> LocalArtifactPathResult {
     let path = if locator.starts_with("file:") {
         let url = url::Url::parse(locator).map_err(|error| format!("invalid file URI: {error}"))?;
         if !matches!(url.host_str(), None | Some("localhost")) {

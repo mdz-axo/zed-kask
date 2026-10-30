@@ -558,6 +558,12 @@ impl KanbanService {
     }
     /// Own the complete assessment transaction sequence. Callers supply only
     /// evidence capture and independent inference, never lease/completion messages.
+    ///
+    /// The capture/assess closure results carry String errors by the D8 seam
+    /// contract: both closures are implemented in kask_bridge, where String
+    /// errors are accepted (check-string-errors gate scope note), and the
+    /// attempt record persists the message as its audit trail
+    /// (`AssessmentAttempt::result`).
     pub async fn goal_assess<C, A, F>(
         &self,
         id: GoalID,
@@ -566,9 +572,9 @@ impl KanbanService {
         assess: A,
     ) -> Result<(), KanbanError>
     where
-        C: FnOnce(&NativeGoalClosure) -> Result<Vec<GoalArtifactSnapshot>, String>,
+        C: FnOnce(&NativeGoalClosure) -> Result<Vec<GoalArtifactSnapshot>, String>, // string-error-ok
         A: FnOnce(GoalAssessmentInput) -> F,
-        F: std::future::Future<Output = Result<AssessmentResult, String>>,
+        F: std::future::Future<Output = Result<AssessmentResult, String>>, // string-error-ok
     {
         let current = self
             .goal_get(id, owner)?
@@ -671,6 +677,10 @@ impl KanbanService {
     /// Prepare outside the canonical lock; publish and acknowledge only while
     /// the exact revision is still current. A destination commit followed by a
     /// canonical commit failure is retried by revising the same memory record.
+    ///
+    /// The prepare/publish closure results carry String errors by the D8 seam
+    /// contract: both closures are implemented in kask_bridge, where String
+    /// errors are accepted (check-string-errors gate scope note).
     pub async fn goal_index_current<P, F, W>(
         &self,
         id: GoalID,
@@ -679,8 +689,8 @@ impl KanbanService {
     ) -> Result<(), KanbanError>
     where
         P: FnOnce(Goal) -> F,
-        F: std::future::Future<Output = Result<W, String>>,
-        W: FnOnce() -> Result<(), String>,
+        F: std::future::Future<Output = Result<W, String>>, // string-error-ok
+        W: FnOnce() -> Result<(), String>,                  // string-error-ok
     {
         self.transition_goal(id, owner, true, |goal| {
             let old = goal.forecast_status.clone();

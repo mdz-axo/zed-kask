@@ -1,6 +1,7 @@
 ---
 name: prompt-enhance
 description: "General-purpose prompt enhancement for the zed-kask platform. Typed routing over a 7-type prompt taxonomy with a 3-tier effort knob. Use when enhancing prompts for skill templates, agent system prompts, or chat REPL prompts."
+audience: user
 ---
 
 # Prompt Enhance

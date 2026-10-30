@@ -2564,7 +2564,21 @@ impl MediaServer {
                             probe.width,
                             probe.height,
                         )
-                        .map_err(McpToolError::failed_precondition)?;
+                        .map_err(|error| match error {
+                            RedactionDecisionError::NotARedactionDecision(reason) => {
+                                McpToolError::failed_precondition(reason)
+                            }
+                            // Unreachable in practice — parse_decision rejects
+                            // mask_track targets before graph build — but the
+                            // per-variant classification stays explicit.
+                            RedactionDecisionError::Tier2NotConfigured => {
+                                McpToolError::permission_denied(
+                                    "mask_track target in a re-encode segment — \
+                                     reserved tier-2 vocabulary; tier-1 renders \
+                                     cover box targets only",
+                                )
+                            }
+                        })?;
                         applied_items.extend(applied);
                         let rendered = ffmpeg
                             .clip_filtered(

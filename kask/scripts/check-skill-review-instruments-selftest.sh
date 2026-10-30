@@ -99,7 +99,11 @@ printf '%s\n' "$gap_out" | grep -q 'curated:' || {
   echo "FAIL: gap instrument did not report counts: $gap_out" >&2
   exit 1
 }
-printf '%s\n' "$gap_out" | sed -n '/MISSING from the curated record/,$p' \
+# The gap direction is "retired but MISSING from the curated record". The
+# range must stop at the derive script's next informational section header
+# ("curated but not derived" — tolerated by design: the record may carry
+# older/manual names), or that section's bare names read as gaps.
+printf '%s\n' "$gap_out" | sed -n '/MISSING from the curated record/,/^--- /p' \
   | tail -n +2 | grep -qE '^[a-z0-9-]+$' && {
   echo "FAIL: the live retirement record still has a gap: $gap_out" >&2
   exit 1
@@ -107,7 +111,7 @@ printf '%s\n' "$gap_out" | sed -n '/MISSING from the curated record/,$p' \
 
 # Negative: a name that never shipped is reported as needing no sweep entry,
 # and one that shipped is reported as requiring one.
-never="$(bash "$SHIPPED" lora-training 2>&1 || true)"
+never="$(bash "$SHIPPED" sankey-flow 2>&1 || true)"
 printf '%s\n' "$never" | grep -q 'sweep entry REQUIRED' || {
   echo "FAIL: shipped-status instrument did not flag a shipped retired skill: $never" >&2
   exit 1

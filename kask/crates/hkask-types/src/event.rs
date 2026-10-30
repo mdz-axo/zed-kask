@@ -88,6 +88,14 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.curator.metacognition",
     // ── Cybernetics ──
     "reg.cybernetics",
+    // ── Per-turn instrument affordance (D94): the native-first denominator
+    // sensor (reg.agent — turn instrument summaries, main.rs), the injector's
+    // degradation warns (reg.affordance — embedding failures surface a
+    // degradation note plus this warn), and the claim-gate v1 findings sink
+    // (reg.gate) — the intervention family targeting native-first drift. ──
+    "reg.agent",
+    "reg.affordance",
+    "reg.gate",
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
     // pain-signal span. Live via Span::from_kind, not string literals.
@@ -281,7 +289,8 @@ impl SpanCategory {
     pub fn from_short_name(s: &str) -> Self {
         let prefix = s.split('.').next().unwrap_or(s);
         match prefix {
-            "cybernetics" | "variety" | "outcome" | "alert" | "sensor" => Self::Cybernetics,
+            "cybernetics" | "variety" | "outcome" | "alert" | "sensor" | "agent" | "affordance"
+            | "gate" => Self::Cybernetics,
             "curation" | "curator" | "spec" => Self::Curation,
             "inference" => Self::Inference,
             "memory" | "consolidation" | "pod" | "connector" => Self::Memory,
@@ -575,6 +584,9 @@ mod tests {
     fn span_category_classifies_canonical_loop_families() {
         for (namespace, expected) in [
             ("reg.cybernetics", SpanCategory::Cybernetics),
+            ("reg.agent", SpanCategory::Cybernetics),
+            ("reg.affordance", SpanCategory::Cybernetics),
+            ("reg.gate", SpanCategory::Cybernetics),
             ("reg.variety", SpanCategory::Cybernetics),
             ("reg.outcome", SpanCategory::Cybernetics),
             ("reg.alert", SpanCategory::Cybernetics),
