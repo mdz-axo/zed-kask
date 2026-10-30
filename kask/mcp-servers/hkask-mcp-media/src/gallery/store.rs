@@ -1815,6 +1815,48 @@ mod tests {
     }
 
     #[test]
+    fn most_recently_organized_is_none_on_empty_store() {
+        let store = setup();
+        assert!(store.most_recently_organized().unwrap().is_none());
+    }
+
+    #[test]
+    fn most_recently_organized_returns_the_only_gallery() {
+        let store = setup();
+        let root = tempfile::tempdir().expect("gallery root");
+        let path = root.path().to_str().expect("UTF-8 root");
+        let gallery = store.open(path, GalleryMode::ReadOnly).unwrap();
+        let most_recent = store.most_recently_organized().unwrap().unwrap();
+        assert_eq!(most_recent.id, gallery.id);
+    }
+
+    #[test]
+    fn most_recently_organized_returns_last_organized() {
+        let store = setup();
+        let first_root = tempfile::tempdir().expect("first gallery");
+        let second_root = tempfile::tempdir().expect("second gallery");
+        let first = store
+            .open(
+                first_root.path().to_str().expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
+        let second = store
+            .open(
+                second_root.path().to_str().expect("UTF-8 root"),
+                GalleryMode::CopyOnWrite,
+            )
+            .unwrap();
+        let first_id = first.id;
+        let second_id = second.id;
+        let most_recent = store.most_recently_organized().unwrap().unwrap();
+        assert_eq!(
+            most_recent.id, second_id,
+            "the last-organized gallery wins, not the first ({first_id} vs {second_id})"
+        );
+    }
+
+    #[test]
     fn add_image_stores_record() {
         let (_store, _gallery, img) = store_with_image("abc123");
         assert_eq!(img.hash, "abc123");

@@ -1,6 +1,29 @@
 //! Media layer tools — store and recall time-keyed annotation layers over
 //! stored video/audio recordings.
 //!
+//! Tool index (line numbers at the time of this comment):
+//!
+//! | Tool | Line | Concern |
+//! |------|------|----------|
+//! | `layers_store` | ~524 | Store a layer with validated items |
+//! | `layers_list` | ~586 | List layers (filtered by media/kind) |
+//! | `layers_get` | ~610 | Get one layer by id |
+//! | `layers_shot_pass` | ~635 | Deterministic shot boundaries (ffmpeg) |
+//! | `layers_semantic_pass` | ~728 | Bounded vision pass (semantic/object/OCR) |
+//! | `layers_audio_pass` | ~1240 | Bounded audio pass (non-speech audio events) |
+//! | `layers_stitch_tracks` | ~1520 | Stitch detections into tracks (IoU-linked) |
+//! | `layers_search` | ~1811 | Lexical search across layers + transcripts |
+//! | `layers_edl_compose` | ~2089 | Compose researcher selections into an EDL layer |
+//! | `layers_render_edl` | ~2249 | Render an EDL into a playable gallery asset |
+//! | `layers_render_redactions` | ~2379 | Render tier-1 redactions (blur/pixelate/black/delogo) |
+//! | `layers_export` | ~2630 | Export layer items as corpus passages |
+//! | `layers_transcript` | ~2687 | Read one recording's stored layers as one time-ordered event surface |
+//!
+//! Proposed split (operator decision, not yet executed):
+//! `layers/{store,passes,search,edl,export}.rs` — one file per concern family,
+//! with `layers.rs` as the module root. The current single-file shape avoids
+//! merge conflicts while three streams actively add tools here.
+//!
 //! The media sibling of the educt transcript-store tools: transcripts anchor
 //! layers to word indices, media layers anchor to source-PTS second ranges
 //! over an immutable media file, with provenance following the same
