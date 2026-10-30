@@ -97,6 +97,7 @@ Use `cx.background_executor().timer(duration).await` in GPUI tests, not `smol::T
 * Numeric env vars that fail to parse must `log::warn!` naming the malformed value, not silently fall back.
 * Opt-in `HKASK_USE_*` features that fail must log the failure classification (HTTP status, error variant), not collapse to `None` via `.ok()?`.
 * `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop — a DB outage returns 0, which the loop reads as "no deviation." Propagate the error or emit `tracing::warn!`.
+* `curator_report_skill_use_issue` is for failures and unexpected output — never file an expected TDD red state or a correct absence as an incident; expected states are verification evidence, not log noise (16 expected_absence rows diluted the 276-row 10-02..10-25 log).
 
 ## Skill system
 
