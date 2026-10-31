@@ -1717,8 +1717,8 @@ pub struct KaskSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskAffordanceSettingsContent {
     /// Inject the per-turn affordance block. Default `false`: the operator
-    /// enables it after reading the native-first-rate baseline
-    /// (`kask/docs/research/instrument-affordance-experiment.md`), keeping
+    /// enables it after reading the native-first-rate baseline (the affordance
+    /// study record was removed 2026-10-30 — git history retains it), keeping
     /// the pre/post comparison clean. Flips apply to the next turn
     /// without a restart (read per turn at the call site).
     pub enabled: Option<bool>,

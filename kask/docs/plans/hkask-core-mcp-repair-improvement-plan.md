@@ -1,7 +1,7 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-13
+last_updated: 2026-10-30
 version: "0.11.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -494,7 +494,7 @@ The self-sustaining loops are gone: with no thread running the editor no longer 
 
 **P7g diagnostic consolidation (2026-10-01; the two-symptom investigation — thread-open latency + input-tracking freeze):**
 
-> **Superseded (2026-10-02):** `kask/docs/research/two-symptom-latency-findings.md` (round-1 §1–§6 + round-2 §7) is the authoritative two-symptom record — the confirmed causes, the register, and the ranked plan live there. This section is retained as the 2026-10-01 measurement snapshot it was.
+> **Record note (updated 2026-10-30):** the superseding record `research/two-symptom-latency-findings.md` was removed in the 2026-10-30 stale-docs sweep; git history retains it (round-1 §1–§6 + round-2 §7: the confirmed causes, the register, and the ranked plan). This section is the retained in-tree two-symptom record — the 2026-10-01 measurement snapshot it was.
 
 *Measured (per-window `ui frame health` counters, the live `[DIAG-anr]` event probe, `ps`/load):* on a fresh post-reboot process, quiet machine (load ≈ 2.2), with one heavy conversation streaming, draw cost held at 23.2–50.4 ms avg (max 50–160 ms) at 220–897 draws/30 s — against the 2.3–7.5 ms healthy baseline (P7c, 2026-09-24). Same day, pre-reboot: 24–38 ms avg with agent activity on a quiet machine (two windows: 24–38 / 17–21), 66–115 ms during the heaviest conversation content (load ≈ 3.8, no build), and the P7f 83–128 ms band during a 16-job build (load 19.6, a second clone compiling). `[DIAG-anr]`: 1,319–2,370 events per window at 3.6–4.5 ms avg (max 16.9 ms) — busy 22–66% of the window; H2 (single-event hog) eliminated, H3 (uniformly expensive events) confirmed. threads.db = 338 MB; the 13-server MCP fleet idles at 0.0–0.4% CPU each (eliminated as a CPU factor).
 

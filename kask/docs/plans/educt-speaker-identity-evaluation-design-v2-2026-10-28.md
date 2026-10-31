@@ -24,7 +24,8 @@ authored 2026-10-28 without inspecting confirmatory trial outcomes.
   `single_arm_calibration`, and `same_session_cross_validation`.
 - Evidence: research run `e99d0ff4045bfb64`,
   `educt-speaker-identity-plan-2026-10-27.md`, and
-  `educt-research-design-assessment-2026-10-27.md` §7 and §9.
+  `educt-research-design-assessment-2026-10-27.md` §7 and §9 (that
+  assessment was removed 2026-10-30; git history retains it).
 
 This revision corrects two defects in the prior registration: overlap-flagged
 trials must not disappear from identification errors, and a development-only

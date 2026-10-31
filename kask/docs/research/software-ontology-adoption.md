@@ -161,8 +161,9 @@ the 2026 redline is a revision, not a retraction.
 - **SEON revision** (approval #3) — not granted; any SEON adoption waits on
   the operator.
 - **Skillware-derived software-process rulings** — the `skill` ruling
-  landed 2026-10-13 (operator adoption of the open-loops proposal,
-  `research/ontology-open-loops-resolution.md` §3.1); the remaining
+  landed 2026-10-13 (operator adoption of the open-loops proposal, 2026-10-13;
+  the proposal `research/ontology-open-loops-resolution.md` was removed
+  2026-10-30 — git history retains it); the remaining
   terms (`skillware_unit`, `lifecycle_continuity`, `agent_host`) await
   load-bearing usage.
 - **CSO >= 3.4 re-attempt** — superseded: 3.5 landed via the versioning

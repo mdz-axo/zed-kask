@@ -33,7 +33,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-ARCH-LEARNING-LOOP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-10-19 | VERIFIED |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-10-05 | VERIFIED |
-| `DIAG-ARCH-EUREKA-001` | [`plans/eureka-cycle-implementation-plan.md`](./plans/eureka-cycle-implementation-plan.md) | 2026-10-23 | VERIFIED |
+| `DIAG-ARCH-EUREKA-001` | [`research/experimentation-reference-model.md`](./research/experimentation-reference-model.md) | 2026-10-30 | VERIFIED |
 | `DIAG-ARCH-SPEAKER-IDENT-001` | [`plans/educt-speaker-identity-plan-2026-10-27.md`](./plans/educt-speaker-identity-plan-2026-10-27.md) | 2026-10-27 | VERIFIED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-28 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |

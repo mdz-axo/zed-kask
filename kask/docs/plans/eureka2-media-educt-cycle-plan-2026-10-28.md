@@ -83,8 +83,11 @@ may be vetoed on functional grounds at any time:
   implementations ∈ {deterministic, open weights, closed behind gates}).
 - **EUREKA-1**: goal `3f918662…` closed accomplished; its standing decisions
   (session-chaired cadence, board-not-server, memory-candidates-only,
-  funding gate, reconciliation checklist) carry forward —
-  `kask/docs/plans/eureka-cycle-implementation-plan.md` [tree].
+  funding gate, reconciliation checklist) carry forward — the live loop's
+  contract is `.agents/skills/eureka-cycle/SKILL.md` plus the
+  `DIAG-ARCH-EUREKA-001` flowchart in
+  `kask/docs/research/experimentation-reference-model.md` (the plan
+  was removed 2026-10-30; git history retains it).
 
 ## 3. Component roles
 
@@ -246,10 +249,12 @@ prediction is frozen now, before any fixture runs.
   `ae9ce1ab…` (Reduct-removal cleanup, media workflow retirement); Algedonic
   review `22979ee8…`.
 - `kask/docs/plans/eureka-cycle-implementation-plan.md` (EUREKA-1 standing
-  decisions) [tree]; `kask/docs/plans/educt-speaker-identity-plan-2026-10-27.md`
-  (reversal conditions, Phase 1b) [tree];
+  decisions; removed 2026-10-30, git history — the live contract is
+  `.agents/skills/eureka-cycle/SKILL.md`);
+  `kask/docs/plans/educt-speaker-identity-plan-2026-10-27.md` (reversal
+  conditions, Phase 1b) [tree];
   `kask/docs/plans/educt-research-design-assessment-2026-10-27.md` (sibling
-  assessment) [tree].
+  assessment; removed 2026-10-30, git history).
 - Fossils: the Reduct removal (2026-10-22, two-class removal rule); the media
   workflow retirement; the S2 vacuous-green lesson; the known-flaky EDL render
   test (isolate before blaming).

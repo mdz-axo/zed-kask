@@ -1,7 +1,7 @@
 ---
 title: "Experimentation Reference Model — vary locally, select centrally, retain durably"
 audience: [developers, architects, operators, agents]
-last_updated: 2026-10-28
+last_updated: 2026-10-30
 version: "1.0.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -112,8 +112,35 @@ The registry is already an expectation-carriage machine in CNS terms ([`research
 
 The wiring records — the six steps' landed state, the follow-up fixes (selection-record race, measurement-void marker), and the E3–E7 cycle outcomes — live in the repair plan §P8.9; this section carries the durable map.
 
+**The discovery cycle over this registry** (the human-chaired Eureka loop; the loop is live as the `eureka-cycle` skill over the Open Questions boards — relocated here 2026-10-30 from the retired implementation plan, re-verified against the live loop contract):
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-ARCH-EUREKA-001
+verified_date: 2026-10-30
+verified_against: the live discovery-loop contract — the ten-step table in `.agents/skills/eureka-cycle/SKILL.md:80-90`, the ROUTE classification and forecasting typed stop plus the GENERATE fanout and funding gate in `.agents/skills/eureka-cycle/SKILL.md:98-118`, the FRAME routes at `.agents/skills/eureka-cycle/SKILL.md:84`; the live surfaces — the Open Questions kanban boards, the Algedonic review board, and the experimentation server's eight-tool registry (pinned by `tool_surface_is_exactly_8_registered_tools` at `kask/mcp-servers/hkask-mcp-experimentation/src/hkask_mcp_experimentation.rs:87`) with the server-enforced budget refusal at `fitness_record`.
+status: VERIFIED
+-->
+
+```mermaid
+flowchart TD
+    Q[Open Questions board - one card in_progress per cycle] --> O[ORIENT - board plus registry plus lineage plus curator reads]
+    O --> RT{ROUTE - research-resolvable, experiment-requiring, or forecasting}
+    RT -->|forecasting| FS[Typed stop - routed disposition citing the superforecasting invocation. The forecasting lifecycle owns resolution]
+    RT -->|research-resolvable or experiment-requiring| G[GENERATE - recall-cited fanout, one recombination candidate]
+    G --> F[FUNDING GATE - the PI chairs. Budget ask in the lifecycle unit - max_runs or call caps]
+    F --> L[FRAME - scientific to hypothesis-testing, artifact to self-improvement, research-resolvable to the research-run path. Declare plus seal]
+    L --> X[EXECUTE - delegated lifecycle bound protocol, sealed rubric evaluators]
+    X --> M[MEASURE - fitness_record under the server-enforced budget]
+    M --> S[RESOLVE - algedonic review, PI chair, selection_record]
+    S -->|adopt| A[Git proposal path, lineage recorded]
+    S -->|reject| FO[Fossil with reasons]
+    A --> SR[STUDY REPORT - grounding-verified, EUR-1 reconciliation plus EUR-2 Brier receipts]
+    FO --> SR
+    SR -->|back-edge| Q
+```
+
 ## Where the execution records live
 
 - [`plans/hkask-core-mcp-repair-improvement-plan.md`](../plans/hkask-core-mcp-repair-improvement-plan.md) §P8 — the server build (P8.4), the phased program (P8.5), the Phase-2 outcome record (P8.8), and the wiring/cycle records (P8.9).
-- [`reference/mcp-servers/experimentation.md`](../reference/mcp-servers/experimentation.md) — the built server's tool surface (six tools over one SQLCipher registry).
+- [`reference/mcp-servers/experimentation.md`](../reference/mcp-servers/experimentation.md) — the built server's tool surface (eight tools over one SQLCipher registry).
 - `DIVERGENCE.md` D86 (the server) and D87 (the experimentation health source).

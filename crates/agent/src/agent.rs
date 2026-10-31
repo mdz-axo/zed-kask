@@ -3816,8 +3816,8 @@ pub(crate) fn context_injector_for(
 /// task-matched skill candidates and the exact instrument handles, appended
 /// at the END of the request — the highest-attention position, immediately
 /// before generation. This converts skill discovery from recall (the
-/// measured 0/3 primary-contract match rate in
-/// `kask/docs/research/native-first-denominator-sample.md`) into
+/// measured 0/3 primary-contract match rate, 2026-10-24; the study
+/// record was removed 2026-10-30 — git history retains it) into
 /// perception, without touching the digest-cached system prompt (the
 /// prefix-cache contract).
 pub trait AffordanceInjector: Send + Sync {

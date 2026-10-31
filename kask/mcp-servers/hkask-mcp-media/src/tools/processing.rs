@@ -527,7 +527,7 @@ impl MediaServer {
     /// post: the durable output, gallery row, lineage, result id, and media-block id agree.
     /// [P1] Constraining: any publication failure removes the output and coupled rows.
     #[tool(
-        description = "Trim media to specified start/end times using local ffmpeg — video inputs stream-copy losslessly to mp4, audio inputs decode to wav; the published asset kind follows the input."
+        description = "Trim media to specified start/end times using local ffmpeg — video inputs clip through a keyframe-aligned segment plan (boundary spans re-encode for a frame-exact cut; interior keyframe-aligned GOPs stream-copy), audio inputs decode to wav; the published asset kind follows the input."
     )]
     pub async fn video_clip(
         &self,

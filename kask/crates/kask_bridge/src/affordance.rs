@@ -1,6 +1,8 @@
 //! Per-turn instrument-affordance injection (spec B v1, D94).
 //!
-//! The measured problem (`kask/docs/research/native-first-denominator-sample.md`):
+//! The measured problem (the 2026-10-24 first per-task applicability adjudication;
+//! the study record lived at `kask/docs/research/native-first-denominator-sample.md`
+//! until the 2026-10-30 stale-docs sweep — git history retains it):
 //! skill activation is 8/8 when the operator names the skill and 0/3 for
 //! primary-contract discovery when the model must find it — the broken arrow
 //! is the catalog MATCH, not tool willingness. The mechanism: embed the

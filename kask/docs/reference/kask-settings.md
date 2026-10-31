@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-09-28
+last_updated: 2026-10-30
 version: "0.41.0"
 status: "Active"
 domain: "Composition"
@@ -222,12 +222,14 @@ prompts (≥ 20 words), the skill catalog is matched to the request by embedding
 similarity and the top-3 candidates are surfaced with their exact invocation
 handles in a bounded block at the request tail — converting skill discovery
 from recall into perception (the measured failure: 100% activation when a
-skill is named, 0/3 primary-contract discovery otherwise —
-`research/native-first-denominator-sample.md`).
+skill is named, 0/3 primary-contract discovery otherwise — recorded in the
+affordance module doc, `kask/crates/kask_bridge/src/affordance.rs:1-10`; the
+study record `research/native-first-denominator-sample.md` was removed
+2026-10-30 and is retained in git history).
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `enabled` | `bool` | `false` | Read per turn — a flip applies to the next turn without a restart. Default off so the operator controls the pre/post boundary against the native-first-rate baseline; see `research/instrument-affordance-experiment.md` §5 for the mechanism and the next experiment (n ≥ 30). |
+| `enabled` | `bool` | `false` | Read per turn — a flip applies to the next turn without a restart. Default off so the operator controls the pre/post boundary against the native-first-rate baseline; the mechanism and sensor live in `kask/crates/kask_bridge/src/affordance.rs` (the affordance study record — including the n ≥ 30 compliance experiment it specified — was removed 2026-10-30 and is retained in git history). |
 
 ## Guard
 
