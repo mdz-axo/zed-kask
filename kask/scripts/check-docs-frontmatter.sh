@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Docs-frontmatter gate (DOCUMENTATION_STANDARDS.md §2): every Markdown file
 # under kask/docs opens with a YAML frontmatter block delimited by '---' and
 # carrying all seven mandatory fields. The 2026-10-05 deep-alignment run
 # found two concurrent-stream additions landing without the header (the
-# compaction spec, the two-symptom findings) — this gate is the enforcement:
-# the addition class fails CI instead of the next alignment run.
+# compaction spec, the two-symptom findings) — this script is the
+# advisory checker (unwired from push/CI enforcement by operator
+# mandate 2026-10-31; run it voluntarily when landing docs).
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

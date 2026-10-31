@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # CI gate: every skill retired within the change range must be recorded in
 # RETIRED_SKILL_NAMES (crates/agent_skills/agent_skills.rs) in the same
 # change — the DIVERGENCE.md D1 retirement convention ("the retirement

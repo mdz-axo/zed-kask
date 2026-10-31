@@ -1,57 +1,31 @@
 #!/usr/bin/env bash
-# pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range,
-# plus the invariant gates, run against the PUSHED COMMIT (never the
-# working tree).
+# pre-push — net-lines + DIVERGENCE.md seam reporting for the pushed
+# range, plus the one blocking code-quality gate (rustfmt), run against
+# the PUSHED COMMIT via a git archive export.
 #
-# Simplification program, Phase 1.1 (mission 2026-10-01): "a visible number
-# at every push. Visible bloat gets challenged; invisible bloat compounds."
-# The net-lines/seam reporting is deliberately NOT a gate — it never blocks
-# a push; printing the number is its whole job. The invariant gates below
-# BLOCK: a red gate tree does not leave this machine.
+# 2026-10-31 operator mandate: the documentation/process bookkeeping
+# gate set (docs-count, docs-frontmatter, docs-citations and its
+# anchors/drift siblings, diagram-registry-parity, mcp-readme-counts,
+# skill-crossrefs and its siblings, retired-record, goal-traceability)
+# is unwired from push and CI enforcement. Those scripts remain on disk
+# as advisory agent tools — run voluntarily by the streams that want
+# them; nothing may block a push or redden CI on them again. The wiring
+# that carried them is deleted in the same change, along with
+# kask/githooks/pre-commit (its five scoped gates were all in the
+# unwired class).
 #
-# Object of attestation (2026-10-31): the gates read the PUSHED COMMIT,
-# via a `git archive` export — never the working tree. The 2026-10-30
-# object-alignment precondition (refuse any push while the tree held
-# uncommitted changes) is REMOVED: in a multi-agent tree with concurrent
-# streams always in flight, it blocked effectively every push and forced
-# the operator's agent to park and restore other streams' work by hand
-# (observed 2026-10-30/31: three park/restore cycles to land one push).
-# The export closes the false-green class that rule existed for — an
-# uncommitted fix greening a red push while the push ships the stale
-# commit behind it — because the gates cannot see the working tree at
-# all: a push of sha S is gated on exactly S's content, whether the
-# tree is busy, clean, or holding unrelated drift. The export is
-# read-only gate input (no .git, nothing checked out into the repo,
-# deleted when the hook exits) — not a second worktree.
-#
-# The export carries the pushed commit's OWN copies of the gate scripts
-# (kask/scripts/check-*.sh are tracked files), so a push is gated by the
-# gate set it ships — self-consistent by construction. A gate script
-# absent from an old pushed commit is reported unchecked, never silently
-# passed (CI remains the backstop).
-#
-# Gate set (each blocks; --no-verify is the operator's explicit bypass):
-# - retired-record (range-based, real repo): every skill retired in the
-#   pushed range is recorded in the same change (the D1 convention).
-# - check-diagram-registry-parity.sh (2026-10-23, EUREKA-1): mermaid fences
-#   == DIAGRAM_ALIGNMENT records == DIAGRAMS_INDEX rows.
-# - check-docs-count-gate.sh, check-skill-crossrefs.sh,
-#   check-docs-frontmatter.sh, check-mcp-readme-counts.sh:
-#   the five gate families whose drift classes shipped through the
-#   wired-but-non-blocking CI exposure (measured evidence on the
-#   EUREKA-2 card) — run all-and-report so one push shows every drift
-#   class.
-# - check-rustfmt.sh: cargo fmt --all -- —check, the CI check job's
-#   Formatting step (18 consecutive pushes went red on GitHub while
-#   every local gate stayed green, 2026-10-29/30). cargo fmt needs no
-#   .git (verified in an archive export 2026-10-31).
-# - check-docs-citations.sh: the file:line citation ladder, ~12s —
-#   runs last, only when the cheap set is green, so its cost is never
-#   paid on an already-red push.
+# What blocks a push, now and deliberately, is exactly one thing:
+# rustfmt drift in the pushed commits — the same check CI runs, so a
+# red push never becomes a wasted red CI run. It runs inside the
+# export (cargo fmt needs no .git, verified 2026-10-31), so a busy
+# working tree can neither block nor redden a push: a push of sha S
+# is gated on exactly S's content. --no-verify remains the explicit
+# bypass.
 #
 # stdin (git pre-push protocol), one line per ref being pushed:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
-# The all-zero sha marks a creation (no remote counterpart) or a deletion.
+# The all-zero sha marks a creation (no remote counterpart) or a
+# deletion.
 #
 # Output per pushed ref:
 #   [pre-push] <ref>: <git diff --shortstat> — net <±N> lines
@@ -65,54 +39,30 @@ cd "$REPO_ROOT" || exit 0
 
 ZERO=0000000000000000000000000000000000000000
 
-# Stash the pushed refs first: the range-based gate needs a pushed range,
-# and the reporting loop below needs every line.
+# Stash the pushed refs first: the reporting loop below needs every line.
 ref_lines=()
 while read -r local_ref local_sha remote_ref remote_sha; do
   ref_lines+=("$local_ref $local_sha $remote_ref $remote_sha")
 done
 [ "${#ref_lines[@]}" -eq 0 ] && exit 0 # nothing pushed: nothing to gate
 
-# The pushed range from the first non-creation, non-deletion ref.
-range_base=""
-range_head=""
-for line in "${ref_lines[@]}"; do
-  read -r _l l_sha _r r_sha <<<"$line"
-  if [ "$l_sha" != "$ZERO" ] && [ "$r_sha" != "$ZERO" ]; then
-    range_base="$r_sha"
-    range_head="$l_sha"
-    break
-  fi
-done
-
-# ── Invariant gates ─────────────────────────────────────────────────────────
+# ── The rustfmt gate, over the PUSHED COMMIT ───────────────────────────────
 gate_failures=()
 
-run_gate() { # run_gate <name> <script> <gate-root> [args...] — records failures, never aborts
-  local name="$1" script="$2" gate_root="$3"; shift 3
+run_gate() { # run_gate <name> <script> <gate-root> — records failures, never aborts
+  local name="$1" script="$2" gate_root="$3"
   if [ ! -f "$script" ]; then
     echo "[pre-push] warning: gate script not present in the gated object ($name — $script) — unchecked on this push (CI remains the backstop)" >&2
     return 0
   fi
   local out
-  if ! out="$(cd "$gate_root" && REPO_ROOT="$gate_root" bash "$script" "$@" 2>&1)"; then
+  if ! out="$(cd "$gate_root" && REPO_ROOT="$gate_root" bash "$script" 2>&1)"; then
     gate_failures+=("$name")
     printf '%s\n' "$out" >&2
   fi
   return 0
 }
 
-GATES_DIR_REAL="$REPO_ROOT/kask/scripts"
-
-# The range-based gate reads commits in the real repo — it is object-true
-# by construction and needs no export.
-if [ -n "$range_base" ]; then
-  run_gate "retired-record" "$GATES_DIR_REAL/check-retired-record.sh" "$REPO_ROOT" --range "$range_base" "$range_head"
-else
-  echo "[pre-push] note: no resolvable pushed range — retired-record unchecked on this push" >&2
-fi
-
-# ── Export gating: every unique pushed sha, gated on its own content ────────
 EXPORT_DIR=""
 cleanup() { [ -n "$EXPORT_DIR" ] && rm -rf "$EXPORT_DIR"; }
 trap cleanup EXIT
@@ -130,26 +80,7 @@ for line in "${ref_lines[@]}"; do
     exit 1
   fi
 
-  GATES_DIR="$EXPORT_DIR/kask/scripts"
-
-  # Diagram-registry parity (EUREKA-1, the proven pattern).
-  run_gate "diagram-registry-parity" "$GATES_DIR/check-diagram-registry-parity.sh" "$EXPORT_DIR"
-
-  # The five cheap docs/skills/registration gates — run all, report all.
-  run_gate "docs-count-gate"   "$GATES_DIR/check-docs-count-gate.sh"   "$EXPORT_DIR"
-  run_gate "skill-crossrefs"   "$GATES_DIR/check-skill-crossrefs.sh"   "$EXPORT_DIR"
-  run_gate "docs-frontmatter"  "$GATES_DIR/check-docs-frontmatter.sh"  "$EXPORT_DIR"
-  run_gate "mcp-readme-counts" "$GATES_DIR/check-mcp-readme-counts.sh" "$EXPORT_DIR"
-
-  # Rustfmt, then citations — the green-only tail (fail-fast on cost): the
-  # ~25s fmt check and the ~12s citations ladder are never paid on a push
-  # that is already red.
-  if [ "${#gate_failures[@]}" -eq 0 ]; then
-    run_gate "rustfmt" "$GATES_DIR/check-rustfmt.sh" "$EXPORT_DIR"
-  fi
-  if [ "${#gate_failures[@]}" -eq 0 ]; then
-    run_gate "docs-citations" "$GATES_DIR/check-docs-citations.sh" "$EXPORT_DIR"
-  fi
+  run_gate "rustfmt" "$EXPORT_DIR/kask/scripts/check-rustfmt.sh" "$EXPORT_DIR"
 
   rm -rf "$EXPORT_DIR"
   EXPORT_DIR=""

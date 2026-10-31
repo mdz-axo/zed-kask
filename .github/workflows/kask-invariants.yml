@@ -1,15 +1,21 @@
-# zed-kask invariant gates. These are the guards that were previously
-# convention-enforced only (run by hand or from the DIVERGENCE.md runbook) —
-# an upstream merge that reintroduces a guarded surface, a formatting drift,
-# or a broken build used to fail nothing automated. The bash/grep scripts
-# finish in seconds; the build jobs take minutes and are tiered (see below).
+# zed-kask invariant gates — the compile/function/quality contract.
+#
+# 2026-10-31 operator mandate: the documentation/process bookkeeping gate
+# set is UNWIRED from CI (and from the pre-push hook): docs-count,
+# docs-frontmatter, docs-citations and its anchors/drift siblings,
+# diagram-registry-parity, mcp-readme-counts, skill-crossrefs and its
+# siblings, retired-record, and the goal-traceability advisory job.
+# Those scripts remain on disk as advisory agent tools, run voluntarily
+# by the streams that want them; nothing reddens CI on them again. The
+# kept steps below are the ones that enforce the operator's stated goal
+# — the code compiles and works: build, tests, formatting, installer
+# function, tool registration, and code-quality hygiene. Every
+# historical enforcement claim about the unwired gates (in
+# DOCUMENTATION_STANDARDS.md, the README portal, and the gates' own
+# headers) is updated in the same change.
+#
 # Every cargo invocation resolves the pinned toolchain from
 # rust-toolchain.toml on first use (rustup auto-install).
-#
-# goal-traceability-advisory (seconds, every push + PR, continue-on-error):
-#   exercises the goal-traceability selftest fixtures and reports skill goal
-#   trailers over the push/PR range — syntax checking only, never approval;
-#   a red run never blocks.
 #
 # check (seconds, every push + PR) — every step below is an independently
 # failing gate:
@@ -54,48 +60,21 @@
 #   tool_surface_pin! registration pin (count + TOOL_NAMES-vs-router) — a
 #   silent registration drop, unrouted #[tool] fn, or same-count rename
 #   fails CI instead of degrading to tool-not-found at dispatch.
-# - check-mcp-readme-counts.sh: the README's three prose count surfaces
-#   (catalog row, Live pin sites entry, arithmetic) agree with every
-#   server's live pin — a registration change that forgets the README
-#   fails CI instead of drifting (three recurrences, 2026-10-29/30).
 # - check-reg-canonical.sh: every `reg.*` tracing target is a canonical
 #   namespace (registered in CANONICAL_NAMESPACES).
-# - check-skill-crossrefs.sh, check-skill-crate-refs.sh,
-#   check-skill-lisp-forms.sh, check-forecast-conformance.sh and
-#   check-template-contracts.sh: skill cross-references resolve,
-#   crate-shaped identifiers in skills/templates name live Cargo packages,
-#   every explicit Lisp form parses through hkask-lisp and avoids mechanically
-#   certain inert/type-broken AST shapes, the forecasting contract matches its
-#   primitives, and template contracts match template bodies.
-# - check-retired-record.sh: every skill retired within the change range
-#   is appended to RETIRED_SKILL_NAMES in the same change (the D1
-#   retirement convention) — a forgotten append would silently shrink
-#   both the installed-copy sweep and the crossrefs gate.
+# - check-provider-profiles.sh: every tree-adopted vendor has a registry
+#   profile carrying the contract keys.
 # - check-unsafe-forbid.sh and check-version-sync.sh: unsafe code stays
 #   gated, crate versions stay in sync.
 # - check-no-mod-rs.sh and check-no-smol-timer.sh: the fork layout stays
 #   mod.rs-free and the GPUI-side surface stays free of smol timers
 #   (both .rules conventions, machine-enforced).
-# - check-docs-count-gate.sh: the docs tree stays under the §3 cap with a
-#   working condensation target, the README's recorded corpus size matches the
-#   real count, and every gate reference carries the canonical numbers
-#   — the 2026-09-30 drift (67 recorded against a 73-file tree) landed
-#   undetected while the gate was documentation-enforced only.
-# - check-docs-frontmatter.sh: every Markdown file under kask/docs carries
-#   the §2 seven-field header — the 2026-10-05 alignment run found two
-#   concurrent-stream additions landing without it (the compaction spec,
-#   the two-symptom findings); the addition class fails CI instead of the
-#   next alignment run.
-# - check-diagram-registry-parity.sh: mermaid fences == DIAGRAM_ALIGNMENT
-#   records == DIAGRAMS_INDEX rows — the same run found the compaction
-#   diagram unregistered and the index prose miscounting (107 vs 108).
 # - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
 #   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
 #   base) beyond duplication-ratchet-baseline.txt — the simplification
-#   program's Phase 1.2 oracle; the redraw-grid two-private-copies class
-#   becomes mechanically detectable. The step fetches the pinned upstream
-#   commit (depth 1) so a bare clone computes the same scan set — the
-#   retired-record step's pattern — and installs jq (jscpd's JSON parser).
+#   program's Phase 1.2 oracle. The step fetches the pinned upstream
+#   commit (depth 1) so a bare clone computes the same scan set, and
+#   installs jq (jscpd's JSON parser).
 # - Gate selftests: the loop step below runs every
 #   kask/scripts/check-*-selftest.sh — see its comment for scope.
 #
@@ -155,26 +134,11 @@ on:
 # in-progress run for the same ref instead of queueing behind it. The
 # seconds-tier check job deliberately has NO concurrency group: every
 # push's check runs to completion, so a red verdict is never erased by a
-# superseding push (the EUREKA-3 erasure finding, 2026-10-24 — under the
-# former workflow-level cancellation, four stale diagram rows and other
+# superseding push (the EUREKA-3 erasure finding, 2026-10-24 — under
+# the former workflow-level cancellation, four stale diagram rows and other
 # drift shipped while red check runs were cancelled mid-flight).
 
 jobs:
-  goal-traceability-advisory:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Exercise advisory traceability fixtures
-        run: bash kask/scripts/check-goal-traceability-selftest.sh
-      - name: Report skill goal trailers (syntax only, never approval)
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: bash kask/scripts/check-goal-traceability.sh --range "$BASE_SHA" "$HEAD_SHA"
-
   check:
     runs-on: ubuntu-latest
     # Seconds-tier: NO concurrency group — every push's check runs to
@@ -218,27 +182,10 @@ jobs:
         run: bash kask/scripts/check-mcp-servers.sh
       - name: MCP registration pins — every server carries tool_surface_pin!
         run: bash kask/scripts/check-mcp-registration.sh
-      - name: MCP registration pins — README count surfaces agree with the pins
-        run: bash kask/scripts/check-mcp-readme-counts.sh
       - name: Regulation namespaces — reg.* spans are canonical
         run: bash kask/scripts/check-reg-canonical.sh
-      - name: Skills — references resolve; Lisp gates parse and discriminate; forecasting and template contracts agree
-        run: |
-          bash kask/scripts/check-skill-crossrefs.sh
-          bash kask/scripts/check-skill-crate-refs.sh
-          bash kask/scripts/check-skill-lisp-forms.sh
-          bash kask/scripts/check-forecast-conformance.sh
-          bash kask/scripts/check-template-contracts.sh
       - name: Provider profiles — every tree-adopted vendor has a registry profile carrying the contract keys
         run: bash kask/scripts/check-provider-profiles.sh
-      - name: Retired-skill record completeness — every retirement in range is recorded
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          git fetch origin "$BASE_SHA" --depth=1 || true
-          git fetch origin "$HEAD_SHA" --depth=1 || true
-          bash kask/scripts/check-retired-record.sh --range "$BASE_SHA" "$HEAD_SHA"
       - name: Crate hygiene — unsafe gated, versions in sync
         run: |
           bash kask/scripts/check-unsafe-forbid.sh
@@ -247,22 +194,6 @@ jobs:
         run: |
           bash kask/scripts/check-no-mod-rs.sh
           bash kask/scripts/check-no-smol-timer.sh
-      - name: Docs count gate — §3 cap, recorded-measurement parity, reference agreement
-        run: bash kask/scripts/check-docs-count-gate.sh
-      - name: Docs frontmatter gate — seven-field header on every Markdown file
-        run: bash kask/scripts/check-docs-frontmatter.sh
-      - name: Docs citations — every path.rs:line citation resolves via the ladder
-        run: bash kask/scripts/check-docs-citations.sh
-      - name: Docs citation anchors — annotated citations still name the symbol at that line
-        run: |
-          bash kask/scripts/check-docs-citation-anchors-selftest.sh
-          bash kask/scripts/check-docs-citation-anchors.sh
-      - name: Docs citation drift — every @symbol form in every file, plus the audit-hash drift ratchet
-        run: |
-          bash kask/scripts/check-docs-citation-drift-selftest.sh
-          bash kask/scripts/check-docs-citation-drift.sh
-      - name: Diagram registry parity — fences, alignment records, index rows agree
-        run: bash kask/scripts/check-diagram-registry-parity.sh
       - name: Duplication ratchet — no net-new clone clusters beyond the baseline
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq
@@ -277,10 +208,16 @@ jobs:
           # each proves its gate fails on a synthetic violation) and the
           # LOCAL-only gates (check-reg-creep.sh, the commit-msg git hook,
           # the audit receipt checker), so no gate can silently go vacuous
-          # without CI noticing.
+          # without CI noticing. The unwired bookkeeping gates' selftests
+          # (2026-10-31 operator mandate) still run here: those scripts
+          # remain on disk as advisory agent tools, and a selftest is the
+          # only thing that keeps an advisory tool honest.
           for selftest in kask/scripts/check-*-selftest.sh; do
-            # Advisory: runs in goal-traceability-advisory, never blocking.
-            [ "$selftest" = kask/scripts/check-goal-traceability-selftest.sh ] && continue
+            # Advisory tools, unwired from enforcement 2026-10-31 — their
+            # selftests remain valid but are not part of the gate set.
+            case "$selftest" in
+              kask/scripts/check-goal-traceability-selftest.sh) continue ;;
+            esac
             bash "$selftest"
           done
 

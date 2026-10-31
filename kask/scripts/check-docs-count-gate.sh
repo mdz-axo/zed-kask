@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Docs-count gate (DOCUMENTATION_STANDARDS.md §3): the kask/docs tree stays
 # under the recorded cap with a working condensation target, the README's
 # recorded corpus size matches the real count, and every gate reference
 # carries the canonical cap/target numbers. The 2026-09-30 drift — 67
 # recorded against a 73-file tree — landed undetected because the gate was
-# documentation-enforced only; this script is the enforcement.
+# documentation-enforced only; this script is the advisory checker
+# (unwired from push/CI enforcement by operator mandate 2026-10-31).
 #
 # Cap and target are parsed from the §3 canonical sentence, so an operator
 # ruling that changes them needs no script edit — only the reference sweep

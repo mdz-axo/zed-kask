@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Diagram-registry parity gate (DOCUMENTATION_STANDARDS.md §4): every
 # current-state Mermaid block under kask/docs carries exactly one
 # DIAGRAM_ALIGNMENT record, and the DIAGRAMS_INDEX registry row count

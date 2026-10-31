@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Docs-citation gate (the tree-sitter adoption proposal's UC-3 cleanup,
 # kask/docs/research/tree-sitter-adoption-proposal.md): every
 # `path.rs:line` citation in kask/docs resolves to a live file in the

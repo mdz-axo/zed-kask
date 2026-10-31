@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Content-aware docs-citation gate (the A-2 finding from the 2026-10-18
 # architecture review; operator ruling 2026-10-18, option (a) scoped small).
 #

@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
+# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
+# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
+# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
+# requires an explicit operator decision.
 # Advisory only. Goal lines are syntax, not authenticated goal/approval evidence.
 # Matched anywhere in the message: the project convention places Goal right
 # after the subject, and `git interpret-trailers --parse` recognizes trailers
