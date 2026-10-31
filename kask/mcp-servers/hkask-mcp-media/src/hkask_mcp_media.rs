@@ -8052,6 +8052,48 @@ mod tool_behavior_tests {
         create_h264_bframe_video(path, 4).await
     }
 
+    /// The H.264 fixture with gated-tone audio: a 440Hz tone for the first
+    /// half of each second, silence for the second — sharp envelope
+    /// edges at known times, the ground truth the reel sync pins localize
+    /// (a uniform sine cannot mark a moment).
+    async fn create_h264_gated_tone_video(
+        path: &std::path::Path,
+        duration_secs: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let video = format!("testsrc2=s=64x48:d={duration_secs}:r=10");
+        let audio =
+            format!("aevalsrc=0.5*sin(2*PI*440*t)*lt(mod(t\\,1)\\,0.5):s=44100:d={duration_secs}");
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                video.as_str(),
+                "-f",
+                "lavfi",
+                "-i",
+                audio.as_str(),
+                "-c:v",
+                "libx264",
+                "-g",
+                "10",
+                "-c:a",
+                "aac",
+                path.to_str().ok_or("fixture path is not UTF-8")?,
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "gated-tone fixture creation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(())
+    }
+
     /// Extract one decoded frame at `ts` as grayscale rawvideo bytes —
     /// the pixel-level ground truth for the only-affected-segments pin
     /// (a stream-copied frame decodes bit-identical to the source; a
@@ -9437,6 +9479,346 @@ mod tool_behavior_tests {
             "the audio track survived the render: {}",
             String::from_utf8_lossy(&audio_probe.stdout)
         );
+        assert_eq!(
+            std::fs::read(&fixture)?,
+            source_bytes_before,
+            "source media bytes are never modified"
+        );
+        Ok(())
+    }
+
+    /// Run one ffprobe CSV query and return its trimmed stdout — the
+    /// probe seam the reel timeline pins read their ground truth
+    /// through.
+    async fn ffprobe_csv(path: &str, args: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffprobe")
+            .arg("-v")
+            .arg("error")
+            .args(args)
+            .arg(path)
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "ffprobe failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// RMS of the audio in the container-time window `[start, end)`
+    /// seconds — decoded via an input seek, which is container-time true
+    /// (a whole-stream decode accumulates each span's encoder priming
+    /// and cannot be mapped back to the timeline; empirically pinned
+    /// 2026-10-30: the concatenated AAC decode runs ~one priming frame
+    /// longer per span boundary).
+    async fn audio_window_rms(
+        path: &str,
+        start: f64,
+        end: f64,
+    ) -> Result<f64, Box<dyn std::error::Error>> {
+        let duration = end - start;
+        let start_arg = format!("{start:.3}");
+        let duration_arg = format!("{duration:.3}");
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-ss",
+                start_arg.as_str(),
+                "-t",
+                duration_arg.as_str(),
+                "-i",
+                path,
+                "-map",
+                "0:a:0",
+                "-f",
+                "f32le",
+                "-ac",
+                "1",
+                "-ar",
+                "44100",
+                "-",
+            ])
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(format!(
+                "audio window decode at {start}s failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let sum: f64 = output
+            .stdout
+            .chunks_exact(4)
+            .map(|bytes| {
+                let value = f64::from(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
+                value * value
+            })
+            .sum();
+        let count = output.stdout.len() / 4;
+        if count == 0 {
+            return Ok(0.0);
+        }
+        Ok((sum / count as f64).sqrt())
+    }
+
+    /// The container time of the tone→silence edge within `[lo, hi)`
+    /// seconds: the first 10ms window whose RMS falls below `threshold`
+    /// after a loud one — the audio-side moment marker for the A/V sync
+    /// pins.
+    async fn tone_to_silence_edge(
+        path: &str,
+        threshold: f64,
+        lo: f64,
+        hi: f64,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+        const WINDOW: f64 = 0.010;
+        let mut was_loud = false;
+        let mut time = lo;
+        while time + WINDOW <= hi {
+            let loud = audio_window_rms(path, time, time + WINDOW).await? > threshold;
+            if !loud && was_loud {
+                return Ok(Some(time));
+            }
+            was_loud = loud;
+            time += WINDOW;
+        }
+        Ok(None)
+    }
+
+    /// dcterms:identifier: `MediaServer::layers_render_edl`
+    /// expect: The rendered reel plays true length on one synced
+    /// timeline — the container duration is the Keep-op total within
+    /// one frame period (a muxer-part-led composition opens ~0.19s late
+    /// and its container duration overstates the op by the same amount,
+    /// pinned 2026-10-30: 3.51s for a 3.3s op), and every stream
+    /// addresses the same source moment: the audio's envelope edges land
+    /// within one audio frame of the video frames they came from.
+    /// [P1] Motivating: the reel is the passage the researcher selected
+    /// — no more, at true length, in sync.
+    /// [P1] Constraining: source media bytes are never modified.
+    #[tokio::test]
+    async fn layers_render_edl_plays_true_length_in_sync() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let fixture = gallery_root.path().join("edl-sync.mp4");
+        create_h264_gated_tone_video(&fixture, 8).await?;
+        let media_path = fixture.to_string_lossy().into_owned();
+        let source_bytes_before = std::fs::read(&fixture)?;
+
+        // Keep ops over the fixture's 1s keyframe grid: [1.0, 2.0] (a
+        // pure stream copy — the part-led case whose timeline artifact
+        // this pins out) and [3.2, 5.5] (re-encoded head, copied
+        // interior, re-encoded tail). The fixture's audio gates a 440Hz
+        // tone: tone [n, n+0.5), silence [n+0.5, n+1).
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(1.0, Some(2.0)), wire_item(3.2, Some(5.5))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let composed = content_of(
+            &server
+                .layers_edl_compose(Parameters(crate::types::LayersEdlComposeRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    layer_id: Some(layer_id),
+                    query: None,
+                }))
+                .await?,
+        );
+        assert_eq!(composed["status"], serde_json::json!("composed"));
+        assert_eq!(
+            composed["layer"]["items_count"],
+            serde_json::json!(2),
+            "the disjoint selections stay two Keep ops"
+        );
+        let edl_layer_id = composed["layer"]["id"]
+            .as_str()
+            .ok_or("composed layer id")?
+            .to_string();
+        let rendered = content_of(
+            &server
+                .layers_render_edl(Parameters(crate::types::LayersRenderEdlRequest {
+                    media_path: media_path.clone(),
+                    layer_id: Some(edl_layer_id),
+                }))
+                .await?,
+        );
+        assert_eq!(rendered["status"], serde_json::json!("rendered"));
+        let output_path = rendered["result"]["output"]
+            .as_str()
+            .ok_or("published output path")?
+            .to_string();
+
+        // Video frame exactness (the timeline fix must not disturb it):
+        // 10 frames for [1.0, 2.0) + 23 for [3.2, 5.5).
+        let frames: u64 = ffprobe_csv(
+            &output_path,
+            &[
+                "-select_streams",
+                "v:0",
+                "-count_packets",
+                "-show_entries",
+                "stream=nb_read_packets",
+                "-of",
+                "csv=p=0",
+            ],
+        )
+        .await?
+        .parse()?;
+        assert_eq!(
+            frames, 33,
+            "the reel carries exactly its Keep ops (10 + 23 frames)"
+        );
+        let stream_duration: f64 = ffprobe_csv(
+            &output_path,
+            &[
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=duration",
+                "-of",
+                "csv=p=0",
+            ],
+        )
+        .await?
+        .parse()?;
+        assert!(
+            (stream_duration - 3.3).abs() < 0.1,
+            "the video stream duration is the Keep-op total: {stream_duration}"
+        );
+
+        // THE length pin: the container duration — what the player and
+        // the gallery show — is the Keep-op total within one frame
+        // period. A muxer-part-led composition opened ~0.19s late and
+        // overstated its length by the same amount.
+        let format_duration: f64 = ffprobe_csv(
+            &output_path,
+            &["-show_entries", "format=duration", "-of", "csv=p=0"],
+        )
+        .await?
+        .parse()?;
+        assert!(
+            (format_duration - 3.3).abs() < 0.1,
+            "the container plays true length: {format_duration}"
+        );
+
+        // The composition baseline every frame position shifts by: the
+        // first span's earliest raw timestamp. With every span's audio
+        // re-cut exactly it is the audio encoder priming, bounded well
+        // under a frame period — not the muxer part's ~0.19s raw offset.
+        let baseline: f64 = ffprobe_csv(
+            &output_path,
+            &[
+                "-select_streams",
+                "v:0",
+                "-read_intervals",
+                "%+#1",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+            ],
+        )
+        .await?
+        .parse()?;
+        assert!(
+            baseline.abs() <= 0.05,
+            "the reel's uniform baseline is bounded: {baseline}"
+        );
+
+        // THE sync pin: the audio's envelope edges land within one audio
+        // frame of the video frames of the same source moment. Reel frame
+        // of source 1.5 = index 5 (op 1's 6th frame); of source 4.5 =
+        // index 23 (op 2 starts at index 10; source 4.5 is its 14th).
+        let frame_pts_text = ffprobe_csv(
+            &output_path,
+            &[
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+            ],
+        )
+        .await?;
+        let frame_pts: Vec<f64> = frame_pts_text
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').parse().ok())
+            .collect();
+        assert_eq!(frame_pts.len(), 33, "the frame PTS list parses fully");
+
+        // Op [1.0, 2.0) occupies the reel head: its tone runs to the
+        // source-1.5 edge, its silence after; the head's own audio is
+        // the selected tone, not dead air. Every window is decoded via
+        // an input seek — container-time true.
+        let tone_rms = audio_window_rms(&output_path, baseline + 0.10, baseline + 0.40).await?;
+        assert!(tone_rms > 0.2, "the selected tone is present: {tone_rms}");
+        let silence_rms = audio_window_rms(&output_path, baseline + 0.60, baseline + 0.90).await?;
+        assert!(
+            silence_rms < 0.05,
+            "the selected silence is present: {silence_rms}"
+        );
+        let head_rms = audio_window_rms(&output_path, baseline + 0.03, baseline + 0.08).await?;
+        assert!(
+            head_rms > 0.2,
+            "the op head is its own audio, not dead air: {head_rms}"
+        );
+        let threshold = 0.5 * tone_rms;
+        let edge_one = tone_to_silence_edge(
+            &output_path,
+            threshold,
+            baseline + 0.35,
+            frame_pts[5] + 0.15,
+        )
+        .await?
+        .ok_or("the source-1.5 tone→silence edge is inside the reel head")?;
+        assert!(
+            (edge_one - frame_pts[5]).abs() <= 0.05,
+            "audio edge {edge_one} vs the source-1.5 video frame {} \
+             — the streams address the same source moment",
+            frame_pts[5]
+        );
+        let edge_two = tone_to_silence_edge(
+            &output_path,
+            threshold,
+            frame_pts[23] - 0.15,
+            frame_pts[23] + 0.15,
+        )
+        .await?
+        .ok_or("the source-4.5 tone→silence edge is inside the interior span")?;
+        assert!(
+            (edge_two - frame_pts[23]).abs() <= 0.05,
+            "audio edge {edge_two} vs the source-4.5 video frame {} \
+             — the streams address the same source moment",
+            frame_pts[23]
+        );
+
+        // Audio survives as aac; the source is never modified.
+        let audio_codec = ffprobe_csv(
+            &output_path,
+            &[
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+            ],
+        )
+        .await?;
+        assert_eq!(audio_codec, "aac", "the audio track survived the render");
         assert_eq!(
             std::fs::read(&fixture)?,
             source_bytes_before,

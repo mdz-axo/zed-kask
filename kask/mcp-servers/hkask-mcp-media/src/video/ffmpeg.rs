@@ -321,9 +321,10 @@ fn clip_reencode_video_args(codec: &str) -> &'static [&'static str] {
     }
 }
 
-/// Boundary-segment audio encoder, in the source's codec family (the same
-/// uniform-stream contract). `Some(&[])` when the input carries no audio
-/// (a video-only boundary segment); `None` when the audio codec has no
+/// Span audio encoder, in the source's codec family — boundary spans
+/// re-encode through it and copy spans re-cut their audio exactly
+/// through it (the concat demuxer's uniform-stream contract). `Some(&[])`
+/// when the input carries no audio; `None` when the audio codec has no
 /// mapped encoder — the clip then degrades to the one-segment
 /// seek-re-encode, whose audio copies.
 fn clip_reencode_audio_args(
@@ -647,13 +648,16 @@ impl FfmpegRunner {
     /// time. Audio-only container inputs decode to 16-bit PCM wav; every
     /// other input publishes an mp4 through the S3 segment plan — the
     /// keyframe-aligned interior GOPs stream-copy through the segment muxer
-    /// (bit-stable frames, an exact timeline) and only the boundary spans
-    /// that need a frame-exact cut re-encode in the source's codec family
-    /// (2026-10-30: the plain `-ss`/`-to` stream copy this replaced
-    /// overshoots the requested end by the B-frame reorder depth — the
-    /// t9 EDL render's timeline drift; the publication path then infers
-    /// the right asset kind from the container, 2026-10-27: the Media
-    /// tab's trim serves both media kinds through this one path).
+    /// (bit-stable video), only the boundary spans that need a frame-exact
+    /// video cut re-encode, and every span's audio re-cuts exactly from
+    /// the source in its codec family so the composed timeline opens at
+    /// the encoder priming and plays true length (2026-10-30: the plain
+    /// `-ss`/`-to` stream copy this replaced overshoots the requested end
+    /// by the B-frame reorder depth, and the muxer part's raw-offset audio
+    /// opened part-led reels ~0.19s late — the t9 EDL render's timeline
+    /// drift; the publication path then infers the right asset kind from
+    /// the container, 2026-10-27: the Media tab's trim serves both media
+    /// kinds through this one path).
     pub async fn clip(
         &self,
         input: &str,
@@ -716,17 +720,23 @@ impl FfmpegRunner {
             Ok(probe) => match self.video_keyframe_times(input).await {
                 Ok(keyframes) => {
                     let plan = plan_clip_segments(&keyframes, start, end);
-                    let needs_reencode = plan
-                        .iter()
-                        .any(|segment| segment.mode == ClipSegmentMode::Reencode);
+                    // Every span needs the in-family audio encoder when
+                    // the input carries audio: boundary spans re-encode
+                    // through atrim, and copy spans re-cut their audio
+                    // exactly (the muxer part's audio track is stored at
+                    // a negative raw offset that surfaces as the
+                    // composition's timeline baseline; see
+                    // [`FfmpegRunner::clip_span_exact_audio`]). An
+                    // unmapped audio codec degrades the whole clip to the
+                    // seek re-encode rather than shipping that artifact.
                     let audio_args =
                         clip_reencode_audio_args(probe.has_audio_stream, &probe.audio_codec);
-                    if !needs_reencode || audio_args.is_some() {
+                    if let Some(audio_args) = audio_args {
                         ClipRoute::Planned {
                             plan,
                             keyframes,
                             video_args: clip_reencode_video_args(&probe.codec),
-                            audio_args: audio_args.unwrap_or(&[]),
+                            audio_args,
                         }
                     } else {
                         ClipRoute::SeekReencode {
@@ -760,8 +770,13 @@ impl FfmpegRunner {
                 for segment in &plan {
                     let path = match segment.mode {
                         ClipSegmentMode::StreamCopy => {
-                            self.clip_stream_copy_span(input, segment.start_sec, segment.end_sec)
-                                .await?
+                            self.clip_stream_copy_span(
+                                input,
+                                segment.start_sec,
+                                segment.end_sec,
+                                audio_args,
+                            )
+                            .await?
                         }
                         ClipSegmentMode::Reencode => {
                             let seek = clip_floor_keyframe(&keyframes, segment.start_sec);
@@ -890,17 +905,31 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Stream-copy the keyframe-aligned span `[start, end)` out of `input`
-    /// as one segment-muxer part — the S3 copy primitive. The muxer parts
-    /// tile the source exactly (a `-ss`/`-to` copy cannot extract a span:
-    /// its video read overshoots by the reorder depth and its audio seek
-    /// lands whole frames off); this span is the part between the two
-    /// boundaries, and every other part is discarded.
+    /// Stream-copy the keyframe-aligned span `[start, end)` out of
+    /// `input` as one segment-muxer part — the S3 copy primitive — with
+    /// the span's audio re-cut exactly from the source. The muxer
+    /// parts tile the source exactly (a `-ss`/`-to` copy cannot extract
+    /// a span: its video read overshoots by the reorder depth and its
+    /// audio seek lands whole frames off); this span is the part between
+    /// the two boundaries, and every other part is discarded. The
+    /// part's video is exact and bit-stable, but its audio track —
+    /// window-exact in content — is stored at a negative raw offset
+    /// (~0.19s on H.264/AAC fixtures, 2026-10-30), elst-compensated
+    /// standalone yet surfaced as a composed timeline's baseline: a
+    /// part-led reel opens ~0.19s late and its container duration
+    /// overstates the Keep op by the same amount (pinned 3.51s for a
+    /// 3.3s op). [`FfmpegRunner::clip_span_exact_audio`] re-cuts the
+    /// audio under the copied video, storing it raw-zero-based so the
+    /// composed timeline opens at the encoder priming and plays true
+    /// length. `audio_args` empty means the input carries no audio:
+    /// the part alone is the span (video-only parts have no raw
+    /// offset).
     async fn clip_stream_copy_span(
         &self,
         input: &str,
         start: f64,
         end: f64,
+        audio_args: &'static [&'static str],
     ) -> Result<PathBuf, crate::MediaError> {
         let from_zero = start <= CLIP_KEYFRAME_MATCH_TOL;
         let boundaries: Vec<f64> = if from_zero {
@@ -911,6 +940,9 @@ impl FfmpegRunner {
         let parts = self.segment_split(input, &boundaries).await?;
         let wanted_index = usize::from(!from_zero);
         if parts.len() != boundaries.len() + 1 {
+            for part in &parts {
+                discard_clip_intermediate(part);
+            }
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "the segment split produced {} parts for the [{start:.3}s, {end:.3}s) span \
                  — the keyframe boundaries diverged; refusing a misaligned clip",
@@ -925,11 +957,75 @@ impl FfmpegRunner {
                 discard_clip_intermediate(&part);
             }
         }
-        wanted.ok_or_else(|| {
+        let part = wanted.ok_or_else(|| {
             crate::MediaError::FfmpegFailed(
                 "the segment split is missing the planned clip part".to_string(),
             )
-        })
+        })?;
+        if audio_args.is_empty() {
+            return Ok(part);
+        }
+        let aligned = self
+            .clip_span_exact_audio(input, &part, start, end, audio_args)
+            .await;
+        discard_clip_intermediate(&part);
+        aligned
+    }
+
+    /// Re-cut the span's audio exactly from `input` and mux it under the
+    /// part's stream-copied video — the copy span's timeline-alignment
+    /// step. The audio comes from the same exact-window trim the boundary
+    /// spans use: the input seek lands at the span start (a keyframe),
+    /// atrim selects `[start, end)` in seek-relative time with the
+    /// segment-split margin convention, and asetpts zero-bases the
+    /// result so the span file stores both streams raw-zero-based —
+    /// no edit-list compensation for a concat to drop. The video stays
+    /// the part's bit-stable stream copy; the audio re-encodes in the
+    /// source's codec family.
+    async fn clip_span_exact_audio(
+        &self,
+        input: &str,
+        part: &std::path::Path,
+        start: f64,
+        end: f64,
+        audio_args: &'static [&'static str],
+    ) -> Result<PathBuf, crate::MediaError> {
+        let rel_start = -CLIP_BOUNDARY_MARGIN;
+        let rel_end = end - start - CLIP_BOUNDARY_MARGIN;
+        let filter_complex =
+            format!("[1:a]atrim=start={rel_start:.3}:end={rel_end:.3},asetpts=PTS-STARTPTS[aout]");
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-i")
+            .arg(part)
+            .arg("-ss")
+            .arg(format!("{start:.3}"))
+            .arg("-i")
+            .arg(input)
+            .arg("-filter_complex")
+            .arg(&filter_complex)
+            .arg("-map")
+            .arg("0:v:0")
+            .arg("-c:v")
+            .arg("copy")
+            .arg("-map")
+            .arg("[aout]");
+        for arg in audio_args {
+            command.arg(arg);
+        }
+        command.arg(output.path());
+        Self::run_to_completion(command, "clip span audio align").await?;
+        let output = output.commit();
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            span_start = start,
+            span_end = end,
+            output = %output.display(),
+            "Clip span audio re-cut exactly under the copied video"
+        );
+        Ok(output)
     }
 
     /// Re-encode the exact span `[start, end)` of `input` — the frame-exact
