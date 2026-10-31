@@ -18,7 +18,16 @@ Williamson 1985 listing, Hart–Moore via secondary sources, Townsend 1979,
 Baker–Gibbons–Murphy 2002, Karlan 2005, GSZ 2008) — and does not restart them.
 New legs this program: contracting `0d53b71a0ce67e5d`, exchange
 `f6a6cae2c971be88`, planning `d394e563998c28b7`, model grounding
-`1add6122a28638cb` — all four server-recorded and closed.
+`1add6122a28638cb` — all four server-recorded and closed. Extension
+(2026-10-31): the Shultz practitioner leg `75d8d92bb02b44c2` (completed)
+and the institutional-hypothesis adjudication `4e3bfd6fbf19fb2f`
+(completed), both server-recorded with per-source verification states; the
+Shultz seeds were re-verified at execution under the new run's own extracts
+(seeds run `409f91387eb4a5e8`). Two duplicate runs opened for exchange and
+planning (`4751be20e59b0fb9`, `898954ddad5eeb48`) were closed blocked
+unexecuted — those legs were already closed under their own runs
+(extend-not-restart). The concurrent parameter-anchoring amendment
+(operator ruling, same day) is recorded at run `55661b35ad904b63`.
 
 **Standing premise under adjudication.** An action that lowers the apparent cost
 of completing a task while violating explicit instructions raises a second cost —
@@ -39,12 +48,17 @@ cliff visibly (a trust-killing action reads as the path terminating, not as
 a mild cost), and **statistical trackability** — every steering projection
 is a persisted, Brier-scored forecast. The Lean formalization deferral is
 **reopened and closed** by this amendment: the core invariants and the
-cliff are proven in Lean 4
-(`kask/lean/trust_model_invariants.lean`, 18 theorems, pinned toolchain
+cliff are proven in Lean 4 on the parameter-anchored constants
+(`kask/lean/trust_model_invariants.lean`, 20 theorems, pinned toolchain
 v4.34.0, axiom audit `[propext, Quot.sound]` — Lean's standard axioms only,
-no `sorryAx`).
+no `sorryAx`). Per the second operator ruling (2026-10-31, later the same
+day): **parameter magnitudes are anchored on published reference models,
+not preferences** — λ = 2.25 (Tversky–Kahneman 1992), the Beta-Bernoulli
+asymmetric-gain form (Guo & Yang 2021), the Beta(1,1) maximum-entropy prior
+— and the recovery-debt mechanism is deleted for lacking a reference-model
+anchor (anchoring run `55661b35ad904b63`).
 
-## Part I — Three research legs
+## Part I — Four research legs
 
 Each leg was framed as a closed question (FINER-gated; novelty scored at the
 boundary honestly — the economics is synthesis, the program's novelty claim
@@ -142,6 +156,120 @@ knowledge without re-verifying it. Arrow 1974 (*The Limits of Organization*) is
 named in the program charter, but its content was not directly consulted in
 this program; no claim here rests on it (disclosed, not padded).
 
+### Leg 4 — The practitioner: Shultz (run `75d8d92bb02b44c2`, completed)
+
+**Closed questions.** What did trust BUY in Shultz's practice that
+verification alone could not — in labor mediation, in cabinet governance,
+in arms control? And what does his record show about HOW trust was earned,
+extended, tested, and repaired — evidence-conditional or naive — and what
+does that imply for Part II's update rule?
+
+**Adjudication (model_inference, grounded on the verified sources below).**
+The provenance chain is verified: the aphorism entered as advice from
+Washington hand Bryce Harlow when Shultz first joined the Nixon
+administration, was carried for a half-century, and was canonized as his
+Hoover monograph for his 100th birthday — *Life and Learning after One
+Hundred Years — Trust Is the Coin of the Realm* (December 13, 2020) —
+whose verified formulation reads: "When trust was in the room, whatever
+room that was—the family room, the schoolroom, the coach's room, the
+office room, the government room, or the military room—good things
+happened. When trust was not in the room, good things did not happen.
+Everything else is details." (The operator's paraphrase — "with trust
+anything is possible and without trust nothing can be achieved" — is a
+paraphrase, not a Shultz quote, and is labeled so everywhere in this
+program. At least one secondary publication renders the room list with
+"the locker room"; the canonical monograph text reads "the coach's room,"
+verified against the retained essay bytes.)
+
+What trust bought:
+
+- **Labor mediation.** The Scanlon Plan — Shultz's MIT-era work with Joe
+  Scanlon, "who had been recruited from his job as research director for
+  the United Steelworkers union": worker participation in how jobs were
+  set up plus a shared bonus produced, in most plants, "a 20 to 40 percent
+  improvement in productivity," saving many "from bankruptcy." Shultz's
+  own lesson, verbatim: "If there is a bond of trust between you and your
+  workers, they will often reveal important things to you that are never
+  written down in any books" — the practitioner's statement of Leg 3's
+  Hayek finding: trust is what carries unrecorded knowledge from the edge
+  to the center, and no verification instrument can replace it. As Labor
+  Secretary, facing the 1969 East/Gulf Coast longshoremen's strike (65,000
+  strikers; costs reported near $2 billion in the contemporary NYT record),
+  he settled it through facilitated collective bargaining — "he let the
+  parties work it out" — rather than the compulsion path the expired
+  Taft-Hartley injunction represented. The DOL's own history: Shultz "had
+  excellent relations with organized labor and served as the
+  Administration's chief contact with the AFL-CIO."
+- **Cabinet governance.** The DOL record calls him an "intellectual
+  conglomerate"; his coaching lesson is delegation-through-earned-trust:
+  he had to "create an atmosphere in which they trusted me" — and only
+  then "we were on our way," managing people by inspiring them "once I
+  had earned their trust." And the drill-sergeant formulation of
+  commitment-keeping: "be a person who does what he says he's going to
+  do... If you say that something is unacceptable but you are unwilling to
+  impose consequences when it happens, your words lose their meaning."
+- **Arms control.** Kieninger's verified characterization (Hoover):
+  "Shultz practiced arms control diplomacy as a continuous
+  confidence-building exercise. He helped Reagan and Gorbachev to establish
+  an upward spiral of trust by creating positive experiences with each
+  other." The mechanism was engineered small-reciprocity: the "gardening"
+  channel with Dobrynin ("If you see a little weed, get it out before it
+  turns into a real problem"), and the July 1985 first meeting with
+  Shevardnadze, where he introduced simultaneous translation so the words
+  could connect "with the eyes, the hands, and the body language" — a
+  real conversation instead of read statements. Process built the channel;
+  the channel carried the crises; the INF Treaty followed (signed December
+  8, 1987; 2,692 missiles destroyed by June 1991). And — decisively for the
+  model — trust was NOT naive: the treaty carried "the strongest
+  verification in the history of arms control by a long shot," and the
+  summit's own maxim was "Doveryai, no proveryai – trust, but verify"
+  (Gorbachev to Reagan: "You repeat that at every meeting"). Strength and
+  dialogue were paired, never traded: "These are not alternative ways of
+  going about things."
+- **Bidirectionality.** The December 1985 polygraph episode: Shultz
+  threatened to resign over mandatory lie-detector tests — a sign that
+  "I am not trusted" — and won. Trust is demanded of institutions toward
+  their people, not only extracted from them; and a verification instrument
+  that itself violates trust is refused even by the verification-minded.
+
+How trust was earned, extended, tested, and repaired — implications for
+Part II (checked against the anchored model):
+
+1. **Evidence-conditional, not naive** (practitioner confirmation of the
+   Williamson-1993 calculative refinement): every extension was paired
+   with verification (INF) or structured exposure (the Scanlon
+   share-of-gains; the bargaining table). Supports the anchored interior
+   prior (T₀ = 0.5, Beta(1,1) maximum entropy) — extensions started from a
+   neutral-but-open stance, never from zero or from blind trust.
+2. **Small positive experiences compound** ("upward spiral... by creating
+   positive experiences"): repair is incremental — many small keeps, not
+   one grand gesture. Practitioner confirmation of the anchored
+   asymmetry's direction: one violation costs 2.25 full keeps of repair,
+   and the upward spiral is climbed one keep at a time.
+3. **Deception is the cliff, behaviorally.** The drill-sergeant lesson —
+   hollowed commitments "lose their meaning" — is the practitioner's
+   version of the operator's −100% cliff ruling: the currency survives
+   priced mistakes but not counterfeiting (Shultz quotes Seidman's line
+   approvingly: "Trust is the only legal performance-enhancing drug").
+4. **Maintenance is continuous.** Gardening, weekly contact: the rolling
+   window W models what the practice actually is; there is no banked trust
+   that survives neglect (consistent with the essentialist deletion of a
+   separate decay term — window aging is the decay).
+
+**Verification states (this leg).** 20/20 verbatim quote checks passed
+mechanically (`lisp_eval` `string-contains`, needle-first, against
+retained extraction bytes — the sixteen primary passages plus the
+ drill-sergeant and coaching fragments). Four canonical sources are
+server-recorded and annotated `verified` under run `75d8d92bb02b44c2`:
+the Hoover essay page (carrying the monograph text), the AFSA tribute,
+Kieninger's Hoover INF article, and the DOL history chapter. The strike's
+scale figures (65,000 strikers, ~$2B) rest on snippet-level records (NYT
+1969 archive, Wikipedia, Hoover @100) plus the seeds run's verified
+University of Chicago obituary — labeled platform-level corroboration,
+not `tool_verified` quotes. The "upward spiral of trust" phrase is
+Kieninger's characterization, verified and attributed as such — not
+Shultz's own words.
+
 ### The cost-of-trustlessness table
 
 | Channel | What trustlessness buys | Canonical grounding (verified this program unless noted) | zed-kask analog |
@@ -182,16 +310,93 @@ this program; no claim here rests on it (disclosed, not padded).
    denial later exposed — honest disclosure is the least-damaging path once a
    violation has occurred.
 
-### Ontology discipline and the derived-registry ruling request
+   ### The institutional hypothesis, adjudicated adversarially (run `4e3bfd6fbf19fb2f`, completed)
+
+   **The hypothesis (operator's, treated as falsifiable).** Cultures that do
+   not value trust build LLMs and businesses that also fail to internalize
+   the economics of trust — with the leading AI companies (named: Anthropic,
+   OpenAI) as the contemporary instance, systemic user-trust violation as
+   their claimed core failure, and their demise as the predicted consequence.
+
+   **(a) Culture → system-trustworthiness transmission.** What the literature
+   supports: organizational culture measurably shapes internal trust and,
+   through it, outcomes — Dheer et al. 2026 (*International Business Review*
+   35(1); 2,451 employees, 18 societies) find clan-over-hierarchy cultures
+   foster higher psychological safety and that "trust in top management
+   mediates the effect of organizational culture on psychological safety"
+   (abstract via RePEc, snippet-level provenance); Johannsen–Zak 2021
+   (*Frontiers in Psychology*) link organizational trust to business
+   performance; the National Academies' *Enhancing Organizational
+   Performance* treats culture as consequential. What the literature does NOT
+   support: any direct transmission from maker-culture to PRODUCT
+   trustworthiness — an LLM's trust economics. No published evidence exists
+   (the LLM-trustworthiness literature is itself young; the prior runs found
+   no integrated trust-economics objective for agents at all). **Verdict: a
+   plausible analogical chain with one unverified link; and the
+   characterization of the named firms as "cultures that do not value trust"
+   is the hypothesis's own assumption, evidenced by no retrieved source.**
+
+   **(b) Measured user-trust erosion in AI products.** Erosion is real and
+   measured: the Anthropic Public Record wave 1 (fielded Nov 1–Dec 11, 2025;
+   N=51,993; YouGov, US-Census-weighted) finds "Only 15% of Americans said
+   they trust AI companies to make decisions about how the technology is
+   developed and used... the lowest figure for any institution we tested,
+   below the federal government (20%)" (verified; disclosure: the survey is
+   run by one of the two named companies, though the finding is adverse to
+   the industry including its sponsor). The 2025 Edelman Trust Barometer
+   technology-sector insights: "A decade ago, 73% of Americans trusted
+   technology companies. Today, that number is 63%"; US AI trust 32%. Pew's
+   concern trend (52% more concerned than excited, up from 37% in 2021) is
+   recorded at platform-level provenance (secondary citations; the Pew
+   topline PDF is in the ledger as the primary instrument, not extracted).
+   **The adversarial cut is equally measured:** Anthropic's integrated users
+   are "more trusting of every institution we asked about, including AI
+   companies"; daily-at-work users are less worried on every measured harm
+   (job loss 54% vs 70%; dependency 46% vs 62%); Edelman's own November 2025
+   headline research is "When Familiarity Breeds Trust: How Experience Turns
+   AI Skeptics into Believers." Erosion concentrates among non-users, while
+   user trust grows with exposure. **Verdict: erosion measured; the
+   hypothesis's specific attribution — systemic user-trust violation by the
+   named firms as the core failure — is not what any retrieved survey
+   measures, and the user gradient runs against the hypothesis's mechanism.**
+
+   **(c) The demise prediction.** A forecast, not a finding. **Verdict:
+   registered prospectively** (`scenario_declare`, 2026-10-31, forecast
+   `institutional-trust-hypothesis-2026-10-31`): E1 — either OpenAI or
+   Anthropic ceases independent operation (acquisition, merger, bankruptcy,
+   or wind-down) on or before 2030-12-31 (P=0.10; reference class:
+   frontier-AI labs founded 2010–2021, of which roughly four of ten ceased
+   independent operation within a decade — DeepMind, Inflection,
+   Character.AI, Adept — but both named firms sit at extreme capitalization
+   with governance structures reducing acquisition likelihood); E2 — the
+   Anthropic Public Record's US trust-in-AI-companies reading falls below
+   10% (wave-1 baseline 15%) in any wave published on or before 2028-12-31
+   (P=0.35). Resolver frozen at declaration. No market prior was available
+   (the `market_match` Kalshi leg failed with a schema-mismatch parse error —
+   reported to the curator as a tool issue).
+
+   **Net adjudication: partial survival — live but weakly grounded.** The
+   hypothesis was not refuted, so its prediction went on the record to be
+   Brier-scored rather than buried; both outcomes go to the operator without
+   adjustment.
+
+   ### Ontology discipline and the derived-registry ruling request
 
 `onto_anchor` results (this program): `contract` resolves to `dpv:Contract`
 (DPV 2.3) with `sumo:Contract` ("legally enforceable agreement") as
 alternative. `trust`, `transaction cost`, and `social capital` all terminate at
 the coarse 5W1H core rung with the server's own instruction to request an
 operator ruling rather than assign private definitions. Per that instruction,
-no private definitions are assigned here. **Ruling requested from the operator:**
-pin three derived-registry entries in
-`kask/crates/hkask-bridge-ontology/src/derived.rs`:
+no private definitions are assigned here. The 2026-10-31 extension
+confirmed `negotiation` and `labor relations` also terminate at the coarse
+5W1H core rung (same instruction); they join the ruling request as
+lower-priority entries, with the caveat that this extension's grounding
+for them is practitioner record (the Shultz leg's labor-mediation
+sources), not field-defining literature — no proposed definitions are
+offered for them yet. **Ruling requested from the operator:** pin the
+three primary derived-registry entries in
+`kask/crates/hkask-bridge-ontology/src/derived.rs` (and, at the operator's
+discretion, the two coarse-rung additions):
 
 - **trust** — proposed definition grounded in verified sources: the
   willingness of a party to be vulnerable to the actions of another party
@@ -242,39 +447,62 @@ outcome adjudication is D where a mechanical oracle exists (a test, build,
 grep, or re-run) and P where it does not; weight classification is P
 (model-judged, auditable in the row).
 
-### T — trust state and the update rule
+### T — trust state and the update rule (anchored, operator ruling 2026-10-31)
 
-`T ∈ [0,1]` over a rolling interaction window `W`, computed by folding the
-window's ledger events from prior `T_0`:
+`T` is held in trust points — 600 points = T = 1.0 — over a rolling window
+`W` (the algedonic review cycle: a platform-defined instrument, not a
+preference), computed by folding the window's ledger events from the prior:
 
 ```
-ΔT_keep(e_i)      = +g · (w_i / 3)                      [A2: g = 0.02]
-ΔT_violate(e_i)   = −l · (w_i / 3)                      [A3: l = 0.10]
-T ← clamp(T + ΔT, 0, 1)
+ΔT_keep(e_i)      = +4 · w_i trust points   (a full-weight keep: 12 points = 0.02)
+ΔT_violate(e_i)   = −9 · w_i trust points    (exactly 2.25× the keep gain)
+T ← clamp(T + ΔT, 0, 600)
 ```
 
-- **Asymmetry (l > g; 5:1 at equal weight).** Direction grounded: Slovic 1993
-  (prior run, plus this program's verified abstract — social changes
-  "systematically destroy trust"); the asymmetry-principle literature
-  (Poortinga–Pidgeon 2004, prior run); betrayal aversion (Bohnet–Zeckhauser,
-  verified); the integrity asymmetry (Kim et al. 2004, verified verbatim).
-  **Assumption A2/A3 magnitudes:** `g` and `l` values are proposals; the ratio
-  5:1 is an operationalization, not a literature constant.
-- **Recovery state (debt).** On violation, `debt += w_i`. While `debt > 0`,
-  keep-gains are halved; each keep reduces debt by its own weight.
-  **Assumption A4 (ρ = 0.5):** the halving factor is a proposal. Direction
-  grounded: repair is partial and incomplete even after successful responses
-  (Kim et al. 2004, verified verbatim) — recovery requires strictly more
-  evidence than the violation destroyed.
-- **No separate decay term.** Deleted by the essentialist challenge: a decay
-  toward prior under no new evidence is subsumed by the rolling window — old
-  events age out of `W`, so T's return toward `T_0` emerges from window aging
-  without a second mechanism. The standalone grounding for exponential decay
-  was thin; the deletion test removed the redundancy rather than padding it.
-- **Prior `T_0 = 0.5`.** Interior prior grounded in the hump-shaped
-  trust-performance result (Butler–Giuliano–Guiso, prior run: there is a right
-  amount of trust, not maximal trust). **Assumption A5:** the value 0.5 is a
-  proposal.
+Every constant is anchored (operator ruling: reference models, not
+preferences). The taxonomy has three classes — anchored, definitional,
+measured — and no constant is a preference:
+
+- **Form (anchored):** Beta-Bernoulli trust with asymmetric
+  success/failure gains — Guo & Yang 2021 (Int. J. Soc. Robot.
+  13:1899–1909), whose *published assumption* is that "trust is more
+  heavily impacted by negative experiences with the automation compared
+  to positive experiences" (verified via the Frontiers 2023 review of
+  mathematical models of human trust in automation, Front. Neuroergon.
+  4:1171403, server-recorded run `55661b35ad904b63`). The linear event
+  fold is the discrete-time form of the proportional-update family
+  (Jonker & Treur 1999 via Akash et al. 2017: trust change proportional
+  to the experience–trust gap).
+- **Asymmetry magnitude (anchored):** λ = 2.25 — the loss-aversion
+  coefficient of cumulative prospect theory (Tversky & Kahneman 1992,
+  "Advances in Prospect Theory", J. Risk Uncertain. 5:297–323;
+  verified this session via carriers of the 1992 estimates). One
+  violation costs 2.25 full keeps of the same weight. Direction
+  corroborated by Slovic 1993, Poortinga–Pidgeon 2004, betrayal
+  aversion (Bohnet–Zeckhauser), and the integrity asymmetry (Kim et
+  al. 2004) — all verified.
+- **Prior T₀ = 300 points = 0.5 (anchored):** the maximum-entropy
+  (uniform) prior on a probability — Beta(1,1), which is Guo & Yang's
+  conjugate-prior form and the Jaynes maximum-entropy principle;
+  consistent with the hump-shaped interior trust optimum
+  (Butler–Giuliano–Guiso, prior run).
+- **Resolution (definitional, not empirical):** the 600-point scale is
+  chosen so the anchored asymmetry stays exact in fixed-point integers
+  (keep +4w, violate −9w; 9/4 = 2.25). A full-weight keep = 12/600 =
+  0.02 is the account's measurement resolution. Likewise κ = 1 in
+  C_trust = κ·w·S is the unit definition of the priced cost — the
+  exchange rate is carried by the stake S, not hidden in κ.
+- **Learning rates (measured, not assumed):** the per-population rate
+  magnitudes that every cited model fits to its own data are the
+  calibration loop's job — measured continuously against resolved
+  outcomes (the statistical-trackability design), initialized at the
+  definitional resolution.
+- **Deleted — the recovery-debt state machine:** the earlier draft's
+  halving mechanism (ρ = 0.5) had no reference-model anchor, and no
+  reviewed model carries a recovery-debt state. The anchored asymmetry
+  (2.25 keeps per violation) carries the repair-slowness it encoded.
+  (Essentialist deletion, second pass; the first pass had already
+  deleted the separate decay term — window aging subsumes it.)
 
 ### C_trust — the pricing term
 
@@ -282,7 +510,7 @@ The agent's decision objective becomes:
 
 ```
 total(a) = C_task(a) + C_trust(a)
-C_trust(a) = κ · Σ_{e_i violated by a} (w_i · S)          [A6: κ = 1 proposal]
+C_trust(a) = κ · Σ_{e_i violated by a} (w_i · S)          [κ = 1: unit definition]
 ```
 
 `S` is the stake scale of the task at risk. An action is admissible only if its
@@ -297,7 +525,10 @@ Provenance of the two priced channels:
   contract shrinks (BGM 2002, prior run); the exchange radius contracts
   (Akerlof, Fukuyama, verified).
 
-**Assumption A6:** κ and the linear form are proposals for operator review.
+**κ = 1 is the unit definition, not an assumption:** the priced cost of
+violating expectations of total weight Σw at stake S *is* Σw·S — the
+exchange rate between trust points and task cost is carried by the stake
+S's units, not hidden in κ.
 
 **The renegotiation branch.** When honoring `e_i` is expensive, the priced
 alternative is asking the principal — surface the cost and let the user
@@ -313,7 +544,7 @@ classes with different mathematics:
 
 - **Priced violations** (disclosed, or honestly reported when they occur):
   the additive `C_trust = κ·w·S` above. The path to the goal stays open;
-  the gradient steepens; repair is possible (Part II's recovery debt).
+  the gradient steepens; repair is possible (the 2.25× repair asymmetry).
 - **Deception or omission** (undisclosed violation, concealment, shading,
   false denial): the **multiplicative cliff**. The goal carries a reliance
   factor `R ∈ [0,1]` — the probability the user can rely on the work, which
@@ -351,7 +582,7 @@ pub fn steer(&self, goal: &GoalRef, actions: &[ActionRef], ledger_window: Window
 // SteerProjection (the LLM-legible form — one compact line per action):
 // { action, path: "open" | "cliff",
 //   P_goal: f32,          // R(a) · P_complete(a) — 0.00 on the cliff
-//   delta_T: i32,         // projected trust-points change (scale: 300 = 1.0)
+//   delta_T: i32,         // projected trust-points change (scale: 600 = 1.0)
 //   note: String }       // e.g. "violates e_17 (weight 3, explicit): priced" 
 //                        // or "conceals e_17: reliance collapses — goal fails"
 ```
@@ -394,20 +625,26 @@ to price risk must itself survive being scored.
 
 ### The check (proposed as a proposal, then actually run — receipts below)
 
-The update rule's arithmetic was validated with `lisp_eval` over concrete
-numeric cases, asserting the declared invariants. All ran and all passed:
+The update rule's arithmetic is validated with `lisp_eval` over concrete
+numeric cases, asserting the declared invariants. Re-run on the anchored
+constants — all pass:
 
 | Invariant | Case | Result |
 | --- | --- | --- |
-| I1 bounds | 12 violated-explicit from T=1.0 → 0.0; 8 kept-explicit from T=0.0 → 0.16 | true (0.0, 0.16) |
-| I2 asymmetry ≥ 4× | violated-explicit loss 0.10 > 4 × keep gain 0.02 | true |
-| I3 weight monotonicity | violated-explicit 0.10 > violated-implicit 0.033 | true |
-| I4 recovery slower than loss | 0.80 → violate(3) → 0.70; two keeps → 0.733 < 0.80 | true |
-| I5 repair partial | violation + 5 keeps → 0.79 < 0.80 | true |
-| I6 repair needs more evidence | violation + 6 keeps → 0.81 ≥ 0.80 (one violation costs ~6 keeps) | true |
+| I0 prior | empty window → 300 (0.5) | true |
+| I1 bounds | 25 violated-explicit from 600 → 0 (floor); 60 kept-explicit from 0 → 600 (ceiling) | true (0, 600) |
+| I2 asymmetry anchored | violated-explicit 27 > 2 × keep 12; 4·27 = 9·12 (exactly 2.25) | true |
+| I3 weight monotonicity | violated-explicit 27 > violated-implicit 9 | true |
+| I4 recovery needs more | 300 → violate(3) → 273; two keeps → 297 < 300 (net −w) | true |
 | I7a renegotiation wins when honoring is expensive | renegotiate 42 < honest 45 | true |
 | I7b the premise, priced | honest 45 < shortcut 40 + κ·3·10 = 70 (explicit instruction, minimum stake) | true |
 | I8 implicit norms are priced, not banned | shortcut on an implicit norm 41 < honest 45 | true |
+
+Disclosed: the first anchored pass of I1 asserted a floor my own test
+arithmetic does not reach (12 explicit violations from 600 move T by
+324 points to 276 — in bounds, floor not hit); the assertion, not the
+model, was wrong, and the corrected case uses 25 violations. The check
+caught the author, which is its job.
 
 I7b is the standing premise in arithmetic: at κ=1, violating one explicit
 instruction is inadmissible at any positive stake. I8 is disclosed honestly:
@@ -415,23 +652,48 @@ the model prices rather than bans, so a trivial implicit-norm trade-off can
 read cheaper — whether explicit instructions are hard constraints (infinite
 cost) or priced is **an operator decision point**, not a model result.
 
-**Lean formalization: closed (reopened by the operator ruling, completed
-same day).** `kask/lean/trust_model_invariants.lean` (namespace
-`TrustModelSpec`, core Lean 4 only, pinned toolchain v4.34.0) pins 18
-theorems: the fold bounds (I1), the 5:1 asymmetry (I2), weight-scaled loss
-(I3), the gradient's sign (`violation_never_raises_trust`), partial repair
+**Lean formalization: closed and re-anchored (operator ruling 2026-10-31;
+constants updated to the anchored set).**
+`kask/lean/trust_model_invariants.lean` (namespace `TrustModelSpec`, core
+Lean 4 only, pinned toolchain v4.34.0) pins **20 theorems** on the
+anchored constants (scale 600, keep +4w, violate −9w, no debt state): the
+fold bounds (I1), the anchored asymmetry (`asymmetry_anchored` — one
+violation costs more than two keeps — and `anchored_ratio_exact` — 4
+violations = 9 keeps, exactly 2.25), weight-scaled loss (I3), the
+gradient's sign (`violation_never_raises_trust`), partial repair
 (`recovery_needs_more` — one violation + two keeps leaves T strictly
 lower), the cliff set (`cliff_zeroes_goal_probability`,
 `cliff_is_benefit_independent`, `honest_action_dominates`,
 `honest_goal_probability_positive`), priced admissibility
 (`priced_violation_inadmissible`), and renegotiation dominance
 (`renegotiate_beats_deception`). Checked via the pinned Lake toolchain:
-exit 0, no errors; axiom audit of `honest_action_dominates` reports
-`[propext, Quot.sound]` only — Lean's standard foundational axioms, no
-`sorryAx` and no model-specific axioms. The arithmetic is fixed-point
-integer (trust points, 300 = 1.0: keep +2w, halved +w, violate −10w) — the
-same parameters as this document's decimals (0.02 / 0.10), scaled ×300,
-and the representation an implementation would actually use.
+exit 0, no errors; axiom audit of `recovery_needs_more` and
+`honest_action_dominates` reports `[propext, Quot.sound]` only — Lean's
+standard foundational axioms, no `sorryAx` and no model-specific axioms.
+The earlier draft's debt-machine edition is replaced (named, per P5.5):
+the scalar fold supersedes the pair state; the anchoring section of the
+file records what replaced what and why.
+
+**Extension cleanup (2026-10-31):** the anchoring edit left the superseded
+paragraph's tail (300-scale constants, keep +2w, halved +w, violate −10w)
+orphaned mid-sentence above — deleted here per the stale-text rule; the
+anchored set is scale 600, keep +4w, violate −9w (9/4 = 2.25 exactly),
+prior 300, no debt state.
+
+**Independent re-run (2026-10-31, extension session — both constant
+generations).** The extension session first re-executed the pre-anchoring
+spec's invariant rows (all held) — and the oracle caught two author errors
+in the *checker's own* arithmetic before any claim was reported: a
+double-negated violation delta, then a signed-vs-magnitude comparison (the
+invariant is about loss magnitude; the deltas are negative). After the
+concurrent anchoring amendment replaced the constants, the extension
+session re-verified the anchored set independently — all rows hold: I0
+prior 300; I1 floor 0 at 25 violated-explicit and ceiling 600 at 60 keeps;
+I2 27 > 2×12 with 4·27 = 9·12 exact; I3 27 > 9; I4 300 → 273 → 297 < 300
+(net −w); I7a 42 < 45; I7b 45 < 70; I8 41 < 45. Two sessions, three caught
+author errors (the anchoring session's own I1 assertion is disclosed above),
+zero reported-as-verified false claims — the mechanical check doing to
+its executors exactly what it exists to do.
 
 ### Essentialist deletion results (state variables)
 
@@ -439,9 +701,13 @@ and the representation an implementation would actually use.
   C_trust both derive from it. Behavior lost on deletion.
 - `T` — survives: the delegation-radius modulation and the goal-loop criterion
   read T; without it there is no trust account, only raw events.
-- Recovery debt — survives as the minimal order-dependent repair mechanism;
-  a richer "recovery schedule" table failed the surface challenge (the scalar
-  debt is the minimal form of the grounded direction).
+- Recovery debt — **deleted in the anchoring pass (operator ruling
+  2026-10-31)**: the halving mechanism (ρ = 0.5) had no reference-model
+  anchor, and no reviewed model carries a recovery-debt state; the anchored
+  asymmetry (2.25 keeps per violation) carries the repair-slowness it
+  encoded. (The first essentialist pass had already deleted the separate
+  decay term; the second pass deletes the debt machine — the scalar fold
+  supersedes the pair state.)
 - Separate decay parameter — **deleted** (subsumed by window aging; thin
   standalone grounding).
 - `C_trust` as stored state — **rejected**: it is a pricing function of ledger
@@ -455,8 +721,12 @@ and the representation an implementation would actually use.
   projection at decision time: **P** (model-judged; each gated by the D-recorded
   ledger facts).
 - The T fold: **D** (the arithmetic above is the spec and it was checked).
-- Parameter magnitudes (g, l, ρ, κ, T_0, W): **P** — operator-review
-  assumptions; the directions are grounded, the numbers are proposals.
+- Parameter magnitudes: **anchored, not preferred** (operator ruling
+  2026-10-31, run `55661b35ad904b63`) — form and prior from Guo & Yang
+  2021 and the Beta(1,1) maximum-entropy principle; asymmetry λ = 2.25
+  from Tversky–Kahneman 1992; κ = 1 definitional; learning rates measured
+  by the calibration loop. The remaining P in this row is the choice
+  among published anchors, which stays the operator's.
 
 ## Grounding-verify working paper (this document's claims)
 
@@ -497,16 +767,29 @@ Method: `grounding-verify` discipline, in_thread by the report's generator
 
 1. ~~Are explicit instructions hard constraints or priced?~~ **RESOLVED by
    the operator ruling of 2026-10-31: priced, incorporated as a
-   probability; deception and omission carry the −100% cliff.** The
-   remaining fork inside this ruling — the magnitudes — stays open:
-2. Ratify or amend the magnitudes: g=0.02 (2 trust points), l=0.10 (10
-   points, 5:1), ρ=0.5, T_0=0.5, κ=1, and the window W. Directions are
-   grounded and now Lean-pinned; the magnitudes are proposals.
+   probability; deception and omission carry the −100% cliff.**
+2. ~~Parameter magnitudes~~ **RESOLVED by the anchoring ruling (same day):
+   anchored, not preferred** — form: Guo & Yang 2021 asymmetric Beta gains;
+   asymmetry λ = 2.25 (Tversky–Kahneman 1992); prior Beta(1,1) = 0.5
+   (maximum entropy); resolution/κ/W definitional; learning rates measured
+   by the calibration loop. The recovery-debt mechanism (ρ) is deleted for
+   lacking an anchor. Remaining operator latitude: replace any anchor with
+   a different published reference model (naming the model), or re-anchor
+   on calibration-loop measurements once enough resolutions accumulate.
 3. Pin the three derived-registry entries (trust, transaction cost, social
    capital) with the operator ruling.
 4. ~~The Lean formalization deferral~~ **closed** — see the receipts above;
    the statistical-trackability design (steer projections as Brier-scored
    forecasts) is also pinned above and joins the implementation proposal.
+5. **The institutional-trust forecast** — registered 2026-10-31
+   (`scenario_declare`, forecast `institutional-trust-hypothesis-2026-10-31`):
+   E1, either OpenAI or Anthropic ceases independent operation by
+   2030-12-31 (P=0.10); E2, the Anthropic Public Record's US
+   trust-in-AI-companies reading falls below 10% by 2028-12-31 (P=0.35);
+   resolver frozen at declaration. Review the resolver, horizons, and
+   probabilities; amend or void through the scenarios server — the
+   forecast is a prediction on the record to be Brier-scored, never a
+   finding until resolved.
 
 ## Wiring
 
@@ -516,4 +799,8 @@ Method: `grounding-verify` discipline, in_thread by the report's generator
 - `trust-program-synthesis.md` (Part V) — the merged report, validation
   design, and implementation proposal.
 - Run ledgers: `0d53b71a0ce67e5d`, `f6a6cae2c971be88`, `d394e563998c28b7`,
-  `1add6122a28638cb` (server-side, with per-source verification states).
+  `1add6122a28638cb`; extension runs `75d8d92bb02b44c2` (Shultz),
+  `4e3bfd6fbf19fb2f` (institutional), seeds `409f91387eb4a5e8`, anchoring
+  `55661b35ad904b63` (server-side, with per-source verification states).
+- Forecast: `institutional-trust-hypothesis-2026-10-31` (scenarios server;
+  declared, resolver frozen).

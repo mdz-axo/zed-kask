@@ -130,6 +130,42 @@ names falsifiers where principles are stated; the operator may prefer a clean
 principle text with the falsifier carried in the program documents — that is
 a placement decision, flagged below.
 
+## The Shultz framing (candidate — operator decision)
+
+The program charter allows the principle text to carry the practitioner
+framing: trust as the currency this platform earns, spends, and refuses
+to counterfeit. The verified material, all quote-checked mechanically
+against the retained extraction bytes (16/16 checks true, 2026-10-31,
+run `75d8d92bb02b44c2`):
+
+- **Provenance:** the aphorism entered as advice from Washington hand
+  Bryce Harlow when Shultz first joined the Nixon administration, was
+  carried for a half-century, and was canonized as his Hoover monograph
+  for his 100th birthday (*Life and Learning after One Hundred Years —
+  Trust Is the Coin of the Realm*, December 13, 2020).
+- **The formulation (verbatim):** "When trust was in the room, whatever
+  room that was—the family room, the schoolroom, the coach's room, the
+  office room, the government room, or the military room—good things
+  happened. When trust was not in the room, good things did not happen.
+  Everything else is details."
+- **The practitioner's model-echoes** (Part I, Leg 4): trust bought what
+  verification could not (the unrecorded knowledge workers reveal "never
+  written down in any books"); extension was evidence-conditional
+  ("trust, but verify" — the INF Treaty carried "the strongest
+  verification in the history of arms control by a long shot"); repair
+  was incremental (the "upward spiral of trust" built "by creating
+  positive experiences with each other"); and hollowed commitments
+  "lose their meaning" — the behavioral form of the −100% cliff.
+
+**Candidate preamble sentence for P13 (operator's call whether to
+adopt):** "Trust is the coin of this collaboration: minted by kept
+expectations, spent by violations at an asymmetric exchange rate, and
+annihilated — not spent — by counterfeiting (deception, omission), which
+collapses the goal itself." Attribution discipline binds all uses: quote
+only the verified passages; the operator's paraphrase ("with trust
+anything is possible and without trust nothing can be achieved") is a
+paraphrase and must never be attributed to Shultz.
+
 ## Functional decision points that belong to the operator
 
 1. **Adoption and placement.** Adopt as P13 in `PRINCIPLES.md` (the
@@ -149,6 +185,11 @@ a placement decision, flagged below.
 4. **The discernment-test answer's sufficiency.** The operator judges
    whether "delegated capacity without re-checking" is the human gain this
    platform is for.
+5. **The Shultz framing** — whether the practitioner framing above enters
+   the final principle text, and in what placement (a preamble sentence in
+   P13, a grounding note under it, or carried only in the program
+   documents). The derivation in this document stands on the charter
+   values with or without it.
 
 ## Wiring
 

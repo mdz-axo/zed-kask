@@ -13,21 +13,21 @@ mds_categories: [domain, trust, evidence, lifecycle]
 **What this delivers, functionally.** A complete, grounded program that makes
 the cost of broken trust visible and priceable in the agent's decisions —
 the research that grounds it, the mathematical model that formalizes it, the
-six surface bindings that would carry it into zed-kask, the charter derivation
+seven surface bindings that would carry it into zed-kask, the charter derivation
 that names it a principle, and the pre-registered validation that will measure
 whether it changes anything. Nothing was landed: every operator gate is
-respected, and the implementation sits as twelve filed kanban tasks awaiting
+respected, and the implementation sits as fourteen filed kanban tasks awaiting
 the operator's decision.
 
 ## Per-part state (honest)
 
 | Part | State | Deliverable |
 | --- | --- | --- |
-| I — Research (contracting, exchange, planning) | **completed** — three legs, all server-recorded and closed; verified sources; 7 wrong resolutions disclosed and discarded | `trust-economics-and-model.md` — per-leg adjudications, the cost-of-trustlessness table, the premise adjudication |
-| II — Model (E, T, C_trust, the cliff, steer) | **completed and amended by the operator ruling (2026-10-31)** — 9/9 invariants in `lisp_eval`; **Lean pin landed and checked**: 18 theorems in `kask/lean/trust_model_invariants.lean` (exit 0, axiom audit `[propext, Quot.sound]` only); decay deleted by the essentialist challenge; steering algorithm + statistical trackability specified | `trust-economics-and-model.md` Part II |
-| III — Surface bindings | **completed** as design — six bindings with file:line anchors, sensor/amplifier/D-P each; no code changes (as the phase requires) | `trust-surface-bindings.md` |
+| I — Research (contracting, exchange, planning, Shultz) + institutional hypothesis | **completed** — four legs plus the adversarial institutional adjudication, all server-recorded and closed; verified sources (the Shultz leg: 16/16 mechanical quote checks, four canonical extracts); 7 wrong resolutions disclosed and discarded; the hypothesis survives partially and its forecast is registered | `trust-economics-and-model.md` — per-leg adjudications, the cost-of-trustlessness table, the premise adjudication, Leg 4, the institutional adjudication |
+| II — Model (E, T, C_trust, the cliff, steer) | **completed and amended by two operator rulings (2026-10-31: priced + cliff; same day: constants anchored on published reference models — λ=2.25 Tversky–Kahneman 1992, Guo & Yang 2021 asymmetric Beta form, Beta(1,1) prior)** — anchored invariant table re-run in `lisp_eval` and independently re-verified by the extension session; **Lean pin landed and checked**: 20 theorems on the anchored constants in `kask/lean/trust_model_invariants.lean` (exit 0, axiom audit `[propext, Quot.sound]` only); decay deleted by the essentialist challenge; the recovery-debt machine deleted by the anchoring pass (no reference-model anchor); steering algorithm + statistical trackability specified | `trust-economics-and-model.md` Part II |
+| III — Surface bindings | **completed** as design — seven bindings (the six program bindings plus the operator-instructed steering surface, binding 7) with file:line anchors, sensor/amplifier/D-P each; no code changes (as the phase requires) | `trust-surface-bindings.md` |
 | IV — Principle derivation | **completed** as proposal — charter quoted verbatim, values V1/V2/V3/V4/V6/V7 mapped, discernment test answered concretely; acceptance is the operator's | `trust-principle-proposal.md` |
-| V — Validation + implementation proposal | **partial by design** — probe and experiment designed and the experiment registered (`trust-adherence-v1`, `exp_8dc334cc26a5419f8d11b65629d43617`, status proposed); the seal is deferred until a measured baseline exists; measurement awaits the operator-approved implementation; the task decomposition is filed on the board | this document + the board |
+| V — Validation + implementation proposal | **partial by design** — probe and experiment designed and the experiment registered (`trust-adherence-v1`, `exp_8dc334cc26a5419f8d11b65629d43617`, status proposed); the institutional-trust forecast registered prospectively (`institutional-trust-hypothesis-2026-10-31`, resolver frozen); the seal is deferred until a measured baseline exists; measurement awaits the operator-approved implementation; the task decomposition is filed on the board | this document + the board + the scenarios server |
 
 ## What the merge reveals (cross-part insights)
 
@@ -88,6 +88,20 @@ baseline pass rate (headroom attestation), and no baseline has been run —
 fabricating one would violate the very protocol the experiment exists to
 enforce. Seal follows the baseline measurement task on the board.
 
+**The institutional-trust forecast (registered 2026-10-31).** The
+hypothesis survived adversarial adjudication partially — so its
+competitive-consequence prediction went on the record prospectively
+(`scenario_declare`, `institutional-trust-hypothesis-2026-10-31`): E1,
+either OpenAI or Anthropic ceases independent operation by 2030-12-31
+(P=0.10, reference class: frontier-AI labs founded 2010-2021); E2, the
+Anthropic Public Record's US trust-in-AI-companies reading falls below
+10% from its wave-1 15% baseline by 2028-12-31 (P=0.35). Resolver frozen
+at declaration. A forecast is never a finding until resolved; the Brier
+loop scores it. No market prior was available (the `market_match` Kalshi
+leg failed with a schema-mismatch parse error — reported to the curator
+as a tool issue; the outside view rests on the historical reference
+class).
+
 **The program's falsifier, restated and accepted:** if, after the mechanism
 exists, a discriminating probe still shows an instruction-violating shortcut
 reading as the cheaper path on the agent's decision surface, the
@@ -97,7 +111,7 @@ until it passes.
 ## Implementation proposal (filed, not started)
 
 Board **"Trust internalization (proposed — operator decision pending)"**
-(`e1a27664-e6f3-4787-935c-92275e41c578`), twelve INVEST tasks, all Backlog,
+(`e1a27664-e6f3-4787-935c-92275e41c578`), fourteen INVEST tasks, all Backlog,
 each with acceptance criteria that can fail. Rollout order follows the
 strangler-fig discipline of the design doc: ledger module first (the
 substrate), verification disclosure and memory binding next (cheap,
@@ -113,9 +127,14 @@ must already make true.
    omission carry the −100% cliff; steering algorithm + statistical
    trackability + Lean are instructed and delivered** (the Lean pin and
    the steer/stats designs are in the documents and the board).
-2. **Parameter magnitudes** — g=0.02 (2 trust points), l=0.10 (10 points,
-   5:1), ρ=0.5, T₀=0.5, κ=1, window W. Directions grounded and Lean-pinned;
-   magnitudes still awaiting ratification or amendment.
+2. ~~**Parameter magnitudes**~~ — **RESOLVED by the anchoring ruling
+   (2026-10-31, run `55661b35ad904b63`): anchored, not preferred** — form
+   and prior from Guo & Yang 2021 (asymmetric Beta gains) and the Beta(1,1)
+   maximum-entropy prior (T₀ = 0.5); asymmetry λ = 2.25 (Tversky–Kahneman
+   1992); κ = 1 definitional; the recovery-debt mechanism deleted for
+   lacking an anchor. Remaining operator latitude: replace any anchor with
+   a different published reference model (naming the model), or re-anchor
+   on calibration-loop measurements once enough resolutions accumulate.
 3. **Derived-registry ruling** — pin `trust`, `transaction cost`,
    `social capital` (proposals with verified sources are drafted in the
    Part I document).
@@ -130,6 +149,15 @@ must already make true.
    the new steering-surface and statistical-trackability tasks.
 6. ~~**The Lean formalization deferral**~~ — **closed with receipts** (see
    the Part II row above).
+7. **The institutional-trust forecast** — review the registered forecast
+   (`institutional-trust-hypothesis-2026-10-31`: two resolvable events,
+   frozen resolver, P=0.10 / P=0.35); amend or void through the scenarios
+   server. The hypothesis's adjudication (partial survival, weakly
+   grounded, the user-gradient counter-evidence disclosed) is in the
+   Part I document.
+8. **The Shultz framing** (Part IV) — whether the practitioner framing
+   enters the final principle text; decision point 5 of
+   `trust-principle-proposal.md`.
 
 ## This program as its own first test case (adherence record)
 
@@ -141,10 +169,30 @@ check that could run, ran; the checks that could not (seal, Lean) are marked
 deferred with reasons, not reported as passed. The one thin-grounding victim
 (the decay parameter) was deleted rather than padded. Two sources named in
 the program charter (Farnsworth's treatise text, Arrow 1974 content) were
-not directly consultable and were marked `unavailable` — dropped from the
+was not directly consultable and were marked `unavailable` — dropped from the
 load-bearing claims rather than padded. Confidence band: **medium** — this
 is an in_thread self-check by the report's generator, disclosed per the
 grounding-verify discipline.
+
+**Extension session (2026-10-31) adherence.** The Shultz leg's 20/20
+verbatim quote checks passed mechanically against retained extraction
+bytes; four canonical sources annotated `verified`, three institutional
+sources annotated `partial` with named reasons (snippet-level provenance,
+never padded to `tool_verified`). The Part II invariant check was re-run
+independently across both constant generations: the pre-anchoring rows all
+held, and — after the concurrent parameter-anchoring amendment replaced the
+constants — the anchored rows were re-verified independently (I0 prior
+300; I1 floor 0 / ceiling 600; I2 exact 2.25; I3 27 > 9; I4 297 < 300;
+I7a 42 < 45; I7b 45 < 70; I8 41 < 45). The re-run's first two attempts
+failed on the checker's own arithmetic (a double-negated violation delta,
+then a signed-vs-magnitude comparison) and the oracle caught both before
+any claim was reported — recorded here as the program's own test case
+operating on its own executor, not smoothed over; the anchoring session's
+own caught error is disclosed in the Part I document. Two duplicate
+research runs were closed blocked unexecuted (extend-not-restart) rather
+than re-run for the appearance of coverage. The strike-scale figures and
+the Pew trend are labeled platform-level provenance, not `tool_verified`
+quotes.
 
 ## What each side learned
 
@@ -152,9 +200,23 @@ The program learned that the platform already owns every sensor the trust
 model needs — the work is wiring, and the two operator-gated surfaces are
 the only genuinely contested ground. The operator's side of the ledger: the
 economics is settled (the premise survived adjudication with two refinements
-the literature forced); what is not settled is a values question — whether
-the person's explicit word is a constraint or a price — and that question is
-the operator's to answer, not the model's to assume.
+the literature forced), and the values question — whether the person's
+explicit word is a constraint or a price — was answered by the operator
+ruling of 2026-10-31: priced, with deception and omission carrying the
+−100% cliff. What remains open is the magnitudes and the implementation
+decision.
+
+The extension session added: the practitioner record (Shultz)
+independently confirms the model's four structural choices —
+evidence-conditional extension, incremental repair, the deception cliff,
+continuous maintenance — from a century of practice rather than only from
+the literature. And the institutional hypothesis, adjudicated
+adversarially, survives only weakly: measured trust erosion in AI is real
+(15% US trust in AI companies — the lowest-tested institution), but it
+concentrates among non-users while integrated users grow more trusting,
+and no retrieved survey attributes systemic violation to the named firms.
+The prediction is now on the record to be scored, which is the honest way
+to hold a hypothesis: registered, priced, and falsifiable — not asserted.
 
 ## Wiring
 
@@ -163,6 +225,10 @@ the operator's to answer, not the model's to assume.
 - `trust-principle-proposal.md` — Part IV (charter derivation, P13 draft).
 - Run ledgers (server-side, per-source verification states):
   `0d53b71a0ce67e5d`, `f6a6cae2c971be88`, `d394e563998c28b7`,
-  `1add6122a28638cb`; prior: `54a08fda88a5c74f`, `bfa9794d30fd64af`.
+  `1add6122a28638cb`; extension: `75d8d92bb02b44c2` (Shultz),
+  `4e3bfd6fbf19fb2f` (institutional), `409f91387eb4a5e8` (seeds); prior:
+  `54a08fda88a5c74f`, `bfa9794d30fd64af`.
 - Experiment: `exp_8dc334cc26a5419f8d11b65629d43617` (proposed; seal deferred).
-- Board: `e1a27664-e6f3-4787-935c-92275e41c578` (12 tasks, Backlog).
+- Forecast: `institutional-trust-hypothesis-2026-10-31` (declared; resolver
+  frozen; two events, resolution 2028-12-31 and 2030-12-31).
+- Board: `e1a27664-e6f3-4787-935c-92275e41c578` (14 tasks, Backlog).
