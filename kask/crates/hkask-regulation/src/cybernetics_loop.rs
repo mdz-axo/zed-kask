@@ -558,6 +558,26 @@ impl CyberneticsLoop {
         );
     }
 
+    /// Wire the trust-ledger sensor after construction (Binding 2,
+    /// trust-internalization program).
+    ///
+    /// The sensor reads the curator's trust-ledger h_mems (Binding 5's
+    /// substrate — trust events ARE h_mems in the curator's store).
+    /// The `MemoryStore` handle is the same one the curator server
+    /// writes through; this sensor reads it for the weighted violation
+    /// count. The set-point is 0.0 — any positive count is a
+    /// deviation.
+    pub fn set_trust_ledger_store(
+        &mut self,
+        memory: Arc<hkask_memory::MemoryStore>,
+        window_hours: i64,
+    ) {
+        self.sensor_registry.replace(
+            crate::loops::SignalMetric::TrustDeviation,
+            Arc::new(crate::trust_sensor::TrustSensor::new(memory, window_hours)),
+        );
+    }
+
     /// Submit a rollout impact check for the next `verify_impact` pass.
     ///
     /// This is the producer side of the event-substrate phase 6 seam: a

@@ -245,8 +245,8 @@ impl EmbeddingStore {
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         conn.execute_batch("BEGIN TRANSACTION;")?;
         let result = conn.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, entity_ref, blob, dim, model, passage_text],
+            "INSERT INTO embeddings (id, entity_ref, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, entity_ref, dim, model, passage_text],
         );
         if let Err(e) = result {
             if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
@@ -310,8 +310,8 @@ impl EmbeddingStore {
             rusqlite::params![entity_ref],
         )?;
         transaction.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, entity_ref, blob, vector.len() as i32, model, passage_text],
+            "INSERT INTO embeddings (id, entity_ref, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, entity_ref, vector.len() as i32, model, passage_text],
         )?;
         let rowid = transaction.last_insert_rowid();
         transaction.execute(
@@ -411,8 +411,8 @@ impl EmbeddingStore {
             )
             .map_err(database_error)?;
         transaction.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            rusqlite::params![id, h_mem.entity, blob, vector.len() as i32, model, passage],
+            "INSERT INTO embeddings (id, entity_ref, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, h_mem.entity, vector.len() as i32, model, passage],
         ).map_err(database_error)?;
         transaction
             .execute(
@@ -436,7 +436,7 @@ impl EmbeddingStore {
     pub fn get(&self, entity_ref: &str) -> Result<StoredEmbedding, EmbeddingError> {
         use crate::database::value::DbValue;
         let rows = self.query_driver(
-            "SELECT id, entity_ref, vector, dimensions, model, passage_text FROM embeddings WHERE entity_ref = ?",
+            "SELECT e.id, e.entity_ref, v.embedding, e.dimensions, e.model, e.passage_text FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1",
             &[DbValue::Text(entity_ref.to_string())],
         )?;
         match rows.first() {
@@ -548,9 +548,11 @@ impl EmbeddingStore {
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         // vec0 is keyed on its implicit integer rowid; the UUID lives
         // only in the embeddings table. Join on rowid (integer B-tree
-        // lookup) instead of a TEXT metadata column.
+        // lookup) instead of a TEXT metadata column. The vector is read
+        // from vec0's own embedding column — after the wave-6 dedupe the
+        // embeddings table no longer carries a duplicate blob.
         let mut stmt = conn.prepare(
-            "SELECT e.id, v.distance, e.entity_ref, e.vector, e.model, e.passage_text
+            "SELECT e.id, v.distance, e.entity_ref, v.embedding, e.model, e.passage_text
              FROM vec_embeddings v
              JOIN embeddings e ON v.rowid = e.rowid
              WHERE v.embedding MATCH ?1 AND v.k = ?2

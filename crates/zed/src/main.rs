@@ -2173,6 +2173,36 @@ fn main() {
                                     .detach();
                                 }
 
+                                // Wire the trust-ledger sensor into the
+                                // cybernetics loop (Binding 2, trust-
+                                // internalization program). The sensor reads
+                                // the curator's store — the same handle the
+                                // memory-health source uses — and emits a
+                                // `TrustDeviation` signal (set-point 0.0:
+                                // any positive weighted-violation count is a
+                                // deviation).
+                                match real_memory_typed.trust_ledger_store() {
+                                    Ok(memory) => {
+                                        let loop_for_trust =
+                                            cybernetics_loop_for_panel_deferred.clone();
+                                        gpui_tokio::Tokio::spawn(cx, async move {
+                                            let mut loop_guard =
+                                                loop_for_trust.write().await;
+                                            loop_guard
+                                                .set_trust_ledger_store(memory, 24);
+                                        })
+                                        .detach();
+                                        log::info!(
+                                            "hKask trust-ledger sensor wired — the regulation loop senses trust deviations (set-point 0.0, window 24h)"
+                                        );
+                                    }
+                                    Err(error) => {
+                                        log::warn!(
+                                            "hKask trust-ledger sensor not wired: {error} — the regulation loop is blind to trust deviations"
+                                        );
+                                    }
+                                }
+
                                 // zed-kask: D87 — wire the experimentation health
                                 // source into the cybernetics loop (§P8.9
                                 // step 1 — the Layer-A afferent pathway for

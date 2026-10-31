@@ -355,18 +355,6 @@ impl SteerAction {
 mod tests {
     use super::*;
 
-    fn explicit(text: &str) -> LedgerEvent {
-        LedgerEvent {
-            id: LedgerEventId::new(),
-            text: text.to_string(),
-            source: "interaction-1".to_string(),
-            weight: Weight::Explicit,
-            outcome: Outcome::Unverified,
-            ts: Utc::now(),
-            oracle_note: None,
-        }
-    }
-
     /// The noise floor: a non-instruction record produces no event.
     #[test]
     fn non_instruction_produces_no_event() {

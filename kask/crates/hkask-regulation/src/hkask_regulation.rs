@@ -16,6 +16,8 @@ pub(crate) mod metacognition;
 pub(crate) mod regulation_policy;
 pub(crate) mod set_points;
 
+pub(crate) mod trust_sensor;
+
 pub(crate) mod loops;
 pub(crate) mod sensor_provider;
 
@@ -34,6 +36,10 @@ pub use inference_resilience::{
     InferencePermanentFailureReceipt, InferenceResilienceSource, InferenceSnapshot,
 };
 pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop};
+
+/// The entity prefix for all trust-ledger h_mems (Binding 5's substrate —
+/// trust events ARE h_mems in the curator's store).
+pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
 
 pub use loops::CurationInput;
 pub use loops::signals::Signal;

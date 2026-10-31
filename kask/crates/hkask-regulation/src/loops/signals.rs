@@ -57,6 +57,10 @@ pub enum SignalMetric {
     AlgedonicLogApproachingCap,
     /// Pending escalation count (Curation Loop 5)
     PendingEscalations,
+    /// Trust deviation (Cybernetics Loop 6, Binding 2): weighted violation
+    /// count + unverified-explicit count from the trust ledger. The set-point
+    /// is 0.0 — any positive value is a deviation.
+    TrustDeviation,
     /// Consolidation candidate count (Memory consolidation bridge)
     ConsolidationCandidates,
     /// Stale goal count (Curation Loop 5)
@@ -142,6 +146,7 @@ impl SignalMetric {
             SignalMetric::PassRate => "pass_rate",
             SignalMetric::TestCoverage => "test_coverage",
             SignalMetric::MutationScore => "mutation_score",
+            SignalMetric::TrustDeviation => "trust_deviation",
         }
     }
 
@@ -171,6 +176,7 @@ impl SignalMetric {
             SignalMetric::PassRate,
             SignalMetric::TestCoverage,
             SignalMetric::MutationScore,
+            SignalMetric::TrustDeviation,
         ]
         .into_iter()
         .find(|metric| metric.as_str() == name)

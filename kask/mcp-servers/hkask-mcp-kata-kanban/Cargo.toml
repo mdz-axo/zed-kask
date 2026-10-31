@@ -9,6 +9,7 @@ description = "Kata-Kanban workflow coordination MCP server"
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-storage.workspace = true
+hkask-trust.workspace = true
 # Folded from hkask-services-kata-kanban
 hkask-inference.workspace = true
 # Pure binary Brier arithmetic for optional, prospectively eligible forecasts.

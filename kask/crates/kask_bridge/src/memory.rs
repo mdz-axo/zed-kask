@@ -251,6 +251,15 @@ impl RealMemoryPort {
             .ok_or_else(|| "curator projection store unavailable".to_string())
     }
 
+    /// The trust-ledger store (Binding 5's substrate): the same
+    /// `Arc<MemoryStore>` the goal-projection path uses. Trust events
+    /// are h_mems in this store (entity `trust:ledger`).
+    pub fn trust_ledger_store(&self) -> Result<Arc<MemoryStore>, String> {
+        self.curator_store
+            .get()
+            .ok_or_else(|| "curator trust-ledger store unavailable".to_string())
+    }
+
     /// Construct a new `RealMemoryPort`.
     ///
     /// Opens the curator's SQLCipher database and initializes the embedding

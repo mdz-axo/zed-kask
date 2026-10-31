@@ -1168,6 +1168,26 @@ impl super::CyberneticsLoop {
                     dev.signal.metric.as_str().into(),
                 ))
             }
+            RegulationReason::TrustDeviationExceeded => {
+                tracing::warn!(
+                    target: "reg.trust",
+                    weighted_violation_count = dev.signal.value,
+                    set_point = dev.signal.set_point,
+                    "Trust-ledger deviation — explicit instruction violated"
+                );
+                Some(RegulatoryAction::with_metric(
+                    proposed.target,
+                    proposed.action_type,
+                    RegulatoryActionParams::with_data(
+                        proposed.reason.as_str(),
+                        RegulationData::TrustDeviationExceeded {
+                            weighted_violation_count: dev.signal.value,
+                            threshold: dev.signal.set_point,
+                        },
+                    ),
+                    dev.signal.metric.as_str().into(),
+                ))
+            }
         }
     }
 }

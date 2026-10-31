@@ -47,6 +47,7 @@ pub(crate) enum RegulationReason {
     OcrSilentFailuresExceeded,
     ExperimentationStuckExperimentsExceeded,
     NativeFirstRateExceeded,
+    TrustDeviationExceeded,
 }
 
 impl RegulationReason {
@@ -74,6 +75,7 @@ impl RegulationReason {
                 "experimentation_stuck_experiments_exceeded"
             }
             Self::NativeFirstRateExceeded => "native_first_rate_exceeded",
+            Self::TrustDeviationExceeded => "trust_deviation_exceeded",
         }
     }
 }
@@ -329,6 +331,21 @@ impl RegulationPolicy {
                         reason: OcrSilentFailuresExceeded,
                     }],
                 },
+                // ── Trust-ledger deviation (Binding 2, trust-internalization
+                //    program; Cybernetics Loop 6) ── Any positive weighted-
+                //    violation count is a deviation: an explicit instruction
+                //    was violated. Escalate to Curation so the trust breach
+                //    reaches the reviewable board — the loop cannot self-heal
+                //    a trust violation (the corrective is the human review).
+                RegulationRule {
+                    metric: TrustDeviation,
+                    direction: AboveSetPoint,
+                    proposed: &[ProposedAction {
+                        target: Curation,
+                        action_type: Escalate,
+                        reason: TrustDeviationExceeded,
+                    }],
+                },
                 // ── Evolution registry health (Cybernetics Loop 6; §P8.9
                 //    step 1) ── A stuck experiment (unresolved past the
                 //    stale set point or budget-spent with no verdict) needs
@@ -418,6 +435,13 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> Option<(u64, u
         RegulationData::ExperimentationStuckExperimentsExceeded { count, threshold } => {
             Some((rounded_count(*count), rounded_count(*threshold)))
         }
+        RegulationData::TrustDeviationExceeded {
+            weighted_violation_count,
+            threshold,
+        } => Some((
+            rounded_count(*weighted_violation_count),
+            rounded_count(*threshold),
+        )),
         RegulationData::NoData => None,
     }
 }
