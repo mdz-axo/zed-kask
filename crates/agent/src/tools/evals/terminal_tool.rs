@@ -146,7 +146,7 @@ impl Display for EvalOutput {
 
 struct TerminalToolTest {
     model: LanguageModel,
-    model_reasoning_effort: Option<String>,
+    model_thinking_effort: Option<String>,
 }
 
 impl TerminalToolTest {
@@ -193,13 +193,13 @@ impl TerminalToolTest {
             })
             .await;
 
-        let model_reasoning_effort = model
+        let model_thinking_effort = model
             .default_effort_level()
             .map(|effort_level| effort_level.value.to_string());
 
         Self {
             model,
-            model_reasoning_effort,
+            model_thinking_effort,
         }
     }
 
@@ -259,7 +259,7 @@ impl TerminalToolTest {
             messages,
             tools,
             thinking_allowed: true,
-            thinking_effort: self.model_reasoning_effort.clone(),
+            thinking_effort: self.model_thinking_effort.clone(),
             ..Default::default()
         };
 

@@ -369,7 +369,7 @@
       "alt-tab": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "cmd-alt-k": "agent::ToggleThinkingMode",
-      "cmd-alt-'": "agent::ToggleReasoningEffortMenu",
+      "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleReasoningEffort",
       "cmd-alt-.": "agent::ToggleFastMode",
     },

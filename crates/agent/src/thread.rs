@@ -2402,14 +2402,14 @@ impl Thread {
         self.thinking_effort.as_ref()
     }
 
-    pub fn set_reasoning_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
+    pub fn set_thinking_effort(&mut self, effort: Option<String>, cx: &mut Context<Self>) {
         self.thinking_effort = effort.clone();
 
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
                     if thread.inherits_parent_model_settings {
-                        thread.set_reasoning_effort(effort.clone(), cx)
+                        thread.set_thinking_effort(effort.clone(), cx)
                     }
                 })
                 .ok();
@@ -10957,7 +10957,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_thread_title_guard_preserves_thread_id_and_reasoning_effort(
+    async fn test_thread_title_guard_preserves_thread_id_and_thinking_effort(
         cx: &mut TestAppContext,
     ) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
@@ -14485,7 +14485,7 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
@@ -14496,7 +14496,7 @@ mod tests {
             }
 
             parent.update(cx, |thread, cx| {
-                thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
+                thread.set_thinking_effort(false.then(|| "default".to_string()), cx);
             });
 
             for subagent in &subagents {
@@ -14509,13 +14509,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_set_reasoning_effort_propagates_to_subagents(cx: &mut TestAppContext) {
+    async fn test_set_thinking_effort_propagates_to_subagents(cx: &mut TestAppContext) {
         let (parent, _event_stream, _) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_reasoning_effort(Some("high".to_string()), cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
             });
 
             for subagent in &subagents {
@@ -14527,7 +14527,7 @@ mod tests {
             }
 
             parent.update(cx, |thread, cx| {
-                thread.set_reasoning_effort(None, cx);
+                thread.set_thinking_effort(None, cx);
             });
 
             for subagent in &subagents {
@@ -14547,8 +14547,8 @@ mod tests {
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
                 thread.set_speed(Speed::Fast, cx);
-                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
-                thread.set_reasoning_effort(Some("high".to_string()), cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
             });
         });
@@ -14617,9 +14617,9 @@ mod tests {
         // Should not panic even though the subagent was dropped
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
+                thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
                 thread.set_speed(Speed::Fast, cx);
-                thread.set_reasoning_effort(Some("high".to_string()), cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
             });
         });
     }

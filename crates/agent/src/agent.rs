@@ -3368,7 +3368,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
-            thread.set_reasoning_effort(
+            thread.set_thinking_effort(
                 enable_thinking.then(|| effort.clone().unwrap_or_else(|| "default".to_string())),
                 cx,
             );
@@ -12200,7 +12200,7 @@ mod internal_tests {
         cx.run_until_parked();
 
         turn.thread.update(cx, |thread, cx| {
-            thread.set_reasoning_effort(Some("high".into()), cx);
+            thread.set_thinking_effort(Some("high".into()), cx);
         });
         cx.run_until_parked();
         assert_eq!(

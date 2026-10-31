@@ -383,7 +383,7 @@ actions!(
         /// Cycles through available thinking effort levels for the current model.
         CycleReasoningEffort,
         /// Toggles the thinking effort selector menu open or closed.
-        ToggleReasoningEffortMenu,
+        ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
         /// Scroll the output by one page up.

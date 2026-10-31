@@ -609,13 +609,13 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
     });
     thread.update(cx, |thread, cx| {
         thread.refresh_model(&model.provider_id, cx);
-        thread.set_reasoning_effort(Some("high".to_string()), cx);
+        thread.set_thinking_effort(Some("high".to_string()), cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
         assert!(!request.thinking_allowed);
 
-        thread.set_reasoning_effort(Some("max".to_string()), cx);
+        thread.set_thinking_effort(Some("max".to_string()), cx);
         let request = thread
             .build_completion_request(CompletionIntent::UserPrompt, cx)
             .unwrap();
@@ -8011,7 +8011,7 @@ async fn test_subagent_thread_model_selection(cx: &mut TestAppContext) {
     });
     parent_thread.update(cx, |parent_thread, cx| {
         parent_thread.set_model(parent_model.clone(), cx);
-        parent_thread.set_reasoning_effort(None, cx);
+        parent_thread.set_thinking_effort(None, cx);
     });
 
     subagent_thread.read_with(cx, |subagent_thread, _cx| {
@@ -11171,7 +11171,7 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
 
     thread.update(cx, |thread, cx| {
         thread.set_profile(AgentProfileId("profile-a".into()), cx);
-        thread.set_reasoning_effort(false.then(|| "default".to_string()), cx);
+        thread.set_thinking_effort(false.then(|| "default".to_string()), cx);
     });
 
     // Send a message — first iteration starts with model A, profile-a, thinking off.
@@ -11215,7 +11215,7 @@ async fn test_mid_turn_model_and_settings_refresh(cx: &mut TestAppContext) {
         // zed-kask: thinking is the explicit toggle in the merged design; an
         // effort alone no longer implies it (upstream's capability guard).
         thread.set_thinking_enabled(true, cx);
-        thread.set_reasoning_effort(true.then(|| "default".to_string()), cx);
+        thread.set_thinking_effort(true.then(|| "default".to_string()), cx);
     });
 
     // Run until parked — processes the echo tool call, loops back, picks up

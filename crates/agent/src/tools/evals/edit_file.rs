@@ -201,7 +201,7 @@ struct EditToolTest {
     project: Entity<Project>,
     model: LanguageModel,
     judge_model: LanguageModel,
-    model_reasoning_effort: Option<String>,
+    model_thinking_effort: Option<String>,
 }
 
 impl EditToolTest {
@@ -268,7 +268,7 @@ impl EditToolTest {
             })
             .await;
 
-        let model_reasoning_effort = model
+        let model_thinking_effort = model
             .default_effort_level()
             .map(|effort_level| effort_level.value.to_string());
 
@@ -277,7 +277,7 @@ impl EditToolTest {
             project,
             model,
             judge_model,
-            model_reasoning_effort,
+            model_thinking_effort,
         }
     }
 
@@ -377,7 +377,7 @@ impl EditToolTest {
             messages,
             tools,
             thinking_allowed: true,
-            thinking_effort: self.model_reasoning_effort.clone(),
+            thinking_effort: self.model_thinking_effort.clone(),
             ..Default::default()
         };
 

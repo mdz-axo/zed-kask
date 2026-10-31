@@ -25,7 +25,7 @@ use crate::model_search;
 use crate::ui::documentation_aside_side;
 use crate::{
     CycleFavoriteModels, CycleModeSelector, CycleReasoningEffort, ToggleProfileSelector,
-    ToggleReasoningEffortMenu,
+    ToggleThinkingEffortMenu,
 };
 
 const PICKER_THRESHOLD: usize = 5;
@@ -549,7 +549,7 @@ impl Render for ConfigOptionSelector {
                                 content = content
                                     .child(action_tooltip_container(
                                         "Change Thinking Effort",
-                                        KeyBinding::for_action(&ToggleReasoningEffortMenu, cx),
+                                        KeyBinding::for_action(&ToggleThinkingEffortMenu, cx),
                                     ))
                                     .child(action_tooltip_container(
                                         "Cycle Thinking Effort",

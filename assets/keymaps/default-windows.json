@@ -337,7 +337,7 @@
       "alt-l": "agent::CycleFavoriteModels",
       "ctrl-;": "agent::OpenAddContextMenu",
       "ctrl-alt-k": "agent::ToggleThinkingMode",
-      "ctrl-alt-'": "agent::ToggleReasoningEffortMenu",
+      "ctrl-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleReasoningEffort",
       "ctrl-alt-.": "agent::ToggleFastMode",
     },

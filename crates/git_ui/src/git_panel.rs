@@ -4598,9 +4598,9 @@ impl GitPanel {
                 // effort when the model advertises `supports_thinking()`; the
                 // self-healing retry catches models that require reasoning but
                 // don't advertise it (common for OpenAI-compatible providers
-                // where `/v1/models` discovery leaves `reasoning_effort:
+                // where `/v1/models` discovery leaves `thinking_effort:
                 // None`). See DIVERGENCE.md D37.
-                let (thinking_allowed, reasoning_effort) =
+                let (thinking_allowed, thinking_effort) =
                     Self::commit_message_thinking_settings(model.supports_thinking());
 
                 let mut request = LanguageModelRequest {
@@ -4619,7 +4619,7 @@ impl GitPanel {
                     stop: Vec::new(),
                     temperature,
                     thinking_allowed,
-                    thinking_effort: reasoning_effort,
+                    thinking_effort,
                     speed: None,
                     compact_at_tokens: None,
                     max_output_tokens: None,
@@ -6278,14 +6278,14 @@ impl GitPanel {
         )
     }
 
-    // zed-kask: D37 — returns `(thinking_allowed, reasoning_effort)` for a
+    // zed-kask: D37 — returns `(thinking_allowed, thinking_effort)` for a
     // commit-message request based on whether the selected model supports
     // thinking. Commit messages are simple, so low effort minimizes tokens
     // while satisfying the model's reasoning requirement.
     fn commit_message_thinking_settings(supports_thinking: bool) -> (bool, Option<String>) {
         let thinking_allowed = supports_thinking;
-        let reasoning_effort = thinking_allowed.then(|| "low".to_string());
-        (thinking_allowed, reasoning_effort)
+        let thinking_effort = thinking_allowed.then(|| "low".to_string());
+        (thinking_allowed, thinking_effort)
     }
 
     fn show_remote_output(
@@ -15248,13 +15248,13 @@ mod tests {
     // zed-kask: D37 — pins the commit-message thinking guard.
     #[test]
     fn test_commit_message_guard_enables_thinking_for_reasoning_model() {
-        let (thinking_allowed, reasoning_effort) = GitPanel::commit_message_thinking_settings(true);
+        let (thinking_allowed, thinking_effort) = GitPanel::commit_message_thinking_settings(true);
         assert!(
             thinking_allowed,
             "guard should enable thinking when the model supports it"
         );
         assert_eq!(
-            reasoning_effort.as_deref(),
+            thinking_effort.as_deref(),
             Some("low"),
             "guard should use low effort for commit messages"
         );
@@ -15263,14 +15263,14 @@ mod tests {
     // zed-kask: D37 — pins the guard for non-reasoning models.
     #[test]
     fn test_commit_message_guard_disables_thinking_for_non_reasoning_model() {
-        let (thinking_allowed, reasoning_effort) =
+        let (thinking_allowed, thinking_effort) =
             GitPanel::commit_message_thinking_settings(false);
         assert!(
             !thinking_allowed,
             "guard should disable thinking when the model does not support it"
         );
         assert!(
-            reasoning_effort.is_none(),
+            thinking_effort.is_none(),
             "guard should not set reasoning effort for non-thinking models"
         );
     }
