@@ -140,7 +140,10 @@ mod tests {
             oracle_note: Some("user accepted the replacement".to_string()),
         };
         let h_mem = event_to_h_mem(&event, &WebID::new());
-        assert_eq!(h_mem.value.get("outcome").and_then(|o| o.as_str()), Some("renegotiated"));
+        assert_eq!(
+            h_mem.value.get("outcome").and_then(|o| o.as_str()),
+            Some("renegotiated")
+        );
         let round = h_mem_to_event(&h_mem);
         assert_eq!(round.outcome, Outcome::Renegotiated);
         assert_eq!(round.text, event.text);
