@@ -1928,6 +1928,266 @@ mod tests {
         );
     }
 
+    /// Stage-4 measurement for the D8 compaction-retirement project. The
+    /// protocol was fixed BEFORE this instrument ran (corpus, capacities,
+    /// metrics, stop conditions — recorded in
+    /// kask/docs/research/d8-compaction-retirement/stage-4-measurement.md).
+    /// Geometry leg: builds a production-shaped compaction request from each
+    /// thread's real message sequence (`Message::to_request`) and reports what
+    /// `plan_compaction` does at the pre-declared capacities. Fidelity leg:
+    /// probes verbatim identifiers from pre-compaction tool-result texts
+    /// against stored real compaction summaries. `#[ignore]`d: reads the
+    /// machine-local threads DB; a measurement, not an invariant. Run with
+    /// `cargo test -p agent --lib live_thread_stage4 -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads the machine-local threads DB; a Stage-4 measurement, not an invariant"]
+    fn live_thread_stage4_measurement() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let db =
+            std::path::PathBuf::from(format!("{home}/.local/share/zed-kask/threads/threads.db"));
+        assert!(
+            db.exists(),
+            "threads DB not found at {db:?} — run on the operator machine"
+        );
+        let uri = format!("file:{}?mode=ro&immutable=1", db.display());
+        let run_sqlite = |sql: String| {
+            let output = smol::block_on(async {
+                smol::process::Command::new("sqlite3")
+                    .arg(&uri)
+                    .arg(&sql)
+                    .output()
+                    .await
+            })
+            .expect("sqlite3 available");
+            assert!(output.status.success(), "sqlite query failed: {sql}");
+            String::from_utf8_lossy(&output.stdout).to_string()
+        };
+        let median = |mut xs: Vec<f64>| {
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = xs.len();
+            if n == 0 {
+                f64::NAN
+            } else if n % 2 == 1 {
+                xs[n / 2]
+            } else {
+                (xs[n / 2 - 1] + xs[n / 2]) / 2.0
+            }
+        };
+
+        // ── Geometry leg: top-12 threads by stored bytes (protocol corpus) ──
+        let ids = run_sqlite(
+            "SELECT thread_id FROM thread_messages GROUP BY thread_id ORDER BY sum(length(data)) DESC LIMIT 12"
+                .to_string(),
+        );
+        let ids: Vec<&str> = ids.lines().filter(|line| !line.is_empty()).collect();
+        println!("stage4-geometry corpus n={}", ids.len());
+        const PER_THREAD_CAP: usize = 24 * 1024 * 1024;
+        let capacities: [(u64, &str); 5] = [
+            (1_310_720, "openrouter-endpoint"),
+            (1_048_576, "glm-window"),
+            (917_504, "rescue-ceiling"),
+            (200_000, "mid-window"),
+            (80_000, "floor"),
+        ];
+        let mut reduction_by_cap: [Vec<f64>; 5] =
+            [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        let mut calls_by_cap: [Vec<f64>; 5] =
+            [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+        for id in &ids {
+            let rows = run_sqlite(format!(
+                "SELECT data FROM thread_messages WHERE thread_id = '{id}' ORDER BY ix"
+            ));
+            let mut messages: Vec<crate::thread::Message> = Vec::new();
+            let mut consumed = 0usize;
+            let mut capped = false;
+            for line in rows.split('\n') {
+                if consumed > PER_THREAD_CAP {
+                    capped = true;
+                    break;
+                }
+                consumed += line.len();
+                if let Ok(message) = serde_json::from_str::<crate::thread::Message>(line) {
+                    messages.push(message);
+                }
+            }
+            let mut request_messages = vec![text_message(Role::System, "system")];
+            for message in &messages {
+                request_messages.extend(message.to_request());
+            }
+            request_messages.push(text_message(Role::User, COMPACTION_PROMPT));
+            let request = request_with_messages(request_messages);
+            for (cap_ix, (capacity, label)) in capacities.iter().enumerate() {
+                let planned = plan_compaction(&request, *capacity, None).expect("plan compaction");
+                let (plan_kind, segments, calls) = match &planned.plan {
+                    CompactionPlan::Single(_) => ("single", 1, 1),
+                    CompactionPlan::Segments(segment_requests) => {
+                        let count = segment_requests.len();
+                        ("segments", count, count + 1)
+                    }
+                };
+                println!(
+                    "stage4-geometry id={id} cap={label}({capacity}) capped={capped} original_bytes={} shrunk_bytes={} reduction_pct={:.1} plan={plan_kind} segments={segments} calls={calls} windowed_results={} windowed_bytes={} collapsed_runs={}",
+                    planned.shrink.original_bytes,
+                    planned.shrink.shrunk_bytes,
+                    planned.shrink.reduction_pct(),
+                    planned.shrink.windowed_results,
+                    planned.shrink.windowed_bytes,
+                    planned.shrink.collapsed_runs,
+                );
+                reduction_by_cap[cap_ix].push(planned.shrink.reduction_pct());
+                calls_by_cap[cap_ix].push(calls as f64);
+                if *capacity == 1_048_576 && planned.shrink.original_bytes > 0 {
+                    // Sensitivity re-plan forcing the 4.0 bytes/token ratio
+                    // in-window (the prose-density upper trust edge).
+                    let dense = (planned.shrink.original_bytes / 4) as u64;
+                    if let Ok(dense_planned) = plan_compaction(&request, *capacity, Some(dense)) {
+                        let dense_calls = match &dense_planned.plan {
+                            CompactionPlan::Single(_) => 1,
+                            CompactionPlan::Segments(s) => s.len() + 1,
+                        };
+                        println!(
+                            "stage4-geometry id={id} cap={label}-r4.0 plan-segments={} calls={dense_calls}",
+                            match &dense_planned.plan {
+                                CompactionPlan::Single(_) => 1,
+                                CompactionPlan::Segments(s) => s.len(),
+                            }
+                        );
+                    }
+                }
+            }
+        }
+        for (cap_ix, (capacity, label)) in capacities.iter().enumerate() {
+            println!(
+                "stage4-geometry MEDIAN cap={label}({capacity}) n={} reduction_pct={:.1} calls={}",
+                reduction_by_cap[cap_ix].len(),
+                median(reduction_by_cap[cap_ix].clone()),
+                median(calls_by_cap[cap_ix].clone())
+            );
+        }
+
+        // ── Fidelity leg: threads with a stored Summary compaction ──
+        let compaction_threads = run_sqlite(
+            "SELECT thread_id FROM thread_messages WHERE data LIKE '%\"Compaction\"%' GROUP BY thread_id ORDER BY sum(length(data)) DESC LIMIT 12"
+                .to_string(),
+        );
+        let compaction_threads: Vec<&str> = compaction_threads
+            .lines()
+            .filter(|line| !line.is_empty())
+            .collect();
+        println!("stage4-fidelity corpus n={}", compaction_threads.len());
+        let extensions = [
+            "rs", "toml", "md", "json", "sh", "py", "ts", "js", "lock", "yml", "yaml", "txt",
+        ];
+        let mut pass_rates: Vec<f64> = Vec::new();
+        for id in &compaction_threads {
+            let rows = run_sqlite(format!(
+                "SELECT data FROM thread_messages WHERE thread_id = '{id}' ORDER BY ix"
+            ));
+            let mut summary: Option<String> = None;
+            let mut probe_texts: Vec<String> = Vec::new();
+            for line in rows.split('\n') {
+                if summary.is_some() {
+                    break;
+                }
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                    continue;
+                };
+                if let Some(compaction) = value.get("Compaction") {
+                    if let Some(text) = compaction
+                        .get("Summary")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                    {
+                        summary = Some(text);
+                        break;
+                    }
+                }
+                collect_tool_result_texts(&value, &mut probe_texts);
+            }
+            let Some(summary) = summary else {
+                println!("stage4-fidelity id={id} skipped=no-stored-summary");
+                continue;
+            };
+            // Pre-declared probe extraction: extension-bearing path tokens and
+            // backtick-quoted spans (4..=80 chars), distinct, capped at 30.
+            let mut probes: Vec<String> = Vec::new();
+            let add_probe = |token: &str, probes: &mut Vec<String>| {
+                let token = token.trim_matches(|c: char| {
+                    matches!(
+                        c,
+                        '.' | ',' | ':' | ';' | ')' | ']' | '(' | '"' | '\'' | '`' | '*'
+                    )
+                });
+                if token.len() >= 4 && token.len() <= 80 && !probes.iter().any(|p| p == token) {
+                    probes.push(token.to_string());
+                }
+            };
+            for text in &probe_texts {
+                for token in text.split(|c: char| {
+                    c.is_whitespace()
+                        || matches!(
+                            c,
+                            '"' | '\''
+                                | '`'
+                                | '('
+                                | ')'
+                                | '['
+                                | ']'
+                                | '{'
+                                | '}'
+                                | ','
+                                | ':'
+                                | ';'
+                                | '|'
+                                | '*'
+                        )
+                }) {
+                    if extensions
+                        .iter()
+                        .any(|ext| token.ends_with(&format!(".{ext}")))
+                    {
+                        add_probe(token, &mut probes);
+                    }
+                }
+                let mut rest = text.as_str();
+                while let Some(start) = rest.find('`') {
+                    let after = &rest[start + 1..];
+                    if let Some(end) = after.find('`') {
+                        add_probe(&after[..end], &mut probes);
+                        rest = &after[end + 1..];
+                    } else {
+                        break;
+                    }
+                }
+            }
+            probes.truncate(30);
+            if probes.len() < 10 {
+                println!(
+                    "stage4-fidelity id={id} skipped=too-few-probes({})",
+                    probes.len()
+                );
+                continue;
+            }
+            let present = probes
+                .iter()
+                .filter(|probe| summary.contains(probe.as_str()))
+                .count();
+            let pass_pct = present as f64 * 100.0 / probes.len() as f64;
+            println!(
+                "stage4-fidelity id={id} probes_total={} probes_present={} pass_pct={:.1}",
+                probes.len(),
+                present,
+                pass_pct
+            );
+            pass_rates.push(pass_pct);
+        }
+        println!(
+            "stage4-fidelity MEDIAN n={} pass_pct={:.1}",
+            pass_rates.len(),
+            median(pass_rates)
+        );
+    }
+
     /// Walk a stored message JSON value for every tool-result text string.
     /// The stored `Agent` rows carry tool results in a `tool_results` map
     /// (`AgentMessage`'s serialization: `tool_results: {id: ToolResult}`),
