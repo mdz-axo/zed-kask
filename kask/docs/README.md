@@ -18,7 +18,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 17 retained artifacts across 9 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
-**Corpus size (measured 2026-10-30):** 77 Markdown documents and one live YAML inventory in the committed corpus, 82 files total in the working tree (`find kask/docs -type f | wc -l`: 78 committed plus four in-flight drafts from concurrent streams) — under the formal **fewer-than-85** cap; the committed corpus sits three above the **75-file working target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
+**Corpus size (measured 2026-10-30):** 77 Markdown documents and one live YAML inventory, 78 files total under `find kask/docs -type f | wc -l` — the committed-tree count this line must match at every gated push (pre-push object alignment means the gates read exactly the committed tree; concurrent-stream in-flight drafts are not part of this number until they land) — under the formal **fewer-than-85** cap; the committed corpus sits three above the **75-file working target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
 ## Repair and improvement plans
 
@@ -114,7 +114,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Internal links target retained documents — this pass swept every row and reference orphaned by the 2026-10-30 stale-docs deletion and by its own six deletions.
 - [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-30).
 - [x] Edited citations use full repository-relative paths; this pass re-anchored the 12 `@sym` citations rotted by `crates/agent/src/thread.rs` line drift (the 2026-10-30 compaction commits) in `skills-and-composition.md` and `lisp-eval-dialect.md` via `kask/scripts/resolve-citation-anchor.sh`, and the citation, anchor, drift and link gates re-ran green over the committed tree.
-- [x] Document count is 82 in the working tree (measured 2026-10-30: 78 committed — 77 Markdown plus the live YAML — plus four concurrent-stream in-flight drafts), under the fewer-than-85 cap; the committed corpus sits three above the 75-file working target — condensation direction, not a gate.
+- [x] Document count is 78 in the working tree at every gated push (measured 2026-10-30: 77 Markdown plus the live YAML; concurrent-stream in-flight drafts are not part of this number until they land), under the fewer-than-85 cap; the committed corpus sits three above the 75-file working target — condensation direction, not a gate.
 
 ## See also
 
