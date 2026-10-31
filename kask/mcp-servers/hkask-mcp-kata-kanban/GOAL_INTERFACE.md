@@ -4,6 +4,35 @@ Goals separate immutable requirements, worker progress, independent assessment,
 and authenticated human decisions. Forecasts are optional and resolve only
 against the human outcome. No probability is synthesized for ordinary goals.
 
+## Trust-economics layer
+
+Every goal carries a standing `GoalTrustClause` as part of the specification
+digest: the value of a deliverable is `T_reliance · B` (Butler–Giuliano–Guiso
+2009), an unverifiable deliverable is rationally discounted to zero (Akerlof
+1970), trust dynamics are asymmetric (Slovic 1993; Kim–Ferrin–Cooper–Dirks
+2004), and violations are priced at the expectation interest (Fuller–Perdue
+1936–37). The clause is structural, not a caller preference — the MCP route
+always passes `None` and the service applies the default.
+
+Each goal also carries a running trust ledger (`Vec<GoalTrustEvent>`,
+append-only) recorded via `kanban_goal_trust_record`. An event captures the
+instruction text (verbatim from intake), whether it was complied with or
+violated, the severity class when violated (`competence` for a disclosed
+failure, `integrity` for a discovered one), evidence for the claim, and the
+operator's estimated cost (the expectation interest: the as-if-complied
+position, not the fix cost). `trust_summary()` computes the regulation signal
+from the ledger; `has_integrity_violation` is the escalation flag.
+
+Every `goal_trust_record` also writes an h_mem with entity `"trust:ledger"`
+to the kata-kanban's own `HMemStore` — the same entity the regulation loop's
+`TrustSensor` reads. Tight coupling: the zed main process opens the
+kata-kanban's DB via `open_kanban_trust_store` and wires both the curator's
+and kata-kanban's `MemoryStore` handles into the sensor, so trust events
+recorded on any goal are visible to the regulation loop. A bridge failure
+surfaces (the goal has the event, the global ledger doesn't); a kata-kanban
+store-open failure degrades to curator-only (the sensor still reads the
+curator's events).
+
 ## Supported data
 
 **Forward-only policy:** obsolete goal-schema data is discarded, not migrated.
