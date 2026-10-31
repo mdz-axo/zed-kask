@@ -16,6 +16,7 @@ pub(super) fn manifest(path: &std::path::Path, digest: &str) -> Vec<agent::Nativ
 }
 fn feature_declaration() -> GoalDeclaration {
     GoalDeclaration {
+        trust_clause: None,
         goal_text: "The feature flag is enabled in the supplied configuration artifact".into(),
         criteria: vec![VerificationCriterion::new(
             "The artifact contains feature_status=enabled".into(),

@@ -206,6 +206,7 @@ fn declare_with_forecast(
 ) -> anyhow::Result<Goal> {
     Ok(host.service.goal_create(
         GoalDeclaration {
+            trust_clause: None,
             goal_text: "The user can retrieve the original frozen requirements after restart"
                 .into(),
             criteria: vec![
