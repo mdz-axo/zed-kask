@@ -231,6 +231,27 @@ struct VisualEventsState {
     note: Option<String>,
 }
 
+impl VisualEventsState {
+    /// Whether the loaded page is a truncated prefix of the recording's
+    /// full event log — the server pages `layers_transcript` (the panel
+    /// requests the 5000-event maximum), so a longer recording's log
+    /// reads as a prefix of its total.
+    fn truncated(&self) -> bool {
+        self.events.len() < self.events_total
+    }
+
+    /// The truncation note's wording — page vs total, so the operator
+    /// reading the list never mistakes a truncated page for the whole
+    /// log.
+    fn truncation_note(&self) -> String {
+        format!(
+            "showing {} of {} events — refine your search or window",
+            self.events.len(),
+            self.events_total
+        )
+    }
+}
+
 /// The armed redaction target (S5 criterion 3): one event carrying a
 /// normalized box — the tier-1 decision's spatial target, keyed by its
 /// stable source ref so the authored decision carries the OMC lineage
@@ -2125,10 +2146,14 @@ impl MediaViewer {
             return;
         };
         cx.notify();
+        // The dispatch pins the maximum page (limit 5000 — the server's
+        // cap, clamped 1..=5000): the event log never reads a silent
+        // 500-event default prefix. Longer logs still page — the list's
+        // bottom truncation note names what the page omits.
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "layers_transcript",
-            serde_json::json!({ "media_path": media_path }),
+            serde_json::json!({ "media_path": media_path, "limit": 5000 }),
         );
         cx.spawn(async move |this, cx| {
             let result = match task.await {
@@ -4917,7 +4942,10 @@ impl MediaViewer {
                 WORKSPACE_HEADER_ITEMS + blocks.len() + WORKSPACE_LIST_TAIL_ITEMS
             }
             TranscriptSurface::Events => {
-                WORKSPACE_HEADER_ITEMS + events.len() + WORKSPACE_EVENTS_TAIL_ITEMS
+                WORKSPACE_HEADER_ITEMS
+                    + events.len()
+                    + WORKSPACE_EVENTS_TAIL_ITEMS
+                    + usize::from(self.visual_events_truncated())
             }
         };
         if self.transcript_list_count != item_count {
@@ -4981,6 +5009,13 @@ impl MediaViewer {
                         .pb_1()
                         .child(self.render_workspace_event_row(row, body_ix, cx))
                         .into_any_element();
+                }
+                // A page shorter than the recording's total events carries
+                // the truncation note as the list's bottom row — the count
+                // the operator reads never silently claims completeness.
+                let tail_ix = body_ix - events.len();
+                if tail_ix == 0 && self.visual_events_truncated() {
+                    return self.render_workspace_events_truncation_note();
                 }
                 self.render_workspace_redaction_section(cx)
             }
@@ -5847,6 +5882,33 @@ impl MediaViewer {
             .on_click(cx.listener(move |this, _event, _window, cx| {
                 this.event_clicked(index, start_sec, cx);
             }))
+            .into_any_element()
+    }
+
+    /// Whether the loaded event log is a truncated page: the server pages
+    /// `layers_transcript` (the panel requests the 5000-event maximum),
+    /// so a longer recording's log reads as a prefix of its total.
+    fn visual_events_truncated(&self) -> bool {
+        self.visual_events
+            .as_ref()
+            .is_some_and(VisualEventsState::truncated)
+    }
+
+    /// The truncation note at the bottom of the event list: a page
+    /// shorter than the recording's total names what it omits — page vs
+    /// total, never a bare count that silently claims completeness.
+    fn render_workspace_events_truncation_note(&self) -> AnyElement {
+        let Some(state) = self.visual_events.as_ref() else {
+            return div().into_any_element();
+        };
+        div()
+            .pb_2()
+            .debug_selector(|| "media-events-truncation-note".into())
+            .child(
+                Label::new(SharedString::from(state.truncation_note()))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
             .into_any_element()
     }
 
@@ -11769,6 +11831,22 @@ mod tests {
         }
     }
 
+    /// dcterms:identifier: `VisualEventsState::truncation_note`
+    /// expect: A truncated page's note names the page-vs-total gap — the
+    /// count the operator reads never silently claims completeness; a
+    /// full page is not truncated and renders no note.
+    #[test]
+    fn truncation_note_names_page_and_total() {
+        let mut state = parse_visual_events(&visual_events_response()).expect("fixture parses");
+        assert!(!state.truncated(), "a full page is not truncated");
+        state.events_total = 1200;
+        assert!(state.truncated());
+        assert_eq!(
+            state.truncation_note(),
+            "showing 2 of 1200 events — refine your search or window"
+        );
+    }
+
     /// dcterms:identifier: `parse_redaction_render`
     /// expect: The S3 render result parses into the review/lineage summary
     /// or rejects — segments and applied items carry their full detail.
@@ -12041,8 +12119,9 @@ mod tests {
             assert_eq!(recorded[0].0, "layers_transcript");
             assert_eq!(
                 recorded[0].1,
-                serde_json::json!({ "media_path": "/rec/one.mp4" }),
-                "the reading surface dispatches the pinned payload"
+                serde_json::json!({ "media_path": "/rec/one.mp4", "limit": 5000 }),
+                "the reading surface dispatches the pinned payload — the \
+                 5000-event maximum page, never the 500-event default prefix"
             );
         }
         // Retained state: back to words and again dispatches nothing.
@@ -13272,5 +13351,164 @@ mod viewer_layout_tests {
             bounds.right() <= px(480.),
             "the authoring section fits the dock: {bounds:?}"
         );
+    }
+
+    /// The events-surface layout fixture: the two-row event log (a shot
+    /// row and a box-carrying object row) with a caller-set total — a
+    /// total above the row count makes the state a truncated page.
+    fn events_state(events_total: usize) -> VisualEventsState {
+        VisualEventsState {
+            status: "completed".into(),
+            events: vec![
+                PaneEventRow {
+                    start_sec: 0.0,
+                    end_sec: Some(4.2),
+                    kind: "shot".into(),
+                    layer_id: "layer_shot".into(),
+                    item_id: "item_s0".into(),
+                    searchable_text: "shot 0".into(),
+                    model: "ffmpeg:scdet".into(),
+                    box_norm: None,
+                    object_label: None,
+                    evidence: vec!["seen".into()],
+                },
+                PaneEventRow {
+                    start_sec: 3.5,
+                    end_sec: Some(9.0),
+                    kind: "object".into(),
+                    layer_id: "layer_obj".into(),
+                    item_id: "item_a".into(),
+                    searchable_text: "object: person".into(),
+                    model: "qwen3-vl".into(),
+                    box_norm: Some([0.1, 0.2, 0.3, 0.4]),
+                    object_label: Some("person".into()),
+                    evidence: vec!["seen".into()],
+                },
+            ],
+            events_total,
+            kinds_present: vec!["shot".into(), "object".into()],
+            note: None,
+        }
+    }
+
+    /// An events-surface workspace over `/generated/one.mp4` with the
+    /// given event log — the truncation tests' shared viewer.
+    fn events_surface_viewer(state: VisualEventsState) -> MediaViewer {
+        let mut viewer = MediaViewer::new();
+        viewer.transcript = Some(TranscriptPaneState {
+            transcript_id: "t-events".into(),
+            media_path: "/generated/one.mp4".into(),
+            gallery_asset_id: None,
+            alignment: "original".into(),
+            alignment_note: None,
+            words: None,
+            working_text: String::new(),
+            paragraph_breaks: None,
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+        });
+        viewer.visual_events = Some(state);
+        viewer.transcript_surface = TranscriptSurface::Events;
+        viewer.active_tab = ViewerTab::Transcript;
+        viewer
+    }
+
+    /// A page shorter than the recording's total events surfaces the
+    /// truncation note at the bottom of the event list: the list carries
+    /// one extra tail item, the note lays out under the last event row,
+    /// and the authoring section still lays out below it.
+    #[gpui::test]
+    fn events_surface_truncation_note_renders_below_the_event_rows(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| events_surface_viewer(events_state(1200)));
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        // The truncated page carries one extra tail item: the fixed
+        // header, the two event rows, the truncation note, then the
+        // authoring section.
+        viewer.read_with(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_list_count,
+                WORKSPACE_HEADER_ITEMS + 2 + WORKSPACE_EVENTS_TAIL_ITEMS + 1
+            );
+        });
+
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(gpui::ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS + 2,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds("media-events-truncation-note")
+            .expect("the truncation note must lay out");
+        assert!(
+            bounds.right() <= px(480.),
+            "the truncation note fits the dock: {bounds:?}"
+        );
+
+        // The authoring section still lays out below the note.
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(gpui::ListOffset {
+                item_ix: viewer.transcript_list_count.saturating_sub(1),
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds("media-events-authoring-section")
+            .expect("the authoring section must lay out");
+        assert!(
+            bounds.right() <= px(480.),
+            "the authoring section fits the dock: {bounds:?}"
+        );
+    }
+
+    /// A full page is not truncated: the tail stays exactly the authoring
+    /// section — no phantom truncation note — so the note's presence
+    /// itself is the truncation signal.
+    #[gpui::test]
+    fn events_surface_full_page_renders_no_truncation_note(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| events_surface_viewer(events_state(2)));
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        viewer.read_with(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_list_count,
+                WORKSPACE_HEADER_ITEMS + 2 + WORKSPACE_EVENTS_TAIL_ITEMS
+            );
+        });
+
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(gpui::ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS + 2,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-events-truncation-note").is_none(),
+            "a full page renders no truncation note"
+        );
+        cx.debug_bounds("media-events-authoring-section")
+            .expect("the authoring section still lays out");
     }
 }

@@ -2729,6 +2729,29 @@ impl MediaServer {
         Parameters(request): Parameters<LayersTranscriptRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_transcript", async {
+            // A malformed window is a caller error, never a nonsensical
+            // read: the overlap filter below would answer a reversed range
+            // with events straddling both boundaries instead of rejecting
+            // it — the same admission the bounded passes enforce
+            // (layers_semantic_pass, layers_audio_pass), ahead of any store
+            // read. A zero-width window (start == end) stays a legitimate
+            // instant read — point-in-time items intersect it.
+            if let Some(range) = &request.time_range {
+                if !range.start_sec.is_finite() || range.start_sec < 0.0 {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "time_range start_sec must be >= 0, got {}",
+                        range.start_sec
+                    )));
+                }
+                if let Some(end_sec) = range.end_sec {
+                    if range.start_sec > end_sec {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "reversed time_range: start_sec {} > end_sec {}",
+                            range.start_sec, end_sec
+                        )));
+                    }
+                }
+            }
             let driver = &**self.gallery_store.driver();
             let records = layer_store::recording_layers(driver, &request.media_path, request.kind)
                 .map_err(map_layer_store_error)?;
@@ -2738,14 +2761,28 @@ impl MediaServer {
                 None
             };
             if records.is_empty() && transcript_events.is_none() {
+                // The note states the actual absence: under a kind filter
+                // that matches nothing, the recording may still carry
+                // layers of other kinds — "no stored layers" would be
+                // false.
+                let note = match request.kind.as_ref() {
+                    Some(kind) => format!(
+                        "no layers of kind '{}' for this recording — try without a \
+                         kind filter or run the appropriate pass (layers_shot_pass, \
+                         layers_semantic_pass, layers_audio_pass) or author one \
+                         (layers_store)",
+                        kind.as_str()
+                    ),
+                    None => "no stored layers for this recording — run a layer pass \
+                            (layers_shot_pass, layers_semantic_pass, layers_audio_pass) \
+                            or author one (layers_store)"
+                        .to_string(),
+                };
                 return Ok(serde_json::json!({
                     "status": "no_layers",
                     "media_path": request.media_path,
                     "events": [],
-                    "note":
-                        "no stored layers for this recording — run a layer pass \
-                         (layers_shot_pass, layers_semantic_pass, layers_audio_pass) \
-                         or author one (layers_store)",
+                    "note": note,
                 }));
             }
             let mut events: Vec<(f64, f64, String, String, serde_json::Value)> = Vec::new();

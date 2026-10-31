@@ -6187,6 +6187,170 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// A reversed window (start_sec > end_sec) is a typed caller error at
+    /// admission — the overlap filter must never answer a nonsensical
+    /// range — while a zero-width instant window (start == end) stays a
+    /// legitimate read: point-in-time items intersect it.
+    #[tokio::test]
+    async fn layers_transcript_rejects_reversed_time_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let server = &env.server;
+        content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(1.0, Some(1.5))],
+                )))
+                .await?,
+        );
+
+        let reversed = server
+            .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                media_path: media_path.clone(),
+                kind: None,
+                time_range: Some(crate::types::LayersTimeRangeRequest {
+                    start_sec: 2.0,
+                    end_sec: Some(1.0),
+                }),
+                limit: None,
+                resume_from: None,
+            }))
+            .await
+            .expect_err("a reversed window must reject, never answer it");
+        assert_eq!(reversed.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            reversed.message.contains("reversed time_range"),
+            "the rejection names the invariant: {}",
+            reversed.message
+        );
+
+        // The same admission class as the bounded passes: a negative (or
+        // non-finite) window start is malformed input, not an open read.
+        let negative = server
+            .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                media_path: media_path.clone(),
+                kind: None,
+                time_range: Some(crate::types::LayersTimeRangeRequest {
+                    start_sec: -1.0,
+                    end_sec: Some(1.0),
+                }),
+                limit: None,
+                resume_from: None,
+            }))
+            .await
+            .expect_err("a negative window start must reject");
+        assert_eq!(negative.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+        // The boundary the rejection must not break: a zero-width instant
+        // window still reads the events intersecting the instant.
+        let instant = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                    time_range: Some(crate::types::LayersTimeRangeRequest {
+                        start_sec: 1.0,
+                        end_sec: Some(1.0),
+                    }),
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(instant["status"], serde_json::json!("completed"));
+        assert_eq!(instant["events_total"], serde_json::json!(1));
+        Ok(())
+    }
+
+    /// An empty result under a kind filter names the filtered kind — the
+    /// recording may carry layers of other kinds, so "no stored layers"
+    /// would be false; without a filter the note keeps the honest
+    /// no-stored-layers message.
+    #[tokio::test]
+    async fn layers_transcript_no_layers_note_names_the_filtered_kind()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let env = video_server_env().await?;
+        let media_path = env.source.to_string_lossy().into_owned();
+        let server = &env.server;
+        content_of(
+            &server
+                .layers_store(Parameters(crate::types::LayersStoreRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    kind: crate::layer_store::MediaLayerKind::AudioEvent,
+                    label: Some("audio events".to_string()),
+                    provenance: crate::types::LayersProvenanceRequest {
+                        model: "OpenRouter/qwen/qwen3.8-omni-flash".to_string(),
+                        prompt_template: "layers_audio_pass".to_string(),
+                    },
+                    items: vec![wire_item(0.0, Some(0.5))],
+                }))
+                .await?,
+        );
+
+        // A kind filter that matches nothing names the kind and the
+        // unfiltered remedy — the recording demonstrably carries layers.
+        let filtered = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: Some(crate::layer_store::MediaLayerKind::Ocr),
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(filtered["status"], serde_json::json!("no_layers"));
+        let note = filtered["note"].as_str().expect("note");
+        assert!(
+            note.contains("no layers of kind 'ocr'"),
+            "the note names the filtered kind: {note}"
+        );
+        assert!(
+            note.contains("kind filter"),
+            "the note names the remedy: {note}"
+        );
+
+        // The recording does carry layers — the unfiltered read completes.
+        let unfiltered = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(unfiltered["status"], serde_json::json!("completed"));
+        assert_eq!(unfiltered["events_total"], serde_json::json!(1));
+
+        // Without a kind filter over a recording that has nothing stored,
+        // the note keeps the honest "no stored layers" message.
+        let bare = content_of(
+            &server
+                .layers_transcript(Parameters(crate::types::LayersTranscriptRequest {
+                    media_path: "no-such-recording.mp4".to_string(),
+                    kind: None,
+                    time_range: None,
+                    limit: None,
+                    resume_from: None,
+                }))
+                .await?,
+        );
+        assert_eq!(bare["status"], serde_json::json!("no_layers"));
+        let note = bare["note"].as_str().expect("note");
+        assert!(
+            note.contains("no stored layers"),
+            "the unfiltered note keeps the current message: {note}"
+        );
+        Ok(())
+    }
+
     /// t1 AC1: a researcher layer with items round-trips store -> list ->
     /// get on a real fixture video, with every range inside the ffprobe
     /// duration. One payload rides the `AnyJsonValue` JSON-string
