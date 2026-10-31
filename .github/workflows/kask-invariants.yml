@@ -214,13 +214,22 @@ jobs:
           # (2026-10-31 operator mandate) still run here: those scripts
           # remain on disk as advisory agent tools, and a selftest is the
           # only thing that keeps an advisory tool honest.
+          failed=""
           for selftest in kask/scripts/check-*-selftest.sh; do
             # Advisory tools, unwired from enforcement 2026-10-31 — their
             # selftests remain valid but are not part of the gate set.
             case "$selftest" in
               kask/scripts/check-goal-traceability-selftest.sh) continue ;;
             esac
-            bash "$selftest"
+            if ! out="$(bash "$selftest" 2>&1)"; then
+              # ::error:: annotations are recorded by GitHub separately
+              # from step logs, so the failing selftest is named even
+              # when the step log capture glitches (observed 2026-10-31:
+              # the loop's final 4 minutes were never captured).
+              echo "::error::selftest FAILED: $selftest"
+              printf '%s\n' "$out" >&2
+              exit 1
+            fi
           done
 
   lean-spec-pins:
