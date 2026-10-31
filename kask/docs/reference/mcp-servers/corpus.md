@@ -214,18 +214,22 @@ made "for one of them" without naming the others:
 | Corpus memory (read-write) | `~/.local/share/zed-kask/mcp/corpus/corpus-memory.db` | yes | QA/passage storage writes it (`corpus_ingest_qa`); the style-centroid path reads salience/method-signal rows (`compose.rs` `query_deduped`) |
 | Shipped bundle (read-only) | the `zk-ref-open.db` parts named by `kask/registry/zk-ref-open/bundle.json` | no | the federated read path reads exactly `embeddings` + `vec_embeddings` (`federated_recall.rs` — `hmems` is producer-owned and never read there) |
 
-The 2026-10-18 stripped export (commit `31d19d877b`, run
-`f22e5893…`, 269,821 passages, 2.3 GiB shipped vs the 3.4 GiB unstripped
-authoring fine.db) lands the projection this table names:
-`corpus_export_bundle` strips the producer-owned tables the read-only
-distribution path never reads (`DISTRIBUTION_EXCLUDED_TABLES`,
-`hkask-mcp-corpus/src/tools/calibration.rs`), then reclaims their pages. This
-is a deliberate consumer-scoped divergence, not a schema change: the
-authoring sealed run keeps every row — a stripped copy is read-only by
-construction, and opening one read-write would read every embedding as an
-orphan (`MemoryStore::delete_orphaned_embeddings` joins on `hmems`). Any
-future storage-format change (a column, an index, a vec0 layout) must state
-its disposition for all three consumers before it lands.
+The 2026-10-31 wave-5+6 refresh (commit `08dc8faf4b`, run
+`780c5774…`, 396 accepted sources, 272,937 passages, 1.29 GiB shipped
+vs the 2.1 GiB unstripped authoring fine.db) lands the projection this
+table names: `corpus_export_bundle` strips the producer-owned tables the
+read-only distribution path never reads (`DISTRIBUTION_EXCLUDED_TABLES`,
+`hkask-mcp-corpus/src/tools/calibration.rs`), then reclaims their pages.
+Wave-6 additionally dropped the byte-identical `embeddings.vector` duplicate
+(vec0 shadow tables are canonical, pinned by
+`tests/vector_dedupe_probe.rs`), cutting the shipped bundle 47% (2.30 →
+1.29 GiB). This is a deliberate consumer-scoped divergence, not a schema
+change: the authoring sealed run keeps every row — a stripped copy is
+read-only by construction, and opening one read-write would read every
+embedding as an orphan (`MemoryStore::delete_orphaned_embeddings` joins
+on `hmems`). Any future storage-format change (a column, an index, a
+vec0 layout) must state its disposition for all three consumers before it
+lands.
 
 Interior orphan `vec0` rows (a vector whose metadata row was deleted through
 a path that did not also delete the vector — therapy SQL passes, interrupted
