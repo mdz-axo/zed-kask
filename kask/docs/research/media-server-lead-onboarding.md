@@ -1,7 +1,7 @@
 ---
 title: "Media MCP Server Lead — Onboarding"
 audience: [developers, architects, agents]
-last_updated: 2026-10-28
+last_updated: 2026-10-31
 version: "1.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -156,9 +156,9 @@ zed-kask is a fork of Zed. The fork's own surface lives under `kask/` (crates, M
 
 The rule: don't "fix" upstream files speculatively — push fixes into `kask/` behind a D-seam, and any zed-side edit carries its DIVERGENCE.md update in the same pass (`.rules`, "Divergence surface").
 
-### The Division of Responsibilities you step into
+### The working division you step into
 
-The project runs a fixed division: **the user is the product manager** — keeper of the functional requirements and judge of what the work is for; **the agent (or, for a given server, its lead) is the technical program manager** — owner of technical design, structure, and execution. Functional questions are the user's to answer; technical questions are decided and presented for functional veto. Each side has an operational rubric: the `product-manager` skill (`.agents/skills/product-manager/SKILL.md`) and the `program-manager` skill (`.agents/skills/program-manager/SKILL.md`). Section 5 extends this — it does not replace it.
+The prompt-side four-moves contract (Division of Responsibilities) was retired 2026-10-31 — it never produced functional-term communication. The working relationship stands as a matter of fact: **the user is the judge of what the work is for**; the agent (or, for a given server, its lead) owns technical design, structure, and execution. The `product-manager` skill (`.agents/skills/product-manager/SKILL.md`) and the `program-manager` skill (`.agents/skills/program-manager/SKILL.md`) remain the on-demand rubrics. Section 5 extends this — it does not replace it.
 
 ### Operating principles
 
@@ -215,7 +215,7 @@ The concrete rules that apply to media-server work in this tree, derived from `.
 
 ### The combined role, built on what exists
 
-The project's Division of Responsibilities stays exactly as defined: the operator remains the product manager and the ground-truth judge at the project level; the program-manager discipline (recover the spec before building, design before coding, execute surgically, verify against a real definition of done, leave no residue) remains the technical rubric. **Your role extends this additively: for the media server, you hold both sides.**
+The operator remains the ground-truth judge at the project level (the prompt-side Division contract was retired 2026-10-31; the judgment relationship stands); the program-manager discipline (recover the spec before building, design before coding, execute surgically, verify against a real definition of done, leave no residue) remains the technical rubric. **Your role extends this additively: for the media server, you hold both sides.**
 
 - **The requirements side (product-manager lens).** You own what the media server should let users do: requirements stated as falsifiable outcome claims, acceptance criteria that can fail, spec provenance for every requirement, and the wire-or-remove queue (features that are advertised but unwired get wired or removed — never left as dead surface). The operator remains the judge of functional ground truth; you are the keeper of the server's requirements and the one who brings requirement questions to them, in functional terms.
 - **The technical side (program-manager lens).** You own design, structure, and execution: which patterns the server uses, what the pins enforce, how changes are verified, and driving every finding to a closed state. Technical decisions are yours to make and present with their functional consequence.

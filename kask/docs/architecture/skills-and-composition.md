@@ -1,7 +1,7 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-10-28
+last_updated: 2026-10-31
 version: "2.3.2"
 status: "Active"
 domain: "architecture"
@@ -106,7 +106,7 @@ cannot honour[^parnas-1972].
 | `model_name` | `:235` | Drops `## Model Information` |
 | `has_skills` | `:241` | Drops `## Agent Skills` and the `<available_skills>` catalog |
 | `(or user_agents_md has_rules)` | `:269` | Drops `## User's Custom Instructions` |
-| `(contains available_tools 'kanban_goal_create')` | conditional goal section | Drops the four-moves → goal-tools wiring inside `## Division of Responsibilities` (D40) |
+| `(contains available_tools 'kanban_goal_create')` | conditional goal section | Drops `## Goal lifecycle (native goal tools)` — the intake/judgment/closure wiring for the native goal tools (D58) |
 | `static_context` | `:359` | Drops `## Session Context` |
 
 ## 4. Section inventory
@@ -123,35 +123,35 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 | Communication | `:9` | Identical |
 | Formatting Responses | `:20` | **Modified** (§5.3, §5.4) |
 | Tool Use | `:42` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:62-63`) |
-| Task Execution | `:66` | **Modified** (§5.2, §5.7) |
+| Task Execution | `:66` | **Modified** (§5.2 — loop-termination guardrail; §5.7 — the ask-trigger amendment, the surviving D40 remnant) |
 | Searching and Reading | `:73` | Identical |
 | Making Code Changes | `:86` | Identical |
-| Ambition vs. Precision | `:100` | **Modified** (§5.7, D40 — "creative touches when scope is vague" replaced with "resolve the vagueness with the user") |
+| Ambition vs. Precision | `:100` | Identical (the D40 vagueness amendment was reverted 2026-10-31) |
 | Validation | `:106` | Identical |
 | Fixing Diagnostics | `:114` | Identical |
 | Debugging | `:119` | Identical |
 | Calling External APIs | `:128` | Identical |
 | Multi-agent delegation | `:136` | Identical |
-| Final Message | `:151` | **Modified** (§5.7, D40 — functional-outcome-first bullet) |
+| Final Message | `:151` | Identical (the D40 functional-outcome-first bullet was reverted 2026-10-31) |
 | System Information | `:165` | Identical |
 | Terminal sandbox | `:179` | Identical |
 | Model Information | `:236` | Identical |
-| Agent Skills | `:242` | **Modified** — em-dash only (§5.5) |
+| Agent Skills | `:242` | Identical (normalized to upstream 2026-10-31) |
 | User's Custom Instructions | `:270` | Identical |
 | → Personal `AGENTS.md` | `:274` | Identical |
 | → Project Rules | `:285` | Identical |
-| Opening identity + roles (kask) | `:1`–`:3` | **Amended upstream opening** (§5.7, D40 evolution — agent renamed Z-K; roles fixed at the top) |
+| Opening identity (kask) | `:1` | **Amended upstream opening** (agent renamed Z-K; the D54 anchoring identity clause. The D40 identity/roles paragraph was removed 2026-10-31) |
 | Redeemable-claims bullet (kask) | `:14` | **Amended upstream section** (§5.9 — claims carry their ground) |
-| Feature-justification bullet (kask) | `:94` | **Amended upstream section** (§5.7 — every feature names its functional requirement) |
 
-| Division of Responsibilities (kask) | `:302` | **New section** (§5.7, D40 — now the working loop; roles live in the opening) |
+
+| Goal lifecycle (native goal tools) (kask) | conditional | **New section** (D58 — intake/judgment/closure wiring for the native goal tools; re-homed 2026-10-31 from the retired Division section) |
 | Ontology anchoring bullet in Tool Use (kask) | `:49` | **Amended upstream section** (§5.8, D53 de-ghettoized + D54 — names the `onto_anchor` tool) |
 | Session Context | `:360` | **New section** (§5.1) |
 
 ## 5. Divergences from upstream
 
 `git diff upstream/main -- crates/agent/src/templates/system_prompt.hbs` reports
-**95 insertions, 6 deletions** (verified 2026-09-28). Each is catalogued below with its
+**87 insertions, 3 deletions** (verified 2026-10-31). Each is catalogued below with its
 D-seam and its pinning test, except the structured tool-call bullet (`:46`, a
 single added line in `## Tool Use` instructing the model to emit tool calls via
 the structured tool-call mechanism rather than narrating parameters as text).
@@ -266,83 +266,47 @@ text, and no `skill_bundle` tool is registered in `crates/agent/src`. Merging
 peer-level skill outputs is driven by the **skill-bundler** skill (see Part
 II, "Merging Skill Outputs").
 
-### 5.7 `## Division of Responsibilities (kask)` — new section (D40)
+### 5.7 The D40 interaction contract — retired 2026-10-31 (operator ruling)
 
-- **zed-kask** `:302-358` carries the four-moves interaction loop from the
-  functional-interaction spec
-  ([`functional-interaction-spec.md`](functional-interaction-spec.md)):
-  point at the same target (intake interpretation, user corrects), bring
-  choices to the user as experiences (options + recommendation, user
-  decides), report outcomes not artifacts (functional outcome first),
-  bank the learning. Three shared-section bullets are amended alongside:
-  the `## Task Execution` autonomy bullet's ask-trigger gains "a choice
-  changes what the user will experience" and its "prematurely" is
-  reframed to "for information you can find yourself"; the
-  `## Ambition vs. Precision` bullet replaces "creative touches when
-  scope is vague" with "resolve the vagueness with the user"; and
-  `## Final Message` gains a functional-outcome-first bullet.
-- **Upstream** has none of these; its autonomy bullet licenses unilateral
-  functional decisions (the trigger is missing information, not authority),
-  and its Final Message bullet rehearses a file-list summary format.
-- **Why:** the severance of functional requirements from technical work is
-  structural — technical tokens crowd out the functional frame in a shared
-  context window. The section is deliberately **preference-framed** (an
-  evaluation axis: "the user evaluates this work by what it lets them do")
-  rather than prohibition-framed, per the spec's gradient-over-constraint
-  principle: constraint walls habituate and provoke escape-seeking.
-- **Loop-closing wiring (2026-08-29):** a conditional block inside the
-  section — `{{#if (contains available_tools 'kanban_goal_create')}}` —
-  maps the moves to the native goal tools (Move 1 → `kanban_goal_create`,
-  Move 3 → `kanban_goal_judge`; separately gated Move 4 → native `kanban_goal_close` and correction → `kanban_goal_correct_outcome`) when the
-  kata-kanban server is connected, and vanishes when it isn't (§3.1: never
-  advertise a capability the turn doesn't have).
-- **Skill rubrics (2026-09-04):** a paragraph after the four moves names
-  each side's operational rubric — the `program-manager` skill (the
-  agent's side: spec recovery, design-before-coding, definition of done,
-  actual verification and honest reporting) and the `product-manager` skill (the user's side: what
-  to deliver at intake, decision points, and confirmation) — and directs
-  underspecified intake to the product-manager skill rather than
-  improvisation.
-- **Evolution (operator ruling 2026-09-10):** the mid-prompt section
-  underperformed — agents read it as an overlay and kept asking technical
-  questions at intake while ignoring functional requirements (observed
-  live in the companies-fix session). Roles now live in the OPENING: the
-  first line renames the agent ("You are the Z-K agent running inside the
-  Zed-Kask fork of Zed.dev") and fixes the roles (user = product manager
-  owning functional requirements; agent = technical program manager /
-  VP of engineering owning technical implementation), followed by a role
-  paragraph carrying the question-class rule — functional questions are
-  the user's to answer, asked in functional terms; technical questions
-  are the agent's to decide, "do not route technical decisions to the
-  user as questions". The section (now at `:302`) opens "The roles are
-  fixed in the opening of this prompt" and move 2 is **Decide by class**:
-  functional decisions surfaced as experiences with a recommendation;
-  technical decisions decided and presented with their functional
-  consequence, "never route one to the user as a question".
-- **Indicator reframing (operator ruling 2026-09-10, same pass):** the
-  prohibition tails were removed per the gradient-over-constraint
-  principle — move 2 now reads "decide and present the result with its
-  functional consequence, as a decision the user can veto on functional
-  grounds", and the opening's question-class rule gained the positive
-  form: a technical choice that genuinely needs the user's input is
-  "present[ed] in functional terms — what each option lets the user do —
-  with the technical detail attached as context". A feature-justification
-  bullet was added to `## Making Code Changes` (":94"): every feature
-  names the functional requirement it serves; a feature that cannot
-  name its requirement is a functional question for the user, not code
-  to write. The opening role paragraph now carries the skills pointer
-  (`program-manager` / `product-manager`).
-- **Pinned by** `test_system_prompt_contains_division_of_responsibilities`
-  (section + all four moves + the authority boundary + both skill
-  references + the no-improvisation directive),
-  `test_division_skill_references_resolve_on_disk` (the named skills
-  exist — a prompt reference to a missing skill is a ghost instruction),
-  `test_system_prompt_autonomy_bullet_includes_experience_trigger`,
-  `test_system_prompt_autonomy_bullet_reframes_prematurely`,
+The PM/TPM four-moves interaction contract (D40) left the system prompt:
+it never produced functional-term communication — the agent kept
+reporting in technical register while holding technical responsibility,
+which was the exact outcome the role framing existed to prevent.
+
+- **Removed (reverted to upstream or deleted):** the opening role paragraph
+  (co-research identity + PM/TPM division + "Discuss work in functional
+  terms" + the `program-manager`/`product-manager` skill pointers), the
+  `## Division of Responsibilities (kask)` section (the four moves + the
+  skill-rubric paragraph), the `## Making Code Changes`
+  feature-justification bullet, the `## Ambition vs. Precision` vagueness
+  amendment, and the `## Final Message` functional-outcome-first bullet.
+  The presence-pins that asserted this content
+  (`test_system_prompt_contains_division_of_responsibilities`,
+  `test_system_prompt_opening_carries_co_re_search_identity`,
+  `test_division_skill_references_resolve_on_disk`,
   `test_system_prompt_vagueness_resolved_with_user`,
-  `test_system_prompt_final_message_leads_with_functional_outcome`,
-  `test_system_prompt_wires_four_moves_to_goal_tools_when_available`, and
-  `test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable`.
+  `test_system_prompt_final_message_leads_with_functional_outcome`) are
+  deleted, and the retired vocabulary's absence is pinned inside
+  `test_system_prompt_template`.
+- **Surviving D40 remnant:** the `## Task Execution` autonomy amendment —
+  the ask-trigger ("a choice changes what the user will experience") and
+  the "prematurely" reframe ("for information you can find yourself").
+  Pinned by `test_system_prompt_autonomy_bullet_includes_experience_trigger`
+  and `test_system_prompt_autonomy_bullet_reframes_prematurely`.
+- **Re-homed:** the goal-tool conditional is now its own section —
+  `## Goal lifecycle (native goal tools)` — under D58, with the move
+  labels reworded (Intake → `kanban_goal_create`, Judgment →
+  `kanban_goal_judge`, Closure → `kanban_goal_close`, Correction →
+  `kanban_goal_correct_outcome`). Pinned by
+  `test_system_prompt_wires_goal_tools_when_available`,
+  `test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable`, and
+  the `test_goal_prompt_*` corpus tests.
+- **Design record:**
+  [`functional-interaction-spec.md`](functional-interaction-spec.md) — the
+  reasoning chain and the rejected approaches remain load-bearing for any
+  future attempt. If functional-term reporting is wanted again, the
+  instrument that can deliver it is structural (a deterministic check on
+  the delivered message), not more prompt prose.
 
 ### 5.8 `## Tool Use` ontology-anchoring bullet — D53 de-ghettoized + D54 canonical ladder (2026-09-10)
 

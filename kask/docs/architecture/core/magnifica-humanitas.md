@@ -1,7 +1,7 @@
 ---
 title: "Magnifica Humanitas — The Values Charter of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-10-08
+last_updated: 2026-10-31
 version: "0.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -53,9 +53,9 @@ This is a **grounding charter, not a gate**: it supplies the *why* beneath princ
 
 **Source:** §68–72. "Decisions are made at the closest level possible to the persons involved... avoiding people being presented with decisions that have already been taken" (§70); "The principle of subsidiarity applies especially in the context of the digital revolution" (§71).
 
-**Grounds:** P13 (trust extends how far work can be delegated — renegotiation over silent violation), the Division of Responsibilities ([`functional-interaction-spec.md`](../functional-interaction-spec.md)) — functional decisions (what should be true, what the user experiences) are the user's; technical decisions are the agent's; the agent never seizes functional authority. P10 (User Agency); P3 (settings exposure — all generative settings exposed to the user, no privileged engineer access).
+**Grounds:** P13 (trust extends how far work can be delegated — renegotiation over silent violation), the subsidiarity design record ([`functional-interaction-spec.md`](../functional-interaction-spec.md); its prompt-side expression was retired 2026-10-31 — the value subsists, the mechanism does not). P10 (User Agency); P3 (settings exposure — all generative settings exposed to the user, no privileged engineer access).
 
-**Live expression:** The four-move working agreement is a subsidiarity structure: point at the same target, decide by class, report outcomes, bank the learning.
+**Retired expression (2026-10-31):** the four-move working agreement was the subsidiarity structure; it never produced functional-term communication and was retired from the prompt. The value awaits a mechanism that works.
 
 ### V5 — Non-Neutrality: Every Tool Embodies Choices
 
@@ -98,7 +98,7 @@ This charter is a **grounding charter (interpretive)** — it adds no new enforc
 | V1 Person-not-profile | IS | P6.1 per-user data directories; no shared profile layer |
 | V2 Truth as common good | IS | P8 anchoring (`onto_anchor`); grounding-verify; IS vs OUGHT honesty |
 | V3 Accountability | IS | Failure-signals rules (`.rules`); per-variant error classification |
-| V4 Subsidiarity | IS | Division of Responsibilities (`functional-interaction-spec.md`) |
+| V4 Subsidiarity | OUGHT | The value subsists (P13 delegation); its prompt-side four-moves expression was retired 2026-10-31 (`functional-interaction-spec.md` remains the design record) |
 | V5 Non-neutrality | IS (partial) | P3.1; design decisions recorded as choices (D-seams, ADRs). No general design-review gate exists. |
 | V6 Dignity of work | IS | Cowboying rule (`.rules`); skills as readable process surfaces |
 | V7 The limit as positive | IS | `PRINCIPLES.md` §0; P5 minimalist test |
@@ -128,4 +128,4 @@ The charter's one-line discernment test, taken from the encyclical's own closing
 - Leo XIV. (2026). *Magnifica Humanitas: Encyclical Letter on Safeguarding the Human Person in the Time of Artificial Intelligence.* Vatican: Libreria Editrice Vaticana. https://www.vatican.va/content/leo-xiv/en/encyclicals/documents/20260515-magnifica-humanitas.html
 - [`magna-carta.md`](magna-carta.md) — the liberties charter.
 - [`PRINCIPLES.md`](PRINCIPLES.md) — P1–P13, the architecture principles this charter grounds.
-- [`functional-interaction-spec.md`](../functional-interaction-spec.md) — the Division of Responsibilities (V4's live expression).
+- [`functional-interaction-spec.md`](../functional-interaction-spec.md) — the Division of Responsibilities design record (its prompt-side expression retired 2026-10-31).

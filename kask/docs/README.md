@@ -1,7 +1,7 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-28
+last_updated: 2026-10-31
 version: "2.10.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -41,7 +41,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`standardized-artifact-storage.md`](architecture/standardized-artifact-storage.md) | **D28** — canonical path layout for persistent Kask artifacts. |
 | [`memory-system-specification.md`](architecture/memory-system-specification.md) | **Memory system specification** — schema, ingestion, recall, consolidation, decay, hygiene, sovereignty, and embedded diagrams. |
 | [`skills-and-composition.md`](architecture/skills-and-composition.md) | **Agent system** — prompt surfaces, skill body injection, composition principles, and testing. |
-| [`functional-interaction-spec.md`](architecture/functional-interaction-spec.md) | **Division of Responsibilities** — operator/product-manager and agent/program-manager working agreement. |
+| [`functional-interaction-spec.md`](architecture/functional-interaction-spec.md) | **Functional interaction design record** — the Division of Responsibilities / four-moves agreement (prompt-side implementation retired 2026-10-31); §9's user–Curator dyad levels remain live. |
 | [`compaction-pipeline-spec.md`](architecture/compaction-pipeline-spec.md) | **Compaction pipeline specification** — ratified 2026-09-29: the three entry points and the always-succeed, deterministic-stage-first pipeline contract. |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P13. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |

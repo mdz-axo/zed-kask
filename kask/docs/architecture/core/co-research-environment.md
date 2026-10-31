@@ -1,7 +1,7 @@
 ---
 title: "The Co-Research Environment — The Thesis of zed-kask"
 audience: [architects, users, agents]
-last_updated: 2026-10-17
+last_updated: 2026-10-31
 version: "0.1.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -36,7 +36,7 @@ Map a research institution onto zed-kask and every seat is occupied:
 | Integrity & accounting | Brier scores, calibration curves, verification states, completion records that cite commit hashes |
 | Ethics & telos | Magnifica Humanitas and its discernment test |
 | Principal investigator | The user |
-| Research staff | The agents, under the Division of Responsibilities |
+| Research staff | The agents, under the operator's question and judgment |
 
 ## Two Distinguishing Properties
 
@@ -63,6 +63,6 @@ It has already been applied once, ad hoc, when the autonomous-scientist surface 
 
 ## Identity, Contract, Methods
 
-The Division of Responsibilities ([`functional-interaction-spec.md`](../functional-interaction-spec.md)) is the operating *contract* within this environment: functional decisions are the user's, technical decisions the agent's. The skills are the *methods* the contract selects among — `program-manager` for code-producing work, `hypothesis-testing` for inquiry cycles, `experimental-design` for the design deep module, `superforecasting` for forecasts. The co-researcher is the *identity*; the program-manager is a method, not the identity.
+The working contract within this environment — functional decisions are the user's, technical decisions the agent's — stands as a matter of working relationship ([`functional-interaction-spec.md`](../functional-interaction-spec.md) is its design record; its prompt-side four-moves implementation was retired 2026-10-31 — it never produced functional-term communication). The skills are the *methods*: `program-manager` for code-producing work, `hypothesis-testing` for inquiry cycles, `experimental-design` for the design deep module, `superforecasting` for forecasts.
 
-The identity is wired where agents read it: the system-prompt opening (D40) and the Curator overlay's `## Identity` block (`CURATOR_STATIC_CONTEXT`); this charter is the authority both point at.
+The identity is wired where agents read it: the Curator overlay's `## Identity` block (`CURATOR_STATIC_CONTEXT`). The base system prompt's identity sentence was retired with the role frame on 2026-10-31; this charter is the authority the overlay points at.

@@ -1,8 +1,8 @@
 ---
 title: "Functional Interaction Specification — Division of Responsibilities, the Gradient Architecture, and the Four Moves"
 audience: [architects, developers, agents, operators]
-last_updated: 2026-09-28
-version: "1.4.1"
+last_updated: 2026-10-31
+version: "1.4.2"
 status: "Active"
 domain: "agent interaction"
 mds_categories: [domain, composition, trust, lifecycle]
@@ -16,6 +16,17 @@ mds_categories: [domain, composition, trust, lifecycle]
 > full — including the rejected approaches — because the rejections are
 > as load-bearing as the agreements: each one names a failure mode that
 > any future implementation must not reintroduce.
+
+> **Status 2026-10-31 (operator ruling).** The prompt-side implementation of
+> this spec — the Division of Responsibilities / four-moves contract (D40) —
+> is RETIRED: it never produced functional-term communication; the agent kept
+> reporting in technical register while holding technical responsibility.
+> The system prompt now carries only the role-free ask-trigger amendment
+> (`## Task Execution`) and the re-homed goal-tool wiring (`## Goal lifecycle
+> (native goal tools)`, under D58). This document remains the design record
+> — the reasoning chain and the rejected approaches stay load-bearing for
+> any future attempt — and §9 (the user–Curator dyad levels,
+> `kask.curator.interaction_mode`) remains the live contract it always was.
 
 ## 1. The problem (universal, not personal)
 

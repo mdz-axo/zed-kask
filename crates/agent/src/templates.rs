@@ -134,6 +134,25 @@ mod tests {
         assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("test-model"));
+        // zed-kask: 2026-10-31 operator retirement — the PM/TPM four-moves
+        // interaction contract never produced functional-term communication
+        // (the agent kept reporting in technical register), so it left the
+        // prompt. Pin its absence; a re-add needs an operator ruling.
+        for retired in [
+            "Division of Responsibilities",
+            "technical program manager",
+            "co-researcher in a co-research environment",
+            "lead with the functional outcome",
+            "resolve the vagueness with the user",
+            "Tie every feature to its functional requirement",
+            "`program-manager` skill",
+            "`product-manager` skill",
+        ] {
+            assert!(
+                !rendered.contains(retired),
+                "the retired interaction contract must stay out of the prompt: {retired}"
+            );
+        }
     }
 
     #[test]
@@ -337,155 +356,6 @@ mod tests {
     }
 
     #[test]
-    fn test_system_prompt_contains_division_of_responsibilities() {
-        // Pins the four-moves interaction loop (functional-interaction-spec.md,
-        // Phase A) so an upstream merge that drops it is caught. The roles are
-        // fixed in the opening (user = product manager, agent = technical
-        // program manager); the section carries the working loop, and move 2
-        // enforces the decision-class split: functional decisions are the
-        // user's, technical decisions are the agent's — never routed to the
-        // user as questions (operator ruling 2026-09-10: agents kept asking
-        // technical questions at intake and ignoring functional requirements).
-        let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
-            project: &project,
-            available_tools: vec!["echo".into()],
-            model_name: None,
-            date: "2026-01-01".to_string(),
-            user_agents_md: None,
-            static_context: None,
-            sandboxing: false,
-            is_linux: false,
-            is_windows: false,
-            mcp_tools_hidden: 0,
-        };
-        let rendered = template.render(&Templates::new()).unwrap();
-        assert!(
-            rendered.contains("## Division of Responsibilities (kask)"),
-            "the division section must be present in the rendered prompt"
-        );
-        // The roles live in the opening, and the section points up at them.
-        assert!(
-            rendered.contains("You are the Z-K agent running inside the Zed-Kask fork of Zed.dev"),
-            "the opening names the agent and its fork"
-        );
-        assert!(
-            rendered.contains("technical program manager"),
-            "the opening fixes the agent's role"
-        );
-        assert!(
-            rendered.contains("The roles are fixed in the opening of this prompt"),
-            "the section anchors to the opening's role statement"
-        );
-        for move_phrase in [
-            "Point at the same target",
-            "Decide by class",
-            "Report outcomes, not artifacts",
-            "Bank the learning",
-        ] {
-            assert!(
-                rendered.contains(move_phrase),
-                "all four moves must be present; missing: {move_phrase}"
-            );
-        }
-        assert!(
-            rendered.contains("present it in functional terms — what each option lets the user do"),
-            "the opening's question-class rule: technical questions carry their functional context"
-        );
-        assert!(
-            rendered.contains("as a decision the user can veto on functional grounds"),
-            "move 2 presents technical decisions as decisions, positively framed"
-        );
-        assert!(
-            rendered.contains("Tie every feature to its functional requirement"),
-            "every feature names the functional requirement it serves"
-        );
-        assert!(
-            rendered.contains("to interpret it, not to revise it"),
-            "the agent interprets the functional requirement; it never revises it"
-        );
-        assert!(
-            rendered.contains("`program-manager` skill"),
-            "the division section must point at the program-manager rubric for the agent's side"
-        );
-        assert!(
-            rendered.contains("`product-manager` skill"),
-            "the division section must point at the product-manager intake contract for the user's side"
-        );
-        assert!(
-            rendered.contains("do not improvise the requirement"),
-            "underspecified intake routes through the product-manager skill, not improvisation"
-        );
-    }
-
-    // zed-kask: co-research-environment identity frame (2026-10-17). The
-    // opening carries the platform thesis — the human is the principal
-    // investigator, the agent holds the instruments, the methods, and the
-    // memory — and nests the two-role division as the operating contract
-    // within the co-research environment. The identity ADDS to the opening;
-    // it must not replace the program-manager role language (the division
-    // is the contract; the role is a method — see
-    // kask/docs/architecture/core/co-research-environment.md).
-    #[test]
-    fn test_system_prompt_opening_carries_co_research_identity() {
-        let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
-            project: &project,
-            available_tools: vec!["echo".into()],
-            model_name: None,
-            date: "2026-01-01".to_string(),
-            user_agents_md: None,
-            static_context: None,
-            sandboxing: false,
-            is_linux: false,
-            is_windows: false,
-            mcp_tools_hidden: 0,
-        };
-        let rendered = template.render(&Templates::new()).unwrap();
-        assert!(
-            rendered.contains("co-research environment"),
-            "the opening names the platform's identity"
-        );
-        assert!(
-            rendered.contains("principal investigator"),
-            "the opening fixes the human's seat: question, judgment, veto"
-        );
-        assert!(
-            rendered.contains("kask/docs/architecture/core/co-research-environment.md"),
-            "the opening points at the thesis charter"
-        );
-        assert!(
-            rendered.contains("technical program manager"),
-            "the identity nests the division; it does not replace it"
-        );
-    }
-
-    #[test]
-    fn test_division_skill_references_resolve_on_disk() {
-        // The Division of Responsibilities names two skills as the operational
-        // rubrics for its two roles. A prompt reference to a skill that does
-        // not LOAD is a ghost instruction — the file can exist and still be
-        // unusable (observed 2026-09-04: an unquoted description containing
-        // ": " made product-manager's frontmatter unparseable YAML). This
-        // pins that both skills exist AND parse with the real loader.
-        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for skill in ["program-manager", "product-manager"] {
-            let path = repo_root.join(format!(".agents/skills/{skill}/SKILL.md"));
-            let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-                panic!(
-                    "the system prompt references the {skill} skill; reading {} failed: {e}",
-                    path.display()
-                )
-            });
-            agent_skills::parse_skill_file_content(&content).unwrap_or_else(|e| {
-                panic!(
-                    "the system prompt references the {skill} skill; its frontmatter must load: {e}"
-                )
-            });
-        }
-    }
-
-    #[test]
     fn test_system_prompt_contains_ontology_anchored_reasoning() {
         // Pins the ontology-anchored professional identity (D53) so an
         // upstream merge that drops it is caught. De-ghettoized per operator
@@ -566,69 +436,6 @@ mod tests {
     }
 
     #[test]
-    fn test_system_prompt_final_message_leads_with_functional_outcome() {
-        // Pins the functional-first Final Message bullet: reports lead with
-        // what the user can now do (or no longer experiences as broken)
-        // before technical detail. The prior bullet alone rehearsed a
-        // file-list summary format every turn.
-        let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
-            project: &project,
-            available_tools: vec!["echo".into()],
-            model_name: None,
-            date: "2026-01-01".to_string(),
-            user_agents_md: None,
-            static_context: None,
-            sandboxing: false,
-            is_linux: false,
-            is_windows: false,
-            mcp_tools_hidden: 0,
-        };
-        let rendered = template.render(&Templates::new()).unwrap();
-        assert!(
-            rendered.contains("lead with the functional outcome"),
-            "the Final Message section must require the functional outcome first"
-        );
-        assert!(
-            !rendered.contains("briefly summarize what changed, reference the relevant files, and state what validation you ran"),
-            "the old file-list-first bullet must not coexist with the functional-first \
-             bullet — two \"what comes first\" instructions resolve unpredictably (§7.3)"
-        );
-    }
-
-    #[test]
-    fn test_system_prompt_vagueness_resolved_with_user() {
-        // Pins the amended `## Ambition vs. Precision` bullet: scope vagueness
-        // is resolved WITH the user, not filled with initiative. The upstream
-        // text ("creative touches when scope is vague") directly contradicted
-        // the Division of Responsibilities — scope-vague is the four-moves'
-        // ask-trigger, so the contradiction is asserted absent as well.
-        let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
-            project: &project,
-            available_tools: vec!["echo".into()],
-            model_name: None,
-            date: "2026-01-01".to_string(),
-            user_agents_md: None,
-            static_context: None,
-            sandboxing: false,
-            is_linux: false,
-            is_windows: false,
-            mcp_tools_hidden: 0,
-        };
-        let rendered = template.render(&Templates::new()).unwrap();
-        assert!(
-            rendered.contains("resolve the vagueness with the user"),
-            "vague scope must route to the user, not to initiative"
-        );
-        assert!(
-            !rendered.contains("creative touches when scope is vague"),
-            "the upstream phrase licenses unilateral product decisions in \
-             exactly the situation where the functional requirement matters most"
-        );
-    }
-
-    #[test]
     fn test_system_prompt_autonomy_bullet_reframes_prematurely() {
         // Pins the amended autonomy bullet: the anti-pattern is asking for
         // findable information — not asking per se. "Prematurely" framed
@@ -654,12 +461,12 @@ mod tests {
         );
         assert!(
             !rendered.contains("coming back to the user prematurely"),
-            "\"prematurely\" biases against the Division's ask-triggers"
+            "\"prematurely\" biases against the ask-triggers"
         );
     }
 
     #[test]
-    fn test_system_prompt_wires_four_moves_to_goal_tools_when_available() {
+    fn test_system_prompt_wires_goal_tools_when_available() {
         // Pin the approved separation of worker progress and host-authenticated closure.
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
@@ -682,18 +489,18 @@ mod tests {
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
-            rendered.contains("run the loop on the native system"),
+            rendered.contains("run goal intake, judgment, and closure on the native system"),
             "the tool wiring must be present when the goal tools are available"
         );
         for wiring in [
-            "Move 1 → `kanban_goal_create`",
-            "Move 3 → `kanban_goal_judge`",
-            "Move 4 → `kanban_goal_close`",
+            "Intake → `kanban_goal_create`",
+            "Judgment → `kanban_goal_judge`",
+            "Closure → `kanban_goal_close`",
             "Correction → `kanban_goal_correct_outcome`",
         ] {
             assert!(
                 rendered.contains(wiring),
-                "every move-to-tool mapping must be present; missing: {wiring}"
+                "every goal-tool mapping must be present; missing: {wiring}"
             );
         }
     }
@@ -867,8 +674,8 @@ mod tests {
         let rendered = template
             .render(&Templates::new())
             .expect("render create-only goal prompt");
-        assert!(rendered.contains("Move 1 → `kanban_goal_create`"));
-        assert!(!rendered.contains("Move 4 → `kanban_goal_close`"));
+        assert!(rendered.contains("Intake → `kanban_goal_create`"));
+        assert!(!rendered.contains("Closure → `kanban_goal_close`"));
         assert!(!rendered.contains("Correction → `kanban_goal_correct_outcome`"));
         assert!(!rendered.contains("kanban_goal_score"));
         assert!(rendered.contains("Ordinary goals omit `forecast`"));
@@ -896,12 +703,12 @@ mod tests {
         };
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(
-            !rendered.contains("run the loop on the native system"),
+            !rendered.contains("run goal intake, judgment, and closure on the native system"),
             "the goal-tool wiring must be absent when the tools are not available"
         );
-        // The four moves themselves are unconditional — the loop survives
-        // without the tools.
-        assert!(rendered.contains("Point at the same target"));
+        // The 2026-10-31 operator retirement removed the four-moves
+        // interaction contract from the prompt; nothing of it renders.
+        assert!(!rendered.contains("Point at the same target"));
     }
 
     #[test]
