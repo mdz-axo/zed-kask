@@ -1,8 +1,8 @@
 ---
 title: "Compaction Pipeline Specification"
 audience: [developers, architects, agents]
-last_updated: 2026-10-05
-version: "1.0.0"
+last_updated: 2026-10-31
+version: "1.1.0"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, trust, lifecycle]
@@ -67,8 +67,7 @@ flowchart TD
     A[Compaction requested<br/>manual, automatic, or PromptTooLarge rescue] --> B[Build request:<br/>system prefix + history + summarization instruction]
     B --> C[Calibrate byte budget<br/>capacity x last-reported-tokens ratio]
     C --> D[Deterministic pre-shrink<br/>on the request COPY only]
-    D --> D1[Pass 1: run-length collapse<br/>3+ identical adjacent lines -> 1 + count]
-    D1 --> D2[Pass 2: head+tail windowing<br/>count-aware cap: clamp(budget/2/k, 2 KiB, 64 KiB)]
+    D --> D2[Head+tail windowing<br/>count-aware cap: clamp(budget/2/k, 2 KiB, 64 KiB)]
     D2 --> E{Shrunk history<br/>fits budget?}
     E -->|yes| F[Two-half plan<br/>ratified split, 2 concurrent calls]
     E -->|no, splittable| G[Balanced N segments<br/>batches of 8, each fits budget]
@@ -84,8 +83,8 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-COMPACTION-001
-verified_date: 2026-10-05
-verified_against: crates/agent/src/thread.rs:2892,3723,3792; crates/agent/src/kask_compaction.rs:930
+verified_date: 2026-10-31
+verified_against: crates/agent/src/thread.rs:2941,4003,4072,4188; crates/agent/src/kask_compaction.rs:121
 status: VERIFIED
 -->
 
@@ -124,13 +123,12 @@ No tools are attached. `thinking_allowed` follows the compaction model's
 ### Stage 2 — Deterministic pre-shrink (`kask_compaction` §1)
 
 Runs on the **request copy only** — the stored thread history is never
-modified. Two passes, in order, over every tool-result text between the
-system prefix and the instruction:
+modified. One pass over every tool-result text between the system prefix
+and the instruction:
 
-| Pass | Transform | Policy | Marker |
-|------|-----------|--------|--------|
-| 1. Run-length collapse | 3+ identical adjacent non-blank lines → one line + exact count | threshold 3; blank runs and unique lines verbatim | `[preceding line repeated N more times]` |
-| 2. Head+tail windowing | text over the per-result cap → head half + marker + tail half | cap = **count-aware**: `clamp(budget/2/k, 2 KiB, 64 KiB)` capped by `clamp(budget/32, 8 KiB, 64 KiB)`, where `k` is the history's tool-result count — so the pass's aggregate is bounded by the budget; **no exemptions** — tool name, JSON shape, error state, and position do not change the policy | `[… compaction elided N bytes to fit the context budget; the full text remains in the thread history …]` |
+| Transform | Policy | Marker |
+|-----------|--------|--------|
+| Head+tail windowing | text over the per-result cap → head half + marker + tail half | cap = **count-aware**: `clamp(budget/2/k, 2 KiB, 64 KiB)` capped by `clamp(budget/32, 8 KiB, 64 KiB)`, where `k` is the history's tool-result count — so the pass's aggregate is bounded by the budget; **no exemptions** — tool name, JSON shape, error state, and position do not change the policy | `[… compaction elided N bytes to fit the context budget; the full text remains in the thread history …]` |
 
 **Anchoring (2026-10-18 grounding pass, verified sources).** The windowing
 pass — the pipeline's measured most-effective pass (86% of bytes removed in
@@ -144,10 +142,15 @@ least. The same finding justifies the aggressive 2 KiB floor: the windowed
 middle is the weak-attention region. The pipeline's tiering — stored history
 as the slow tier, summary as the fast tier — follows virtual context
 management (Packer et al., *MemGPT*, arXiv:2310.08560: hierarchical memory
-tiers with data movement between fast and slow memory). Pass 1 (RLE) is a
-**compression** citation only (Salomon), not a context-management claim; the
-2026-10-18 census measured it at 0.0% median on real threads — it stays as a
-cheap lossless guard, not a load-bearing pass.
+tiers with data movement between fast and slow memory).
+
+**Run-length collapse deleted (2026-10-31).** The 2026-10-18 census
+measured the pass at 0.0% median bytes on real threads (re-measured
+2026-10-31 with the same result), and its only citation was the RLE
+compression precedent — a value citation, not a requirement. The pass,
+its pins, and the census instrument were removed under the same falsifier
+rule that dropped C4: a pass must be anchored to a reference model *or*
+measured effective.
 
 **C2 count-aware cap (operator ruling 2026-10-18).** The fixed 8 KiB
 per-result floor left the pass's aggregate unbounded in the result count
@@ -170,10 +173,9 @@ measured **0.0% median** (max 652 bytes in the richest thread) on the same
 census — measurably inert on this workload — and no context-management or
 compression source governs it, so it is dropped as well: a proposed pass
 must be anchored to a reference model *or* measured effective, and C4 is
-neither. The census instrument is retained (test-only, `live_thread_census`)
-to re-measure if the workload changes: a thread mix that produces version-
-counter or progress spam would show up in the next census run and can
-re-open the question with evidence.
+neither. The census instrument was deleted with the run-length pass
+(2026-10-31): all three of its adjudication questions were answered, so
+a re-open rebuilds the instrument rather than re-runs it.
 
 Why windowing and not the condenser's line-selection algorithms: the
 flashrank-style mid-content `...` elision corrupts structured output (the
@@ -227,10 +229,10 @@ rejects the summary; empty/failed/cancelled phases never commit a marker.
 ## Observability
 
 `stream_compaction` logs the shrink outcome when it reduced anything, with
-per-pass byte attribution so an inert pass is visible as a zero:
+byte attribution so a no-op stage is visible as a zero:
 
 ```
-Compaction deterministic pre-shrink: 6_412_331 -> 1_204_882 bytes (81% reduction; 23 results, cap 10485 bytes, 41 result texts; windowed: 23 results / 5_207_449 bytes; runs collapsed: 4 runs / 331 bytes)
+Compaction deterministic pre-shrink: 6_412_331 -> 1_204_882 bytes (81% reduction; 23 results, cap 10485 bytes, 41 result texts; windowed: 23 results / 5_207_449 bytes)
 ```
 
 The segmented path logs the merge call's cost:
@@ -286,13 +288,13 @@ edges are designed, not accidental:
 The pipeline is a composition of published techniques; each stage names
 its analytical basis:
 
-- **Run-length encoding (RLE)** — the adjacent-repeat collapse is RLE over
-  lines: a run of identical symbols becomes one symbol plus a count. The
-  count marker preserves the exact repetition magnitude, unlike lossy
-  deduplication. **A compression citation, not a context-management
-  claim** — the 2026-10-18 census measured this pass at 0.0% median on
-  real coding threads; it stays as a cheap lossless guard, not a
-  load-bearing pass.
+- **Run-length collapse: deleted (2026-10-31).** The 2026-10-18 census
+  measured this pass at 0.0% median bytes on real coding threads
+  (re-measured 2026-10-31 with the same result); its only citation was the
+  RLE compression precedent — a value citation, not a requirement — so the
+  pass, its pins, and the census instrument were removed under the same
+  falsifier rule that dropped C4: a pass must be anchored to a reference
+  model *or* measured effective.
 - **Parameterized-run collapse: dropped (2026-10-18).** Proposed as
   value-abstracted RLE (lines identical except a trailing numeric field →
   first/last + range marker); measured 0.0% median on the real-thread census
@@ -330,11 +332,18 @@ its analytical basis:
   divide-and-conquer summarization pattern for documents exceeding a
   model's window (the map-reduce computation pattern: Dean & Ghemawat,
   2004; hierarchical/recursive summarization as used by LLM chaining
-  frameworks for long documents).
-- **Balanced partitioning / LPT scheduling** — balanced segment packing
-  minimizes the largest request (wall time is bounded by the largest
-  concurrent call), in the spirit of list-scheduling bounds for
-  multiprocessor scheduling (Graham's LPT analysis).
+  frameworks for long documents). The reduce round is bounded: when the
+  combined summaries exceed the merge call's byte budget, summaries merge
+  in ordered batches, each of which fits the budget (added 2026-10-31 —
+  the flat single merge over-windowed exactly at the extreme segment counts
+  the map stage exists for).
+- **Balanced chain-partition** — balanced segment packing minimizes the
+  largest request (wall time is bounded by the largest concurrent call).
+  The objective is contiguous chronological balance — a balanced
+  chain-partition, not Graham LPT scheduling: the list-scheduling analogy
+  is directional only and no approximation bound transfers (corrected
+  2026-10-31; no behavioral change — the balanced-packing objective is
+  what is pinned).
 - **Empirical ratio calibration** — the bytes-per-token ratio is fitted
   from the provider's own usage reports rather than assumed, with a
   trust window to reject stale measurements: constant-fitting against
@@ -352,7 +361,6 @@ compressor — a separate consumer with its own protected-tools policy,
 ## Pins
 
 - `kask_compaction.rs` planner suite: `pre_shrink_windows_oversized_results_and_keeps_small_ones`,
-  `pre_shrink_collapses_adjacent_repeats_with_counts`,
   `pre_shrink_has_no_exemptions_on_the_summarizer_copy`,
   `calibration_decides_segmentation_in_tokens_not_bytes`,
   `below_floor_capacity_keeps_legacy_two_half_plan`,
@@ -366,12 +374,17 @@ compressor — a separate consumer with its own protected-tools policy,
 - `kask_compaction.rs` C2 count-aware cap (2026-10-18):
   `count_aware_cap_windows_a_fleet_of_subcap_results`,
   `count_aware_cap_bounds_the_windowed_fleet_by_budget_half`.
-- `kask_compaction.rs` instrumentation + census (2026-10-18):
-  `per_pass_byte_attribution_is_reported`,
-  `census_counts_duplicate_blocks_and_parameterized_runs`; the live-thread
-  census `live_thread_census` (test-only, `#[ignore]`d — the measurement
-  gate that read C1/C3 at 2.5% median below the 5% build threshold and C4
-  at 0.0% median — the falsifier that dropped all three).
+- `kask_compaction.rs` instrumentation (2026-10-18):
+  `per_pass_byte_attribution_is_reported`. The live-thread measurement
+  harness `live_thread_compaction_measurement` (test-only, `#[ignore]`d;
+  protocol: `kask/docs/research/d8-compaction-review.md`) measured the
+  real corpus: 22.7% median pre-shrink reduction at the governing
+  capacity, 26.7% median verbatim-identifier survival in stored summaries.
+- `kask_compaction.rs` bounded merge (2026-10-31): `merge_batches` splits
+  the reduce into ordered batches that each fit the merge budget; pinned
+  by `merge_batches_fit_the_merge_budget_in_chronological_order`,
+  `merge_batches_keep_a_small_count_as_one_flat_batch`,
+  `merge_batches_isolate_an_over_budget_summary`.
 - `thread.rs` integration (real `Thread::compact` path):
   `test_compaction_pre_shrinks_oversized_tool_results`,
   `test_segmented_compaction_over_budget_history`,
