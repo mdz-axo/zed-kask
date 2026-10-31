@@ -1516,6 +1516,18 @@ impl CuratorServer {
 
     // ── Trust ledger (Binding 5 — trust events ARE h_mems) ───────────
 
+    /// The trust ledger over the curator's memory store — the shared
+    /// wiring of the four trust-ledger tools below (Binding 5 — trust
+    /// events ARE h_mems).
+    fn trust_ledger(&self) -> Result<hkask_trust::TrustLedger, McpToolError> {
+        let stores = self.db.get();
+        let memory = stores
+            .memory
+            .ok_or_else(|| McpToolError::failed_precondition("curator memory store unavailable"))?;
+        let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
+        Ok(hkask_trust::TrustLedger::new(std::sync::Arc::new(store)))
+    }
+
     #[tool(
         description = "Record a verbatim instruction in the trust ledger. The text is stored exactly as given; the weight classifies how explicitly it was stated (1=implicit, 2=committed, 3=explicit). Returns the ledger event id for later outcome resolution."
     )]
@@ -1524,12 +1536,7 @@ impl CuratorServer {
         Parameters(req): Parameters<TrustLedgerRecordInstructionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "trust_ledger_record_instruction", async {
-            let stores = self.db.get();
-            let memory = stores.memory.ok_or_else(|| {
-                McpToolError::failed_precondition("curator memory store unavailable")
-            })?;
-            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
-            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let ledger = self.trust_ledger()?;
             let weight = match req.weight {
                 1 => hkask_trust::Weight::Implicit,
                 2 => hkask_trust::Weight::Committed,
@@ -1558,16 +1565,12 @@ impl CuratorServer {
         Parameters(req): Parameters<TrustLedgerRecordOutcomeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "trust_ledger_record_outcome", async {
-            let stores = self.db.get();
-            let memory = stores.memory.ok_or_else(|| {
-                McpToolError::failed_precondition("curator memory store unavailable")
-            })?;
-            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
-            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let ledger = self.trust_ledger()?;
             let id = hkask_trust::LedgerEventId::from_string(&req.event_id);
             let outcome = match req.outcome.as_str() {
                 "kept" => hkask_trust::Outcome::Kept,
                 "violated" => hkask_trust::Outcome::Violated,
+                "renegotiated" => hkask_trust::Outcome::Renegotiated,
                 _ => hkask_trust::Outcome::Unverified,
             };
             ledger
@@ -1591,12 +1594,7 @@ impl CuratorServer {
         Parameters(req): Parameters<TrustLedgerStateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "trust_ledger_state", async {
-            let stores = self.db.get();
-            let memory = stores.memory.ok_or_else(|| {
-                McpToolError::failed_precondition("curator memory store unavailable")
-            })?;
-            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
-            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let ledger = self.trust_ledger()?;
             let hours = req.window_hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours);
             let stats = ledger.window_stats(since).map_err(trust_error_to_mcp)?;
@@ -1605,6 +1603,7 @@ impl CuratorServer {
                 "kept": stats.kept,
                 "violated": stats.violated,
                 "unverified": stats.unverified,
+                "renegotiated": stats.renegotiated,
                 "delegation_radius_percent": stats.delegation_radius_percent(),
                 "window_hours": hours,
             }))
@@ -1620,12 +1619,7 @@ impl CuratorServer {
         Parameters(req): Parameters<TrustLedgerSteerRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "trust_ledger_steer", async {
-            let stores = self.db.get();
-            let memory = stores.memory.ok_or_else(|| {
-                McpToolError::failed_precondition("curator memory store unavailable")
-            })?;
-            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
-            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let ledger = self.trust_ledger()?;
             let hours = req.window_hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours);
             let trust = ledger.trust_state(since).map_err(trust_error_to_mcp)?;
@@ -1687,6 +1681,9 @@ fn trust_error_to_mcp(e: hkask_trust::TrustError) -> McpToolError {
         hkask_trust::TrustError::EmptyInstruction => {
             McpToolError::invalid_argument("instruction text was empty — not an event")
         }
+        hkask_trust::TrustError::EmptyTeachingPayload => McpToolError::invalid_argument(
+            "the proposal's teaching payload was empty — a proposal that does not teach is invalid",
+        ),
     }
 }
 

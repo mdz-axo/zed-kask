@@ -571,6 +571,21 @@ impl KanbanServer {
         .await
     }
 
+    /// A goal serialized with its `trust_summary` folded in — the JSON
+    /// shape both `kanban_goal_get` and `kanban_goal_list` return.
+    fn goal_with_trust_summary(goal: &Goal) -> Result<serde_json::Value, McpToolError> {
+        let summary = goal.trust_summary();
+        let mut value =
+            serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "trust_summary".into(),
+                serde_json::to_value(summary).map_err(|e| McpToolError::internal(e.to_string()))?,
+            );
+        }
+        Ok(value)
+    }
+
     /// Read the complete canonical specification and history, including archives.
     #[tool(
         description = "Get a caller-owned canonical goal with full original criteria, progress, closure, assessment, forecast and delivery history."
@@ -586,17 +601,7 @@ impl KanbanServer {
                 .goal_get(id, self.webid)
                 .map_err(map_kanban_error)?
                 .ok_or_else(|| McpToolError::not_found(format!("goal {id} not found")))?;
-            let summary = goal.trust_summary();
-            let mut value =
-                serde_json::to_value(&goal).map_err(|e| McpToolError::internal(e.to_string()))?;
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "trust_summary".into(),
-                    serde_json::to_value(summary)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?,
-                );
-            }
-            Ok(value)
+            Self::goal_with_trust_summary(&goal)
         })
         .await
     }
@@ -615,19 +620,7 @@ impl KanbanServer {
                 .map_err(map_kanban_error)?;
             let enriched: Vec<serde_json::Value> = goals
                 .iter()
-                .map(|goal| {
-                    let summary = goal.trust_summary();
-                    let mut value = serde_json::to_value(goal)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
-                    if let Some(obj) = value.as_object_mut() {
-                        obj.insert(
-                            "trust_summary".into(),
-                            serde_json::to_value(summary)
-                                .map_err(|e| McpToolError::internal(e.to_string()))?,
-                        );
-                    }
-                    Ok(value)
-                })
+                .map(Self::goal_with_trust_summary)
                 .collect::<Result<Vec<_>, McpToolError>>()?;
             serde_json::to_value(enriched).map_err(|e| McpToolError::internal(e.to_string()))
         })

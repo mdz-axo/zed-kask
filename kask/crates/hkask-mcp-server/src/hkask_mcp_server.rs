@@ -9,6 +9,7 @@
 
 pub(crate) mod security;
 pub mod server;
+pub mod trust_ledger_hmem;
 
 // NOTE: The canonical MCP server registry lives in
 // `kask_bridge::mcp_servers::BUILT_IN_MCP_SERVERS` (id + binary + description).

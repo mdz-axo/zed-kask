@@ -7900,10 +7900,12 @@ dependencies = [
 name = "hkask-mcp-server"
 version = "0.40.2"
 dependencies = [
+ "chrono",
  "hkask-inference",
  "hkask-keystore",
  "hkask-memory",
  "hkask-storage",
+ "hkask-trust",
  "hkask-types",
  "libc",
  "rmcp",

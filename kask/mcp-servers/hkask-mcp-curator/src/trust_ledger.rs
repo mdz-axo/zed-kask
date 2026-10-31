@@ -4,10 +4,12 @@
 //! `trust_ledger_record_outcome`, `trust_ledger_state`,
 //! `trust_ledger_steer`) live on `CuratorServer` alongside the other
 //! curator tools (see the main file). This module provides the
-//! `CuratorTrustLedgerStore` — the `TrustLedgerStore` implementation
-//! that persists trust events as h_mems in the curator's `MemoryStore`
+//! `CuratorTrustLedgerStore` — the `TrustLedgerStore` implementation that
+//! persists trust events as h_mems in the curator's `MemoryStore`
 //! (entity `trust:ledger`, attribute = the event id, value = JSON
-//! carrying the full event).
+//! carrying the full event). The substrate-independent wire format and
+//! query logic live in `hkask_mcp_server::trust_ledger_hmem`, shared
+//! with the kata-kanban's store so the two cannot drift.
 //!
 //! Binding 5 closes mechanically: trust events ARE h_mems, so
 //! `memory_insert`'s evidence gate (`fetch_existing_h_mem`) can cite a
@@ -16,13 +18,10 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use hkask_mcp_server::trust_ledger_hmem;
 use hkask_memory::MemoryStore;
-use hkask_storage::HMem;
-use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, TrustError, TrustLedgerStore, Weight};
+use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, TrustError, TrustLedgerStore};
 use hkask_types::WebID;
-
-/// The entity prefix for all trust-ledger h_mems.
-pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
 
 /// Stores each `LedgerEvent` as an h_mem in the curator's `MemoryStore`:
 /// entity `trust:ledger`, attribute = the event id (a UUID), value =
@@ -36,64 +35,11 @@ impl CuratorTrustLedgerStore {
     pub fn new(memory: Arc<MemoryStore>, webid: WebID) -> Self {
         Self { memory, webid }
     }
-
-    fn event_to_h_mem(&self, event: &LedgerEvent) -> HMem {
-        let value = serde_json::json!({
-            "text": event.text,
-            "source": event.source,
-            "weight": event.weight.points(),
-            "outcome": match event.outcome {
-                Outcome::Kept => "kept",
-                Outcome::Violated => "violated",
-                Outcome::Unverified => "unverified",
-            },
-            "ts": event.ts.to_rfc3339(),
-            "oracle_note": event.oracle_note,
-        });
-        HMem::new(TRUST_LEDGER_ENTITY, event.id.as_str(), value, self.webid)
-    }
-
-    fn h_mem_to_event(h: &HMem) -> LedgerEvent {
-        let v = &h.value;
-        LedgerEvent {
-            id: LedgerEventId::from_string(&h.attribute),
-            text: v
-                .get("text")
-                .and_then(|t| t.as_str())
-                .unwrap_or("")
-                .to_string(),
-            source: v
-                .get("source")
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string(),
-            weight: match v.get("weight").and_then(|w| w.as_i64()) {
-                Some(1) => Weight::Implicit,
-                Some(2) => Weight::Committed,
-                _ => Weight::Explicit,
-            },
-            outcome: match v.get("outcome").and_then(|o| o.as_str()) {
-                Some("kept") => Outcome::Kept,
-                Some("violated") => Outcome::Violated,
-                _ => Outcome::Unverified,
-            },
-            ts: v
-                .get("ts")
-                .and_then(|t| t.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(Utc::now),
-            oracle_note: v
-                .get("oracle_note")
-                .and_then(|n| n.as_str())
-                .map(|s| s.to_string()),
-        }
-    }
 }
 
 impl TrustLedgerStore for CuratorTrustLedgerStore {
     fn append(&self, event: LedgerEvent) -> Result<(), TrustError> {
-        let h_mem = self.event_to_h_mem(&event);
+        let h_mem = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.memory
             .store(h_mem)
             .map_err(|_| TrustError::StoreUnavailable)?;
@@ -108,26 +54,18 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
     ) -> Result<LedgerEvent, TrustError> {
         let h_mems = self
             .memory
-            .query_deduped_untouched(TRUST_LEDGER_ENTITY)
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
             .map_err(|_| TrustError::StoreUnavailable)?;
 
-        let h_mem = h_mems
-            .iter()
-            .find(|h| h.attribute == id.as_str())
-            .ok_or_else(|| TrustError::EventNotFound(id.to_string()))?;
-
-        // Reconstruct the event with the resolved outcome.
-        let mut event = Self::h_mem_to_event(h_mem);
-        event.outcome = outcome;
-        event.oracle_note = oracle_note;
+        let (event, old_h_mem_id) =
+            trust_ledger_hmem::resolve_event(&h_mems, id, outcome, oracle_note)?;
 
         // Delete the old row, store the updated one (no update-in-place on
         // HMemStore; delete + insert is the replacement path).
-        let old_h_mem_id = h_mem.id;
         self.memory
             .delete_h_mem(&old_h_mem_id)
             .map_err(|_| TrustError::StoreUnavailable)?;
-        let updated = self.event_to_h_mem(&event);
+        let updated = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.memory
             .store(updated)
             .map_err(|_| TrustError::StoreUnavailable)?;
@@ -138,21 +76,10 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
     fn window(&self, since: DateTime<Utc>) -> Result<Vec<LedgerEvent>, TrustError> {
         let h_mems = self
             .memory
-            .query_deduped_untouched(TRUST_LEDGER_ENTITY)
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
             .map_err(|_| TrustError::StoreUnavailable)?;
 
-        Ok(h_mems
-            .iter()
-            .filter(|h| {
-                h.value
-                    .get("ts")
-                    .and_then(|t| t.as_str())
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc) >= since)
-                    .unwrap_or(false)
-            })
-            .map(Self::h_mem_to_event)
-            .collect())
+        Ok(trust_ledger_hmem::window_events(&h_mems, since))
     }
 }
 
