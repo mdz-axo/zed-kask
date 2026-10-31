@@ -8006,21 +8006,25 @@ mod tool_behavior_tests {
     /// stream-copy case: copy segments must come from the segment muxer
     /// (a plain `-to` copy overshoots by the reorder depth), the re-encoded
     /// segment repeats in-band parameter sets for the concatenated output,
-    /// and audio stream-copies through both segment kinds.
-    async fn create_redaction_h264_video(
+    /// and audio stream-copies through both segment kinds. Keyframes every
+    /// second (`-g 10` at 10fps).
+    async fn create_h264_bframe_video(
         path: &std::path::Path,
+        duration_secs: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let video = format!("testsrc2=s=64x48:d={duration_secs}:r=10");
+        let audio = format!("sine=frequency=440:duration={duration_secs}");
         let output = tokio::process::Command::new("ffmpeg")
             .args([
                 "-y",
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc2=s=64x48:d=4:r=10",
+                video.as_str(),
                 "-f",
                 "lavfi",
                 "-i",
-                "sine=frequency=440:duration=4",
+                audio.as_str(),
                 "-c:v",
                 "libx264",
                 "-g",
@@ -8039,6 +8043,13 @@ mod tool_behavior_tests {
             .into());
         }
         Ok(())
+    }
+
+    /// The 4s default of the redaction render tests.
+    async fn create_redaction_h264_video(
+        path: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        create_h264_bframe_video(path, 4).await
     }
 
     /// Extract one decoded frame at `ts` as grayscale rawvideo bytes —
@@ -9234,6 +9245,203 @@ mod tool_behavior_tests {
             .as_str()
             .ok_or("published gallery asset id")?;
         assert!(!asset_id.is_empty());
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::layers_render_edl`
+    /// expect: A reel over an H.264 B-frame source carries exactly its
+    /// Keep ops — frame-count exact within one frame period per op, not
+    /// the stream-copy reorder-depth overshoot — and every keyframe-
+    /// aligned interior frame is a bit-stable stream copy (the S3 pin,
+    /// on the t9 render path).
+    /// [P1] Motivating: a rendered reel's timeline does not drift.
+    /// [P1] Constraining: source media bytes are never modified.
+    #[tokio::test]
+    async fn layers_render_edl_over_b_frames_is_frame_exact_and_bit_stable()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let fixture = gallery_root.path().join("edl-bframes.mp4");
+        create_h264_bframe_video(&fixture, 8).await?;
+        let media_path = fixture.to_string_lossy().into_owned();
+        let source_bytes_before = std::fs::read(&fixture)?;
+
+        // Disjoint Keep ops over the fixture's 1s keyframe grid (keyframes
+        // at 0..7; 10fps): [1.0, 2.0] is keyframe-aligned on both bounds —
+        // a pure stream copy, the aligned-bounds case a plain `-ss`/`-to`
+        // copy overshoots by the reorder depth; [3.2, 5.8] spans an
+        // unaligned head, a whole GOP-aligned interior and an unaligned
+        // tail. The compose path sorts and union-merges, so the reel
+        // order is [1.0, 2.0] then [3.2, 5.8].
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(1.0, Some(2.0)), wire_item(3.2, Some(5.8))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        let composed = content_of(
+            &server
+                .layers_edl_compose(Parameters(crate::types::LayersEdlComposeRequest {
+                    media_path: media_path.clone(),
+                    gallery_asset_id: None,
+                    layer_id: Some(layer_id),
+                    query: None,
+                }))
+                .await?,
+        );
+        assert_eq!(composed["status"], serde_json::json!("composed"));
+        assert_eq!(
+            composed["layer"]["items_count"],
+            serde_json::json!(2),
+            "the disjoint selections stay two Keep ops"
+        );
+        let edl_layer_id = composed["layer"]["id"]
+            .as_str()
+            .ok_or("composed layer id")?
+            .to_string();
+        let rendered = content_of(
+            &server
+                .layers_render_edl(Parameters(crate::types::LayersRenderEdlRequest {
+                    media_path: media_path.clone(),
+                    layer_id: Some(edl_layer_id),
+                }))
+                .await?,
+        );
+        assert_eq!(rendered["status"], serde_json::json!("rendered"));
+        let output_path = rendered["result"]["output"]
+            .as_str()
+            .ok_or("published output path")?
+            .to_string();
+
+        // Frame-count exact: 10 frames for [1.0, 2.0) + 26 for [3.2, 5.8)
+        // (head [3.2, 4.0) = 8, interior [4.0, 5.0) = 10, tail [5.0, 5.8)
+        // = 8). The stream-copy B-frame overshoot adds the reorder depth
+        // to a copied Keep op (12 frames for [1.0, 2.0] on this fixture) —
+        // the drift this test pins out.
+        let counted = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-count_packets",
+                "-show_entries",
+                "stream=nb_read_packets",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let frames: u64 = String::from_utf8_lossy(&counted.stdout).trim().parse()?;
+        assert_eq!(
+            frames, 36,
+            "the reel carries exactly its Keep ops (10 + 26 frames), not \
+             the B-frame overshoot"
+        );
+        let video_probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=duration",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let video_duration: f64 = String::from_utf8_lossy(&video_probe.stdout)
+            .trim()
+            .parse()?;
+        assert!(
+            (video_duration - 3.6).abs() < 0.1,
+            "the reel's video timeline stays within one frame period of the \
+             requested 3.6s: {video_duration}"
+        );
+
+        // THE pin: the keyframe-aligned interiors are bit-stable stream
+        // copies. A composed reel's frames sit at the ideal positions plus
+        // one uniform baseline — the first clip's earliest raw-timestamp
+        // deficit (the segment muxer's early audio cut when a pure-copy op
+        // leads; the boundary re-encode's audio priming otherwise) — which
+        // cancels in the duration and never touches frame content or
+        // spacing. Measure the baseline and probe the interiors at their
+        // actual composed positions: op [1.0, 2.0) frames sit at baseline
+        // + (t - 1.0) and op [3.2, 5.8) frames at baseline + 1.0 + (t - 3.2).
+        let first_frame = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-read_intervals",
+                "%+#1",
+                "-show_entries",
+                "frame=pts_time",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        let baseline: f64 = String::from_utf8_lossy(&first_frame.stdout)
+            .trim()
+            .parse()?;
+        assert!(
+            (0.0..0.5).contains(&baseline),
+            "the reel's uniform baseline is bounded: {baseline}"
+        );
+        for (source_ts, ideal_offset) in [(1.5, 0.5), (4.5, 2.3)] {
+            let source_frame = redaction_frame_bytes(&media_path, source_ts, None).await?;
+            let reel_frame =
+                redaction_frame_bytes(&output_path, baseline + ideal_offset, None).await?;
+            assert!(
+                !source_frame.is_empty(),
+                "source frame at {source_ts}s extracted"
+            );
+            assert_eq!(
+                source_frame,
+                reel_frame,
+                "the interior frame from source {source_ts}s is a bit-stable \
+                 stream copy at reel {:.3}s",
+                baseline + ideal_offset
+            );
+        }
+
+        // Audio survives the segment plan (stream-copied through the muxer
+        // parts, re-encoded in-family only inside boundary spans).
+        let audio_probe = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=codec_name",
+                "-of",
+                "csv=p=0",
+                &output_path,
+            ])
+            .output()
+            .await?;
+        assert_eq!(
+            String::from_utf8_lossy(&audio_probe.stdout).trim(),
+            "aac",
+            "the audio track survived the render: {}",
+            String::from_utf8_lossy(&audio_probe.stdout)
+        );
+        assert_eq!(
+            std::fs::read(&fixture)?,
+            source_bytes_before,
+            "source media bytes are never modified"
+        );
         Ok(())
     }
 

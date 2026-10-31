@@ -105,6 +105,11 @@ pub struct VideoProbeInfo {
     pub width: u32,
     pub height: u32,
     pub codec: String,
+    /// The audio stream's codec name ("unknown" when the input carries
+    /// none) — the clip segment plan re-encodes boundary-span audio in
+    /// the source's codec family so the concat demuxer's uniform-stream
+    /// contract holds.
+    pub audio_codec: String,
     pub fps: f32,
     pub bit_rate: u64,
     /// Whether the input carries a video stream — the stream-requirement
@@ -140,6 +145,212 @@ fn selected_frame_timestamps(stderr: &str) -> Result<Vec<f64>, crate::MediaError
         timestamps.push(value);
     }
     Ok(timestamps)
+}
+
+// ── Clip segment plan (the S3 render's t9 mirror) ─────────────────────
+//
+// A clip of `[start, end)` over a video source decomposes like the S3
+// redaction render's segment plan (`src/redaction.rs`, design §6): the
+// keyframe-aligned interior GOPs stream-copy through the segment muxer —
+// bit-stable frames, an exact timeline — and only the boundary spans
+// that need a frame-exact cut re-encode. A `-ss`/`-to` stream copy
+// produces none of it: its read starts at the keyframe at or before the
+// seek point and its `-to` boundary lands reorder depth late (empirically
+// pinned 2026-10-29, ffmpeg 8.0.1: `-ss 1.0 -to 2.0 -c copy` on a 1s-GOP
+// H.264 B-frame source yields 12 frames, not 10).
+
+/// Keyframe-match tolerance for a clip boundary: ffprobe's keyframe times
+/// and a caller's floats can differ by float slop far under a frame
+/// period.
+const CLIP_KEYFRAME_MATCH_TOL: f64 = 0.001;
+
+/// Every trim/segment boundary is lowered by this much so float drift
+/// between ffprobe's and ffmpeg's timestamps can only select the intended
+/// frame or keyframe — the `segment_split` convention.
+const CLIP_BOUNDARY_MARGIN: f64 = 0.001;
+
+/// How one span of a clip renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipSegmentMode {
+    /// A keyframe-aligned span stream-copied by the segment muxer — its
+    /// frames decode bit-identical to the source.
+    StreamCopy,
+    /// A boundary span re-encoded frame-exactly — a stream copy cannot cut
+    /// here (it would start at the previous keyframe and overshoot the end
+    /// by the reorder depth).
+    Reencode,
+}
+
+/// One segment of a clip's render plan. Segments are contiguous,
+/// time-ordered and half-open in frame display time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ClipPlanSegment {
+    mode: ClipSegmentMode,
+    start_sec: f64,
+    end_sec: f64,
+}
+
+/// The resolved execution path for a video clip.
+enum ClipRoute {
+    /// The segment plan composes: muxer-copied spans and in-family
+    /// re-encoded boundary spans, concatenated.
+    Planned {
+        plan: Vec<ClipPlanSegment>,
+        keyframes: Vec<f64>,
+        video_args: &'static [&'static str],
+        audio_args: &'static [&'static str],
+    },
+    /// One whole-span seek re-encode — the visible degradation when the
+    /// plan cannot compose.
+    SeekReencode { video_args: &'static [&'static str] },
+}
+
+/// The largest keyframe time at or before `t` — the decode seek point for
+/// a re-encoded span. Frame 0 is a keyframe in any decodable stream, so
+/// the floor always exists (the redaction plan's floor convention).
+fn clip_floor_keyframe(keyframe_times: &[f64], t: f64) -> f64 {
+    keyframe_times
+        .iter()
+        .copied()
+        .filter(|k| *k <= t)
+        .fold(0.0, f64::max)
+}
+
+/// The smallest keyframe time at or after `t` (within the match
+/// tolerance), or `None` past the last keyframe.
+fn clip_ceil_keyframe(keyframe_times: &[f64], t: f64) -> Option<f64> {
+    keyframe_times
+        .iter()
+        .copied()
+        .filter(|k| *k >= t - CLIP_KEYFRAME_MATCH_TOL)
+        .fold(None, |acc: Option<f64>, k| {
+            Some(match acc {
+                Some(existing) => existing.min(k),
+                None => k,
+            })
+        })
+}
+
+/// Plan the clip's render over `[start, end)` (half-open in frame display
+/// time): the copyable interior — whole GOPs strictly inside the span,
+/// from the first keyframe at or after `start` to the last at or before
+/// `end` — plus the boundary spans around it that re-encode. Degradation
+/// is always toward more re-encoding, never toward an unsafe copy: a span
+/// with no copyable interior (inside one GOP, or no keyframe at or after
+/// `start`) is one whole-span re-encode.
+fn plan_clip_segments(keyframe_times: &[f64], start: f64, end: f64) -> Vec<ClipPlanSegment> {
+    let aligned = |bound: f64| {
+        keyframe_times
+            .iter()
+            .any(|k| (*k - bound).abs() < CLIP_KEYFRAME_MATCH_TOL)
+    };
+    let interior_start = if aligned(start) {
+        Some(start)
+    } else {
+        clip_ceil_keyframe(keyframe_times, start)
+    };
+    let interior_end = if aligned(end) {
+        end
+    } else {
+        clip_floor_keyframe(keyframe_times, end)
+    };
+    let Some(interior_start) =
+        interior_start.filter(|s| *s < interior_end - CLIP_KEYFRAME_MATCH_TOL)
+    else {
+        return vec![ClipPlanSegment {
+            mode: ClipSegmentMode::Reencode,
+            start_sec: start,
+            end_sec: end,
+        }];
+    };
+    let mut plan = Vec::with_capacity(3);
+    if start < interior_start - CLIP_KEYFRAME_MATCH_TOL {
+        plan.push(ClipPlanSegment {
+            mode: ClipSegmentMode::Reencode,
+            start_sec: start,
+            end_sec: interior_start,
+        });
+    }
+    plan.push(ClipPlanSegment {
+        mode: ClipSegmentMode::StreamCopy,
+        start_sec: interior_start,
+        end_sec: interior_end,
+    });
+    if interior_end < end - CLIP_KEYFRAME_MATCH_TOL {
+        plan.push(ClipPlanSegment {
+            mode: ClipSegmentMode::Reencode,
+            start_sec: interior_end,
+            end_sec: end,
+        });
+    }
+    plan
+}
+
+/// Boundary-segment video encoder: re-encode in the source's codec family
+/// so the concat demuxer's uniform-stream contract holds (the S3 pin: a
+/// mixed-codec concat misdecodes the re-encoded segments entirely), with
+/// the h264 arm repeating in-band parameter sets so a concatenated output
+/// re-inits the decoder where a re-encoded segment begins. An unmapped
+/// codec transcodes to h264 — one segment, one family, never a silent
+/// mixed-codec concat.
+fn clip_reencode_video_args(codec: &str) -> &'static [&'static str] {
+    match codec {
+        "mpeg4" => &["-c:v", "mpeg4"],
+        _ => &[
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-x264-params",
+            "repeat-headers=1",
+        ],
+    }
+}
+
+/// Boundary-segment audio encoder, in the source's codec family (the same
+/// uniform-stream contract). `Some(&[])` when the input carries no audio
+/// (a video-only boundary segment); `None` when the audio codec has no
+/// mapped encoder — the clip then degrades to the one-segment
+/// seek-re-encode, whose audio copies.
+fn clip_reencode_audio_args(
+    has_audio_stream: bool,
+    codec: &str,
+) -> Option<&'static [&'static str]> {
+    if !has_audio_stream {
+        return Some(&[]);
+    }
+    match codec {
+        "aac" => Some(&["-c:a", "aac"]),
+        "mp3" => Some(&["-c:a", "libmp3lame"]),
+        _ => None,
+    }
+}
+
+/// The one-segment degradation's video encoder — the pre-plan clip shape.
+fn clip_seek_reencode_video_args(codec: &str) -> &'static [&'static str] {
+    match codec {
+        "mpeg4" => &["-c:v", "mpeg4"],
+        _ => &["-c:v", "libx264", "-preset", "veryfast", "-crf", "18"],
+    }
+}
+
+/// Remove a clip-owned intermediate, tolerating absence (a missing file is
+/// already clean) and warning on real failures — the rollback hygiene of
+/// `RollbackOwnedOutput`'s drop, for files a caller never sees.
+fn discard_clip_intermediate(path: &std::path::Path) {
+    if let Err(error) = std::fs::remove_file(path) {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return;
+        }
+        tracing::warn!(
+            target: "hkask.mcp.media.ffmpeg",
+            path = %path.display(),
+            %error,
+            "Failed to remove clip intermediate"
+        );
+    }
 }
 
 /// ffmpeg runner with availability detection.
@@ -368,6 +579,11 @@ impl FfmpegRunner {
             .and_then(|c| c.as_str())
             .unwrap_or("unknown")
             .to_string();
+        let audio_codec = audio_stream
+            .and_then(|s| s.get("codec_name"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("unknown")
+            .to_string();
         let fps = video_stream
             .and_then(|s| s.get("r_frame_rate"))
             .and_then(|r| r.as_str())
@@ -392,6 +608,7 @@ impl FfmpegRunner {
             width,
             height,
             codec,
+            audio_codec,
             fps: fps as f32,
             bit_rate,
             has_video_stream: video_stream.is_some(),
@@ -414,11 +631,17 @@ impl FfmpegRunner {
         )
     }
 
-    /// Trim media to specified start/end times. Video inputs stream-copy
-    /// losslessly into mp4 (`-c copy`); audio inputs decode to 16-bit PCM wav —
-    /// the publication path then infers the right asset kind from the container
-    /// (2026-10-27: the Media tab's trim serves both media kinds through this
-    /// one path).
+    /// Trim media to specified start/end times, half-open in frame display
+    /// time. Audio-only container inputs decode to 16-bit PCM wav; every
+    /// other input publishes an mp4 through the S3 segment plan — the
+    /// keyframe-aligned interior GOPs stream-copy through the segment muxer
+    /// (bit-stable frames, an exact timeline) and only the boundary spans
+    /// that need a frame-exact cut re-encode in the source's codec family
+    /// (2026-10-30: the plain `-ss`/`-to` stream copy this replaced
+    /// overshoots the requested end by the B-frame reorder depth — the
+    /// t9 EDL render's timeline drift; the publication path then infers
+    /// the right asset kind from the container, 2026-10-27: the Media
+    /// tab's trim serves both media kinds through this one path).
     pub async fn clip(
         &self,
         input: &str,
@@ -431,8 +654,10 @@ impl FfmpegRunner {
         self.ensure_temp_dir()?;
 
         let audio_input = Self::clip_input_is_audio(input);
-        let output =
-            RollbackOwnedOutput::new(self.output_path(if audio_input { "wav" } else { "mp4" }));
+        if !audio_input {
+            return self.clip_video(input, start_sec, end_sec).await;
+        }
+        let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let duration = end_sec - start_sec;
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -442,60 +667,322 @@ impl FfmpegRunner {
             .arg("-to")
             .arg(format!("{:.3}", end_sec))
             .arg("-i")
-            .arg(input);
-        if audio_input {
-            command.arg("-c:a").arg("pcm_s16le");
-        } else {
-            // The keyframe probe is best-effort: a failed probe (missing
-            // input, probe error) falls back to the stream-copy path — the
-            // ffmpeg command itself reports the real failure for missing
-            // files (the rollback test's contract).
-            let (reencode_needed, codec) = match self.probe(input).await {
-                Ok(probe) if probe.has_video_stream => {
-                    match self.video_keyframe_times(input).await {
-                        Ok(keyframes) => {
-                            let aligned = |bound: f32| {
-                                keyframes.iter().any(|keyframe: &f64| {
-                                    (*keyframe - f64::from(bound)).abs() < 0.001
-                                })
-                            };
-                            (
-                                !(aligned(start_sec) && aligned(end_sec)),
-                                probe.codec.clone(),
-                            )
-                        }
-                        Err(_) => (false, String::new()),
-                    }
-                }
-                Ok(probe) => (false, probe.codec),
-                Err(_) => (false, String::new()),
-            };
-            if reencode_needed {
-                // The stream-copy B-frame bleed (pinned 2026-10-29, fixed
-                // 2026-10-30): a plain `-ss X -to Y -c copy` starts at the
-                // keyframe at-or-before X and the `-to` boundary lands
-                // reorder depth late (a `-to 1.0` on a 1s-GOP source
-                // yields 12 frames, not 10). Re-encode the exact window in
-                // the source's codec family — the operator's call: reels
-                // change output (they get correct, losing the bled
-                // frames).
-                command
-                    .arg("-c:v")
-                    .arg(if codec == "mpeg4" { "mpeg4" } else { "libx264" });
-                if codec != "mpeg4" {
-                    command.arg("-preset").arg("veryfast").arg("-crf").arg("18");
-                }
-                command.arg("-c:a").arg("copy");
-            } else {
-                command.arg("-c").arg("copy");
-            }
-            command.arg("-avoid_negative_ts").arg("make_zero");
-        }
-        command.arg(output.path());
+            .arg(input)
+            .arg("-c:a")
+            .arg("pcm_s16le")
+            .arg(output.path());
         Self::run_to_completion(command, "clip").await?;
 
         let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, audio_input, output = %output.display(), "Media clipped");
+        Ok(output)
+    }
+
+    /// The video clip: resolve the segment plan, then produce its segments
+    /// and compose them. Every resolution failure degrades toward more
+    /// re-encoding, never toward an unsafe copy (the S3 degradation
+    /// direction): a failed probe or keyframe enumeration, or an audio
+    /// codec with no in-family encoder for boundary spans, collapses the
+    /// plan to one whole-span seek re-encode — frame-exact, audio copied,
+    /// and standalone, so no concat boundary exists for an edit-list
+    /// offset to drift.
+    async fn clip_video(
+        &self,
+        input: &str,
+        start_sec: f32,
+        end_sec: f32,
+    ) -> Result<PathBuf, crate::MediaError> {
+        let start = f64::from(start_sec).max(0.0);
+        let end = f64::from(end_sec);
+        let probe = self.probe(input).await;
+        let route = match probe.as_ref() {
+            // A video-less container has no keyframe domain: audio packets
+            // carry no reorder depth, so the trim is a container copy.
+            Ok(probe) if !probe.has_video_stream => {
+                return self.clip_container_copy(input, start, end).await;
+            }
+            Ok(probe) => match self.video_keyframe_times(input).await {
+                Ok(keyframes) => {
+                    let plan = plan_clip_segments(&keyframes, start, end);
+                    let needs_reencode = plan
+                        .iter()
+                        .any(|segment| segment.mode == ClipSegmentMode::Reencode);
+                    let audio_args =
+                        clip_reencode_audio_args(probe.has_audio_stream, &probe.audio_codec);
+                    if !needs_reencode || audio_args.is_some() {
+                        ClipRoute::Planned {
+                            plan,
+                            keyframes,
+                            video_args: clip_reencode_video_args(&probe.codec),
+                            audio_args: audio_args.unwrap_or(&[]),
+                        }
+                    } else {
+                        ClipRoute::SeekReencode {
+                            video_args: clip_seek_reencode_video_args(&probe.codec),
+                        }
+                    }
+                }
+                Err(_) => ClipRoute::SeekReencode {
+                    video_args: clip_seek_reencode_video_args(&probe.codec),
+                },
+            },
+            // The probe is best-effort: a missing input reports its real
+            // cause from the re-encode command's own ffmpeg run (the
+            // rollback test's contract), and a machine without ffprobe
+            // still clips — re-encoded, never a bleeding copy.
+            Err(_) => ClipRoute::SeekReencode {
+                video_args: clip_seek_reencode_video_args(""),
+            },
+        };
+        match route {
+            ClipRoute::SeekReencode { video_args } => {
+                self.clip_seek_reencode(input, start, end, video_args).await
+            }
+            ClipRoute::Planned {
+                plan,
+                keyframes,
+                video_args,
+                audio_args,
+            } => {
+                let mut segment_paths = Vec::with_capacity(plan.len());
+                for segment in &plan {
+                    let path = match segment.mode {
+                        ClipSegmentMode::StreamCopy => {
+                            self.clip_stream_copy_span(input, segment.start_sec, segment.end_sec)
+                                .await?
+                        }
+                        ClipSegmentMode::Reencode => {
+                            let seek = clip_floor_keyframe(&keyframes, segment.start_sec);
+                            self.clip_trim_reencode(
+                                input,
+                                segment.start_sec,
+                                segment.end_sec,
+                                seek,
+                                video_args,
+                                audio_args,
+                            )
+                            .await?
+                        }
+                    };
+                    segment_paths.push(path);
+                }
+                let output = match segment_paths.as_slice() {
+                    [only] => only.clone(),
+                    _ => {
+                        let sources = segment_paths
+                            .iter()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>();
+                        let concatenated = match self.concat(&sources).await {
+                            Ok(concatenated) => {
+                                for path in &segment_paths {
+                                    discard_clip_intermediate(path);
+                                }
+                                concatenated
+                            }
+                            Err(error) => {
+                                for path in &segment_paths {
+                                    discard_clip_intermediate(path);
+                                }
+                                return Err(error);
+                            }
+                        };
+                        concatenated
+                    }
+                };
+                let reencoded_segments = plan
+                    .iter()
+                    .filter(|segment| segment.mode == ClipSegmentMode::Reencode)
+                    .count();
+                tracing::info!(
+                    target: "hkask.mcp.media.ffmpeg",
+                    input = %input,
+                    duration = end - start,
+                    reencoded_segments,
+                    stream_copied_segments = plan.len() - reencoded_segments,
+                    output = %output.display(),
+                    "Media clipped"
+                );
+                Ok(output)
+            }
+        }
+    }
+
+    /// Container-level stream copy for video-less inputs: with no video
+    /// keyframe domain there is no reorder depth to overshoot, so the
+    /// half-open `[start, end)` trim is a packet copy.
+    async fn clip_container_copy(
+        &self,
+        input: &str,
+        start: f64,
+        end: f64,
+    ) -> Result<PathBuf, crate::MediaError> {
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{start:.3}"))
+            .arg("-to")
+            .arg(format!("{end:.3}"))
+            .arg("-i")
+            .arg(input)
+            .arg("-c")
+            .arg("copy")
+            .arg("-avoid_negative_ts")
+            .arg("make_zero")
+            .arg(output.path());
+        Self::run_to_completion(command, "clip").await?;
+        Ok(output.commit())
+    }
+
+    /// One whole-span seek re-encode — the degradation path (and the
+    /// pre-plan clip shape): decode `[start, end)` from the input seek,
+    /// re-encode the video in the source's family, copy the audio.
+    /// Standalone by construction, so no concat boundary exists for its
+    /// edit-list offset to drift.
+    async fn clip_seek_reencode(
+        &self,
+        input: &str,
+        start: f64,
+        end: f64,
+        video_args: &'static [&'static str],
+    ) -> Result<PathBuf, crate::MediaError> {
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{start:.3}"))
+            .arg("-to")
+            .arg(format!("{end:.3}"))
+            .arg("-i")
+            .arg(input);
+        for arg in video_args {
+            command.arg(arg);
+        }
+        command
+            .arg("-c:a")
+            .arg("copy")
+            .arg("-avoid_negative_ts")
+            .arg("make_zero")
+            .arg(output.path());
+        Self::run_to_completion(command, "clip re-encode").await?;
+        let output = output.commit();
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            start = start,
+            end = end,
+            output = %output.display(),
+            "Clip span seek re-encoded"
+        );
+        Ok(output)
+    }
+
+    /// Stream-copy the keyframe-aligned span `[start, end)` out of `input`
+    /// as one segment-muxer part — the S3 copy primitive. The muxer parts
+    /// tile the source exactly (a `-ss`/`-to` copy cannot extract a span:
+    /// its video read overshoots by the reorder depth and its audio seek
+    /// lands whole frames off); this span is the part between the two
+    /// boundaries, and every other part is discarded.
+    async fn clip_stream_copy_span(
+        &self,
+        input: &str,
+        start: f64,
+        end: f64,
+    ) -> Result<PathBuf, crate::MediaError> {
+        let from_zero = start <= CLIP_KEYFRAME_MATCH_TOL;
+        let boundaries: Vec<f64> = if from_zero {
+            vec![end]
+        } else {
+            vec![start, end]
+        };
+        let parts = self.segment_split(input, &boundaries).await?;
+        let wanted_index = usize::from(!from_zero);
+        if parts.len() != boundaries.len() + 1 {
+            return Err(crate::MediaError::FfmpegFailed(format!(
+                "the segment split produced {} parts for the [{start:.3}s, {end:.3}s) span \
+                 — the keyframe boundaries diverged; refusing a misaligned clip",
+                parts.len()
+            )));
+        }
+        let mut wanted = None;
+        for (index, part) in parts.into_iter().enumerate() {
+            if index == wanted_index {
+                wanted = Some(part);
+            } else {
+                discard_clip_intermediate(&part);
+            }
+        }
+        wanted.ok_or_else(|| {
+            crate::MediaError::FfmpegFailed(
+                "the segment split is missing the planned clip part".to_string(),
+            )
+        })
+    }
+
+    /// Re-encode the exact span `[start, end)` of `input` — the frame-exact
+    /// boundary segment. The input seek lands at `seek` (the keyframe at
+    /// or before the span start, so the decode covers the whole span),
+    /// and the trim/atrim filters select the span in seek-relative time;
+    /// setpts zero-bases both streams so the segment composes in a concat
+    /// with no edit-list offset to drift (empirically pinned 2026-10-30:
+    /// the input-seek audio copy this replaced lands its first packet at
+    /// a negative timestamp, and the composed muxer then shifts the whole
+    /// timeline by the reorder depth). Both window edges are lowered by
+    /// [`CLIP_BOUNDARY_MARGIN`] — the segment-split convention — so
+    /// timestamp float drift can only select the intended frames. Video
+    /// re-encodes in the source's codec family; audio (when present)
+    /// re-encodes in its family too, exactly windowed.
+    async fn clip_trim_reencode(
+        &self,
+        input: &str,
+        start: f64,
+        end: f64,
+        seek: f64,
+        video_args: &'static [&'static str],
+        audio_args: &'static [&'static str],
+    ) -> Result<PathBuf, crate::MediaError> {
+        let rel_start = start - seek - CLIP_BOUNDARY_MARGIN;
+        let rel_end = end - seek - CLIP_BOUNDARY_MARGIN;
+        let has_audio = !audio_args.is_empty();
+        let mut filter_complex =
+            format!("[0:v]trim=start={rel_start:.3}:end={rel_end:.3},setpts=PTS-STARTPTS[vout]");
+        if has_audio {
+            filter_complex.push_str(&format!(
+                ";[0:a]atrim=start={rel_start:.3}:end={rel_end:.3},asetpts=PTS-STARTPTS[aout]"
+            ));
+        }
+        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{seek:.3}"))
+            .arg("-i")
+            .arg(input)
+            .arg("-filter_complex")
+            .arg(&filter_complex)
+            .arg("-map")
+            .arg("[vout]");
+        if has_audio {
+            command.arg("-map").arg("[aout]");
+        }
+        for arg in video_args {
+            command.arg(arg);
+        }
+        for arg in audio_args {
+            command.arg(arg);
+        }
+        command.arg(output.path());
+        Self::run_to_completion(command, "clip re-encode").await?;
+        let output = output.commit();
+        tracing::info!(
+            target: "hkask.mcp.media.ffmpeg",
+            input = %input,
+            start = start,
+            end = end,
+            output = %output.display(),
+            "Clip span re-encoded frame-exactly"
+        );
         Ok(output)
     }
 
@@ -1306,6 +1793,98 @@ impl FfmpegRunner {
 mod tests {
     use super::*;
 
+    /// The plan as comparable (mode, start, end) tuples.
+    fn clip_plan_modes(plan: &[ClipPlanSegment]) -> Vec<(&'static str, f64, f64)> {
+        plan.iter()
+            .map(|segment| {
+                let mode = match segment.mode {
+                    ClipSegmentMode::StreamCopy => "copy",
+                    ClipSegmentMode::Reencode => "reencode",
+                };
+                (mode, segment.start_sec, segment.end_sec)
+            })
+            .collect()
+    }
+
+    /// The clip plan mirrors the S3 redaction plan's keyframe alignment:
+    /// every stream-copy span starts and ends on a keyframe, the
+    /// re-encode spans carry the frame-exact boundaries, and the plan
+    /// tiles the requested span exactly. Keyframes every 1s.
+    #[test]
+    fn clip_plan_tiles_keyframe_aligned_spans() {
+        let keyframes = [0.0, 1.0, 2.0, 3.0];
+        // Aligned both: one copy span, nothing to re-encode.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 1.0, 2.0)),
+            vec![("copy", 1.0, 2.0)],
+            "aligned bounds stream-copy whole"
+        );
+        // Unaligned start, aligned end: re-encode head, copy interior.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.2, 2.0)),
+            vec![("reencode", 0.2, 1.0), ("copy", 1.0, 2.0)]
+        );
+        // Aligned start, unaligned end: copy interior, re-encode tail.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 1.0, 2.5)),
+            vec![("copy", 1.0, 2.0), ("reencode", 2.0, 2.5)]
+        );
+        // Both unaligned with an interior: head, copy, tail.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.2, 3.8)),
+            vec![
+                ("reencode", 0.2, 1.0),
+                ("copy", 1.0, 3.0),
+                ("reencode", 3.0, 3.8)
+            ]
+        );
+        // From zero: the copy starts at frame 0 — no degenerate head.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.0, 3.8)),
+            vec![("copy", 0.0, 3.0), ("reencode", 3.0, 3.8)]
+        );
+    }
+
+    /// No copyable interior → one whole-span re-encode (the S3 degradation
+    /// direction): inside one GOP, aligned with no whole GOP inside, no
+    /// keyframes at all, or a zero-length span.
+    #[test]
+    fn clip_plan_without_an_interior_reencodes_whole() {
+        let keyframes = [0.0, 1.0, 2.0, 3.0];
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 2.1, 2.5)),
+            vec![("reencode", 2.1, 2.5)],
+            "inside one GOP"
+        );
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 2.0, 2.5)),
+            vec![("reencode", 2.0, 2.5)],
+            "aligned at a keyframe but no whole GOP inside"
+        );
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&[], 0.5, 2.0)),
+            vec![("reencode", 0.5, 2.0)],
+            "no keyframes enumerated"
+        );
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 1.0, 1.0)),
+            vec![("reencode", 1.0, 1.0)],
+            "zero-length span is one degenerate re-encode"
+        );
+    }
+
+    /// Boundary float slop within the keyframe-match tolerance is
+    /// aligned, not a phantom boundary segment.
+    #[test]
+    fn clip_plan_tolerates_boundary_float_slop() {
+        let keyframes = [0.0, 1.0, 2.0];
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.9995, 1.9995)),
+            vec![("copy", 0.9995, 1.9995)],
+            "bounds within the 1ms tolerance of keyframes copy whole"
+        );
+    }
+
     #[test]
     fn selected_pts_are_observed_not_ordinal_times_interval() {
         let stderr = "unrelated pts_time:99\n[Parsed_showinfo_1] n: 0 pts_time:3.7 pos:0\n[Parsed_showinfo_1] n: 1 pts_time:7.25 pos:10";
@@ -1509,7 +2088,8 @@ mod tests {
     /// carry exactly [start, end] — not the stream-copy B-frame bleed (the
     /// copy starts at the keyframe at-or-before start; the `-to` boundary
     /// lands reorder depth late). RED on the copy path (pinned live
-    /// 2026-10-29), GREEN on the reencode path.
+    /// 2026-10-29); GREEN on the whole-span re-encode — this fixture's only
+    /// keyframe is frame 0, so the plan has no copyable interior.
     #[tokio::test]
     async fn clip_of_unaligned_bounds_is_exact_not_bled() {
         let runner = FfmpegRunner::detect();
@@ -1549,6 +2129,58 @@ mod tests {
             (probed.duration_secs - 0.5).abs() < 0.05,
             "clip of [0.4, 0.9] must carry exactly 0.5s, carried {}s — the \
              stream-copy B-frame bleed",
+            probed.duration_secs
+        );
+    }
+
+    /// The aligned-bounds pin (2026-10-30): even keyframe-aligned clip
+    /// bounds must not take a `-ss`/`-to` stream-copy path on a B-frame
+    /// source — its `-to` boundary lands reorder depth late (empirically
+    /// 12 frames for [1.0, 2.0] on this fixture, pinned live 2026-10-29;
+    /// ffmpeg 8.0.1). The exact copy comes from the segment muxer: exactly
+    /// the requested window, bit-stable.
+    #[tokio::test]
+    async fn clip_aligned_bounds_on_b_frames_is_exact() {
+        let runner = FfmpegRunner::detect();
+        if !runner.available {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        runner.ensure_temp_dir().expect("temp dir");
+        let source = runner.output_path("mp4");
+        let mut generate = Command::new(&runner.ffmpeg_path);
+        generate
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("testsrc2=s=64x48:d=4:r=10")
+            .arg("-g")
+            .arg("10")
+            .arg("-c:v")
+            .arg("libx264")
+            .arg("-y")
+            .arg(&source);
+        let generated = generate
+            .output()
+            .await
+            .expect("generate h264 b-frame source");
+        assert!(
+            generated.status.success(),
+            "h264 b-frame source generation failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let clipped = runner
+            .clip(source.to_str().expect("utf-8 temp path"), 1.0, 2.0)
+            .await
+            .expect("clip must run ffmpeg to completion");
+        let probed = runner
+            .probe(clipped.to_str().expect("utf-8 temp path"))
+            .await
+            .expect("probe the clipped output");
+        assert!(
+            (probed.duration_secs - 1.0).abs() < 0.05,
+            "clip of [1.0, 2.0] must carry exactly 1.0s, carried {}s — the \
+             stream-copy B-frame overshoot",
             probed.duration_secs
         );
     }
