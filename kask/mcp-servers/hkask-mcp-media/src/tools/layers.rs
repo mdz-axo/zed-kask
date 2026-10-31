@@ -2662,14 +2662,17 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Export every stored media layer item over one recording as corpus passages — the semantic handoff for corpus ingestion. Each item becomes one passage carrying its stable item id (resolvable via layers_get), start-end seconds, kind, label, and confidence, preceded by a recording header naming the media path. Feed the output to corpus_convert → corpus_chunk → corpus_embed; each item's text is a natural chunk boundary."
+        description = "Export every stored media layer item over one recording as corpus passages — the semantic handoff for corpus ingestion. Each item becomes one passage carrying its stable item id (resolvable via layers_get), start-end seconds, kind, label, and confidence, preceded by a recording header naming the media path. A pure layer-store read: works on any recording that has stored layers, whether or not the source media file still exists (detached-media layers survive source deletion). Feed the output to corpus_convert → corpus_chunk → corpus_embed; each item's text is a natural chunk boundary."
     )]
     pub async fn layers_export(
         &self,
         Parameters(request): Parameters<LayersExportRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_export", async {
-            ensure_local_input_exists(&request.media_path)?;
+            // No ensure_local_input_exists gate: this is a pure layer-store
+            // read. Detached-media recordings (source file deleted, layers
+            // surviving via the detach-and-surface contract) must export —
+            // the same surfaces layers_transcript reads without a gate.
             let driver = &**self.gallery_store.driver();
             let records = layer_store::recording_layers(
                 driver,

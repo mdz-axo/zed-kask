@@ -9123,6 +9123,65 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// BUG 4: export is a pure layer-store read — a recording whose source
+    /// file was deleted after layer storage (detached media, layers
+    /// surviving via the detach-and-surface contract) must export, the
+    /// same surface layers_transcript reads without an existence gate.
+    #[tokio::test]
+    async fn layers_export_reads_detached_media_layers() -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id.clone(), gallery_root.path());
+        let recording = gallery_root.path().join("export-detached.wav");
+        create_real_audio(&recording).await?;
+        let media_path = recording.to_string_lossy().into_owned();
+        let stored = content_of(
+            &server
+                .layers_store(Parameters(researcher_layer_request(
+                    media_path.clone(),
+                    vec![wire_item(0.2, Some(1.2))],
+                )))
+                .await?,
+        );
+        let layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        std::fs::remove_file(&recording)?;
+        let exported = content_of(
+            &server
+                .layers_export(Parameters(crate::types::LayersExportRequest {
+                    media_path: media_path.clone(),
+                    kind: None,
+                }))
+                .await?,
+        );
+        assert_eq!(
+            exported["status"],
+            serde_json::json!("exported"),
+            "detached-media recordings export: {}",
+            exported
+        );
+        assert_eq!(exported["layers"], serde_json::json!(1));
+        assert_eq!(exported["items"], serde_json::json!(1));
+        let passages = exported["passages"].as_str().ok_or("passages text")?;
+        assert!(
+            passages.contains("### item: "),
+            "the detached layer's items export as passages"
+        );
+        let fetched = content_of(
+            &server
+                .layers_get(Parameters(crate::types::LayersGetRequest { layer_id }))
+                .await?,
+        );
+        assert!(
+            exported["passages"].as_str().unwrap_or_default().contains(
+                fetched["layer"]["items"][0]["id"]
+                    .as_str()
+                    .ok_or("detached layer item id")?
+            ),
+            "the exported passage id resolves through layers_get on the detached layer"
+        );
+        Ok(())
+    }
+
     /// Compose a researcher selection into an EDL and render it — the
     /// shared body of the render tests.
     async fn compose_and_render(
