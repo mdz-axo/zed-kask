@@ -16,6 +16,90 @@ use std::sync::{Arc, RwLock};
 
 use super::open_regulation_archive;
 
+/// Resolve the kata-kanban's DB path: `HKASK_KANBAN_DB` if set,
+/// else `mcp/kata-kanban/kanban.db` under the hKask data dir.
+/// Mirrors the resolution in the kata-kanban MCP server
+/// (`hkask_mcp_kata_kanban.rs`, line ~1665).
+pub(crate) fn kanban_db_path() -> String {
+    std::env::var("HKASK_KANBAN_DB").unwrap_or_else(|_| {
+        let p = hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
+        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        resolved.to_string_lossy().to_string()
+    })
+}
+
+/// Open the kata-kanban's DB as a read handle for the trust sensor
+/// (tight coupling). The kata-kanban MCP server writes trust events
+/// (entity `"trust:ledger"`) to its own DB; this opens the same DB
+/// file for the regulation loop's `TrustSensor` to read from.
+/// The embedding dim is 0 — the trust sensor doesn't embed, it just
+/// queries h_mems by entity.
+pub fn open_kanban_trust_store(passphrase: &str) -> Option<Arc<MemoryStore>> {
+    let path = kanban_db_path();
+
+    let db = match open_or_repair(&path, passphrase) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                db_path = %path,
+                "Failed to open kata-kanban DB for trust sensor — trust events from kata-kanban will be invisible to the regulation loop"
+            );
+            return None;
+        }
+    };
+    let pool = match db.sqlite_pool() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                db_path = %path,
+                "Failed to get SQLite pool for kata-kanban DB"
+            );
+            return None;
+        }
+    };
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
+        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, path.as_str()),
+    );
+    let h_mem_store = match HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                db_path = %path,
+                "Failed to create HMemStore for kata-kanban DB"
+            );
+            return None;
+        }
+    };
+    let embedding_store = match EmbeddingStore::from_driver(driver, 0) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                db_path = %path,
+                "Failed to create EmbeddingStore for kata-kanban DB"
+            );
+            return None;
+        }
+    };
+    let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+    tracing::info!(
+        target: "reg.memory",
+        db_path = %path,
+        "Kata-kanban trust store opened — trust events from kata-kanban are now visible to the regulation loop"
+    );
+    Some(store)
+}
+
 /// Resolve the curator's sovereign `curator.db` path (same resolution as
 /// `open_curator_store`): `HKASK_CURATOR_DB` if set, else
 /// `agents/curator/curator.db` under the hKask data dir.

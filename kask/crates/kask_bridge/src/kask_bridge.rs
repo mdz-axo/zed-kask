@@ -84,8 +84,8 @@ pub use mcp_servers::{
 };
 pub use memory::{
     BridgeMemoryPort, CuratorRegulationArchive, RealMemoryPort, hydrate_operator_feedback,
-    load_operator_feedback, open_curator_regulation_archive, persist_operator_feedback,
-    persist_skill_outcome, persist_skill_tool_failure,
+    load_operator_feedback, open_curator_regulation_archive, open_kanban_trust_store,
+    persist_operator_feedback, persist_skill_outcome, persist_skill_tool_failure,
 };
 pub use model_resolution::resolve_model_names;
 pub use passphrase_rotation::{

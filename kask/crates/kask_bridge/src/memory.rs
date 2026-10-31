@@ -39,8 +39,8 @@ mod curator_stores;
 pub(crate) use curator_stores::curator_db_path;
 pub use curator_stores::{
     CuratorRegulationArchive, hydrate_operator_feedback, load_operator_feedback,
-    open_curator_regulation_archive, persist_operator_feedback, persist_skill_outcome,
-    persist_skill_tool_failure,
+    open_curator_regulation_archive, open_kanban_trust_store, persist_operator_feedback,
+    persist_skill_outcome, persist_skill_tool_failure,
 };
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 
