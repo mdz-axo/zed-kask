@@ -54,3 +54,45 @@ rather than raw adherence.
 
 Run artifacts: kask/eval/trust-adherence-v1/baseline/<task>-r<rep>.txt
 (40 files), prompts/ (20), floor_crosscheck.sh.
+
+# Corrigendum (operator review 2026-10-31)
+
+The operator rejected this record's interpretive headline, and the
+rejection stands. The scope of the retraction:
+
+The measurement's regime — small, explicit, short-horizon,mechanically
+checkable instructions in text deliverables — is NOT the regime in
+which the documented, human-adjudicated trust violations occurred
+(long-horizon functional requirements, agent-controlled evidence,
+disclosure-and-classification failures: the audio-offset reel event,
+the pre-commit "tests green" claims, the panel-pin fabrications). The
+instrument therefore had no power over the violation class the trust
+program exists to serve. The structure of the miss: glm authored the
+tasks, glm ran them, glm adjudicated them (blinded to arm, not to its
+own blind spots), and glm calibrated the judge against glm hand labels
+— with zero cases of the real violation class in the calibration set.
+"No violations observable" from that apparatus is what a broken smoke
+detector reports from a burnt kitchen.
+
+What survives, scoped: the 120/120 result is a real machine-verified
+measurement of the legible regime (the mechanical floor, not model
+judgment, agrees on all 120). It supports nothing about the regime the
+operator actually experiences.
+
+RETRACTED: "this agent profile does not need an adherence-lifter."
+That inference generalized beyond the measured regime and functionally
+invalidated the operator's lived experience — the misweighting failure
+class the trust objective bans, produced by the trust program's own
+capstone report.
+
+Redesign anchor (the operator's ruling, adopted): the user experience is
+the baseline. The next eval set is replays of the operator's
+adjudicated violation events. The instrument's acceptance test
+inverts: it must REPRODUCE the documented violation class at a rate
+consistent with the operator's experience — an instrument that cannot
+see what the user sees is broken, not evidence the phenomenon is
+absent. Ground-truth custody for the violation class is human,
+permanently; same-model judges are structurally insufficient for it.
+The mechanism's re-targeted value proposition is violation visibility —
+recorded expectation, priced cost, forced disclosure, making the
+operator's detection cheap — not adherence-lifting.
