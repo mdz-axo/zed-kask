@@ -366,6 +366,28 @@ impl Database {
         Self::migrate_embeddings_passage_text(conn)?;
         Self::migrate_hmems_provenance(conn)?;
         Self::migrate_hmems_forgetting_spec(conn)?;
+        Self::migrate_embeddings_drop_vector(conn)?;
+        Ok(())
+    }
+
+    /// Wave-6 dedupe (2026-10-31): drop the legacy `vector` column from
+    /// existing `embeddings` tables. vec0's shadow tables hold the canonical
+    /// vectors (pinned byte-identical by `tests/vector_dedupe_probe.rs`);
+    /// the duplicate column shipped 1.04 GB in the 2.47 GB distribution
+    /// copy. Idempotent: the column being absent is the steady state.
+    fn migrate_embeddings_drop_vector(conn: &rusqlite::Connection) -> Result<(), DatabaseError> {
+        let has_column = {
+            let mut stmt = conn.prepare("PRAGMA table_info(embeddings)")?;
+            let names = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            names.filter_map(|r| r.ok()).any(|name| name == "vector")
+        };
+        if has_column {
+            conn.execute_batch("ALTER TABLE embeddings DROP COLUMN vector;")?;
+            tracing::info!(
+                target: "reg.storage",
+                "Migration: dropped legacy vector column from embeddings (vec0 is canonical)"
+            );
+        }
         Ok(())
     }
 

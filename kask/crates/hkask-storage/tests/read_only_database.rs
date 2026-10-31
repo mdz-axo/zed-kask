@@ -135,7 +135,7 @@ fn sweeping_orphaned_vectors_preserves_retrieval() -> anyhow::Result<()> {
     {
         let connection = pool.get()?;
         connection.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model, passage_text) \
+            "INSERT INTO embeddings (id, entity_ref, dimensions, model, passage_text) \
              VALUES ('orphan-meta', 'corpus:test:orphan', X'00', 1024, 'fixture-model', 'x')",
             [],
         )?;

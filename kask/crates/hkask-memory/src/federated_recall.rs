@@ -31,7 +31,6 @@ const RECEIPT_SCHEMA_VERSION: u32 = 1;
 const CURRENT_EMBEDDING_COLUMNS: &[&str] = &[
     "id",
     "entity_ref",
-    "vector",
     "dimensions",
     "model",
     "passage_text",

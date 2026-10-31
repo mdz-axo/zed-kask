@@ -425,41 +425,39 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary databases");
         let first = make_test_db(directory.path(), "first.db", "old-passphrase");
         let blocked = make_test_db(directory.path(), "blocked.db", "old-passphrase");
-        // Seed an invalid embedding vector (blob shorter than `dimensions`
-        // implies): the rotation copy rebuilds the vector index from
-        // canonical rows and invalid vectors fail rather than vanish, so
-        // `blocked` opens normally with the old key but fails mid-rotation
-        // — the rollback-triggering case.
+        // Wave-6 dedupe: the rotation copies the vec0 shadow tables
+        // verbatim (the canonical store), so an orphaned `embeddings`
+        // metadata row without a vec0 shadow row is inert data that
+        // rotates cleanly; `purge_orphaned_vectors` owns its cleanup.
+        // This test now pins the new invariant: rotation succeeds on
+        // orphans, both databases land on the new key, and the orphan
+        // survives (untouched bytes) for the purge bin to reclaim.
         {
             let db = Database::open(&blocked.to_string_lossy(), "old-passphrase").expect("open");
             let pool = db.sqlite_pool().expect("pool");
             let conn = pool.get().expect("conn");
             conn.execute(
-                "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model) \
-                 VALUES ('bad-1', 'e', x'00112233', 1024, 'm')",
+                "INSERT INTO embeddings (id, entity_ref, dimensions, model) \
+                 VALUES ('bad-1', 'e', 1024, 'm')",
                 [],
             )
-            .expect("seed invalid vector");
+            .expect("seed orphaned metadata row");
         }
-        let error = apply_db_rotation(
+        apply_db_rotation(
             "old-passphrase",
             "new-passphrase",
             &[first.clone(), blocked.clone()],
         )
-        .expect_err("rotation refuses on invalid vectors");
+        .expect("rotation succeeds on orphaned metadata");
         assert!(
-            error.to_string().contains("blocked.db"),
-            "the failure names the database: {error}"
+            opens_with(&first, "new-passphrase"),
+            "rotated: {}",
+            probe(&first, "new-passphrase")
         );
         assert!(
-            opens_with(&first, "old-passphrase"),
-            "rolled back: {}",
-            probe(&first, "old-passphrase")
-        );
-        assert!(
-            opens_with(&blocked, "old-passphrase"),
-            "untouched: {}",
-            probe(&blocked, "old-passphrase")
+            opens_with(&blocked, "new-passphrase"),
+            "rotated: {}",
+            probe(&blocked, "new-passphrase")
         );
     }
 

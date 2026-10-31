@@ -497,7 +497,7 @@ impl EmbeddingStore {
     ) -> Result<bool, EmbeddingError> {
         self.validate_dim(fresh_vector)?;
         let rows = self.query_driver(
-            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 AND e.vector = ?4 LIMIT 1",
+            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 AND v.embedding = ?4 LIMIT 1",
             &[
                 DbValue::Text(entity_ref.to_string()),
                 DbValue::Text(passage_text.to_string()),
@@ -640,7 +640,7 @@ impl EmbeddingStore {
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, entity_ref, vector, model, passage_text FROM embeddings WHERE id = ?1",
+            "SELECT e.id, e.entity_ref, v.embedding, e.model, e.passage_text FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.id = ?1",
         )?;
         let mut rows = Vec::with_capacity(ids.len());
         for id in ids {
@@ -883,7 +883,7 @@ impl EmbeddingStore {
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         let mut stmt =
-            conn.prepare("SELECT entity_ref, vector FROM embeddings WHERE entity_ref LIKE ?1")?;
+            conn.prepare("SELECT e.entity_ref, v.embedding FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref LIKE ?1")?;
         let rows = stmt.query_map(rusqlite::params![pattern], |row| {
             let entity_ref: String = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;
@@ -973,7 +973,7 @@ impl EmbeddingStore {
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
         let mut stmt =
-            conn.prepare("SELECT entity_ref, vector, passage_text, model FROM embeddings")?;
+            conn.prepare("SELECT e.entity_ref, v.embedding, e.passage_text, e.model FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid")?;
         let rows = stmt.query_map([], |row| {
             let entity_ref: String = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;

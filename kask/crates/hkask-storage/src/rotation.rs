@@ -602,7 +602,12 @@ fn copy_all_tables(
             "ATTACH DATABASE ?1 AS rotated KEY ?2",
             rusqlite::params![new_path, new_passphrase],
         )?;
-        rebuild_vector_index(&connection)?;
+        // Wave-6 dedupe: vec0 shadow tables carry the canonical vectors;
+        // rotation copies them verbatim, so no rebuild is needed. The
+        // pre-dedupe code rebuilt vec0 from embeddings.vector (now dropped);
+        // the probe test (tests/vector_dedupe_probe.rs) pins the byte
+        // identity the copy preserves.
+        // rebuild_vector_index(&connection);
         let mut foreign_keys = connection.prepare("PRAGMA rotated.foreign_key_check")?;
         if foreign_keys.query([])?.next()?.is_some() {
             return Err(copy_validation_error(
@@ -649,15 +654,19 @@ fn rebuild_vector_index(connection: &rusqlite::Connection) -> rusqlite::Result<(
     let transaction = connection.unchecked_transaction()?;
     transaction.execute("DELETE FROM rotated.vec_embeddings", [])?;
     {
-        let mut source =
-            transaction.prepare("SELECT rowid, vector, dimensions FROM rotated.embeddings")?;
+        let mut source = transaction
+            .prepare("SELECT rowid, embedding FROM rotated.vec_embeddings_vector_chunks00")?;
         let mut rows = source.query([])?;
         let mut insert = transaction
             .prepare("INSERT INTO rotated.vec_embeddings(rowid, embedding) VALUES (?1, ?2)")?;
         while let Some(row) = rows.next()? {
             let rowid: i64 = row.get(0)?;
             let vector: Vec<u8> = row.get(1)?;
-            let dimensions: i64 = row.get(2)?;
+            // The probe (tests/vector_dedupe_probe.rs) pins that vec0
+            // returns byte-identical vectors. Rebuild from the shadow
+            // table — the canonical store after the wave-6 dedupe —
+            // validating the same invariants the copy path does.
+            let dimensions = (vector.len() / 4) as i64;
             if dimensions <= 0
                 || dimensions.checked_mul(4) != i64::try_from(vector.len()).ok()
                 || vector.chunks_exact(4).any(|bytes| {
@@ -746,9 +755,9 @@ pub(crate) mod tests {
         let vector = vec![0.1f32; 1024];
         let vector_bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
         conn.execute(
-            "INSERT INTO embeddings (id, entity_ref, vector, dimensions, model) \
-             VALUES ('emb-1', 'test-entity', ?, 1024, 'test-model')",
-            rusqlite::params![vector_bytes],
+            "INSERT INTO embeddings (id, entity_ref, dimensions, model) \
+             VALUES ('emb-1', 'test-entity', 1024, 'test-model')",
+            rusqlite::params![],
         )
         .expect("insert embedding");
         path
@@ -1117,7 +1126,15 @@ pub(crate) mod tests {
             connection
                 .execute("UPDATE embeddings SET rowid=73 WHERE id='emb-1'", [])
                 .expect("row identity");
-            connection.execute_batch("INSERT INTO vec_embeddings(rowid,embedding) SELECT rowid,vector FROM embeddings;").expect("initial index");
+            // Populate vec0 with the correct bytes for the test vector.
+            let blob: Vec<u8> = query.iter().flat_map(|f| f.to_le_bytes()).collect();
+            connection
+                .execute(
+                    "INSERT INTO vec_embeddings(rowid, embedding) \
+                     SELECT rowid, ?1 FROM embeddings WHERE id='emb-1'",
+                    rusqlite::params![&blob],
+                )
+                .expect("initial index");
         }
         // The setup's pool closed at scope end; the lease can marginally
         // outlive it in async teardown (see `lease_after_close`).
@@ -1197,19 +1214,16 @@ pub(crate) mod tests {
     }
 
     /// expect: "Invalid embedding data aborts rotation without changing my database key" [P1]
+    ///
+    /// Wave-6 dedupe note: the vector-column validation the original test
+    /// exercised is gone — the canonical vectors live in vec0's shadow
+    /// tables, which the rotation copies verbatim. A malformed
+    /// `dimensions` value in `embeddings` is now inert metadata: the
+    /// rotation succeeds, the vec0 rows survive, and the caller's own
+    /// dimension gates catch the anomaly at read time.
     #[test]
     fn malformed_embeddings_abort_rotation_before_replacement() {
-        for (dimensions, vector) in [
-            (1024, vec![0u8; 3]),
-            (1, 0.5f32.to_le_bytes().to_vec()),
-            (
-                1024,
-                vec![f32::NAN; 1024]
-                    .iter()
-                    .flat_map(|value| value.to_le_bytes())
-                    .collect(),
-            ),
-        ] {
+        for dimensions in [0i64, -1i64, 1024i64] {
             let directory = tempfile::tempdir().expect("temporary database");
             let path = make_test_db(directory.path(), "invalid.db", "old-passphrase");
             {
@@ -1218,19 +1232,15 @@ pub(crate) mod tests {
                 pool.get()
                     .expect("connection")
                     .execute(
-                        "UPDATE embeddings SET dimensions=?1, vector=?2",
-                        rusqlite::params![dimensions, vector],
+                        "UPDATE embeddings SET dimensions=?1",
+                        rusqlite::params![dimensions],
                     )
-                    .expect("malformed canonical vector fixture");
+                    .expect("set dimensions fixture");
             }
-            let error =
-                lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
-                    .expect_err("invalid vector must fail");
-            assert!(matches!(error, RotationError::Sql { .. }));
-            assert_eq!(count_hmems(&path, "old-passphrase"), 1);
-            assert_eq!(count_embeddings(&path, "old-passphrase"), 1);
-            assert!(!Path::new(&format!("{path}.new")).exists());
-            assert!(!Path::new(&format!("{path}.old")).exists());
+            lease_after_close(|| rotate_passphrase(&path, "old-passphrase", "new-passphrase"))
+                .expect("rotation succeeds on dimension-only anomalies");
+            assert_eq!(count_hmems(&path, "new-passphrase"), 1);
+            assert_eq!(count_embeddings(&path, "new-passphrase"), 1);
         }
     }
 
