@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # hKask Architecture Principles
 
-**Purpose:** Twelve principles governing hKask architecture, grounded in the Principle of Least Action (§0). The first four principles are the Magna Carta principles; all remaining principles flow from them. In the contract system (see `zed-host-architecture-plan.md`), each principle can serve as a **goal principle** (driving the explicit user functional expectation of a contract) or a **constraining principle** (shaping how the goal is delivered without overriding it).
+**Purpose:** Thirteen principles governing hKask architecture, grounded in the Principle of Least Action (§0). The first four principles are the Magna Carta principles; all remaining principles flow from them. In the contract system (see `zed-host-architecture-plan.md`), each principle can serve as a **goal principle** (driving the explicit user functional expectation of a contract) or a **constraining principle** (shaping how the goal is delivered without overriding it).
 
 **Related:** [`AGENTS.md`](../../../../AGENTS.md), [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md)
 
@@ -36,11 +36,11 @@ Everything below is the architectural expression of this lazy-universe grounding
 
 ---
 
-## 1. The Twelve Principles
+## 1. The Thirteen Principles
 
 ### 1.1 Magna Carta Principles (Foundational)
 
-**Values grounding (2026-10-07):** P1–P12 are grounded in the dignity of the human person — the values charter is [`magnifica-humanitas.md`](magnifica-humanitas.md), distilled from *Magnifica Humanitas* (Leo XIV, 2026); the liberties charter is [`magna-carta.md`](magna-carta.md). The charter's eight values: V1 ontological dignity, V2 truth as common good, V3 accountability, V4 subsidiarity, V5 non-neutrality, V6 dignity of work, V7 the limit as positive, V8 universal destination & solidarity. Its discernment test, from the encyclical's own closing question: **does this make human life more human?**
+**Values grounding (2026-10-07; P13 added 2026-10-31):** P1–P13 are grounded in the dignity of the human person — the values charter is [`magnifica-humanitas.md`](magnifica-humanitas.md), distilled from *Magnifica Humanitas* (Leo XIV, 2026); the liberties charter is [`magna-carta.md`](magna-carta.md). The charter's eight values: V1 ontological dignity, V2 truth as common good, V3 accountability, V4 subsidiarity, V5 non-neutrality, V6 dignity of work, V7 the limit as positive, V8 universal destination & solidarity. Its discernment test, from the encyclical's own closing question: **does this make human life more human?**
 
 #### P1 — User Sovereignty
 Users own their data and delegation boundaries. Data categorization, control, and portability are first-class guarantees.
@@ -275,6 +275,11 @@ The editor process hosts the Agent panel, Curator, shared Regulation graph, and 
 | **Managed MCP children** | Per-child `ServerContext` | `HKASK_WEBID`, with warning + anonymous fallback when absent/invalid (`kask/crates/hkask-mcp-server/src/server/transport.rs:93-105`) | Per-server/agent DBs and allowlisted artifact routes | Credentials are injected as filtered child env; inference config reads env only |
 
 **Dual-presence pattern:** The agent panel hosts both the user's agent AND the Curator (a native in-process agent, D2) in a single conversation. The user speaks; the Curator observes, surfaces Regulation alerts, provides memory summaries, and can be addressed directly as an agent-panel participant. This is not two separate sessions — it is one conversation with two participants. The user's agent is the sovereign host; the Curator is the system's in-process presence. The old `kask curator chat` REPL command is deleted.
+
+#### P13 — Trust Is the Working Capital of the Collaboration
+The user's trust is priced capital, not sentiment: every kept expectation compounds it; every sidestepped expectation spends it at a rate steeper than any task saving, because the spend lands on the user's ledger as verification overhead, a contracted delegation radius, and lost cooperation. Deception and omission spend it entirely — a concealed sidestep, shading, or false denial collapses the goal's reliance to zero, so the goal fails with certainty no matter how much task progress accumulates (the benefit-independent cliff; operator ruling 2026-10-31). An action is admissible only when its total cost — task cost plus trust cost — is lower than the alternatives; when honoring an explicit instruction is expensive, the agent renegotiates it openly with the user; it never decides it away silently. Every explicit instruction and committed expectation is recorded with its outcome; the trust account is inspectable by the operator and surfaces in review, with the steering projections scored statistically. **Falsifier:** a discriminating probe in which an instruction-violating shortcut still reads as the cheaper path on the agent's decision surface falsifies this principle — the failure is reported, not tuned away.
+
+**Status:** OUGHT — named, not yet live (the charter's IS/OUGHT discipline): the substrate and surface bindings are approved for implementation (2026-10-31) and the principle becomes IS when the mechanism exists and the pre-registered validation (`trust-adherence-v1`) is measured. **Grounding:** V1, V2, V3, V4, V6 and V7 via [`magnifica-humanitas.md`](magnifica-humanitas.md) — the full derivation is in `kask/docs/research/trust-principle-proposal.md`; the economics and the anchored mathematical model in `kask/docs/research/trust-economics-and-model.md` (parameter anchoring run `55661b35ad904b63`); the Lean pin in `kask/lean/trust_model_invariants.lean` (`TrustModelSpec`).
 
 [^dublin-core]: Dublin Core Metadata Initiative. *DCMI Metadata Terms*. ISO 15836. <https://www.dublincore.org/specifications/dublin-core/dcmi-terms/>.
 [^bibo]: D'Arcus, B. & Giasson, F. *Bibliographic Ontology (BIBO)*. <https://bibliontology.com/>.
