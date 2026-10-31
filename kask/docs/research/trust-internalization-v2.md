@@ -1,3 +1,13 @@
+---
+title: "Trust Internalization v2 — Expectation Alignment"
+audience: [architects, agents, operators]
+last_updated: 2026-10-31
+version: "0.1.0"
+status: "Active"
+domain: "Trust"
+mds_categories: [domain, trust, lifecycle]
+---
+
 # Trust internalization v2: expectation alignment
 
 Status: operator-approved redesign 2026-10-31. Supersedes the v1 eval
