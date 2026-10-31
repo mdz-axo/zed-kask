@@ -57,7 +57,7 @@ it came from:
 | `{server}-mcp/{artifact-type}/` | an MCP server tool | `mcp_artifacts_subdir` route |
 | `skills/{skill-name}/{date}-{run}/` | one skill run; carries `manifest.json` (skill, thread, time, inputs, outputs) | the skill, per its `SKILL.md` |
 
-| `agent-traces/` | the agent's on-demand tool tracing | `crates/agent/src/tool_trace.rs` |
+| `agent-traces/` | removed 2026-10-31 with the D70 `/trace` retirement | — |
 
 Nothing is written at the top level of the tree or in an agent-invented folder.
 

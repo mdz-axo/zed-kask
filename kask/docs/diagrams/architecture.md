@@ -409,11 +409,13 @@ accounting identity, not a credential.
 ## hKask Event Store
 
 The `hkask-event-store` crate is the append-only event log for agent
-rollouts. It captures `model_request` and `verdict` events produced by
-harness runs (the rollout regression monitor) and (reserved) curator turns.
-Wired into the
-composition root via `kask_bridge/src/rollout_event_bridge.rs` and consumed
-by `hkask-regulation/src/cybernetics_loop.rs`. Verified current.
+rollouts (`model_request` and `verdict` events). Its only composition-root
+consumer — the swarm-era rollout regression monitor wired via
+`kask_bridge/src/rollout_event_bridge.rs` — was removed 2026-10-31,
+completing the D33 swarm retirement: the swarm server that wrote
+`mcp/swarm/events.db` is gone, so the store has no production writer. The
+crate and the `hkask-regulation/src/cybernetics_loop.rs` event-source
+contract remain as library surface.
 
 ```mermaid
 classDiagram

@@ -802,43 +802,6 @@ fn main() {
             .with_alerts_channel(alert_tx)
             .with_curator_directive_channel(directive_rx)
             .with_event_sink(event_sink.clone());
-        // zed-kask: event-substrate phase 6 — wire the rollout event source
-        // so `verify_impact` can query the store for before/after metric
-        // values. The store path is the D28 default (`mcp/swarm/events.db`
-        // under the kask data dir, overridable via
-        // `HKASK_SWARM_EVENTS_PATH`). A missing/unopenable store leaves the
-        // loop unwired (degraded, not broken — the re-sense fallback still
-        // verifies) with a warn naming the path, per the failure-signal rule.
-        //
-        // The same store handle is shared with the harness regression monitor
-        // background task (the producer side of the phase 6 seam): when the
-        // harness writes a `harness_summary` event and the pass rate drops
-        // materially below the previous run, the monitor calls
-        // `submit_rollout_impact_check` — the first live traffic through the
-        // seam.
-        let (cybernetics_loop_inner, harness_event_store) = {
-            // The path contract (HKASK_SWARM_EVENTS_PATH override, D28
-            // default) is consumed by zed's harness regression monitor —
-            // single-sourced in swarm_events_db_path.
-            let events_path = hkask_types::agent_paths::swarm_events_db_path();
-            match kask_bridge::BridgeRolloutEventSource::open(&events_path) {
-                Ok(source) => {
-                    let store = source.store();
-                    let wired =
-                        cybernetics_loop_inner.with_rollout_event_source(std::sync::Arc::new(source));
-                    (wired, Some(store))
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        target: "hkask.regulation",
-                        path = %events_path,
-                        error = %error,
-                        "rollout event source not wired — verify_impact falls back to re-sensing"
-                    );
-                    (cybernetics_loop_inner, None)
-                }
-            }
-        };
         let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
             cybernetics_loop_inner.with_alert_email_sink(sink)
         } else {
@@ -893,7 +856,6 @@ fn main() {
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
-        let cybernetics_loop_for_harness = cybernetics_loop.clone();
         let mcp_runtime = std::sync::Arc::new(
             hkask_mcp::McpRuntime::new()
                 .with_governance(cybernetics_loop, event_sink),
@@ -1292,71 +1254,6 @@ fn main() {
             })
             .detach();
             log::info!("Curator metacognition loop started (30s tick interval)");
-
-            // zed-kask: event-substrate phase 6 — harness regression monitor.
-            // The producer side of the seam: periodically query the event store
-            // for new `harness_summary` events, detect pass-rate regressions,
-            // and submit each to `CyberneticsLoop::submit_rollout_impact_check`.
-            // This is the first live traffic through the phase 6 seam — the
-            // zed side observes harness results (via the shared event store)
-            // and closes the cybernetic feedback loop.
-            //
-            // Only runs when both the curator is on AND the event store opened
-            // successfully. A missing store leaves the monitor unwired
-            // (degraded, not broken — the re-sense fallback still verifies).
-            if let Some(store) = harness_event_store {
-                gpui_tokio::Tokio::spawn(cx, async move {
-                    let mut harness_monitor = kask_bridge::HarnessRegressionMonitor::default();
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(60));
-                    interval.tick().await; // skip the first immediate tick
-                    loop {
-                        interval.tick().await;
-                        let loop_guard = cybernetics_loop_for_harness.read().await;
-                        match harness_monitor.poll_once(&store, &loop_guard).await {
-                            Ok(kask_bridge::HarnessMonitorPoll::Complete {
-                                accepted_checks,
-                                cursor,
-                            }) => {
-                                if accepted_checks > 0 {
-                                    tracing::info!(
-                                        target: "hkask.regulation",
-                                        accepted_checks,
-                                        ?cursor,
-                                        "harness regression impact checks accepted for assessment"
-                                    );
-                                }
-                            }
-                            Ok(kask_bridge::HarnessMonitorPoll::Backpressured {
-                                accepted_checks,
-                                blocked_event_position,
-                                capacity,
-                            }) => {
-                                tracing::warn!(
-                                    target: "hkask.regulation",
-                                    accepted_checks,
-                                    blocked_event_position,
-                                    capacity,
-                                    "harness regression monitor backpressured — blocked event will retry next tick"
-                                );
-                            }
-                            Err(error) => {
-                                tracing::warn!(
-                                    target: "hkask.regulation",
-                                    error = %error,
-                                    "harness regression monitor query failed — will retry next tick"
-                                );
-                            }
-                        }
-                    }
-                })
-                .detach();
-                log::info!("Harness regression monitor started (60s interval)");
-            } else {
-                log::info!(
-                    "Harness regression monitor not started — event store not wired"
-                );
-            }
         } else {
             log::info!(
                 "Curator always_on=false — regulation tick cycles not started \

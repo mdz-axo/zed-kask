@@ -59,7 +59,10 @@ The agent's `onto_anchor` accepts optional `relation_query` (`to`, `max_hops`); 
 
 **Coverage and evaluation gates:** the directly stated `has_parent` and `inverse_of` edges and recorded `has_constituent` edges are not a claim of complete ontology relation coverage. Extend it only with reviewed relation assertions and stable source snapshots, not inferred similarity/keyword edges. After deployment, test paired relational tasks across domains with identical labels but a load-bearing edge removed or changed. A supported agent claim must change or become unknown; separately count unnecessary traversals and unsupported claims.
 
-**On-demand capture:** The native `/trace <prompt>` command can capture one actual agent turn into a private JSON file in the artifacts directory's `agent-traces/` subdirectory. It records the session/run IDs, final answer or completion error, elapsed time, and each tool call's input, output/error and elapsed time; ordinary turns are not captured. The operator receives the exported path after the turn. Traces may contain sensitive arguments and results: the directory is restricted to the owner and files are created with owner-only access; a permissive directory fails closed. Exports above 8 MiB fail visibly without writing an incomplete file rather than truncating evidence. This is capture, **not** an automatic evidence grader or global feedback pipeline. The native agent test exercises `/trace` through a real `onto_anchor` invocation and verifies the exported two-hop result, and verifies that the next ordinary turn writes no trace; it does not demonstrate live editor invocation or a controlled model-level improvement evaluation. The latter still requires paired tasks and an isolated graph-edge counterfactual.
+**On-demand capture:** retired 2026-10-31 with the D70 `/trace` tool (one
+export across ~5 weeks of deployed use); the operator ruling lives in the
+DIVERGENCE retired list. Evidence capture, if it returns, is a new product
+decision under a new seam.
 
 ### `dc_bibo` — Dublin Core + BIBO + CiTO (state axis, universal)
 

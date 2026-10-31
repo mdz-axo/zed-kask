@@ -28,12 +28,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::SharedString;
-use language_model::{LanguageModelCompletionError, LanguageModelToolUseId};
+use language_model::LanguageModelCompletionError;
 use project::AgentId;
 
 use crate::thread::{CachedFilteredContext, CachedSystemPrompt, DeferredToolResult};
 use crate::tool_retry_tracker::ToolRetryTracker;
-use crate::tool_trace::ToolTraceCapture;
 
 /// All kask-specific per-thread state. Created with `new()` for both
 /// upstream Zed and kask threads; the thread is born a `ZED_AGENT_ID`
@@ -68,9 +67,6 @@ pub(crate) struct KaskThreadState {
     cached_system_prompt: Option<CachedSystemPrompt>,
     cached_filtered_context: Option<CachedFilteredContext>,
 
-    // D70 — only populated for an explicitly traced turn.
-    tool_trace: Option<ToolTraceCapture>,
-
     // D59 — the most recently activated skill in this thread; tool failures
     // while it is set are recorded against it without the model reporting.
     active_skill: Rc<RefCell<Option<SharedString>>>,
@@ -87,33 +83,12 @@ impl KaskThreadState {
             interrupted_by_tool_failure: false,
             cached_system_prompt: None,
             cached_filtered_context: None,
-            tool_trace: None,
             active_skill: Rc::new(RefCell::new(None)),
         }
     }
 
     pub(crate) fn active_skill_handle(&self) -> Rc<RefCell<Option<SharedString>>> {
         self.active_skill.clone()
-    }
-
-    pub(crate) fn start_tool_trace(&mut self, session_id: String, first_message_ix: usize) {
-        self.tool_trace = Some(ToolTraceCapture::new(session_id, first_message_ix));
-    }
-
-    pub(crate) fn trace_tool_started(&mut self, id: &LanguageModelToolUseId) {
-        if let Some(trace) = self.tool_trace.as_mut() {
-            trace.tool_started(id);
-        }
-    }
-
-    pub(crate) fn trace_tool_finished(&mut self, id: &LanguageModelToolUseId) {
-        if let Some(trace) = self.tool_trace.as_mut() {
-            trace.tool_finished(id);
-        }
-    }
-
-    pub(crate) fn take_tool_trace(&mut self) -> Option<ToolTraceCapture> {
-        self.tool_trace.take()
     }
 
     // ── Truncation detection (D25) ────────────────────────────────────

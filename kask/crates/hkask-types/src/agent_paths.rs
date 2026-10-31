@@ -171,8 +171,8 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 }
 
 /// Returns the relative path `mcp/{server_id}/{subdir}` for a server's
-/// internal directory (e.g. `mcp/swarm/agents/curated`,
-/// `mcp/scenarios/forecasts`, `mcp/corpus/ocr-health.json`). The caller
+/// internal directory (e.g. `mcp/scenarios/forecasts`,
+/// `mcp/corpus/ocr-health.json`). The caller
 /// resolves this against the data dir via `resolve_under_data_dir`.
 ///
 /// This is the directory equivalent of [`mcp_server_db`] — use it for any
@@ -180,7 +180,8 @@ pub fn mcp_server_db(server_id: &str, purpose: &str) -> PathBuf {
 /// construction here means a layout change (e.g. renaming `mcp/` to
 /// `servers/`) touches one helper, not 10+ call sites.
 ///
-/// Internal-system servers only (kata-kanban, swarm, scenarios, ...). The
+/// Internal-system servers only (kata-kanban, experimentation, scenarios,
+/// ...). The
 /// content servers (research, media, corpus) use
 /// [`mcp_artifacts_subdir`] under the visible artifacts dir instead.
 pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
@@ -189,33 +190,6 @@ pub fn mcp_server_subdir(server_id: &str, subdir: &str) -> PathBuf {
         base
     } else {
         base.join(subdir)
-    }
-}
-
-/// Resolve the swarm rollout event store's database path: the
-/// `HKASK_SWARM_EVENTS_PATH` operator override when set non-blank, else
-/// the D28 default `mcp/swarm/events.db` under the data dir.
-///
-/// Single-sources a two-opener contract: the swarm server writes the store,
-/// and zed's harness regression monitor reads it (the phase-6 seam). Both
-/// must open the same database or the seam silently breaks.
-pub fn swarm_events_db_path() -> String {
-    env_override_or_default(
-        std::env::var("HKASK_SWARM_EVENTS_PATH").ok().as_deref(),
-        &mcp_server_db("swarm", "events"),
-    )
-}
-
-/// The override-or-default resolution behind [`swarm_events_db_path`],
-/// split from the env read so the legs are testable in-process
-/// (edition-2024 env mutation is unsafe and racy under parallel tests).
-/// A set override is used raw; a blank one falls back to the default.
-fn env_override_or_default(override_path: Option<&str>, default: &std::path::Path) -> String {
-    match override_path.filter(|s| !s.trim().is_empty()) {
-        Some(path) => path.to_string(),
-        None => resolve_under_data_dir(default)
-            .to_string_lossy()
-            .to_string(),
     }
 }
 
@@ -384,8 +358,8 @@ mod tests {
             PathBuf::from("mcp/kata-kanban/kanban.db")
         );
         assert_eq!(
-            mcp_server_db("swarm", "memory"),
-            PathBuf::from("mcp/swarm/memory.db")
+            mcp_server_db("experimentation", "experimentation"),
+            PathBuf::from("mcp/experimentation/experimentation.db")
         );
     }
 
@@ -395,28 +369,9 @@ mod tests {
             mcp_server_subdir("scenarios", "forecasts"),
             PathBuf::from("mcp/scenarios/forecasts")
         );
-        assert_eq!(mcp_server_subdir("swarm", ""), PathBuf::from("mcp/swarm"));
-    }
-
-    #[test]
-    fn swarm_events_db_path_override_and_default_legs() {
-        // The contract both openers share (the swarm server's run() and zed's
-        // harness regression monitor): a set override is used raw, a blank one
-        // falls back to the D28 default.
-        let default = resolve_under_data_dir(&mcp_server_db("swarm", "events"))
-            .to_string_lossy()
-            .to_string();
         assert_eq!(
-            env_override_or_default(None, &mcp_server_db("swarm", "events")),
-            default
-        );
-        assert_eq!(
-            env_override_or_default(Some("   "), &mcp_server_db("swarm", "events")),
-            default
-        );
-        assert_eq!(
-            env_override_or_default(Some("/custom/events.db"), &mcp_server_db("swarm", "events")),
-            "/custom/events.db"
+            mcp_server_subdir("kata-kanban", ""),
+            PathBuf::from("mcp/kata-kanban")
         );
     }
 
@@ -427,7 +382,7 @@ mod tests {
         // is observable regardless of what the env resolves to.
         for relative in [
             agent_db("curator"),
-            mcp_server_db("swarm", "memory"),
+            mcp_server_db("experimentation", "experimentation"),
             mcp_server_subdir("scenarios", "forecasts"),
         ] {
             let resolved = resolve_under_data_dir(&relative);

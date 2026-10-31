@@ -23,16 +23,8 @@ database maintenance, delegation grants, host skill tools, identity, four
 inference adapters, inference IPC/provider/socket support, scheduled passphrase
 rotation, MCP environment and registry wiring, memory, model resolution, settings,
 metacognition, directives, algedonic log and board sinks, context-server and OCR
-health sources, and rollout events
+health sources
 (`kask/crates/kask_bridge/src/kask_bridge.rs:23-121`).
-
-The rollout-event bridge also owns the harness monitor's acknowledgment
-boundary. `HarnessRegressionMonitor::poll_once` completes event-store queries
-before handoff, offers regressions to the bounded Regulation queue in event
-order, and advances its cursor only through the accepted contiguous prefix.
-Typed queue backpressure and query failure retain unaccepted summaries for
-retry; later impact assessment and verdict publication remain Regulation
-responsibilities (`kask/crates/kask_bridge/src/rollout_event_bridge.rs:87-143`).
 
 That width is deliberate: moving any of those adapters into a portable hKask
 crate would reverse the dependency direction. Skill body execution remains in

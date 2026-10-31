@@ -2258,7 +2258,7 @@ impl ThreadView {
 
         // A native command with no declared input (e.g. `/compact`) runs alone,
         // with trailing text queued as a follow-up. Input-taking native commands
-        // (e.g. `/trace`) must receive the complete prompt in the same turn.
+        // must receive the complete prompt in the same turn.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -14433,8 +14433,8 @@ fn file_link_candidates(
 
 /// Returns the leading native command only when it declares no input.
 /// Such commands (e.g. `/compact`) run alone and queue trailing text as a
-/// follow-up without echoing the command. Input-taking native commands (e.g.
-/// `/trace`), MCP prompts and external ACP commands consume their own arguments
+/// follow-up without echoing the command. Input-taking native commands,
+/// MCP prompts and external ACP commands consume their own arguments
 /// and must travel through the normal, complete-prompt submission path.
 fn leading_native_command(
     text: &str,

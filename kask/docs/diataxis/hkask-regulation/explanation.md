@@ -108,22 +108,19 @@ central action.
 
 ## Why harness-summary acknowledgment follows queue admission
 
-The rollout harness writes ordered `harness_summary` events to the shared event
-store. `HarnessRegressionMonitor` scans those events and offers each material
-pass-rate regression to `CyberneticsLoop::submit_rollout_impact_check`. The
-monitor owns its cursor: a summary that requires an impact check is acknowledged
-only after the bounded queue returns `RolloutImpactSubmission::Accepted`.
-`QueueFull` preserves both the queue and the monitor cursor at the accepted
-contiguous prefix, while any event-store query failure preserves the cursor from
-before the poll
-(`kask/crates/kask_bridge/src/rollout_event_bridge.rs:87-143`).
-
-This acknowledgment is admission, not a verdict. The next Regulation tick drains
-accepted checks into `verify_impact`; metric assessment and event-store verdict
-write-back remain separate later phases
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:819`). The production 60-second
-scheduler invokes the same behavior-tested `poll_once` operation rather than
-assigning a scan cursor before submission (`crates/zed/src/main.rs`).
+The bounded admission queue remains as library contract
+(`RolloutEventSource`, `RolloutImpactSubmission`): a submitted check is
+acknowledged only when the bounded queue returns `Accepted`; `QueueFull`
+preserves the accepted contiguous prefix; a query failure retains
+unaccepted summaries for retry, and the next Regulation tick drains accepted
+checks into `verify_impact`
+(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:819`).
+Acknowledgment is admission, not a verdict. Its only production submitter —
+the swarm-era harness regression monitor over `mcp/swarm/events.db`, wired
+via `kask_bridge/src/rollout_event_bridge.rs` — was removed 2026-10-31
+(D57 retired, completing the D33 swarm retirement: the swarm server that
+wrote the store is gone). The contract is currently submitter-less; retiring
+the queue machinery itself is a separate operator ruling.
 
 ## Why escalation is board-backed
 

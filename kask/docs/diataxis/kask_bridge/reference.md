@@ -27,7 +27,7 @@ The crate root declares 30 top-level production modules
 `inference_providers`, `inference_socket`, `mcp_env`, `mcp_servers`, `memory`,
 `model_resolution`, `settings`, `metacognition_bridge`, `directive_bridge`,
 `algedonic_log_bridge`, `algedonic_board`, `context_server_health_bridge`,
-`ocr_health_bridge`, and `rollout_event_bridge`.
+`ocr_health_bridge`.
 
 The public re-exports are defined at
 `kask/crates/kask_bridge/src/kask_bridge.rs:27-124`. Skill execution is not a

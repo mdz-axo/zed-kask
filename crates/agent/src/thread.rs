@@ -4709,11 +4709,9 @@ impl Thread {
             },
         );
         this.update(cx, |this, cx| {
-            // zed-kask: D1 (H6) + D70 — the event-stream ownership gate and the
-            // trace-completion record; upstream's late-terminal-output path
-            // below handles the not-owned case.
+            // zed-kask: D1 (H6) — the event-stream ownership gate; upstream's
+            // late-terminal-output path below handles the not-owned case.
             if this.owns_pending_message(event_stream) {
-                this.kask.trace_tool_finished(&tool_result.tool_use_id);
                 this.pending_message()
                     .tool_results
                     .insert(tool_result.tool_use_id.clone(), tool_result);
@@ -4946,7 +4944,6 @@ impl Thread {
         cx.notify();
 
         let owning_message_ix = self.messages.len();
-        self.kask.trace_tool_started(&tool_use.id);
         let tool = self.tool(tool_use.name.as_ref());
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp_v2::ToolKind::Other;
@@ -6220,24 +6217,6 @@ impl Thread {
 
     pub(crate) fn subagent_partial_output(&self) -> String {
         subagent_partial_output_from_messages(&self.messages, self.pending_message.as_ref())
-    }
-
-    pub(crate) fn start_on_demand_trace(&mut self) -> Result<()> {
-        if !self.is_turn_complete() {
-            return Err(anyhow!("Cannot trace while another turn is running"));
-        }
-        self.kask
-            .start_tool_trace(self.id.to_string(), self.messages.len());
-        Ok(())
-    }
-
-    pub(crate) fn finish_on_demand_trace(
-        &mut self,
-        error: Option<String>,
-    ) -> Option<crate::tool_trace::ToolTrace> {
-        self.kask
-            .take_tool_trace()
-            .map(|trace| trace.finish(&self.messages, error))
     }
 
     fn build_request_messages(

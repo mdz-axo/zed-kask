@@ -123,12 +123,6 @@ mod algedonic_board;
 mod algedonic_board_real_tests;
 pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 
-mod rollout_event_bridge;
-
-pub use rollout_event_bridge::{
-    BridgeRolloutEventSource, HarnessMonitorPoll, HarnessRegressionMonitor,
-};
-
 // The credential namespace constant and the test-email helper live in the
 // `credentials` module; re-exported here to preserve the historical public
 // surface (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`, `kask_bridge::spawn_test_email`).

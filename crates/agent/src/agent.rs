@@ -11,7 +11,6 @@ mod sandboxing;
 mod templates;
 #[cfg(test)]
 mod tests;
-mod tool_trace;
 pub use delegation_authority::{DelegatedToolIdentity, DelegationAuthority};
 mod thread;
 mod thread_store;
@@ -199,7 +198,6 @@ impl From<&Skill> for NativeAvailableSkill {
 }
 
 pub const COMPACT_COMMAND_NAME: &str = "compact";
-const TRACE_COMMAND_NAME: &str = "trace";
 
 /// Returns the set of MCP prompt names that must be server-qualified
 /// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
@@ -288,11 +286,6 @@ enum NativeRetryAction {
         skill: Skill,
         content: Vec<acp_v2::ContentBlock>,
     },
-    // zed-kask: D70 — the on-demand `/trace` command: a private single-turn
-    // capture whose stripped prompt is sent through the normal turn.
-    Trace {
-        content: Vec<acp_v2::ContentBlock>,
-    },
     Compact,
 }
 
@@ -305,14 +298,6 @@ impl NativeRetryAction {
         if let Some(parsed_command) = Command::parse(&content) {
             if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
                 return Ok(Self::Compact);
-            }
-
-            // zed-kask: D70 — `/trace` classifies before the skill arms so a
-            // user skill or MCP prompt named "trace" cannot hijack the command
-            // (the D44 stale-list lesson: a rename must not degrade to a
-            // silently different invocation).
-            if parsed_command.is_unqualified(TRACE_COMMAND_NAME) {
-                return Ok(Self::Trace { content });
             }
 
             // Skill scope qualifiers (`/:<name>` and
@@ -1992,16 +1977,6 @@ impl NativeAgent {
         .meta(acp_thread::meta_with_command_category(
             acp_thread::CommandCategory::Native,
         ));
-        let trace_command = acp_v2::AvailableCommand::new(
-            TRACE_COMMAND_NAME,
-            "Run one prompt with an on-demand private tool trace",
-        )
-        .input(acp_v2::AvailableCommandInput::Text(
-            acp_v2::TextCommandInput::new("<prompt>"),
-        ))
-        .meta(acp_thread::meta_with_command_category(
-            acp_thread::CommandCategory::Native,
-        ));
 
         let registry = state.context_server_registry.read(cx);
 
@@ -2009,7 +1984,7 @@ impl NativeAgent {
         // force-prefixed (`/<server>.compact`) and stays reachable: an
         // unqualified `/compact` always routes to the native command.
         let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
-            [COMPACT_COMMAND_NAME, TRACE_COMMAND_NAME],
+            [COMPACT_COMMAND_NAME],
             registry.prompts().map(|p| p.prompt.name.as_str()),
         );
 
@@ -2048,10 +2023,7 @@ impl NativeAgent {
             Some(command)
         });
 
-        [compact_command, trace_command]
-            .into_iter()
-            .chain(mcp_commands)
-            .collect()
+        [compact_command].into_iter().chain(mcp_commands).collect()
     }
 
     pub fn load_thread(
@@ -4187,7 +4159,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 // zed-kask: the v1 completion-based prompt path, retained for ACP v1
 // clients and the agent tests. Command dispatch is shared with the
 // receipt path: classify through `NativeRetryAction::for_prompt`
-// (D70 `/trace`, the D1 scoped-skill error and core-aware unqualified
+// (the D1 scoped-skill error and core-aware unqualified
 // resolution) and execute through `execute_retry_action`.
 impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
     fn prompt(
@@ -4220,7 +4192,7 @@ impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
         // Route through the receipt transport so the session's execution
         // bookkeeping (retry actions, cancellation, completion channel) is
         // set up exactly as the v2 path does. `for_prompt` classification
-        // (D70 `/trace`, the D1 scoped-skill error and core-aware
+        // (the D1 scoped-skill error and core-aware
         // unqualified resolution) runs inside submit_native; the completion
         // channel restores the v1 completion-based response.
         let (task, completion) = self.submit_native(session_id, Some(params.prompt), cx);
@@ -4281,73 +4253,6 @@ impl NativeAgentConnection {
             Some(NativeRetryAction::Compact) => self.0.update(cx, |agent, cx| {
                 agent.send_compact_command(message_id, session_id, cx)
             }),
-            // zed-kask: D70 — the on-demand trace command: strip the command
-            // prefix, run one traced turn, then export the trace and report
-            // its path in the conversation.
-            Some(NativeRetryAction::Trace { content }) => {
-                let Some(thread) = self.thread(&session_id, cx) else {
-                    return Task::ready(Err(anyhow!("Trace session not found")));
-                };
-                let Some(acp_thread) = self
-                    .0
-                    .read(cx)
-                    .sessions
-                    .get(&session_id)
-                    .map(|session| session.acp_thread.clone())
-                else {
-                    return Task::ready(Err(anyhow!("Trace session was released")));
-                };
-                let mut blocks = content;
-                if let Some(acp_v2::ContentBlock::Text(first)) = blocks.first_mut() {
-                    let text = strip_slash_command_prefix(&first.text);
-                    if text.trim().is_empty() {
-                        blocks.remove(0);
-                    } else {
-                        first.text = text;
-                    }
-                }
-                if blocks.is_empty() {
-                    return Task::ready(Err(anyhow!("/trace requires a prompt or attachment")));
-                }
-                let path_style = thread.read(cx).project().read(cx).path_style(cx);
-                let task = self.run_turn(session_id, cx, {
-                    let thread = thread.clone();
-                    move |_thread, cx| {
-                        thread.update(cx, |thread, cx| {
-                            thread.start_on_demand_trace()?;
-                            let content = blocks
-                                .into_iter()
-                                .map(|block| {
-                                    UserMessageContent::from_content_block(block, path_style)
-                                })
-                                .collect::<Result<Vec<_>>>()?;
-                            thread.send(message_id, content, cx)
-                        })
-                    }
-                });
-                cx.spawn(async move |cx| {
-                    let result = task.await;
-                    let error = result.as_ref().err().map(ToString::to_string);
-                    let trace = thread
-                        .update(cx, |thread, _| thread.finish_on_demand_trace(error))
-                        .context("No trace was active for the completed turn")?;
-                    let directory = crate::tool_trace::trace_directory();
-                    let path = cx
-                        .background_spawn(async move {
-                            crate::tool_trace::write_trace(&trace, &directory)
-                        })
-                        .await
-                        .context("On-demand trace export failed")?;
-                    acp_thread.update(cx, |thread, cx| {
-                        thread.push_assistant_content_block(
-                            format!("On-demand tool trace saved to {}", path.display()).into(),
-                            false,
-                            cx,
-                        );
-                    })?;
-                    result
-                })
-            }
             None => self.run_turn(session_id, cx, |thread, cx| {
                 thread.update(cx, |thread, cx| thread.resume(cx))
             }),
@@ -6847,152 +6752,6 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn trace_prompt_starts_capture_and_sends_only_the_prompt(cx: &mut TestAppContext) {
-        let fake = init_test(cx);
-        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
-        cx.run_until_parked();
-        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
-        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-        let model = fake.model("fake");
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
-
-        let prompt_task = cx.update(|cx| {
-            acp_thread::AgentSessionClientUserMessageIds::prompt(
-                connection.as_ref(),
-                ClientUserMessageId::new(),
-                acp_v2::PromptRequest::new(session_id.clone(), vec!["/trace inspect this".into()]),
-                cx,
-            )
-        });
-        cx.run_until_parked();
-
-        let request = fake
-            .pending_completions_for(&model)
-            .pop()
-            .expect("model request");
-        assert_eq!(
-            request_texts_after_system(&request.messages),
-            vec!["inspect this"]
-        );
-        let trace =
-            cx.update(|cx| thread.update(cx, |thread, _| thread.finish_on_demand_trace(None)));
-        let trace = trace.expect("trace capture active during model request");
-        assert_eq!(trace.session_id, session_id.to_string());
-        drop(prompt_task);
-    }
-
-    #[gpui::test]
-    async fn traced_turn_exports_final_answer_and_normal_turn_does_not_export(
-        cx: &mut TestAppContext,
-    ) {
-        let run = async {
-            let fake = init_test(cx);
-            let temp = tempfile::tempdir()?;
-            let directory = temp.path().join("agent-traces");
-            let _override = crate::tool_trace::TestTraceDirectoryGuard::scoped(directory.clone());
-            let (connection, agent, _project, acp_thread, _fs) =
-                setup_native_agent_session(cx).await;
-            cx.run_until_parked();
-            let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
-            let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
-            let model = fake.model("fake");
-            cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
-            let prompt_task = cx.update(|cx| {
-                acp_thread::AgentSessionClientUserMessageIds::prompt(
-                    connection.as_ref(),
-                    ClientUserMessageId::new(),
-                    acp_v2::PromptRequest::new(
-                        session_id.clone(),
-                        vec!["/trace check sustainable growth rate to net margin".into()],
-                    ),
-                    cx,
-                )
-            });
-            cx.run_until_parked();
-            let request = fake
-                .pending_completions_for(&model)
-                .pop()
-                .expect("traced model request");
-            let tool_use = language_model::LanguageModelToolUse {
-                id: "trace-tool-1".into(),
-                name: OntoAnchorTool::NAME.into(),
-                raw_input: json!({"term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}}).to_string(),
-                input: language_model::LanguageModelToolUseInput::Json(json!({
-                    "term":"sustainable growth rate","relation_query":{"to":"net margin","max_hops":2}
-                })),
-                is_input_complete: true,
-                thought_signature: None,
-            };
-            fake.send_event(
-                &model,
-                &request,
-                LanguageModelCompletionEvent::ToolUse(tool_use),
-            );
-            fake.end_stream(&model, &request);
-            cx.run_until_parked();
-            // The mid-turn title generation (thread.rs: the turn loop fires
-            // `generate_title` once `title.is_none()`) races this follow-up on
-            // the same registered fake — select by intent, not by list
-            // position, so the answer lands on the turn's request.
-            let followup = fake
-                .pending_completions_for(&model)
-                .into_iter()
-                .find(|request| request.intent == Some(CompletionIntent::ToolResults))
-                .expect("tool-result followup");
-            fake.send_text(&model, &followup, "traced answer");
-            fake.end_stream(&model, &followup);
-            cx.run_until_parked();
-            prompt_task.await?;
-            let paths = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
-            assert_eq!(paths.len(), 1);
-            let trace: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(paths[0].path())?)?;
-            assert_eq!(trace["final_answer"], "traced answer");
-            assert_eq!(trace["session_id"], session_id.to_string());
-            assert_eq!(trace["calls"].as_array().map(Vec::len), Some(1));
-            assert_eq!(trace["calls"][0]["name"], "onto_anchor");
-            assert_eq!(
-                trace["calls"][0]["input"]["relation_query"]["to"],
-                "net margin"
-            );
-            assert_eq!(trace["calls"][0]["outcome"], "completed");
-            assert!(trace["calls"][0]["elapsed_ms"].is_number());
-            let result: serde_json::Value = serde_json::from_str(
-                trace["calls"][0]["result_text"]
-                    .as_str()
-                    .expect("tool output text"),
-            )?;
-            assert_eq!(result["traversal"]["status"], "path_found");
-            assert_eq!(result["traversal"]["edges"][1]["to"], "net_margin");
-
-            let normal_task = cx.update(|cx| {
-                acp_thread::AgentSessionClientUserMessageIds::prompt(
-                    connection.as_ref(),
-                    ClientUserMessageId::new(),
-                    acp_v2::PromptRequest::new(session_id, vec!["ordinary response".into()]),
-                    cx,
-                )
-            });
-            cx.run_until_parked();
-            let request = fake
-                .pending_completions_for(&model)
-                .pop()
-                .expect("ordinary model request");
-            fake.send_text(&model, &request, "normal answer");
-            fake.end_stream(&model, &request);
-            cx.run_until_parked();
-            normal_task.await?;
-            assert_eq!(
-                std::fs::read_dir(&directory)?.count(),
-                1,
-                "ordinary turns must not create traces"
-            );
-            Ok::<(), anyhow::Error>(())
-        };
-        run.await.expect("native trace export and opt-in boundary");
-    }
-
-    #[gpui::test]
     async fn test_native_stop_does_not_wait_for_uncooperative_tool(cx: &mut TestAppContext) {
         use crate::tests::test_tools::DelayTool;
         use language_model::{LanguageModelToolUse, LanguageModelToolUseInput};
@@ -8426,9 +8185,8 @@ mod internal_tests {
         cx.update(|cx| {
             let commands = acp_thread.read(cx).available_commands();
 
-            // zed-kask: find, not full-list equality — the fork also registers
-            // the native `/trace` command (D6), so the command list is a superset
-            // of upstream's.
+            // zed-kask: find, not full-list equality — the list also carries
+            // MCP prompts, so a full-list assertion would over-constrain.
             let compact = commands.iter().find(|command| command.name == "compact");
             let compact = compact.expect("compact command should be available");
             assert_eq!(
