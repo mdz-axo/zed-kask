@@ -1362,6 +1362,14 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
+/// A summarization stream that ended successfully with no text at all —
+/// transient-shaped (a 200 with empty content), distinct from truncation
+/// and refusal. The only typed compaction error: the manual path's
+/// one-shot retry discriminates on exactly this failure.
+#[derive(Debug, thiserror::Error)]
+#[error("Compaction produced an empty summary")]
+struct EmptyCompactionSummary;
+
 pub enum ThreadModel {
     Ready(LanguageModel),
     Unresolved(SelectedModel),
@@ -2985,17 +2993,56 @@ impl Thread {
             let event_stream = event_stream.clone();
             async move |this, cx| {
                 let result = if let Some((model, request)) = compaction {
-                    Self::stream_compaction(
+                    // zed-kask: an empty-but-successful summary stream is
+                    // transient-shaped (a 200 with empty content; observed
+                    // live 2026-10-30 as two failed manual compactions six
+                    // seconds apart) — retry the summarization once before
+                    // failing the compaction. A refusal is permanent for
+                    // the same request and is never retried; the threshold
+                    // path already retries through the turn loop and the
+                    // PromptTooLarge rescue retries transient failures
+                    // internally, so the retry is scoped to the manual
+                    // path. Pinned by
+                    // test_manual_compact_retries_once_on_an_empty_summary.
+                    let attempt = Self::stream_compaction(
                         &this,
                         &event_stream,
                         cancellation_rx.clone(),
-                        model,
-                        request,
-                        CompactionInsertion::Manual { marker_id: id },
+                        model.clone(),
+                        request.clone(),
+                        CompactionInsertion::Manual {
+                            marker_id: id.clone(),
+                        },
                         None,
                         cx,
                     )
-                    .await
+                    .await;
+                    match attempt {
+                        Err(error) if error.downcast_ref::<EmptyCompactionSummary>().is_some() => {
+                            log::info!(
+                                "Manual compaction produced an empty summary; retrying once"
+                            );
+                            this.update(cx, |this, _| {
+                                if let Some(telemetry) = this.pending_compaction_telemetry.as_mut()
+                                {
+                                    telemetry.retries += 1;
+                                }
+                            })
+                            .log_err();
+                            Self::stream_compaction(
+                                &this,
+                                &event_stream,
+                                cancellation_rx.clone(),
+                                model,
+                                request,
+                                CompactionInsertion::Manual { marker_id: id },
+                                None,
+                                cx,
+                            )
+                            .await
+                        }
+                        result => result,
+                    }
                 } else {
                     Ok(ControlFlow::Continue(()))
                 };
@@ -4387,6 +4434,7 @@ impl Thread {
         let mut summary = String::new();
         let mut usage = TokenUsage::default();
         let mut truncated = false;
+        let mut refused = false;
         while let Some(event) = stream.next().await {
             // zed-kask: check cancellation before processing each buffered
             // event so a queued usage update from a cancelled compaction is
@@ -4418,15 +4466,28 @@ impl Thread {
                 LanguageModelCompletionEvent::Stop(StopReason::MaxTokens) => {
                     truncated = true;
                 }
+                LanguageModelCompletionEvent::Stop(StopReason::Refusal) => {
+                    refused = true;
+                }
                 _ => {}
             }
         }
+        // zed-kask: classify the stream's own verdict before the empty check
+        // — a provider refusal is a refusal (permanent for the same
+        // request), never a generic "empty summary". Pinned by
+        // test_manual_compact_refusal_is_classified_and_not_retried.
+        anyhow::ensure!(
+            !refused,
+            "The model refused the compaction request; no summary was saved"
+        );
         anyhow::ensure!(
             !truncated,
             "Compaction reached the model's output limit; no summary was saved"
         );
         let summary = summary.trim().to_string();
-        anyhow::ensure!(!summary.is_empty(), "Compaction produced an empty summary");
+        if summary.is_empty() {
+            return Err(EmptyCompactionSummary.into());
+        }
         let input_tokens = usage.input_tokens + usage.cache_read_input_tokens;
         Ok(Some((summary, input_tokens)))
     }
@@ -12146,8 +12207,8 @@ mod tests {
         });
     }
 
-    /// A failed compaction (here, an empty summary) reports an error and leaves
-    /// the thread untouched — no marker, no compaction.
+    /// A compaction that stays empty across its single retry reports an error
+    /// and leaves the thread untouched — no marker, no compaction.
     #[gpui::test]
     async fn test_manual_compact_empty_summary_leaves_no_marker(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
@@ -12177,6 +12238,15 @@ mod tests {
         fake.end_stream(&model, &request);
         cx.run_until_parked();
 
+        // The empty summary is retried once; end the retry's stream empty too
+        // so the compaction actually fails.
+        let retry_request = fake
+            .pending_completions()
+            .pop()
+            .expect("an empty summary is retried once");
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
         // An error is surfaced, and the thread is left exactly as it was. The
         // compaction task drops the event stream after failing, so the channel
         // closes and this drain terminates.
@@ -12191,6 +12261,128 @@ mod tests {
             assert_eq!(thread.messages.len(), 2);
             assert!(matches!(&*thread.messages[0], Message::User(_)));
             assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// A provider refusal on the compaction request is classified as a
+    /// refusal — not misreported as an empty summary — and, being permanent
+    /// for the same request, is not retried.
+    #[gpui::test]
+    async fn test_manual_compact_refusal_is_classified_and_not_retried(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let mut events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let request = fake.pending_completions().pop().unwrap();
+        fake.send_event(
+            &model,
+            &request,
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+        );
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+
+        // The refusal is surfaced by name, no second summarization request is
+        // made, and the thread is left exactly as it was. The compaction task
+        // drops the event stream after failing, so the channel closes and
+        // this drain terminates.
+        let mut refusal_error = false;
+        while let Some(event) = events.next().await {
+            if let Err(error) = event {
+                assert!(
+                    error.to_string().contains("refused the compaction request"),
+                    "the refusal must be named: {error}"
+                );
+                assert!(
+                    !error.to_string().contains("empty summary"),
+                    "a refusal must not be misreported as an empty summary"
+                );
+                refusal_error = true;
+            }
+        }
+        assert!(refusal_error, "expected an error event naming the refusal");
+        assert!(
+            fake.pending_completions().is_empty(),
+            "a refusal is permanent and is not retried"
+        );
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 2);
+            assert!(matches!(&*thread.messages[0], Message::User(_)));
+            assert!(matches!(&*thread.messages[1], Message::Agent(_)));
+        });
+    }
+
+    /// An empty-but-successful summarization stream is transient-shaped: the
+    /// manual compaction retries once, and a summary from the retry is
+    /// stored with no error surfaced.
+    #[gpui::test]
+    async fn test_manual_compact_retries_once_on_an_empty_summary(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+        });
+
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // First attempt: the stream ends successfully with no text.
+        let request = fake.pending_completions().pop().unwrap();
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+
+        // Exactly one retry, and its summary is stored.
+        let retry_request = fake
+            .pending_completions()
+            .pop()
+            .expect("an empty summary is retried exactly once");
+        fake.send_text(&model, &retry_request, "summary of old context");
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
+
+        assert!(
+            fake.pending_completions().is_empty(),
+            "a successful retry ends the compaction — no third request"
+        );
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.messages.len(), 4);
+            assert!(matches!(&*thread.messages[2], Message::User(_)));
+            assert!(matches!(
+                &*thread.messages[3],
+                Message::Compaction(CompactionInfo::Summary(summary))
+                    if summary.as_ref() == "summary of old context"
+            ));
         });
     }
 

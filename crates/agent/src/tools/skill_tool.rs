@@ -904,6 +904,7 @@ mod tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
 
         // Missing dependencies → fail fast, naming both.

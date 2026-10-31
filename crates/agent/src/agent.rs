@@ -5898,6 +5898,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         }
     }
 
@@ -6418,6 +6419,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         }
     }
 
@@ -8121,6 +8123,19 @@ mod internal_tests {
             Some(CompletionIntent::ThreadContextSummarization)
         );
         fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        // The empty-but-successful summary stream is retried once; the
+        // retry's stream must also end before the compaction fails.
+        let retry_request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("an empty summary is retried once");
+        assert_eq!(
+            retry_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        fake.end_stream(&model, &retry_request);
+        cx.run_until_parked();
         completion
             .await
             .expect("driver completed")
@@ -9235,6 +9250,7 @@ mod internal_tests {
                 disable_model_invocation: false,
                 dependencies: Vec::new(),
                 core: false,
+                audience: None,
             });
         }
 
@@ -9313,6 +9329,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -9324,6 +9341,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -9335,6 +9353,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -9394,6 +9413,7 @@ mod internal_tests {
             disable_model_invocation: true,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -9405,6 +9425,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
 
         let (kept, issues) = select_catalog_skills(&[hidden, visible]);
@@ -9526,6 +9547,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
         let project_skill = Skill {
             name: "project-skill".into(),
@@ -9540,6 +9562,7 @@ mod internal_tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
 
         cx.update(|cx| {
