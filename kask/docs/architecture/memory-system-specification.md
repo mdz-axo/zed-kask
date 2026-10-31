@@ -246,11 +246,20 @@ creation (`hmem.rs:141-149`).
 ### `vec_embeddings` (virtual, sqlite-vec — `schema.sql:6`)
 
 ```sql
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding float[$DIM] distance_metric=cosine);
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding int8[$DIM] distance_metric=cosine);
 ```
 
 Keyed on `rowid` (mirrors `embeddings.rowid`). KNN search via the `MATCH`
-operator returns nearest neighbors ordered by cosine distance.
+operator returns nearest neighbors ordered by cosine distance. Since the
+wave-6 int8 quantization layer (2026-10-31) the schema default stores one
+byte per dimension; databases created before it keep their `float[$DIM]`
+table and `EmbeddingStore` dispatches on each database's declared element
+type (`hkask-storage/src/vec0.rs` — detection, the affine decode, and the
+explicit `convert-vec0-int8` conversion; conversion is never an open-time
+migration because a read-write open of a sealed SQLCipher database
+rewrites its header page and invalidates the seal's byte digest — bind
+the seal after the last read-write open, which federated consumers never
+perform: they open read-only).
 
 ### `memory_links` (co-occurrence — `schema.sql:21-29`)
 

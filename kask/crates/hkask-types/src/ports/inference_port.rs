@@ -295,7 +295,7 @@ pub trait InferencePort: Send + Sync {
     /// Generate embeddings requesting a specific output width from
     /// MRL-capable embedding models (Matryoshka truncation — e.g. Qwen3
     /// Embedding, text-embedding-3). Callers whose vector stores are
-    /// width-bound (sqlite-vec `float[N]` tables) pass the store's width so
+    /// width-bound (sqlite-vec `float[N]` and `int8[N]` tables) pass the store's width so
     /// returned vectors always fit; `None` requests the model's native
     /// width. The default delegates to [`InferencePort::embed_with_identity`]
     /// and `debug_assert!`s against a requested width: a port that does not

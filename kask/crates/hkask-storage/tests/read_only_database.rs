@@ -150,8 +150,12 @@ fn sweeping_orphaned_vectors_preserves_retrieval() -> anyhow::Result<()> {
             .iter()
             .flat_map(|value| value.to_le_bytes())
             .collect();
+        // The schema declares the int8 column (wave-6), so the manufactured
+        // orphan quantizes through vec_quantize_int8 like every production
+        // write — the sweep only cares about the row's existence.
         connection.execute(
-            "INSERT INTO vec_embeddings(rowid, embedding) VALUES (?1, ?2)",
+            "INSERT INTO vec_embeddings(rowid, embedding) \
+             VALUES (?1, vec_quantize_int8(?2, 'unit'))",
             rusqlite::params![rowid, blob],
         )?;
         connection.execute("DELETE FROM embeddings WHERE id = 'orphan-meta'", [])?;

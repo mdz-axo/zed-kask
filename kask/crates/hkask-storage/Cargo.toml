@@ -13,6 +13,10 @@ path = "src/hkask_storage.rs"
 name = "purge-orphaned-vectors"
 path = "src/bin/purge_orphaned_vectors.rs"
 
+[[bin]]
+name = "convert-vec0-int8"
+path = "src/bin/convert_vec0_int8.rs"
+
 [dependencies]
 
 hkask-types = { workspace = true, features = ["sql"] }

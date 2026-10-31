@@ -286,7 +286,8 @@ impl CuratorStore {
         }
     }
 
-    /// The store's vector width (the vec0 table's `float[N]`). Embedding
+    /// The store's vector width (the vec0 table's declared width —
+    /// `float[N]` before the wave-6 int8 layer, `int8[N]` after). Embedding
     /// requests must request this width from MRL-capable models so
     /// returned vectors always fit the table.
     pub(crate) fn embedding_dim(&self) -> usize {

@@ -4,7 +4,7 @@ CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
 CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);
 CREATE TABLE IF NOT EXISTS embeddings (id TEXT PRIMARY KEY, entity_ref TEXT NOT NULL, dimensions INTEGER NOT NULL, model TEXT NOT NULL, passage_text TEXT, created_at TEXT DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS idx_embeddings_entity_ref ON embeddings(entity_ref);
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding float[$DIM] distance_metric=cosine);
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(embedding int8[$DIM] distance_metric=cosine);
 CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, actor_webid TEXT NOT NULL, action TEXT NOT NULL, resource TEXT NOT NULL, outcome TEXT NOT NULL, details TEXT, ip_address TEXT, created_at TEXT DEFAULT (datetime('now')));
 CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor_webid);

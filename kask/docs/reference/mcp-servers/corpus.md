@@ -231,6 +231,23 @@ on `hmems`). Any future storage-format change (a column, an index, a
 vec0 layout) must state its disposition for all three consumers before it
 lands.
 
+The wave-6 int8 quantization layer (same day, run `d6aa019e…`) completes
+the storage cut: the sealed run's three index databases and the shipped
+bundle store one byte per dimension (`int8[$DIM]` vec0 columns, 286,063
+fine rows preserved verbatim), taking the shipped bundle from 1.29 GiB
+to 465,879,450 bytes (0.43 GiB) — 66% on top of the dedupe's 47%. The
+recall cost is gated on the calibration harness's own replicate spread
+(`run-retrieval-replicates.sh`: both recall@5 deltas equal their noise
+floors, both int8 medians inside the float32 arms' observed ranges; the
+trust-reference-model subset 15/15 in every replicate of both arms; one
+secondary metric, correct_source_mrr, shifted 0.004 beyond its spread —
+disclosed). Conversion is explicit (`convert-vec0-int8`), never an open-time
+migration: a read-write open of a sealed database rewrites its header page
+and invalidates the seal's byte digest (measured: 4,064 bytes = one page),
+so the seal binds after the last read-write open — the export itself — and
+federated consumers open read-only. Gate evidence:
+`run-records/zk-ref-open-2026-10-05/evaluation-int8-gate-2026-10-31/GATE-VERDICT.md`.
+
 Interior orphan `vec0` rows (a vector whose metadata row was deleted through
 a path that did not also delete the vector — therapy SQL passes, interrupted
 re-embeds) are invisible to retrieval (KNN inner-joins them out) and cost

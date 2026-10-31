@@ -131,7 +131,7 @@ pub struct InferenceParams {
     /// OpenAI-compatible `dimensions` body field — e.g. Qwen3 Embedding's
     /// Matryoshka truncation). `None` lets the model emit its native width;
     /// callers whose vector stores are width-bound (sqlite-vec `float[N]`
-    /// tables) must pass the store's width so returned vectors always fit.
+    /// and `int8[N]` tables) must pass the store's width so returned vectors always fit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub embed_dimensions: Option<u32>,
 

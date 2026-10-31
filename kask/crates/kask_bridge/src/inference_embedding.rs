@@ -325,7 +325,7 @@ impl LanguageModelEmbeddingPort {
     /// Generate embeddings, requesting a specific output width from
     /// MRL-capable models (the OpenAI-compatible `dimensions` body field).
     /// `None` lets the model emit its native width; callers whose vector
-    /// stores are width-bound (sqlite-vec `float[N]` tables) pass the
+    /// stores are width-bound (sqlite-vec `float[N]` and `int8[N]` tables) pass the
     /// store's width so returned vectors always fit.
     pub async fn embed_with_dimensions(
         &self,

@@ -1092,12 +1092,15 @@ pub(crate) mod tests {
             connection
                 .execute("UPDATE embeddings SET rowid=73 WHERE id='emb-1'", [])
                 .expect("row identity");
-            // Populate vec0 with the correct bytes for the test vector.
+            // Populate vec0 with the quantized form of the test vector —
+            // fresh stores declare the int8 column (wave-6), so the raw
+            // f32 blob goes through vec_quantize_int8 exactly as the
+            // EmbeddingStore write path does.
             let blob: Vec<u8> = query.iter().flat_map(|f| f.to_le_bytes()).collect();
             connection
                 .execute(
                     "INSERT INTO vec_embeddings(rowid, embedding) \
-                     SELECT rowid, ?1 FROM embeddings WHERE id='emb-1'",
+                     SELECT rowid, vec_quantize_int8(?1, 'unit') FROM embeddings WHERE id='emb-1'",
                     rusqlite::params![&blob],
                 )
                 .expect("initial index");
@@ -1170,7 +1173,7 @@ pub(crate) mod tests {
             let recalled: String = connection
                 .query_row(
                     "SELECT h.entity FROM vec_embeddings v JOIN embeddings e ON e.rowid=v.rowid
-                 JOIN hmems h ON h.entity=e.entity_ref WHERE v.embedding MATCH ?1 AND v.k=1",
+                 JOIN hmems h ON h.entity=e.entity_ref WHERE v.embedding MATCH vec_quantize_int8(?1, 'unit') AND v.k=1",
                     [blob],
                     |row| row.get(0),
                 )

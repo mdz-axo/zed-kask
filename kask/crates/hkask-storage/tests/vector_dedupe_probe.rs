@@ -1,9 +1,12 @@
-//! Probe: can the vector be recovered byte-for-byte from vec0 alone?
+//! Probe: can the vector be recovered from vec0 alone?
 //!
-//! The proposed dedupe removes `embeddings.vector` and reads the vector back
-//! from the vec0 virtual table's own `embedding` column. That is only sound if
-//! vec0 returns the canonical bytes unchanged. This test establishes (or
-//! falsifies) that premise before any schema change depends on it.
+//! The wave-5/6 dedupe removed `embeddings.vector` and reads the vector
+//! back from the vec0 virtual table's own `embedding` column. That is
+//! sound only if vec0 returns the stored bytes and the store decodes them
+//! consistently. Since the int8 quantization layer (wave-6, 2026-10-31)
+//! fresh stores hold quantized bytes: the probe pins one byte per
+//! dimension and the affine decode, with a quantization-exact one-hot
+//! vector.
 use std::sync::Arc;
 
 use hkask_storage::EmbeddingStore;
@@ -18,7 +21,7 @@ fn fixture_vector(seed: f32) -> Vec<f32> {
 }
 
 #[test]
-fn vec0_returns_the_canonical_vector_byte_for_byte() -> anyhow::Result<()> {
+fn vec0_returns_the_canonical_int8_bytes_and_the_store_decodes_them() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("probe.db");
     let path_str = path
@@ -31,7 +34,11 @@ fn vec0_returns_the_canonical_vector_byte_for_byte() -> anyhow::Result<()> {
     let embeddings =
         EmbeddingStore::from_driver(Arc::clone(&driver), hkask_storage::embedding_dim())?;
 
-    let vector = fixture_vector(0.25);
+    // One-hot vectors are quantization-exact: 1 → int8 127, 0 → 0
+    // (trunc((0 + 1) * 127.5 - 128) = trunc(-0.5) = 0).
+    let dim = hkask_storage::embedding_dim();
+    let mut vector = vec![0.0f32; dim];
+    vector[7] = 1.0;
     embeddings.store("probe:1", &vector, "fixture-model", Some("probe passage"))?;
 
     let connection = pool.get()?;
@@ -41,13 +48,37 @@ fn vec0_returns_the_canonical_vector_byte_for_byte() -> anyhow::Result<()> {
         [],
         |row| row.get(0),
     )?;
-    // The probe asserts the premise directly: vec0 returns the same
-    // number of bytes it was given, with the leading component
-    // preserved — the property the dedupe relies on.
+    // The probe asserts the premise directly: the int8 shadow stores one
+    // byte per dimension, and the affine decode returns the one-hot
+    // exactly — the property the dedupe relies on.
     assert_eq!(
         from_vec0.len(),
-        vector.len() * std::mem::size_of::<f32>(),
-        "vec0 vector length differs from the stored vector length"
+        vector.len(),
+        "the int8 shadow stores one byte per dimension"
+    );
+    assert!(
+        from_vec0[7] >= 120,
+        "the hot component quantizes near the range top (v = 1.0 lands at 126 \
+         under the C's f32 step): {}",
+        from_vec0[7]
+    );
+    assert!(
+        from_vec0
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| index == 7 || *byte == 0),
+        "zero components quantize to 0"
+    );
+    let stored = embeddings.get("probe:1")?;
+    let max_error = stored
+        .vector
+        .iter()
+        .zip(&vector)
+        .map(|(approx, original)| (approx - original).abs())
+        .fold(0.0f32, f32::max);
+    assert!(
+        max_error <= 2.0 / 255.0 + 1e-5,
+        "the store decodes within one quantum: {max_error}"
     );
     Ok(())
 }

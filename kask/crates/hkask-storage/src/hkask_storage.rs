@@ -37,6 +37,9 @@ pub use embeddings::{
     EmbeddingError, EmbeddingStore, PassageRow, SearchOutcome, SimilarityResult, StoredEmbedding,
 };
 
+pub mod vec0;
+pub use vec0::{Int8Conversion, Vec0Error, Vec0Storage, convert_vec0_to_int8};
+
 pub use hkask_types::HMemId;
 pub use hmem::{HMem, HMemError, HMemStore, Provenance, TxnReads};
 pub use regulation_store::RegulationArchive;

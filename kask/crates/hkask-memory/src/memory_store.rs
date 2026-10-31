@@ -1545,6 +1545,36 @@ mod tests {
         MemoryStore::new(h_mem_store, embedding_store)
     }
 
+    /// A test store whose vec0 table declares the pre-quantization float32
+    /// column — for tests whose synthetic fixture vectors carry values
+    /// outside the int8 quantizer's [-1, 1] range (9.0, 99.0, 0..dim) or
+    /// assert byte-exact round-trips. The int8 default (the wave-6
+    /// quantization layer) has dedicated coverage in hkask-storage's
+    /// `tests/int8_vec0_quantization.rs`; these tests pin the centroid
+    /// math and the rollback/replace choreography, which need exact
+    /// fixtures. The rebuild must precede `EmbeddingStore::from_driver` —
+    /// element-type detection reads the declared column at construction.
+    fn float32_test_store() -> MemoryStore {
+        let driver = SqliteDriver::in_memory_driver();
+        let dim = hkask_storage::embedding_dim();
+        driver
+            .sqlite_pool()
+            .expect("in-memory pool")
+            .get()
+            .expect("connection")
+            .execute_batch(&format!(
+                "DROP TABLE vec_embeddings; \
+                 CREATE VIRTUAL TABLE vec_embeddings USING vec0(\
+                 embedding float[{dim}] distance_metric=cosine);"
+            ))
+            .expect("rebuild float32 vec0");
+        let h_mem_store =
+            hkask_storage::HMemStore::from_driver(Arc::clone(&driver)).expect("h_mem store");
+        let embedding_store =
+            hkask_storage::EmbeddingStore::from_driver(driver, dim).expect("embedding store");
+        MemoryStore::new(h_mem_store, embedding_store)
+    }
+
     #[test]
     fn semantic_write_derives_missing_passages_and_preserves_explicit_text() -> anyhow::Result<()> {
         let store = test_store();
@@ -2833,7 +2863,7 @@ mod tests {
 
     #[test]
     fn compute_centroid_averages_prefix_embeddings_and_stores() {
-        let store = test_store();
+        let store = float32_test_store();
         let dim = hkask_storage::embedding_dim();
         let flat = |x: f32| vec![x; dim];
         store
@@ -2891,7 +2921,7 @@ mod tests {
 
     #[test]
     fn compute_centroid_excludes_rule_refs() {
-        let store = test_store();
+        let store = float32_test_store();
         let dim = hkask_storage::embedding_dim();
         store
             .store_embedding("style:test:chunk:1", &vec![0.5; dim], "m", None)
@@ -2939,7 +2969,7 @@ mod tests {
     /// expect: "Selected refs contribute once, without duplicating or altering source embeddings." [P3]
     #[test]
     fn compute_centroid_for_refs_math_and_exclusions() {
-        let store = test_store();
+        let store = float32_test_store();
         let dim = hkask_storage::embedding_dim();
         let first: Vec<f32> = (0..dim).map(|i| i as f32).collect();
         let second: Vec<f32> = first.iter().map(|v| v + 4.0).collect();
@@ -3064,15 +3094,24 @@ mod tests {
              BEGIN INSERT INTO vec_embeddings (rowid, embedding)
                  VALUES (NEW.rowid, NEW.vector); END;",
         ] {
+            // This test pins the rollback choreography with byte-exact
+            // fixtures (values at/above 1.0 clamp under int8), so the
+            // fixture rebuilds the pre-quantization float32 column.
             let driver = SqliteDriver::in_memory_driver();
+            let dim = hkask_storage::embedding_dim();
+            driver
+                .sqlite_pool()
+                .expect("SQLite pool")
+                .get()?
+                .execute_batch(&format!(
+                    "DROP TABLE vec_embeddings; \
+                     CREATE VIRTUAL TABLE vec_embeddings USING vec0(\
+                     embedding float[{dim}] distance_metric=cosine);"
+                ))?;
             let store = MemoryStore::new(
                 hkask_storage::HMemStore::from_driver(Arc::clone(&driver))?,
-                hkask_storage::EmbeddingStore::from_driver(
-                    Arc::clone(&driver),
-                    hkask_storage::embedding_dim(),
-                )?,
+                hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), dim)?,
             );
-            let dim = hkask_storage::embedding_dim();
             let destination = "style:test:hopper:centroid";
             let source = vec![2.0; dim];
             let original = vec![1.0; dim];
@@ -3124,7 +3163,7 @@ mod tests {
     /// expect: "Concurrent recomputations leave one centroid without copying source embeddings." [P3]
     #[test]
     fn compute_centroid_concurrently_keeps_one_destination() -> anyhow::Result<()> {
-        let store = Arc::new(test_store());
+        let store = Arc::new(float32_test_store());
         let dim = hkask_storage::embedding_dim();
         let destination = "style:test:hopper:centroid";
         let source = vec![2.0; dim];

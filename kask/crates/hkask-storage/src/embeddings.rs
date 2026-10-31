@@ -19,6 +19,21 @@
 //! vector rather than referencing the one vec0 already holds.
 //! `strip_producer_tables` (`rotation.rs`) is the distribution-side
 //! reduction that ships today.
+//!
+//! Element types: the schema creates the vec0 column as `int8[$DIM]`
+//! (the wave-6 quantization layer, 2026-10-31 — one byte per dimension);
+//! databases created before it keep their `float[$DIM]` table forever.
+//! The store reads the declared type at construction
+//! (`crate::vec0::Vec0Storage::detect`) and dispatches every
+//! vector-touching SQL site on it: int8 stores quantize writes, queries,
+//! and byte-equality checks through `vec_quantize_int8(v, 'unit')` (the
+//! single quantization authority — never re-implemented in Rust) and
+//! decode reads through the affine inverse. Conversion of an existing
+//! database is EXPLICIT (`crate::vec0::convert_vec0_to_int8` / the
+//! `convert-vec0-int8` binary), never an open-time migration — a silent
+//! flip would be an unmeasured recall change on live stores and would
+//! rewrite sealed artifacts without a reseal. See `crate::vec0` for the
+//! quantization and distance semantics.
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 
@@ -101,6 +116,7 @@ use std::sync::Arc;
 pub struct EmbeddingStore {
     pool: Pool<SqliteConnectionManager>,
     dim: usize,
+    storage: crate::vec0::Vec0Storage,
     driver: Arc<dyn crate::database::driver::DatabaseDriver>,
 }
 impl EmbeddingStore {
@@ -143,7 +159,28 @@ impl EmbeddingStore {
                 "EmbeddingStore requires a SqliteDriver, but sqlite_pool() returned None",
             ))
         })?;
-        Ok(Self { pool, dim, driver })
+        // Read the vec0 element type this database actually declares:
+        // fresh stores are int8 (the schema default since the wave-6
+        // quantization layer); stores created before it stay float32
+        // until explicitly converted. Detection fails loudly rather than
+        // guessing — a wrong element type corrupts every vector byte
+        // that follows it.
+        let storage = {
+            let conn = pool
+                .get()
+                .map_err(|e| InfrastructureError::database(e.to_string()))?;
+            crate::vec0::Vec0Storage::detect(&conn).map_err(|error| {
+                EmbeddingError::Infrastructure(hkask_types::InfrastructureError::database(format!(
+                    "cannot detect the vec_embeddings element type: {error}"
+                )))
+            })?
+        };
+        Ok(Self {
+            pool,
+            dim,
+            storage,
+            driver,
+        })
     }
 
     /// Semantic row/vector publication requires one shared database handle.
@@ -172,22 +209,16 @@ impl EmbeddingStore {
         }
         bytes
     }
-    /// Decode binary blob back into f32 vector.
-    fn decode_vector(blob: &[u8], expected_dim: usize) -> Result<Vec<f32>, EmbeddingError> {
-        if blob.len() != expected_dim * 4 {
-            return Err(EmbeddingError::DimensionMismatch {
-                expected: expected_dim * 4,
-                actual: blob.len(),
-            });
-        }
-        let mut vector = Vec::with_capacity(expected_dim);
-        for chunk in blob.chunks_exact(4) {
-            let f = f32::from_le_bytes(chunk.try_into().map_err(|_| {
-                EmbeddingError::Decode("corrupt vector blob: chunk not 4 bytes".into())
-            })?);
-            vector.push(f);
-        }
-        Ok(vector)
+    /// The vec0 INSERT for this store's element type: float32 stores bind
+    /// the raw little-endian f32 blob; int8 stores quantize through
+    /// `vec_quantize_int8` (whose int8-subtype result satisfies vec0's
+    /// column-type check). All three write paths share this one SQL —
+    /// only the element type differs.
+    fn vec_insert_sql(&self) -> String {
+        format!(
+            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, {})",
+            self.storage.value_expr("?2")
+        )
     }
     /// Validate vector dimension.
     fn validate_dim(&self, vector: &[f32]) -> Result<(), EmbeddingError> {
@@ -203,6 +234,9 @@ impl EmbeddingStore {
     /// Validate the vector against the store dimension and prepare the new
     /// row's identity and vec0 blob — the shared prologue of the two write
     /// paths (`store`, `replace`), which diverge in transaction handling.
+    /// The blob is the little-endian f32 wire form in BOTH storage states;
+    /// int8 quantization happens in SQL at insert (`vec_insert_sql`),
+    /// keeping `vec_quantize_int8` the single quantization authority.
     fn prepare_new_row(&self, vector: &[f32]) -> Result<(String, Vec<u8>), EmbeddingError> {
         self.validate_dim(vector)?;
         let id = hkask_types::EmbeddingID::new().to_string();
@@ -254,10 +288,7 @@ impl EmbeddingStore {
         // a different pool connection) would break this — the rowid
         // would be from the wrong connection.
         let rowid: i64 = conn.last_insert_rowid();
-        let vec_result = conn.execute(
-            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
-            rusqlite::params![rowid, &blob],
-        );
+        let vec_result = conn.execute(&self.vec_insert_sql(), rusqlite::params![rowid, &blob]);
         if let Err(e) = vec_result {
             if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
                 tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings INSERT error");
@@ -304,10 +335,7 @@ impl EmbeddingStore {
             rusqlite::params![id, entity_ref, vector.len() as i32, model, passage_text],
         )?;
         let rowid = transaction.last_insert_rowid();
-        transaction.execute(
-            "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
-            rusqlite::params![rowid, &blob],
-        )?;
+        transaction.execute(&self.vec_insert_sql(), rusqlite::params![rowid, &blob])?;
         transaction.commit()?;
         Ok(id)
     }
@@ -406,7 +434,7 @@ impl EmbeddingStore {
         ).map_err(database_error)?;
         transaction
             .execute(
-                "INSERT INTO vec_embeddings (rowid, embedding) VALUES (?1, ?2)",
+                &self.vec_insert_sql(),
                 rusqlite::params![transaction.last_insert_rowid(), blob],
             )
             .map_err(database_error)?;
@@ -440,7 +468,7 @@ impl EmbeddingStore {
                     .ok()
                     .and_then(|v| v.as_text().ok())
                     .map(|s| s.to_string());
-                let vector = Self::decode_vector(&blob, self.dim())?;
+                let vector = self.storage.decode_blob(&blob, self.dim())?;
                 Ok(StoredEmbedding {
                     id,
                     entity_ref: er,
@@ -486,8 +514,19 @@ impl EmbeddingStore {
         fresh_vector: &[f32],
     ) -> Result<bool, EmbeddingError> {
         self.validate_dim(fresh_vector)?;
+        // Under int8 the byte-equality comparison runs against the
+        // quantized form of the fresh vector — the stored bytes ARE
+        // quantized, so the int8-consistent form of "the exact passage
+        // has a vector from this producer" compares quantized to
+        // quantized.
+        let sql = format!(
+            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid \
+             WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 \
+             AND v.embedding = {} LIMIT 1",
+            self.storage.value_expr("?4")
+        );
         let rows = self.query_driver(
-            "SELECT 1 FROM embeddings e JOIN vec_embeddings v ON v.rowid = e.rowid WHERE e.entity_ref = ?1 AND e.passage_text = ?2 AND e.model = ?3 AND v.embedding = ?4 LIMIT 1",
+            &sql,
             &[
                 DbValue::Text(entity_ref.to_string()),
                 DbValue::Text(passage_text.to_string()),
@@ -541,13 +580,14 @@ impl EmbeddingStore {
         // lookup) instead of a TEXT metadata column. The vector is read
         // from vec0's own embedding column — after the wave-6 dedupe the
         // embeddings table no longer carries a duplicate blob.
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT e.id, v.distance, e.entity_ref, v.embedding, e.model, e.passage_text
              FROM vec_embeddings v
              JOIN embeddings e ON v.rowid = e.rowid
-             WHERE v.embedding MATCH ?1 AND v.k = ?2
+             WHERE v.embedding MATCH {} AND v.k = ?2
              ORDER BY v.distance",
-        )?;
+            self.storage.value_expr("?1")
+        ))?;
         let rows = stmt.query_map(rusqlite::params![&query_blob, fetch_k as i64], |row| {
             let id: String = row.get(0)?;
             let distance: f64 = row.get(1)?;
@@ -573,7 +613,7 @@ impl EmbeddingStore {
         matching.truncate(limit);
         let mut results = Vec::with_capacity(matching.len());
         for (id, distance, entity_ref, blob, model, passage_text) in matching {
-            let vector = Self::decode_vector(&blob, self.dim())?;
+            let vector = self.storage.decode_blob(&blob, self.dim())?;
             results.push(SimilarityResult {
                 embedding: StoredEmbedding {
                     id,
@@ -645,7 +685,7 @@ impl EmbeddingStore {
             })?;
             if let Some(row) = matched.next() {
                 let (id, entity_ref, blob, model, passage_text) = row?;
-                let vector = Self::decode_vector(&blob, self.dim())?;
+                let vector = self.storage.decode_blob(&blob, self.dim())?;
                 rows.push(StoredEmbedding {
                     id,
                     entity_ref,
@@ -882,7 +922,7 @@ impl EmbeddingStore {
         let mut results = Vec::new();
         for row in rows {
             let (entity_ref, blob) = row.map_err(EmbeddingError::Storage)?;
-            let vector = Self::decode_vector(&blob, dim)?;
+            let vector = self.storage.decode_blob(&blob, dim)?;
             results.push((entity_ref, vector));
         }
         Ok(results)
@@ -974,7 +1014,7 @@ impl EmbeddingStore {
         let mut results = Vec::new();
         for row in rows {
             let (entity_ref, blob, passage_text, model) = row.map_err(EmbeddingError::Storage)?;
-            let vector = Self::decode_vector(&blob, dim)?;
+            let vector = self.storage.decode_blob(&blob, dim)?;
             results.push((entity_ref, vector, passage_text, model));
         }
         Ok(results)
@@ -1022,7 +1062,12 @@ mod tests {
                     let store = &store;
                     let barrier = &barrier;
                     scope.spawn(move || -> Result<(), EmbeddingError> {
-                        let vector = vec![(writer + 1) as f32; dim];
+                        // Wave-6 int8: writer markers stay inside the
+                        // quantizer's [-1, 1] range — constants at or above
+                        // 1.0 clamp, and the exact-round-trip assertion
+                        // becomes a within-quantum comparison.
+                        let marker = (writer as f32 + 1.0) * 0.1;
+                        let vector = vec![marker; dim];
                         barrier.wait();
                         for _ in 0..4 {
                             store.replace(
@@ -1046,7 +1091,14 @@ mod tests {
         assert_eq!(store.count()?, 3);
         let current = store.get("centroid")?;
         let writer: usize = current.model.parse()?;
-        assert_eq!(current.vector, vec![(writer + 1) as f32; dim]);
+        let expected_marker = (writer as f32 + 1.0) * 0.1;
+        for component in &current.vector {
+            assert!(
+                (component - expected_marker).abs() <= 2.0 / 255.0 + 1e-6,
+                "the winning writer's vector survives quantization within one \
+                 quantum: {component} vs {expected_marker}"
+            );
+        }
         assert_eq!(current.passage_text.as_deref(), Some("current"));
         let conn = pool.get()?;
         let vectors: i64 =
@@ -1056,10 +1108,7 @@ mod tests {
             "SELECT v.embedding FROM vec_embeddings v JOIN embeddings e ON e.rowid = v.rowid WHERE e.entity_ref = 'centroid'",
             [], |row| row.get(0),
         )?;
-        assert_eq!(
-            EmbeddingStore::decode_vector(&indexed, dim)?,
-            current.vector
-        );
+        assert_eq!(store.storage.decode_blob(&indexed, dim)?, current.vector);
         let ids: Vec<String> = conn
             .prepare("SELECT id FROM embeddings WHERE entity_ref = 'passages' ORDER BY rowid")?
             .query_map([], |row| row.get(0))?

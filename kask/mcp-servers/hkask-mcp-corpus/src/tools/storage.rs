@@ -513,7 +513,8 @@ fn durable_retrieval(
         total_indexed,
         missing_text: usize::try_from(missing_text)
             .map_err(|_| McpToolError::internal("missing-text count exceeds usize"))?,
-        // The disk schema fixes one dimension per database (vec0 float[N]);
+        // The disk schema fixes one dimension per database (the vec0
+        // column's declared width, `int8[N]` or `float[N]`);
         // a query of another width fails the search above instead of
         // producing a partial mismatch count.
         dimension_mismatch: 0,

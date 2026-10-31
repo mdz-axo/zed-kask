@@ -332,9 +332,11 @@ impl PromptBuilderService {
 }
 
 /// Load one source's passage pool from the corpus DB: the named refs'
-/// vectors (decoded from the stored little-endian f32 blobs) and passage
-/// texts, validated and normalized exactly as the former whole-DB preload
-/// validated them — empty text or an invalid vector fails the call.
+/// vectors (decoded per the vec0 table's declared element type — int8
+/// affine-inverse since the wave-6 quantization layer, little-endian f32
+/// before) and passage texts, validated and normalized exactly as the
+/// former whole-DB preload validated them — empty text or an invalid
+/// vector fails the call.
 /// Keyed by reference; a duplicate stored row for one ref fails too.
 fn load_source_pool(
     driver: &dyn DatabaseDriver,
@@ -353,7 +355,7 @@ fn load_source_pool(
         let rows = driver
             .query(
                 &format!(
-                    "SELECT e.entity_ref, v.embedding, e.passage_text FROM embeddings e \
+                    "SELECT e.entity_ref, v.embedding, e.passage_text, e.dimensions FROM embeddings e \
                      JOIN vec_embeddings v ON v.rowid = e.rowid \
                      WHERE e.entity_ref IN ({placeholders})"
                 ),
@@ -362,6 +364,24 @@ fn load_source_pool(
             .map_err(|error| {
                 McpToolError::internal(format!("QA context pool query failed: {error}"))
             })?;
+        // The stored bytes' element type is a property of the database's
+        // vec0 table (int8 since the wave-6 quantization layer, float32
+        // before), so decode through the same contract `EmbeddingStore`
+        // uses — the raw f32 assumption this path used to make would
+        // silently reinterpret four int8 bytes as one garbage f32.
+        let storage = {
+            let pool = driver
+                .sqlite_pool()
+                .ok_or_else(|| McpToolError::internal("QA context pool requires a SqliteDriver"))?;
+            let connection = pool.get().map_err(|error| {
+                McpToolError::internal(format!("QA context pool connection failed: {error}"))
+            })?;
+            hkask_storage::vec0::Vec0Storage::detect(&connection).map_err(|error| {
+                McpToolError::internal(format!(
+                    "QA context vec0 element type detection failed: {error}"
+                ))
+            })?
+        };
         for row in &rows {
             let reference = row.get_str(0).map_err(|error| {
                 McpToolError::internal(format!("QA context pool reference read failed: {error}"))
@@ -387,15 +407,24 @@ fn load_source_pool(
                     "QA context '{reference}' has no stored passage_text"
                 )));
             }
-            if blob.len() % 4 != 0 {
+            let dimensions: i64 = row.get_int(3).map_err(|error| {
+                McpToolError::internal(format!(
+                    "QA context '{reference}' dimensions read failed: {error}"
+                ))
+            })?;
+            if dimensions <= 0 {
                 return Err(McpToolError::failed_precondition(format!(
                     "QA context '{reference}' has an invalid embedding"
                 )));
             }
-            let mut vector: Vec<f32> = blob
-                .chunks_exact(4)
-                .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-                .collect();
+            let mut vector: Vec<f32> =
+                storage
+                    .decode_blob(blob, dimensions as usize)
+                    .map_err(|error| {
+                        McpToolError::failed_precondition(format!(
+                            "QA context '{reference}' has an invalid embedding: {error}"
+                        ))
+                    })?;
             if vector.is_empty()
                 || vector.iter().any(|value| !value.is_finite())
                 || !vector.iter().any(|value| *value != 0.0)
