@@ -96,6 +96,12 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.agent",
     "reg.affordance",
     "reg.gate",
+    // ── Trust ledger ──
+    // reg.trust — the cybernetics loop's trust-deviation escalation evidence,
+    // emitted by the TrustDeviationExceeded path (cybernetics_loop/cycle.rs)
+    // when the weighted instruction-violation count from the trust ledger
+    // exceeds its set point. Same loop-connected family as reg.agent.
+    "reg.trust",
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
     // pain-signal span. Live via Span::from_kind, not string literals.
@@ -290,7 +296,7 @@ impl SpanCategory {
         let prefix = s.split('.').next().unwrap_or(s);
         match prefix {
             "cybernetics" | "variety" | "outcome" | "alert" | "sensor" | "agent" | "affordance"
-            | "gate" => Self::Cybernetics,
+            | "gate" | "trust" => Self::Cybernetics,
             "curation" | "curator" | "spec" => Self::Curation,
             "inference" => Self::Inference,
             "memory" | "consolidation" | "pod" | "connector" => Self::Memory,
@@ -591,6 +597,7 @@ mod tests {
             ("reg.outcome", SpanCategory::Cybernetics),
             ("reg.alert", SpanCategory::Cybernetics),
             ("reg.sensor.memory", SpanCategory::Cybernetics),
+            ("reg.trust", SpanCategory::Cybernetics),
             ("reg.curation", SpanCategory::Curation),
             ("reg.curator.directive", SpanCategory::Curation),
             ("reg.curator.metacognition", SpanCategory::Curation),
