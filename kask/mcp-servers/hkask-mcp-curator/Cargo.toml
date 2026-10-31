@@ -13,6 +13,7 @@ hkask-bridge-ontology.workspace = true
 
 hkask-memory.workspace = true
 hkask-inference.workspace = true
+hkask-trust.workspace = true
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

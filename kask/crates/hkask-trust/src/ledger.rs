@@ -43,6 +43,9 @@ impl LedgerEventId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+    pub fn from_string(s: &str) -> Self {
+        Self(s.to_string())
+    }
 }
 
 impl Default for LedgerEventId {

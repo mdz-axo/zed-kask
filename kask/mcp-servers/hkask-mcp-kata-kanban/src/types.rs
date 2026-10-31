@@ -3,6 +3,7 @@
 //! Each tool has a request struct and response struct serializable
 //! for MCP JSON-RPC transport.
 
+use crate::kanban::types::goal::GoalTrustSummary;
 use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -172,17 +173,7 @@ pub(crate) struct GoalTrustRecordResponse {
     /// The number of trust events on the goal's ledger after this append.
     pub trust_event_count: usize,
     /// The goal's trust summary — the regulation signal (seam 7).
-    pub trust_summary: GoalTrustSummaryWire,
-}
-
-/// Wire format for the trust summary (the regulation signal).
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GoalTrustSummaryWire {
-    pub total_instructions: usize,
-    pub complied: usize,
-    pub violated_competence: usize,
-    pub violated_integrity: usize,
-    pub has_integrity_violation: bool,
+    pub trust_summary: GoalTrustSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -321,6 +312,65 @@ pub(crate) struct TaskAssignResponse {
 pub struct TaskVerifyRequest {
     pub task_id: String,
     pub evidence: String,
+    /// The adherence disclosure: whether any explicit instruction was
+    /// sidestepped to complete this task (Binding 6, trust-internalization
+    /// program; the tool contract change the board approved).
+    pub adherence: AdherenceDisclosure,
+}
+
+/// The adherence disclosure: what the completing agent declares about
+/// instruction adherence. Two forms, both structured:
+/// - `sidestepped: false` — no explicit instruction was sidestepped.
+/// - `sidestepped: true` — the `description` names what was sidestepped
+///   and why; `ledger_refs` cite the trust-ledger event ids; and
+///   `delta_trust_points` carries the recorded trust-point change.
+///
+/// This is a claim (P — model-judged, cross-checkable against the
+/// trust ledger's D-recorded rows where the ledger captured the same
+/// instructions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AdherenceDisclosure {
+    /// Whether any explicit instruction was sidestepped to complete
+    /// this task.
+    pub sidestepped: bool,
+    /// When `sidestepped: true`: what was sidestepped and why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// When `sidestepped: true`: the trust-ledger event ids for the
+    /// sidestepped instructions (citable as evidence h_mems).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ledger_refs: Vec<String>,
+    /// When `sidestepped: true`: the recorded trust-point change
+    /// (negative — a sidestep never gains trust).
+    #[serde(default)]
+    pub delta_trust_points: i32,
+}
+
+impl AdherenceDisclosure {
+    /// The default disclosure: no instruction was sidestepped.
+    pub fn none() -> Self {
+        Self {
+            sidestepped: false,
+            description: None,
+            ledger_refs: Vec::new(),
+            delta_trust_points: 0,
+        }
+    }
+
+    /// A sidestepped disclosure: names what was sidestepped and the
+    /// recorded trust cost.
+    pub fn sidestepped(
+        description: &str,
+        ledger_refs: Vec<String>,
+        delta_trust_points: i32,
+    ) -> Self {
+        Self {
+            sidestepped: true,
+            description: Some(description.to_string()),
+            ledger_refs,
+            delta_trust_points,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -329,6 +379,9 @@ pub(crate) struct TaskVerifyResponse {
     pub passed: bool,
     pub reasoning: String,
     pub new_status: String,
+    /// The adherence disclosure echoed back (Binding 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adherence: Option<AdherenceDisclosure>,
 }
 
 // ── Comments ────────────────────────────────────────────────────────────────

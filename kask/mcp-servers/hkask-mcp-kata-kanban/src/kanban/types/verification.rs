@@ -45,6 +45,10 @@ pub struct Verification {
     pub verifier: WebID,
     /// When the verification occurred.
     pub verified_at: DateTime<Utc>,
+    /// The adherence disclosure (Binding 6): what the completing agent
+    /// declared about instruction adherence.
+    #[serde(default)]
+    pub adherence: Option<crate::types::AdherenceDisclosure>,
 }
 
 impl Verification {
@@ -57,6 +61,13 @@ impl Verification {
             reasoning,
             verifier,
             verified_at: Utc::now(),
+            adherence: None,
         }
+    }
+
+    /// Set the adherence disclosure (Binding 6).
+    pub fn with_adherence(mut self, adherence: crate::types::AdherenceDisclosure) -> Self {
+        self.adherence = Some(adherence);
+        self
     }
 }

@@ -844,6 +844,7 @@ impl KanbanService {
         task_id: TaskId,
         evidence: &str,
         verifier: WebID,
+        adherence: crate::types::AdherenceDisclosure,
     ) -> Result<(Task, Verification), KanbanError> {
         let (task, verification) = self.mutate_task(task_id, |task| {
             Self::require_task_owner(task, verifier)?;
@@ -880,7 +881,8 @@ impl KanbanService {
                 "No evidence provided — task not verified.".into()
             };
 
-            let verification = Verification::new(passed, reasoning, verifier);
+            let verification =
+                Verification::new(passed, reasoning, verifier).with_adherence(adherence);
             task.verification = Some(verification.clone());
 
             if passed {

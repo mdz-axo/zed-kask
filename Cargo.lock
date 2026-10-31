@@ -7716,6 +7716,7 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-storage",
+ "hkask-trust",
  "hkask-types",
  "regex",
  "rmcp",
@@ -8086,6 +8087,10 @@ dependencies = [
 [[package]]
 name = "hkask-trust"
 version = "0.40.2"
+dependencies = [
+ "chrono",
+ "uuid",
+]
 
 [[package]]
 name = "hkask-types"

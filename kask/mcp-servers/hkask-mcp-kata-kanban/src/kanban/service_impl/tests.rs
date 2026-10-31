@@ -6,6 +6,7 @@ use crate::kanban::{
     Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskFilter,
     TaskSpec, TaskStatus,
 };
+use crate::types::AdherenceDisclosure;
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
 use hkask_types::id::BoardId;
@@ -745,7 +746,12 @@ fn done_gate_flag_refuses_direct_moves_to_done() -> anyhow::Result<()> {
         matches!(&refused, Err(KanbanError::InvalidTransition { to, .. }) if *to == TaskStatus::Done),
         "an ordinary move to Done is refused on a gated board: {refused:?}"
     );
-    let verified = svc.task_verify(task.id, "user confirmed", owner)?;
+    let verified = svc.task_verify(
+        task.id,
+        "user confirmed",
+        owner,
+        AdherenceDisclosure::none(),
+    )?;
     assert!(
         verified
             .0
@@ -1005,7 +1011,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                 }
             }
             if operation == "reopen" {
-                svc.task_verify(task.id, "Confirmed", owner)
+                svc.task_verify(task.id, "Confirmed", owner, AdherenceDisclosure::none())
                     .expect("done fixture");
             }
             let before = svc.require_task(task.id).expect("fixture read");
@@ -1024,7 +1030,9 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                         None,
                     )
                     .map(|_| ()),
-                "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
+                "verify" => svc
+                    .task_verify(task.id, "Confirmed", owner, AdherenceDisclosure::none())
+                    .map(|_| ()),
                 "reopen" => svc.task_reopen(task.id, owner).map(|_| ()),
                 "spawn" => svc
                     .spawn_task(task.id, SpawnSpec::new(task.id), owner)
@@ -1197,7 +1205,7 @@ fn interleaved_lifecycle_changes_validate_the_current_status() {
             || match operation {
                 "claim" => svc.task_claim(task.id, owner),
                 "verify" => svc
-                    .task_verify(task.id, "Confirmed", owner)
+                    .task_verify(task.id, "Confirmed", owner, AdherenceDisclosure::none())
                     .map(|(task, _)| task),
                 "reopen" => svc.task_reopen(task.id, owner),
                 _ => unreachable!("fixture operation"),
@@ -1318,7 +1326,9 @@ fn task_mutations_preserve_typed_missing_task_and_authorization_errors() {
         let apply = |id, actor| match operation {
             "move" => svc.task_move(id, TaskStatus::Ready, actor).map(|_| ()),
             "claim" => svc.task_claim(id, actor).map(|_| ()),
-            "verify" => svc.task_verify(id, "Confirmed", actor).map(|_| ()),
+            "verify" => svc
+                .task_verify(id, "Confirmed", actor, AdherenceDisclosure::none())
+                .map(|_| ()),
             "unassign" => svc.task_unassign(id, actor).map(|_| ()),
             "update" => svc
                 .task_update(
@@ -1710,7 +1720,12 @@ fn algedonic_review_done_requires_task_verify() {
         TaskStatus::Review
     );
     let (verified, _) = svc
-        .task_verify(task.id, "Observation and reviewer decision", owner)
+        .task_verify(
+            task.id,
+            "Observation and reviewer decision",
+            owner,
+            AdherenceDisclosure::none(),
+        )
         .expect("verify");
     assert_eq!(verified.status, TaskStatus::Done);
 }
@@ -1787,13 +1802,79 @@ fn task_claim_rejects_done_task() {
     svc.task_move(task.id, TaskStatus::InProgress, owner)
         .unwrap();
     svc.task_move(task.id, TaskStatus::Review, owner).unwrap();
-    svc.task_verify(task.id, "done", owner).unwrap();
+    svc.task_verify(task.id, "done", owner, AdherenceDisclosure::none())
+        .unwrap();
 
     let err = svc.task_claim(task.id, WebID::new()).unwrap_err();
     assert!(
         matches!(err, super::KanbanError::InvalidTransition { .. }),
         "claiming a Done task should fail with InvalidTransition, got: {err}"
     );
+}
+
+/// Binding 6 (trust-internalization): the adherence disclosure is
+/// recorded on the Verification and survives the verify path.
+/// The disclosure states whether any explicit instruction was
+/// sidestepped, names what was sidestepped, and cites the ledger refs.
+/// A `sidestepped: true` claim without a description names nothing
+/// (rejected by the tool handler, pinned here at the service level).
+#[test]
+fn task_verify_records_the_adherence_disclosure() {
+    let (svc, board, owner) = make_service_with_board();
+    let spec = TaskSpec::new("Test adherence".into())
+        .with_criteria(vec![VerificationCriterion::new("compile".into())]);
+    let task = svc.task_create(board.id, spec, owner).unwrap();
+    svc.task_move(task.id, TaskStatus::Ready, owner).unwrap();
+    svc.task_move(task.id, TaskStatus::InProgress, owner)
+        .unwrap();
+    svc.task_move(task.id, TaskStatus::Review, owner).unwrap();
+
+    // 1. No-sidestep claim: recorded as-is.
+    let (task, _verification) = svc
+        .task_verify(
+            task.id,
+            "No explicit instruction sidestepped",
+            owner,
+            AdherenceDisclosure::none(),
+        )
+        .unwrap();
+    assert_eq!(task.status, TaskStatus::Done);
+    let verification = task.verification.as_ref().unwrap();
+    assert!(verification.passed);
+    assert!(verification.adherence.as_ref().unwrap().sidestepped == false);
+
+    // 2. A sidestepped claim with a description is recorded (the
+    // disclosure is a claim — the P check happens at review).
+    let (svc2, board2, owner2) = make_service_with_board();
+    let spec2 = TaskSpec::new("Test sidestep".into());
+    let task2 = svc2.task_create(board2.id, spec2, owner2).unwrap();
+    svc2.task_move(task2.id, TaskStatus::Ready, owner2).unwrap();
+    svc2.task_move(task2.id, TaskStatus::InProgress, owner2)
+        .unwrap();
+    svc2.task_move(task2.id, TaskStatus::Review, owner2)
+        .unwrap();
+    let disclosure = AdherenceDisclosure::sidestepped(
+        "skipped the verification pass to ship faster",
+        vec!["ledger-event-1".to_string()],
+        -27,
+    );
+    let (task2, _) = svc2
+        .task_verify(task2.id, "Done with disclosure", owner2, disclosure)
+        .unwrap();
+    assert_eq!(task2.status, TaskStatus::Done);
+    let recorded = task2
+        .verification
+        .as_ref()
+        .unwrap()
+        .adherence
+        .as_ref()
+        .unwrap();
+    assert!(recorded.sidestepped);
+    assert_eq!(
+        recorded.description.as_deref(),
+        Some("skipped the verification pass to ship faster")
+    );
+    assert_eq!(recorded.delta_trust_points, -27);
 }
 
 #[test]
@@ -1824,7 +1905,12 @@ fn task_verify_pass() {
     svc.task_move(task.id, TaskStatus::Review, owner).unwrap();
 
     let (verified, _verif) = svc
-        .task_verify(task.id, "The code compiles successfully", owner)
+        .task_verify(
+            task.id,
+            "The code compiles successfully",
+            owner,
+            AdherenceDisclosure::none(),
+        )
         .unwrap();
     assert_eq!(verified.status, TaskStatus::Done);
     assert!(verified.verification.as_ref().unwrap().passed);
@@ -1837,7 +1923,7 @@ fn task_verify_rejects_non_review() {
         .task_create(board.id, TaskSpec::new("Test".into()), owner)
         .unwrap();
 
-    let result = svc.task_verify(task.id, "evidence", owner);
+    let result = svc.task_verify(task.id, "evidence", owner, AdherenceDisclosure::none());
     assert!(result.is_err());
 }
 

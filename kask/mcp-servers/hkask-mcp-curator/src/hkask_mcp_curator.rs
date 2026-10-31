@@ -22,6 +22,7 @@ pub(crate) mod federated;
 pub(crate) mod forgetting;
 pub(crate) mod ontology;
 pub(crate) mod thread_turns;
+pub(crate) mod trust_ledger;
 pub mod types;
 
 pub use db::{CuratorDb, CuratorStores};
@@ -1512,6 +1513,185 @@ impl CuratorServer {
         })
         .await
     }
+
+    // ── Trust ledger (Binding 5 — trust events ARE h_mems) ───────────
+
+    #[tool(
+        description = "Record a verbatim instruction in the trust ledger. The text is stored exactly as given; the weight classifies how explicitly it was stated (1=implicit, 2=committed, 3=explicit). Returns the ledger event id for later outcome resolution."
+    )]
+    pub async fn trust_ledger_record_instruction(
+        &self,
+        Parameters(req): Parameters<TrustLedgerRecordInstructionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_record_instruction", async {
+            let stores = self.db.get();
+            let memory = stores.memory.clone().ok_or_else(|| {
+                McpToolError::failed_precondition("curator memory store unavailable")
+            })?;
+            let store =
+                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid.clone());
+            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let weight = match req.weight {
+                1 => hkask_trust::Weight::Implicit,
+                2 => hkask_trust::Weight::Committed,
+                _ => hkask_trust::Weight::Explicit,
+            };
+            let id = ledger
+                .record_instruction(&req.text, &req.source, weight)
+                .map_err(trust_error_to_mcp)?;
+            RegulationSpan::Curation.emit("trust_ledger_record_instruction");
+            Ok(serde_json::json!({
+                "event_id": id.as_str(),
+                "text": req.text,
+                "source": req.source,
+                "weight": req.weight,
+                "outcome": "unverified",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Resolve a trust-ledger event's verification outcome: kept, violated, or unverified. The oracle_note names what verified it (a test name, a build, a grep, a re-run)."
+    )]
+    pub async fn trust_ledger_record_outcome(
+        &self,
+        Parameters(req): Parameters<TrustLedgerRecordOutcomeRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_record_outcome", async {
+            let stores = self.db.get();
+            let memory = stores.memory.clone().ok_or_else(|| {
+                McpToolError::failed_precondition("curator memory store unavailable")
+            })?;
+            let store =
+                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid.clone());
+            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let id = hkask_trust::LedgerEventId::from_string(&req.event_id);
+            let outcome = match req.outcome.as_str() {
+                "kept" => hkask_trust::Outcome::Kept,
+                "violated" => hkask_trust::Outcome::Violated,
+                _ => hkask_trust::Outcome::Unverified,
+            };
+            ledger
+                .record_outcome(&id, outcome, req.oracle_note.clone())
+                .map_err(trust_error_to_mcp)?;
+            RegulationSpan::Curation.emit("trust_ledger_record_outcome");
+            Ok(serde_json::json!({
+                "event_id": req.event_id,
+                "outcome": req.outcome,
+                "oracle_note": req.oracle_note,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read the windowed trust account: trust points (600 = 1.0), kept/violated/unverified counts, delegation radius percent. Default window: 24 hours (the algedonic review cycle)."
+    )]
+    pub async fn trust_ledger_state(
+        &self,
+        Parameters(req): Parameters<TrustLedgerStateRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_state", async {
+            let stores = self.db.get();
+            let memory = stores.memory.clone().ok_or_else(|| {
+                McpToolError::failed_precondition("curator memory store unavailable")
+            })?;
+            let store =
+                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid.clone());
+            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let hours = req.window_hours.unwrap_or(24);
+            let since = chrono::Utc::now() - chrono::Duration::hours(hours);
+            let stats = ledger.window_stats(since).map_err(trust_error_to_mcp)?;
+            Ok(serde_json::json!({
+                "trust_points": stats.trust_points,
+                "kept": stats.kept,
+                "violated": stats.violated,
+                "unverified": stats.unverified,
+                "delegation_radius_percent": stats.delegation_radius_percent(),
+                "window_hours": hours,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Project candidate actions against the goal gradient. A trust-killing action (concealment) reads as the path terminating (P_goal: 0%); the honest path keeps a live probability. Each action names what it violates and whether it conceals."
+    )]
+    pub async fn trust_ledger_steer(
+        &self,
+        Parameters(req): Parameters<TrustLedgerSteerRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_steer", async {
+            let stores = self.db.get();
+            let memory = stores.memory.clone().ok_or_else(|| {
+                McpToolError::failed_precondition("curator memory store unavailable")
+            })?;
+            let store =
+                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid.clone());
+            let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
+            let hours = req.window_hours.unwrap_or(24);
+            let since = chrono::Utc::now() - chrono::Duration::hours(hours);
+            let trust = ledger.trust_state(since).map_err(trust_error_to_mcp)?;
+
+            let actions: Vec<hkask_trust::SteerAction> = req
+                .actions
+                .iter()
+                .map(|a| hkask_trust::SteerAction {
+                    name: a.name.clone(),
+                    violates: a
+                        .violates
+                        .iter()
+                        .map(|v| {
+                            let w = match v.weight {
+                                1 => hkask_trust::Weight::Implicit,
+                                2 => hkask_trust::Weight::Committed,
+                                _ => hkask_trust::Weight::Explicit,
+                            };
+                            (w, v.instruction.clone())
+                        })
+                        .collect(),
+                    conceals: a.conceals,
+                    completion_percent: a.completion_percent,
+                    note: a.note.clone(),
+                })
+                .collect();
+
+            let projections = ledger.steer(trust, &actions);
+            let rendered: Vec<serde_json::Value> = projections
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "action": p.action,
+                        "path": if p.cliff { "cliff" } else { "open" },
+                        "p_goal_percent": p.p_goal_percent,
+                        "delta_trust_points": p.delta_trust_points,
+                        "note": p.note,
+                    })
+                })
+                .collect();
+
+            Ok(serde_json::json!({
+                "trust_points": trust,
+                "projections": rendered,
+            }))
+        })
+        .await
+    }
+}
+
+fn trust_error_to_mcp(e: hkask_trust::TrustError) -> McpToolError {
+    match e {
+        hkask_trust::TrustError::StoreUnavailable => McpToolError::failed_precondition(
+            "trust ledger store unavailable — account unknown, not zero",
+        ),
+        hkask_trust::TrustError::EventNotFound(id) => {
+            McpToolError::not_found(format!("trust ledger event '{id}' not found"))
+        }
+        hkask_trust::TrustError::EmptyInstruction => {
+            McpToolError::invalid_argument("instruction text was empty — not an event")
+        }
+    }
 }
 
 // ── Server startup ─────────────────────────────────────────────────────
@@ -1680,8 +1860,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         CuratorServer::tool_router(),
         "tool_router",
-        15,
-        tool_surface_is_exactly_15_registered_tools,
+        19,
+        tool_surface_is_exactly_19_registered_tools,
     );
 
     /// The retired escalation/advice tool family must not reappear — the

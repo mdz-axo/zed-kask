@@ -433,6 +433,11 @@ impl KanbanServer {
                             .as_deref()
                             .map(parse_goal_id)
                             .transpose()?,
+                        // None means the service applies the default trust
+                        // clause (see [`types::goal::GoalTrustClause`]).
+                        // The MCP route doesn't accept a custom trust
+                        // clause — the clause is structural, not a
+                        // caller preference.
                         trust_clause: None,
                     };
                     respond(self.service.goal_create(declaration, self.webid), |goal| {
@@ -559,13 +564,7 @@ impl KanbanServer {
             respond(Ok(goal), |goal| GoalTrustRecordResponse {
                 goal_id: goal.id.to_string(),
                 trust_event_count: goal.trust_events.len(),
-                trust_summary: GoalTrustSummaryWire {
-                    total_instructions: summary.total_instructions,
-                    complied: summary.complied,
-                    violated_competence: summary.violated_competence,
-                    violated_integrity: summary.violated_integrity,
-                    has_integrity_violation: summary.has_integrity_violation,
-                },
+                trust_summary: summary,
             })
         })
         .await
@@ -592,14 +591,8 @@ impl KanbanServer {
             if let Some(obj) = value.as_object_mut() {
                 obj.insert(
                     "trust_summary".into(),
-                    serde_json::to_value(GoalTrustSummaryWire {
-                        total_instructions: summary.total_instructions,
-                        complied: summary.complied,
-                        violated_competence: summary.violated_competence,
-                        violated_integrity: summary.violated_integrity,
-                        has_integrity_violation: summary.has_integrity_violation,
-                    })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?,
+                    serde_json::to_value(summary)
+                        .map_err(|e| McpToolError::internal(e.to_string()))?,
                 );
             }
             Ok(value)
@@ -628,14 +621,8 @@ impl KanbanServer {
                     if let Some(obj) = value.as_object_mut() {
                         obj.insert(
                             "trust_summary".into(),
-                            serde_json::to_value(GoalTrustSummaryWire {
-                                total_instructions: summary.total_instructions,
-                                complied: summary.complied,
-                                violated_competence: summary.violated_competence,
-                                violated_integrity: summary.violated_integrity,
-                                has_integrity_violation: summary.has_integrity_violation,
-                            })
-                            .map_err(|e| McpToolError::internal(e.to_string()))?,
+                            serde_json::to_value(summary)
+                                .map_err(|e| McpToolError::internal(e.to_string()))?,
                         );
                     }
                     Ok(value)
@@ -941,24 +928,39 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Record verification evidence for a task in Review. The evidence text is the pass signal; acceptance criteria are guidance, not a gate."
+        description = "Record verification evidence for a task in Review. The evidence text is the pass signal; acceptance criteria are guidance, not a gate. The adherence disclosure states whether any explicit instruction was sidestepped (Binding 6)."
     )]
     pub async fn kanban_task_verify(
         &self,
-        Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
+        Parameters(TaskVerifyRequest {
+            task_id,
+            evidence,
+            adherence,
+        }): Parameters<TaskVerifyRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_verify", async {
             let tid = parse_task_id(&task_id)?;
             if evidence.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("evidence must not be empty"));
             }
+            // Binding 6: the adherence disclosure must be present.
+            // A verify call without it fails validation at the same place
+            // the empty-evidence check lives (the tool contract change).
+            // `sidestepped: true` requires a non-empty description naming
+            // what was sidestepped (the claim is a claim, not a vibe).
+            if adherence.sidestepped && adherence.description.as_deref().unwrap_or("").trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "adherence.sidestepped is true but adherence.description is empty — name what was sidestepped",
+                ));
+            }
             respond(
-                self.service.task_verify(tid, &evidence, self.webid),
+                self.service.task_verify(tid, &evidence, self.webid, adherence),
                 |(task, verification)| TaskVerifyResponse {
                     task_id: task.id.to_string(),
                     passed: verification.passed,
                     reasoning: verification.reasoning,
                     new_status: task.status.to_string(),
+                    adherence: verification.adherence,
                 },
             )
         })

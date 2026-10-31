@@ -127,9 +127,9 @@ pub enum GoalTrustSeverity {
 }
 
 /// The goal's trust summary, computed from the ledger's events.
-/// The regulation loop reads the violation rates from here — the
-/// count of integrity-severity violations is the escalation signal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The count of integrity-severity violations is the escalation
+/// signal — `has_integrity_violation` is the regulation flag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GoalTrustSummary {
     pub total_instructions: usize,
     pub complied: usize,

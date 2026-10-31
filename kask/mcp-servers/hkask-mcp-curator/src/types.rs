@@ -7,6 +7,74 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PingRequest {}
 
+// ── Trust-ledger MCP tool types (Binding 5 substrate) ─────────────────────
+
+/// `trust_ledger_record_instruction`: record a verbatim instruction
+/// in the trust ledger.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerRecordInstructionRequest {
+    /// The verbatim instruction text, exactly as the user gave it.
+    pub text: String,
+    /// The interaction id (the user turn) the instruction came from.
+    pub source: String,
+    /// 1=implicit (context-derived), 2=committed (promised), 3=explicit.
+    pub weight: u8,
+}
+
+/// `trust_ledger_record_outcome`: resolve a trust-ledger event's
+/// verification state.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerRecordOutcomeRequest {
+    /// The ledger event id (from `trust_ledger_record_instruction`).
+    pub event_id: String,
+    /// The verification outcome: "kept" | "violated" | "unverified".
+    pub outcome: String,
+    /// What verified the outcome (a test name, a build, a grep, a re-run).
+    /// When `None`, the outcome is model-judged (auditable in the row).
+    pub oracle_note: Option<String>,
+}
+
+/// `trust_ledger_state`: the windowed trust account.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerStateRequest {
+    /// The window in hours. Default 24 (the algedonic review cycle).
+    pub window_hours: Option<i64>,
+}
+
+/// One candidate action for the `trust_ledger_steer` projection.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerSteerActionInput {
+    /// The action's name (what the agent would do).
+    pub name: String,
+    /// The expectations this action violates, named by weight + instruction.
+    pub violates: Vec<TrustLedgerSteerViolationInput>,
+    /// Whether this action conceals (the deception/omission cliff).
+    pub conceals: bool,
+    /// The honest completion probability in percent (0..=100).
+    pub completion_percent: i32,
+    /// Why this action is taken (or what it avoids).
+    pub note: Option<String>,
+}
+
+/// One violated expectation, named by weight + instruction.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerSteerViolationInput {
+    /// 1=implicit, 2=committed, 3=explicit.
+    pub weight: u8,
+    /// The verbatim instruction that was violated.
+    pub instruction: String,
+}
+
+/// `trust_ledger_steer`: project candidate actions against the goal
+/// gradient (the LLM-legible trust-cost surface).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerSteerRequest {
+    /// Candidate actions to project.
+    pub actions: Vec<TrustLedgerSteerActionInput>,
+    /// The window in hours. Default 24.
+    pub window_hours: Option<i64>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BackfillEmbeddingsRequest {
     /// List the candidates that would be embedded, without embedding
