@@ -81,8 +81,16 @@ assert_no_match "$repo_root/crates/zed/src/main.rs" '\bcollab_ui::init|\bcall::i
     "zed-kask initializes the deleted collab/call stack"
 assert_no_match "$repo_root/crates/zed/src/zed.rs" '\bcollab_ui::init|\bcall::init|\bchannel::init' \
     "zed-kask's alternate init path initializes the deleted collab/call stack"
-assert_no_match "$repo_root/Cargo.toml" 'livekit-rust-sdks|webrtc-sys|libwebrtc' \
-    "the workspace re-pins the deleted LiveKit/webrtc SDKs"
+assert_no_match "$repo_root/Cargo.toml" \
+    'livekit-rust-sdks|webrtc-sys|libwebrtc|patches/scratch' \
+    "the workspace re-pins the deleted LiveKit/webrtc SDKs or the orphaned cxx scratch patch"
+# zed-kask: D90 — the `[patch] scratch = { path = "tooling/corgi/patches/scratch" }`
+# entry (upstream's OUT_DIR workaround for cxx-build's shared cxxbridge headers)
+# was orphaned by this stack's removal: upstream's only scratch consumers are
+# cxx-build/webrtc-sys-build, both inside the deleted livekit stack. Removed
+# 2026-10-31 after the unused-`[patch]` build warning surfaced it; the pinned
+# patch crate directory went with it.
+assert_absent "$repo_root/tooling/corgi/patches/scratch"
 
 # zed-kask: D90 — upstream chains title_bar::init inside collab_ui::init,
 # which this fork deleted. Removing the collab_ui::init call from main.rs

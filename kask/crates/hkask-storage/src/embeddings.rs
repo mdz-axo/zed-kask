@@ -8,7 +8,7 @@
 //! canonical blob (pinned by `tests/vector_dedupe_probe.rs`), so the copy
 //! bought nothing. Uniform retrieval stays backend-agnostic: every read
 //! joins `vec_embeddings` on `rowid = embeddings.rowid` (see `get`,
-//! `get_by_ids`, `get_all_by_prefix`, `search`, `rebuild_vector_index`) —
+//! `get_by_ids`, `get_all_by_prefix`, `search`) —
 //! raw SQL against `embeddings` must NOT expect a `vector` column.
 //!
 //! The vec0 auxiliary-column escape hatch (`+vector BLOB`) does not work,

@@ -234,9 +234,13 @@ lands.
 Interior orphan `vec0` rows (a vector whose metadata row was deleted through
 a path that did not also delete the vector — therapy SQL passes, interrupted
 re-embeds) are invisible to retrieval (KNN inner-joins them out) and cost
-space only. The distribution path is always clean (`rebuild_vector_index`
-rebuilds vec0 from canonical rows at export). The authoring databases are
-the only unswept copies; sweep them with the maintenance binary:
+space only. Since the wave-6 storage dedupe the export path copies vec0
+verbatim (the pre-dedupe export rebuilt it from the now-dropped
+`embeddings.vector` column; vec0 reads return the canonical bytes and
+export+strip preserve every shadow row, pinned by
+`tests/vector_dedupe_probe.rs`), a shipped bundle carries the sealed run's
+interior orphans — the sweep below is the only orphan removal, and it runs
+on the source databases before export:
 
 ```bash
 HKASK_DB_PASSPHRASE=… cargo run -p hkask-storage --bin purge-orphaned-vectors -- <db> [<db> …]

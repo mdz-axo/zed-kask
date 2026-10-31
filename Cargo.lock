@@ -8100,11 +8100,9 @@ dependencies = [
 name = "hkask-trust-eval"
 version = "0.40.2"
 dependencies = [
- "chrono",
  "hkask-mcp-curator",
  "hkask-memory",
  "hkask-storage",
- "hkask-trust",
  "hkask-types",
  "regex",
  "rmcp",
@@ -22913,7 +22911,3 @@ dependencies = [
  "syn 2.0.117",
  "winnow 1.0.2",
 ]
-
-[[patch.unused]]
-name = "scratch"
-version = "1.0.9"

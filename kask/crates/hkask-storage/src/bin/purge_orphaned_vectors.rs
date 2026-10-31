@@ -12,9 +12,11 @@
 //! is invisible to retrieval; it only costs space. On the zk-ref-open
 //! authoring databases the residue measured 32,797 rows across four files.
 //!
-//! The distribution path purges this at export (`rebuild_vector_index`
-//! deletes and rebuilds vec0 from canonical rows), so shipped copies are
-//! clean. The authoring databases are not, and nothing swept them.
+//! Since the wave-6 storage dedupe the distribution path copies vec0
+//! verbatim (the pre-dedupe export rebuilt it from the now-dropped
+//! `embeddings.vector` column), a shipped bundle carries the sealed run's
+//! interior orphans — this sweep is the only orphan removal, and it runs
+//! on the source databases before export.
 //!
 //! # Why a binary rather than a SQL one-liner
 //!

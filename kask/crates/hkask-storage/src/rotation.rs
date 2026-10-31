@@ -544,9 +544,11 @@ pub fn verify_database_key(db_path: &str, passphrase: &str) -> Result<(), Rotati
 }
 
 /// SQLCipher owns schema export, including contentless FTS shadow tables,
-/// indexes, triggers, rowids, and AUTOINCREMENT high-water marks. Rebuilding
-/// only the vector index from canonical rows avoids preserving an incomplete
-/// derived index. No destination is published until all checks succeed.
+/// indexes, triggers, rowids, and AUTOINCREMENT high-water marks. vec0
+/// shadow tables are copied verbatim — tests/vector_dedupe_probe.rs pins
+/// that vec0 reads return the canonical bytes and that export+strip
+/// preserves every shadow row. No destination is published until all
+/// checks succeed.
 fn copy_all_tables(
     source_pool: &r2d2::Pool<crate::SqliteConnectionManager>,
     source_path: &str,
@@ -607,7 +609,6 @@ fn copy_all_tables(
         // pre-dedupe code rebuilt vec0 from embeddings.vector (now dropped);
         // the probe test (tests/vector_dedupe_probe.rs) pins the byte
         // identity the copy preserves.
-        // rebuild_vector_index(&connection);
         let mut foreign_keys = connection.prepare("PRAGMA rotated.foreign_key_check")?;
         if foreign_keys.query([])?.next()?.is_some() {
             return Err(copy_validation_error(
@@ -648,39 +649,6 @@ fn copy_validation_error(message: &str) -> rusqlite::Error {
         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
         Some(message.to_string()),
     )
-}
-
-fn rebuild_vector_index(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute("DELETE FROM rotated.vec_embeddings", [])?;
-    {
-        let mut source = transaction
-            .prepare("SELECT rowid, embedding FROM rotated.vec_embeddings_vector_chunks00")?;
-        let mut rows = source.query([])?;
-        let mut insert = transaction
-            .prepare("INSERT INTO rotated.vec_embeddings(rowid, embedding) VALUES (?1, ?2)")?;
-        while let Some(row) = rows.next()? {
-            let rowid: i64 = row.get(0)?;
-            let vector: Vec<u8> = row.get(1)?;
-            // The probe (tests/vector_dedupe_probe.rs) pins that vec0
-            // returns byte-identical vectors. Rebuild from the shadow
-            // table — the canonical store after the wave-6 dedupe —
-            // validating the same invariants the copy path does.
-            let dimensions = (vector.len() / 4) as i64;
-            if dimensions <= 0
-                || dimensions.checked_mul(4) != i64::try_from(vector.len()).ok()
-                || vector.chunks_exact(4).any(|bytes| {
-                    !f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]).is_finite()
-                })
-            {
-                return Err(copy_validation_error(&format!(
-                    "invalid canonical embedding at rowid {rowid}"
-                )));
-            }
-            insert.execute(rusqlite::params![rowid, vector])?;
-        }
-    }
-    transaction.commit()
 }
 
 /// Remove a rotation artifact, ignoring "not found" (the common case —
@@ -752,8 +720,6 @@ pub(crate) mod tests {
         )
         .expect("insert");
         // Insert a test row into embeddings.
-        let vector = vec![0.1f32; 1024];
-        let vector_bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
         conn.execute(
             "INSERT INTO embeddings (id, entity_ref, dimensions, model) \
              VALUES ('emb-1', 'test-entity', 1024, 'test-model')",

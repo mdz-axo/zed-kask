@@ -1841,7 +1841,7 @@ fn task_verify_records_the_adherence_disclosure() {
     assert_eq!(task.status, TaskStatus::Done);
     let verification = task.verification.as_ref().unwrap();
     assert!(verification.passed);
-    assert!(verification.adherence.as_ref().unwrap().sidestepped == false);
+    assert!(!verification.adherence.as_ref().unwrap().sidestepped);
 
     // 2. A sidestepped claim with a description is recorded (the
     // disclosure is a claim — the P check happens at review).
