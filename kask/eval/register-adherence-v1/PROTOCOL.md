@@ -30,6 +30,17 @@ trade-off (immediate discipline vs. mid-program constancy). The house has
 no ADR directory; this record is the ADR, housed with the protocol it
 governs.
 
+**Amendment (2026-10-31, pre-arms).** The operator approved adding the
+anchor duty sentence to the clause ("Anchor visibly before work …") —
+the step-1 element of the v2 process contract
+(`kask/docs/research/trust-internalization-v2.md`), backed by the anchor
+surface (`trust_anchor_record` / `trust_anchor_get` over the typed
+`hkask-trust` `Anchor`) that landed the same day. The amendment predates
+every measurement arm (none has run), so the ambient policy for all arms
+is the amended clause and no arm delta can be attributed to the amendment
+retroactively; the pin `test_system_prompt_carries_trust_clause` covers
+the amended wording.
+
 ## Pre-registered probe: the answer-the-question bullet
 
 The clause's highest-risk line is "Answer the question the person asked, in

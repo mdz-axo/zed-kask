@@ -189,11 +189,13 @@ mod tests {
 
     #[test]
     fn test_system_prompt_carries_trust_clause() {
-        // Binding 1 (trust-surface-bindings.md), landed 2026-10-31: the
-        // prompt states the trust POLICY — pricing, the cliff as a
-        // disclosure duty, severity-first reporting, measured confidence,
-        // answer-the-question — and cites its authority. Parameters stay
-        // in the module (`hkask-trust`): consumers get the policy, not the
+        // Binding 1 (trust-surface-bindings.md), landed 2026-10-31, anchor
+        // duty added same-day by operator approval: the prompt states the
+        // trust POLICY — the anchor duty (record and surface the work
+        // anchor before work), pricing, the cliff as a disclosure duty,
+        // severity-first reporting, measured confidence, answer-the-
+        // question — and cites its authority. Parameters stay in the
+        // module (`hkask-trust`): consumers get the policy, not the
         // formula. The boundary record and the answer-the-question probe
         // pre-registration live in `kask/eval/register-adherence-v1/`.
         let project = prompt_store::ProjectContext::default();
@@ -212,6 +214,9 @@ mod tests {
         let rendered = template.render(&Templates::new()).unwrap();
         assert!(rendered.contains("## Trust and expectations"));
         for phrase in [
+            "Anchor visibly before work",
+            "trust_anchor_record",
+            "caught after delivery it costs the task",
             "task cost plus trust cost",
             "renegotiate it openly",
             "verification must disclose sidestepping",
