@@ -118,7 +118,7 @@ until per-invocation attribution/authority is implemented (repair plan P2).
 
 API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FRED, etc.) are stored in the system
 keychain under `kask://credentials/<key>`. Inference-provider keys
-(OpenRouter, DeepInfra, RunPod, KiloCode) are the exception — each lives at its
+(OpenRouter, DeepInfra, RunPod) are the exception — each lives at its
 provider's `api_url` keychain slot (one key, one location), the same slot
 zed's `ApiKeyState` reads; see [Inference Providers](#inference-providers).
 There are no settings.json
@@ -142,13 +142,13 @@ with the new key.
 
 ## Inference Providers
 
-Inference providers (OpenRouter, DeepInfra, RunPod, KiloCode, Ollama) are NOT
+Inference providers (OpenRouter, DeepInfra, RunPod, Ollama) are NOT
 configured through the kask settings section — there is no
 `KaskInferenceProvidersSettings` struct. Providers are registered via zed's
 native **Settings → AI → LLM Providers**, and each provider's API key
 lives at exactly ONE keychain location: the provider's `api_url`
 (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`,
-`https://api.runpod.io`, `https://api.kilo.ai/api/gateway`) — the same slot zed's `ApiKeyState` reads.
+`https://api.runpod.io`) — the same slot zed's `ApiKeyState` reads.
 Every consumer — `ApiKeyState`, MCP server env injection
 (`credential_urls_for_mcp` via `credential_url_for_key`), the embedding
 port (`resolve_embedding_credentials`), and the IPC batch/rerank paths —
@@ -425,8 +425,7 @@ settings-file rewrite). The observer runs `sync_kask_mcp_runtime_servers`:
 `build_mcp_server_env` re-reads the keychain, and affected servers restart when
 their env differs. This covers data-service `kask://credentials/...` slots and
 inference-provider `api_url` slots used by MCP children (for example,
-OpenRouter/DeepInfra media keys). Native KiloCode chat has no MCP child-key
-consumer, so rotating its provider slot does not nudge MCP servers. A failed
+OpenRouter/DeepInfra media keys). A failed
 keychain write/delete does not trigger a restart.
 
 ### `HKASK_DB_PASSPHRASE` resolution

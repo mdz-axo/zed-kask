@@ -304,7 +304,7 @@ pub(crate) fn delete_credential(
 
 /// Whether a credential URL feeds MCP server env. Keychain writes/deletes to
 /// such URLs must nudge `SettingsStore` so governed MCP servers restart with
-/// the new value. A native-only provider URL (RunPod OCR, KiloCode chat) is
+/// the new value. A native-only provider URL (RunPod OCR) is
 /// deliberately false: its provider is refreshed directly, and restarting
 /// child processes would be wasted work.
 fn credential_url_feeds_mcp_servers(url: &str) -> bool {
@@ -831,8 +831,8 @@ mod tests {
 
         // Native-only providers keep their canonical slots but do not restart
         // MCP children. RunPod's Data Services row refreshes its provider
-        // directly; KiloCode is configured through the native provider UI.
-        for url in ["https://api.runpod.io", "https://api.kilo.ai/api/gateway"] {
+        // directly.
+        for url in ["https://api.runpod.io"] {
             assert!(!credential_url_feeds_mcp_servers(url));
         }
 
@@ -865,7 +865,6 @@ mod tests {
             "kask://credentials/openrouter",
             "kask://credentials/deepinfra",
             "kask://credentials/runpod",
-            "kask://credentials/kilocode",
         ] {
             assert!(
                 !credential_url_feeds_mcp_servers(url),

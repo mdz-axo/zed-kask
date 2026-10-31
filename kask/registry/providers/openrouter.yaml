@@ -43,9 +43,11 @@ consumed_capabilities:
       ollama same-family model measured 206s–>300s per chunk (see
       kask/registry/providers/ollama.yaml) and was recorded as deliberate
       non-consumption for this role
-  - capability: edit predictions — z-ai/glm-5.2
-    source: DIVERGENCE.md D24
-deliberate_non_consumption: []
+deliberate_non_consumption:
+  - capability: edit predictions
+    reason: retired 2026-10-31 (operator ruling — unused); the D24 GLM
+      edit-prediction route is removed and predictions fall back to Zed's
+      cloud endpoint default
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
   extracted_at: "2026-10-13"

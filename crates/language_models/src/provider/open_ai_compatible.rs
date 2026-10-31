@@ -551,21 +551,6 @@ impl LanguageModelClient for OpenAiCompatibleLanguageModelProvider {
             .boxed()
         }
     }
-
-    // zed-kask: D24 — expose the registry-held credentials so edit prediction
-    // can talk to the provider's HTTP API directly, without a second
-    // inference router.
-    fn api_key(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
-        self.state.read_with(cx, |state, _cx| {
-            let api_url = &state.settings.api_url;
-            state.api_key_state.key(api_url).map(|key| key.to_string())
-        })
-    }
-
-    fn api_url(&self, _model: &LanguageModel, cx: &App) -> Option<String> {
-        self.state
-            .read_with(cx, |state, _cx| Some(state.settings.api_url.clone()))
-    }
 }
 
 fn default_thinking_reasoning_effort(model: &AvailableModel) -> Option<open_ai::ReasoningEffort> {

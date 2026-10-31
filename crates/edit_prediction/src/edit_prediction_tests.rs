@@ -2910,11 +2910,6 @@ fn init_test_with_fake_client_and_legacy_data_collection(
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
         install_in_memory_credentials_provider(cx);
-        // zed-kask: D24 — default.json sets the edit prediction provider to
-        // `open_ai_compatible_api` for production (kask completion port
-        // interception). Tests expect the upstream Zeta cloud path, so
-        // override the provider back to `zed`.
-        override_edit_prediction_provider_to_zed(cx);
         zlog::init_test();
 
         if let Some(legacy_data_collection_choice) = legacy_data_collection_choice {
@@ -3550,11 +3545,6 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
         install_in_memory_credentials_provider(cx);
-        // zed-kask: D24 — default.json sets the edit prediction provider to
-        // `open_ai_compatible_api` for production (kask completion port
-        // interception). Tests expect the upstream Zeta cloud path, so
-        // override the provider back to `zed`.
-        override_edit_prediction_provider_to_zed(cx);
     });
 }
 
@@ -3624,32 +3614,6 @@ fn install_in_memory_credentials_provider(cx: &mut App) {
     }
 }
 
-// zed-kask: D24 — override the edit prediction provider back to `zed`
-// in test settings. `default.json` sets it to `open_ai_compatible_api` for
-// production (kask completion port interception), but the test
-// `FakeHttpClient` handlers only serve the Zeta cloud endpoints
-// (`/predict_edits/v3`, `/predict_edits/v4`). Without this override,
-// `is_cloud_zeta` is `false` and requests route through
-// `send_custom_server_request` to an unhandled URL, causing tests to
-// deadlock or fail with 404.
-//
-// The override writes the DEFAULT settings layer, not the user layer:
-// upstream tests clear the user provider (`set_provider(None)`) and
-// expect the default to resolve to `zed`, while the explicit-choice
-// semantics (`raw_user_settings().provider` staying `None`) must hold —
-// a user-layer override would break both.
-fn override_edit_prediction_provider_to_zed(cx: &mut App) {
-    SettingsStore::update_global(cx, |store, cx| {
-        store.update_default_settings(cx, |settings| {
-            settings
-                .project
-                .all_languages
-                .edit_predictions
-                .get_or_insert_default()
-                .provider = Some(settings::EditPredictionProvider::Zed);
-        });
-    });
-}
 
 fn set_jumps_feature_flag_override(cx: &mut App, value: &str) {
     SettingsStore::update_global(cx, |store, cx| {

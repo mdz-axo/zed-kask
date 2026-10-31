@@ -16,13 +16,13 @@ runtime facilities. Its governing dependency invariant and module root are at
 
 ## Current module surface
 
-The crate root declares 30 top-level production modules
-(`kask/crates/kask_bridge/src/kask_bridge.rs:23-121`; a 31st declaration,
-`algedonic_board_real_tests`, is `#[cfg(test)]` at `:122-123`):
+The crate root declares 29 top-level production modules
+(`kask/crates/kask_bridge/src/kask_bridge.rs:23-119`; a 30th declaration,
+`algedonic_board_real_tests`, is `#[cfg(test)]` at `:120-121`):
 
 `condenser_bridge`, `context_injector`, `credentials`,
 `database_maintenance`, `delegation_grants`, `host_skill_tools`, `identity`,
-`inference_chat`, `inference_edit_prediction`, `inference_resilience`,
+`inference_chat`, `inference_resilience`,
 `passphrase_rotation`, `inference_embedding`, `inference_ipc_server`,
 `inference_providers`, `inference_socket`, `mcp_env`, `mcp_servers`, `memory`,
 `model_resolution`, `settings`, `metacognition_bridge`, `directive_bridge`,
@@ -30,9 +30,9 @@ The crate root declares 30 top-level production modules
 `ocr_health_bridge`.
 
 The public re-exports are defined at
-`kask/crates/kask_bridge/src/kask_bridge.rs:27-124`. Skill execution is not a
+`kask/crates/kask_bridge/src/kask_bridge.rs:27-122`. Skill execution is not a
 bridge module; the agent-side `SkillTool` owns body injection — the bridge root
-exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-124`).
+exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-122`).
 
 ## Settings hierarchy
 

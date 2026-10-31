@@ -1487,14 +1487,6 @@ fn main() {
         // (from the keychain), and its own DB paths. If the Zed user hasn't
         // resolved, a fallback identity ("kask") is used. See the comment
         // at the top of the spawn block for the full rationale.
-        //
-        // Clone `tool_port` for the model-dependent skill execution task
-        // (below) before it's moved into the deferred task. The model-dependent
-        // task fires on `LanguageModelRegistry` events, independent of user
-        // login — the skill execution only needs the model + tool_port, not
-        // the username.
-        let _tool_port_for_model_task: std::sync::Arc<dyn hkask_tool_port::ToolPort> =
-            tool_port.clone();
         {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup.clone();
@@ -2393,13 +2385,6 @@ fn main() {
                     );
                 }
 
-                // zed-kask: Registry path resolution is now handled by the
-                // model-dependent skill execution task (below the deferred
-                // task block), which doesn't need the deferred task. The skill
-                // execution is the only consumer of the registry paths, and
-                // it's wired by that separate task. The IPC server and MCP
-                // server launch below don't need the registry paths.
-
                 // Sync model-dependent wiring (inside cx.update).
                 let inference_wiring = cx.update(|cx| {
                     // ── Panel + curator wiring: unconditional ─────────────────
@@ -2859,116 +2844,6 @@ fn main() {
             }).detach();
         }
 
-        // zed-kask: D1 — Model-dependent skill execution wiring.
-        //
-        // This task wires the edit-prediction port (D24), which needs the
-        // cascade) as soon as `LanguageModelRegistry::default_model()` returns
-        // `Some`, independent of Zed user login. The model registry is
-        // populated from settings.json (`agent.default_model`), not from
-        // cloud auth, so gating the skill execution on user login was a
-        // bug: users with a configured default model but no cloud login had
-        // skills silently disabled (the `skill` tool returned a no-op
-        // envelope instead of the skill body).
-        //
-        // The task subscribes to `LanguageModelRegistry` events
-        // (`DefaultModelChanged`, `ProviderStateChanged`, `AddedProvider`,
-        // `ProvidersChanged`) and fires the wiring on each event until it
-        // succeeds. The `AtomicBool` guard latches on success only (see
-        // `try_wire_edit_prediction_port`) — events that fire while provider
-        // credentials are still loading are retried on the next event, and a
-        // call after success is dropped before reaching the set-once hook.
-        //
-        // The registry path resolution (dev source vs seeded) is duplicated
-        // from the deferred task because it doesn't need the user and must
-        // run here for the skill execution. The `tool_port` is the same
-        // `McpRuntime` Arc used by the deferred task. The inference port
-        // is constructed independently from the resolved model — this is a
-        // second port (the deferred task's IPC server constructs its own),
-        // but they wrap the same underlying model, so the duplication is
-        // harmless.
-        //
-        // What stays in the deferred task:
-        // - Memory port, context injector, curator injector (use fallback
-        //   identity if Zed user hasn't resolved)
-        // - Regulation archive (needs passphrase), board sink (governed tool invoker)
-        // - IPC server (needs embedding port from provisioning)
-        // - MCP server launch, email sink
-        {
-            let app_state_for_model_task = app_state.clone();
-            cx.spawn(async move |cx| {
-                // Check immediately and subscribe to registry events.
-                let registry = cx.update(|cx| language_model::LanguageModelRegistry::global(cx));
-
-                // Initial check — the model may already be available.
-                let initial = registry.read_with(cx, |r, _| r.default_model().is_some());
-                // zed-kask: D24 — one latch pair shared by the initial check and
-                // the registry-event subscription: `ep_wired` latches on success
-                // (see `try_wire_edit_prediction_port`), `ep_warned` latches on
-                // the first failure so the startup event burst logs one WARN,
-                // not one per retry.
-                let ep_wired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let ep_warned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let http_client = app_state_for_model_task.client.http_client();
-                if initial {
-                    if let Err(e) = try_wire_edit_prediction_port(
-                        &ep_wired,
-                        &ep_warned,
-                        &registry,
-                        http_client.clone(),
-                        cx,
-                    )
-                    .await
-                    {
-                        log::warn!("hKask edit-prediction port initial wiring failed: {e}");
-                    }
-                }
-
-                // Subscribe to registry events for the async case.
-                let registry_for_sub = registry.clone();
-                let http_client_for_sub = http_client;
-                cx.subscribe(
-                    &registry,
-                    move |_, event: &language_model::Event, cx| {
-                        match event {
-                            language_model::Event::DefaultModelChanged
-                            | language_model::Event::ProviderStateChanged(_)
-                            | language_model::Event::AddedProvider(_)
-                            | language_model::Event::ProvidersChanged => {
-                                let registry = registry_for_sub.clone();
-                                let ep_wired = ep_wired.clone();
-                                let ep_warned = ep_warned.clone();
-                                let http_client = http_client_for_sub.clone();
-                                cx.spawn(async move |cx| {
-                                    // zed-kask: D24
-                                    if let Err(e) = try_wire_edit_prediction_port(
-                                        &ep_wired,
-                                        &ep_warned,
-                                        &registry,
-                                        http_client,
-                                        cx,
-                                    )
-                                    .await
-                                    {
-                                        log::warn!(
-                                            "hKask edit-prediction port wiring failed on registry event: {e}"
-                                        );
-                                    }
-                                })
-                                .detach();
-                            }
-                            _ => {}
-                        }
-                    },
-                )
-                .detach();
-
-                log::info!(
-                    "hKask model-dependent skill execution task started — \
-                     waiting for LanguageModelRegistry to report a default model"
-                );
-            })
-            .detach();
-        }
 
         // zed-kask does not initialize upstream Zed's in-app updater. Its Linux
         // installer writes `zed*.app` bundles into `~/.local` and can replace
@@ -3085,22 +2960,19 @@ fn main() {
         media_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
-        // D1/D3: Model-dependent kask wiring is split across two tasks:
+        // D1/D3: Model-dependent kask wiring lives in the deferred task:
         //
-        // 1. The skill execution (D1) is wired by the model-dependent task
-        //    (above), which fires as soon as `LanguageModelRegistry::
-        //    default_model()` returns `Some` — independent of Zed user login.
-        //    The model registry is populated from settings.json, not cloud auth.
-        //
-        // 2. The remaining model-dependent hooks (IPC server, condenser, panel
-        //    tool invoker) and all kask hooks (memory port, context injector,
-        //    regulation archive) are wired by the deferred task (above).
-        //    The deferred task no longer blocks on the Zed user — it proceeds
-        //    immediately with a fallback identity if needed.
+        // The panel/curator/condenser hooks are unconditional in its
+        // `inference_wiring` block; the inference stack (real inference
+        // port, inference IPC server, regulation health source) is
+        // model-gated — `wire_kask_inference_stack` defers while
+        // `LanguageModelRegistry::default_model()` is still `None` (the
+        // registry populates from settings.json, not cloud auth), and the
+        // model-resolved re-wire completes it on registry events.
         //
         // zed-kask: D1/D3/D6/D8 — F20: deferred task (kask hooks:
         // memory_port, thread_condenser, tool_invoker, context_injector,
-        // curator_context_injector) + model-dependent task (edit_prediction_port).
+        // curator_context_injector).
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -3390,93 +3262,6 @@ fn main() {
 // supplies their tools to the agent through set_kask_tool_source. The
 // ContextServerStore must not launch duplicate, keyless per-project children.
 
-/// zed-kask: D24 — wire the kask edit-prediction port.
-///
-/// Resolves the VISIBLE default chain — `kask.models.default_model` when
-/// set, else the zed default model — from the `LanguageModelRegistry` (never
-/// a code constant, per the operator's no-hidden-models spec), constructs a
-/// `BridgeEditPredictionPort` that makes raw `/completions` calls through
-/// the model's `api_url()`/`api_key()`, and injects it into the
-/// edit-prediction store via
-/// `edit_prediction::open_ai_compatible::set_kask_completion_port`.
-///
-/// Called from the same model-dependent task as the edit-prediction port wiring
-/// — fires once the registry has a model. `Mutex`-based hook (re-settable),
-/// so there is no need for an `AtomicBool` guard, but we use one anyway to
-/// avoid redundant `resolve_model_names` + HTTP-client construction on every
-/// registry event.
-async fn try_wire_edit_prediction_port(
-    wired: &std::sync::atomic::AtomicBool,
-    warned: &std::sync::atomic::AtomicBool,
-    registry: &gpui::Entity<language_model::LanguageModelRegistry>,
-    http_client: std::sync::Arc<dyn http_client::HttpClient>,
-    cx: &mut gpui::AsyncApp,
-) -> anyhow::Result<()> {
-    // Latch on SUCCESS, not on attempt: an event can fire while provider
-    // credentials are still loading, and latching on a failed attempt left
-    // the port permanently unwired for the session (live-observed
-    // 2026-08-30: the 18:07 "no api_url/api_key" failure latched the guard
-    // and no later event retried). The load/store pair needs no CAS —
-    // handlers run on the GPUI main thread and this closure has no awaits.
-    if wired.load(std::sync::atomic::Ordering::SeqCst) {
-        return Ok(());
-    }
-
-    cx.update(|cx| {
-        let tokio_handle = gpui_tokio::Tokio::handle(cx);
-        // `kask.models.default_model` — which carries the code default
-        // (operator ruling 2026-09-04: defaults in code, settings override)
-        // — else the zed default.
-        let kask_default_model = kask_bridge::KaskSettings::get_global(cx)
-            .models
-            .default_model
-            .trim()
-            .to_string();
-        let kask_default_model = (!kask_default_model.is_empty()).then_some(kask_default_model);
-        let port = kask_bridge::BridgeEditPredictionPort::from_registry(
-            registry.read(cx),
-            http_client,
-            tokio_handle,
-            kask_default_model.as_deref(),
-            cx,
-        );
-        if let Some(port) = port {
-            edit_prediction::open_ai_compatible::set_kask_completion_port(Some(
-                std::sync::Arc::new(port)
-                    as std::sync::Arc<dyn edit_prediction::open_ai_compatible::KaskCompletionPort>,
-            ));
-            wired.store(true, std::sync::atomic::Ordering::SeqCst);
-            log::info!(
-                "hKask edit-prediction port wired — routing FIM completions \
-                 through LanguageModelRegistry ({})",
-                kask_default_model.as_deref().unwrap_or("zed default model")
-            );
-        } else {
-            // The registry fires a burst of events at startup while provider
-            // credentials load asynchronously; each event retries this
-            // wiring. Warn once, then log repeats at debug — a normal
-            // startup previously emitted 100+ identical WARN lines before
-            // the keychain read landed and the port wired.
-            if !warned.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                log::warn!(
-                    "hKask edit-prediction port not wired — could not resolve {} \
-                     from LanguageModelRegistry (no api_url/api_key). Edit \
-                     predictions will fall back to the configured provider. \
-                     Retries until the key resolves log at debug.",
-                    kask_default_model.as_deref().unwrap_or("zed default model")
-                );
-            } else {
-                log::debug!(
-                    "hKask edit-prediction port retry: {} still unresolved \
-                     (no api_url/api_key)",
-                    kask_default_model.as_deref().unwrap_or("zed default model")
-                );
-            }
-        }
-        Ok(())
-    })
-}
-
 /// Which model the inference stack was wired to — the re-wire's latch input.
 enum InferenceStackWiring {
     /// The registry has no default model yet; nothing was wired.
@@ -3684,10 +3469,10 @@ fn wire_kask_inference_stack(
         sync_kask_mcp_runtime_servers(mcp_runtime, restart_env, launch_pass_complete, cx);
     }
 
-    // The skill execution and edit-prediction wiring live in the separate
-    // model-dependent task, which fires on registry events — the inference
-    // port constructed here is a second port, but they wrap the same
-    // underlying model, so the duplication is harmless.
+    // This stack's port is the process-global inference port
+    // (`set_global_inference_port`) that the kask inference surface — skill
+    // execution and the curator session factory included — reads; there is
+    // no second port. The edit-prediction route retired with D24 (2026-10-31).
     wiring
 }
 

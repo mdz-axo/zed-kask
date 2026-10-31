@@ -42,7 +42,6 @@ settings_content.workspace = true
 credentials_provider.workspace = true
 collections.workspace = true
 schemars = { workspace = true, features = ["derive"] }
-edit_prediction.workspace = true
 
 # Shared
 uuid.workspace = true

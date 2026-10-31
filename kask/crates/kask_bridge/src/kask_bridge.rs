@@ -37,7 +37,6 @@ mod goals;
 mod identity;
 pub use goals::GoalHost;
 mod inference_chat;
-mod inference_edit_prediction;
 mod inference_resilience;
 mod passphrase_rotation;
 pub use delegation_grants::revoke_delegation_grant;
@@ -62,7 +61,6 @@ pub use inference_chat::{
     LanguageModelInferencePort, NoModelInferencePort, global_inference_port,
     set_global_inference_port,
 };
-pub use inference_edit_prediction::BridgeEditPredictionPort;
 pub use inference_embedding::LanguageModelEmbeddingPort;
 pub use inference_ipc_server::{
     InferenceIpcServer, WorktreeSpawner, set_worktree_spawner, swap_inference_ipc_ports,
