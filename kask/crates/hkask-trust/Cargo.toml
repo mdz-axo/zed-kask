@@ -8,5 +8,9 @@ description = "The expectation-ledger trust model (P13): the anchored fold, the 
 [lib]
 path = "src/hkask_trust.rs"
 
+[dependencies]
+uuid.workspace = true
+chrono = { workspace = true, features = ["clock"] }
+
 [lints]
 workspace = true
