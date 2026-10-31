@@ -50,12 +50,7 @@ impl CuratorTrustLedgerStore {
             "ts": event.ts.to_rfc3339(),
             "oracle_note": event.oracle_note,
         });
-        HMem::new(
-            TRUST_LEDGER_ENTITY,
-            event.id.as_str(),
-            value,
-            self.webid,
-        )
+        HMem::new(TRUST_LEDGER_ENTITY, event.id.as_str(), value, self.webid)
     }
 
     fn h_mem_to_event(h: &HMem) -> LedgerEvent {

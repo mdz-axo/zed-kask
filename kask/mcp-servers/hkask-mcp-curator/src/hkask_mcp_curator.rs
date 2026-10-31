@@ -1528,8 +1528,7 @@ impl CuratorServer {
             let memory = stores.memory.ok_or_else(|| {
                 McpToolError::failed_precondition("curator memory store unavailable")
             })?;
-            let store =
-                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
+            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
             let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
             let weight = match req.weight {
                 1 => hkask_trust::Weight::Implicit,
@@ -1563,8 +1562,7 @@ impl CuratorServer {
             let memory = stores.memory.ok_or_else(|| {
                 McpToolError::failed_precondition("curator memory store unavailable")
             })?;
-            let store =
-                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
+            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
             let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
             let id = hkask_trust::LedgerEventId::from_string(&req.event_id);
             let outcome = match req.outcome.as_str() {
@@ -1597,8 +1595,7 @@ impl CuratorServer {
             let memory = stores.memory.ok_or_else(|| {
                 McpToolError::failed_precondition("curator memory store unavailable")
             })?;
-            let store =
-                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
+            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
             let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
             let hours = req.window_hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours);
@@ -1627,8 +1624,7 @@ impl CuratorServer {
             let memory = stores.memory.ok_or_else(|| {
                 McpToolError::failed_precondition("curator memory store unavailable")
             })?;
-            let store =
-                crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
+            let store = crate::trust_ledger::CuratorTrustLedgerStore::new(memory, self.webid);
             let ledger = hkask_trust::TrustLedger::new(std::sync::Arc::new(store));
             let hours = req.window_hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours);
