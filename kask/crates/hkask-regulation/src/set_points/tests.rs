@@ -99,6 +99,25 @@ fn algedonic_events_max_round_trips_from_config() {
     );
 }
 
+/// `native_first_rate_threshold` round-trips from YAML config and the
+/// default stays 0.50 — the operator's calibration knob (recalibrated from
+/// the measured baseline 2026-10-31 via `HKASK_REG_CONFIG`). Pins the wire
+/// key itself: `SetPointsConfig` has no `deny_unknown_fields`, so a
+/// renamed field would load an operator's config file successfully while
+/// silently stranding the calibration at the default.
+#[test]
+fn native_first_rate_threshold_round_trips_from_config() {
+    let config =
+        SetPointsConfig::from_yaml("native_first_rate_threshold: 0.65\n").expect("valid yaml");
+    let points = SetPoints::from_config(&config);
+    assert_eq!(points.native_first_rate_threshold, 0.65);
+    assert_eq!(
+        SetPoints::default().native_first_rate_threshold,
+        0.50,
+        "the compiled default is the pre-baseline guess, unchanged"
+    );
+}
+
 /// Pins the bounds check for `algedonic_events_max`: a value at or above
 /// `max_alerts` configures a vacuous sensor — the actionable count can
 /// never exceed the log cap, so the sensor could never fire and the
