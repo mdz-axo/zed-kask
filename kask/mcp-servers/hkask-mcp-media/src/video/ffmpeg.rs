@@ -467,7 +467,7 @@ impl FfmpegRunner {
                         Err(_) => (false, String::new()),
                     }
                 }
-                Ok(probe) => (false, probe.codec.clone()),
+                Ok(probe) => (false, probe.codec),
                 Err(_) => (false, String::new()),
             };
             if reencode_needed {

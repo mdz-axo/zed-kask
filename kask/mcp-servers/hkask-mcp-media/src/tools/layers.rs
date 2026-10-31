@@ -268,7 +268,7 @@ fn transcript_stream(
             )
         })
         .collect();
-    Ok(Some((summary.id.clone(), bundle.model.clone(), segments)))
+    Ok(Some((summary.id.clone(), bundle.model, segments)))
 }
 
 /// The semantic vision pass's typed chunk output — the schema the model is
