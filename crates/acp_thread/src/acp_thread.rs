@@ -7863,9 +7863,9 @@ impl AcpThread {
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
                     let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    // zed-kask: D27 — upstream adopted the non-interactive sandboxed
-                    // shell (linux-gated; zed-kask is linux-only per D7). Failure
-                    // rationale: DIVERGENCE.md D27. Pin: test_sandboxed_terminal_runs_non_interactively.
+                    // zed-kask: upstream adopted the non-interactive sandboxed
+                    // shell (linux-gated; zed-kask is linux-only per D7), so this
+                    // matches upstream. Pin: test_sandboxed_terminal_runs_non_interactively.
                     if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
                         builder = builder.non_interactive();
                     }
@@ -22219,7 +22219,7 @@ mod tests {
         );
     }
 
-    /// D27: sandboxed terminal commands must run non-interactively. The sandbox
+    /// Sandboxed terminal commands must run non-interactively. The sandbox
     /// creates a new session (setsid) with no controlling terminal and stdin
     /// redirected to /dev/null. An interactive shell (-i) tries to set the tty
     /// process group, fails with "Cannot set tty process group (No such
@@ -22249,9 +22249,9 @@ mod tests {
         assert_eq!(program, "/bin/sh");
         assert!(
             !args.contains(&"-i".to_string()),
-            "D27: sandboxed terminal must not pass -i — the sandbox has no \
+            "sandboxed terminal must not pass -i — the sandbox has no \
              controlling terminal, so -i causes \"Cannot set tty process group\" \
-             and exit code 2. See DIVERGENCE.md D27."
+             and exit code 2."
         );
     }
 

@@ -1,7 +1,7 @@
 ---
 title: "hKask Core and MCP Review — Repair and Improvement Plan"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-30
+last_updated: 2026-10-31
 version: "0.11.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -313,7 +313,7 @@ Plan: replace the boolean with a host-authenticated receipt wherever authenticat
 Evidence:
 - `AGENTS.md:39–47` says 10 servers, describes an old host path, and references an absent per-tool contract document.
 - `kask/docs/architecture/zed-host-architecture-plan.md:13–43` says 18 libraries/11 servers.
-- `DIVERGENCE.md:234–240` includes a removed library and 11 servers.
+- `DIVERGENCE.md` recorded a removed library and 11 servers at plan time (then-current line numbering; the register now lists 8 servers).
 
 Counterevidence: the runtime registry is centralized; the charter distinguishes IS/OUGHT. Missing documentation is not proof that all tool contracts lack tests.
 

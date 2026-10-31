@@ -2059,12 +2059,12 @@ impl Ord for ParseStep {
         let range_b = other.range();
         Ord::cmp(&other.depth, &self.depth)
             .then_with(|| Ord::cmp(&range_b.start, &range_a.start))
-            // zed-kask: D66 (retired onto upstream, 2026-10-27) — upstream
-            // resolved the equal-start contradiction with the OPPOSITE
-            // canonical order (longer end pops first) and flipped
-            // check_invariants to match; their design delivers the seam's
-            // purpose (deterministic equal-start ordering, no panic), so the
-            // fork's shorter-first tie-break is retired onto theirs.
+            // zed-kask: matches upstream since the 2026-10-27 sync —
+            // upstream resolves the equal-start contradiction by popping
+            // the LONGER end first at equal start and flips
+            // check_invariants to match (deterministic equal-start
+            // ordering, no panic); the fork's former shorter-first
+            // tie-break is retired onto upstream's design.
             .then_with(|| Ord::cmp(&range_a.end, &range_b.end))
             .then_with(|| other.language.id().cmp(&self.language.id()))
     }
