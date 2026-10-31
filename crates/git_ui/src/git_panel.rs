@@ -15263,8 +15263,7 @@ mod tests {
     // zed-kask: D37 — pins the guard for non-reasoning models.
     #[test]
     fn test_commit_message_guard_disables_thinking_for_non_reasoning_model() {
-        let (thinking_allowed, thinking_effort) =
-            GitPanel::commit_message_thinking_settings(false);
+        let (thinking_allowed, thinking_effort) = GitPanel::commit_message_thinking_settings(false);
         assert!(
             !thinking_allowed,
             "guard should disable thinking when the model does not support it"
