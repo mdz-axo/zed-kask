@@ -4305,6 +4305,54 @@ impl Thread {
                                     summaries.push(summary);
                                 }
                             }
+                            // zed-kask (Stage-3 F4, d8-compaction-retirement
+                            // 2026-10-31): bound the reduce the same way the
+                            // map is bounded — merge in ordered budget-fitting
+                            // batches until one final flat merge fits. A zero
+                            // budget (Single plans, no-budget paths) keeps the
+                            // existing single flat merge unchanged.
+                            let merge_budget_bytes = planned.merge_budget_bytes;
+                            if merge_budget_bytes > 0 {
+                                loop {
+                                    let batches = crate::kask_compaction::merge_batches(
+                                        &summaries,
+                                        merge_budget_bytes,
+                                    );
+                                    if batches.len() <= 1
+                                        || batches.iter().all(|batch| batch.len() == 1)
+                                    {
+                                        break;
+                                    }
+                                log::info!(
+                                    "Compaction batched merge round: {} summaries -> {} batches",
+                                    summaries.len(),
+                                    batches.len()
+                                );
+                                let mut merged = Vec::with_capacity(batches.len());
+                                for batch in batches {
+                                    let batch_summaries: Vec<String> =
+                                        summaries[batch.clone()].to_vec();
+                                    let batch_result =
+                                        Self::collect_compaction_summary_with_usage(
+                                            this,
+                                            &model,
+                                            crate::kask_compaction::merge_request(
+                                                request.clone(),
+                                                &batch_summaries,
+                                            ),
+                                            None,
+                                            summary_cancellation_rx.clone(),
+                                            cx.clone(),
+                                        )
+                                        .await?;
+                                    let Some((batch_summary, _)) = batch_result else {
+                                        return Ok(None);
+                                    };
+                                    merged.push(batch_summary);
+                                }
+                                summaries = merged;
+                                }
+                            }
                             let request =
                                 crate::kask_compaction::merge_request(request, &summaries);
                             // The merge call's token cost is surfaced from the

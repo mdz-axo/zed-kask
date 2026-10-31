@@ -107,6 +107,12 @@ impl ShrinkStats {
 pub(crate) struct PlannedCompaction {
     pub(crate) plan: CompactionPlan,
     pub(crate) shrink: ShrinkStats,
+    /// The byte budget one merge round's combined summaries must fit
+    /// (Stage-3 F4, d8-compaction-retirement 2026-10-31): the flat reduce
+    /// over every summary at once over-windows exactly at the extreme
+    /// segment counts the map stage exists for. Zero keeps the legacy
+    /// flat merge (Single plans, no-budget paths).
+    pub(crate) merge_budget_bytes: usize,
 }
 
 /// Plan how to summarize `request`'s history under `input_capacity_tokens`
@@ -133,6 +139,7 @@ pub(crate) fn plan_compaction(
         return Ok(PlannedCompaction {
             plan: CompactionPlan::Single(request.clone()),
             shrink: ShrinkStats::zero(0),
+            merge_budget_bytes: 0,
         });
     }
     let instruction = request
@@ -163,6 +170,7 @@ pub(crate) fn plan_compaction(
         return Ok(PlannedCompaction {
             plan,
             shrink: ShrinkStats::zero(original_total),
+            merge_budget_bytes: 0,
         });
     };
 
@@ -190,7 +198,11 @@ pub(crate) fn plan_compaction(
             .map(|(earlier, later)| CompactionPlan::Segments(vec![earlier, later]))
             .unwrap_or_else(|| CompactionPlan::Single(shrunk))
     };
-    Ok(PlannedCompaction { plan, shrink })
+    Ok(PlannedCompaction {
+        plan,
+        shrink,
+        merge_budget_bytes: budget,
+    })
 }
 
 /// Build the final merge request from completed segment summaries, in
@@ -217,6 +229,39 @@ pub(crate) fn merge_request(
     base.messages
         .push(context_message(COMPACTION_PROMPT.into()));
     base
+}
+
+/// Split `summaries` into ordered merge batches whose combined text fits
+/// `budget_bytes` per merge call (Stage-3 F4, d8-compaction-retirement
+/// 2026-10-31): the flat reduce over every summary at once over-windows
+/// exactly at the extreme segment counts the map stage exists for, so the
+/// reduce round is bounded the same way the map round is. Greedy in-order
+/// packing over chronological order; a summary alone over the budget is
+/// its own one-summary batch (a batched merge still shrinks it). A zero
+/// budget is the legacy single flat batch.
+pub(crate) fn merge_batches(summaries: &[String], budget_bytes: usize) -> Vec<Range<usize>> {
+    if budget_bytes == 0 {
+        return vec![0..summaries.len()];
+    }
+    // Per-summary label overhead ("Segment N:") and the fixed merge-request
+    // overhead (instruction preamble + compaction prompt), reserved so a
+    // packed batch never relies on the provider's rounding.
+    const LABEL_OVERHEAD: usize = 16;
+    const FIXED_OVERHEAD: usize = 128;
+    let mut batches = Vec::new();
+    let mut batch_start = 0;
+    let mut batch_bytes = FIXED_OVERHEAD;
+    for (index, summary) in summaries.iter().enumerate() {
+        let summary_bytes = LABEL_OVERHEAD.saturating_add(summary.len());
+        if batch_bytes.saturating_add(summary_bytes) > budget_bytes && index > batch_start {
+            batches.push(batch_start..index);
+            batch_start = index;
+            batch_bytes = FIXED_OVERHEAD;
+        }
+        batch_bytes = batch_bytes.saturating_add(summary_bytes);
+    }
+    batches.push(batch_start..summaries.len());
+    batches
 }
 
 // ─────────────────────── §1 Deterministic pre-shrink ──────────────────────
@@ -1669,6 +1714,59 @@ mod tests {
                 .last()
                 .is_some_and(|message| message.string_contents() == COMPACTION_PROMPT)
         );
+    }
+
+    #[test]
+    fn merge_batches_fit_the_merge_budget_in_chronological_order() {
+        // 20 summaries of 1000 bytes: a 5000-byte budget fits 4 per batch
+        // (4 x 1016 = 4064 <= 5000; adding a 5th would exceed it), so the flat
+        // reduce becomes 5 ordered batches whose concat is the input order.
+        let summaries: Vec<String> = (0..20)
+            .map(|index| {
+                let mut summary = format!("s{index}:");
+                summary.push_str(&"x".repeat(1000 - summary.len()));
+                summary
+            })
+            .collect();
+        assert!(summaries.iter().all(|summary| summary.len() == 1000));
+        let batches = merge_batches(&summaries, 5_000);
+        assert_eq!(batches.len(), 5);
+        let flattened: Vec<&String> = batches
+            .iter()
+            .flat_map(|batch| summaries[batch.clone()].iter())
+            .collect();
+        assert_eq!(flattened.len(), summaries.len());
+        assert!(
+            flattened
+                .iter()
+                .enumerate()
+                .all(|(index, summary)| std::ptr::eq(*summary, &summaries[index]))
+        );
+    }
+
+    #[test]
+    fn merge_batches_keep_a_small_count_as_one_flat_batch() {
+        let summaries = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(
+            merge_batches(&summaries, 1_000_000),
+            vec![0..2],
+            "a small total keeps the single flat merge unchanged"
+        );
+        assert_eq!(
+            merge_batches(&summaries, 0),
+            vec![0..2],
+            "a zero budget is the legacy flat batch"
+        );
+    }
+
+    #[test]
+    fn merge_batches_isolate_an_over_budget_summary() {
+        // The middle summary alone exceeds the 500-byte budget: it becomes
+        // its own one-summary batch (the only progress a batched reduce can
+        // make on it), and the neighbors keep their own batches.
+        let summaries = vec!["tiny".to_string(), "x".repeat(900), "tiny".to_string()];
+        let batches = merge_batches(&summaries, 500);
+        assert_eq!(batches, vec![0..1, 1..2, 2..3]);
     }
 
     // ── C2 count-aware cap ──
