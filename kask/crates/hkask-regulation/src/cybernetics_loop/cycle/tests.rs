@@ -2234,6 +2234,78 @@ fn loop_telemetry_coalescer_preserves_transitions_and_reports_suppression() {
     assert_eq!(steady.suppressed_cycles, 1);
 }
 
+/// expect: "A persistent condition warns once on the log surface, not per tick" [P9 §9.4]
+/// The warn arms' log surface follows the telemetry coalescer's transition
+/// discipline: entry warns, an unchanged reading is coalesced, a changed
+/// reading re-warns, and leaving deviation re-arms the latch. Observed
+/// motive (2026-10-31): the native-first warn repeated byte-identically on
+/// every 10-second tick for six minutes while its 11-sample window sat
+/// frozen between turns — the escalation path dedups onto the open board
+/// card, but the log line had no latch.
+#[test]
+fn condition_warn_latch_classifies_transitions() {
+    let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+    let signal = Signal::new(LoopId::Cybernetics, SignalMetric::NativeFirstRate, 0.7, 0.5);
+    assert!(
+        regulation_loop.condition_warn_transition(&signal),
+        "a condition's first occurrence warns"
+    );
+    assert!(
+        !regulation_loop.condition_warn_transition(&signal),
+        "an unchanged persistent condition is coalesced"
+    );
+    let mut changed = signal.clone();
+    changed.value = 0.8;
+    assert!(
+        regulation_loop.condition_warn_transition(&changed),
+        "a changed reading re-warns immediately"
+    );
+    // Clearing re-arms: the announcement drops the latch, so a recurrence
+    // warns again rather than being silenced forever.
+    regulation_loop.report_cleared_conditions(&[]);
+    assert!(
+        regulation_loop.condition_warn_transition(&signal),
+        "a recurrence after clearing warns again"
+    );
+    assert!(
+        !regulation_loop.condition_warn_transition(&signal),
+        "and its persistence is coalesced again"
+    );
+}
+
+/// All three condition-warn arms (tool reliability, native-first, trust
+/// deviation) route their warns through the §9.4 latch: the first action
+/// build consumes the transition, so the identical next cycle coalesces
+/// instead of re-warning. Driven through `build_regulation_action` so the
+/// pin covers the arm wiring itself, not just the helper.
+#[test]
+fn warn_arms_route_through_the_condition_latch() {
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    runtime.block_on(async {
+        let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
+        let policy = RegulationPolicy::default();
+        for (metric, value, set_point) in [
+            (SignalMetric::ToolReliability, 0.2, 0.8),
+            (SignalMetric::NativeFirstRate, 0.7, 0.5),
+            (SignalMetric::TrustDeviation, 1.0, 0.0),
+        ] {
+            let signal = Signal::new(LoopId::Cybernetics, metric, value, set_point);
+            let deviation = Deviation::from_signal(&signal)
+                .unwrap_or_else(|| panic!("{metric:?} must deviate from its set point"));
+            for proposed in policy.decide(&deviation) {
+                regulation_loop
+                    .build_regulation_action(&deviation, proposed)
+                    .await
+                    .unwrap_or_else(|| panic!("{metric:?} warn arm still builds its action"));
+            }
+            assert!(
+                !regulation_loop.condition_warn_transition(&signal),
+                "{metric:?}: the first action build consumed the transition, so the identical next cycle coalesces"
+            );
+        }
+    });
+}
+
 fn fallback_alert_action() -> RegulatoryAction {
     RegulatoryAction::with_metric(
         LoopId::Curation,

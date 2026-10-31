@@ -186,6 +186,57 @@ struct LoopTelemetryDecision {
     suppressed_cycles: usize,
 }
 
+/// Log-surface condition coalescing — the degradation warn arms' counterpart
+/// of [`LoopTelemetryState`] (§9.4): which deviated conditions have already
+/// warned, keyed by metric with their `(value_bits, set_point_bits)`
+/// fingerprint. Observed motive (2026-10-31): a frozen native-first reading
+/// (7 of 11 substantive turns, byte-identical for six minutes while the
+/// window sat unchanged between turns) re-warned on every 10-second tick —
+/// the escalation path dedups onto the open board card and the telemetry
+/// path coalesces by fingerprint, but the `tracing` warn surface had no
+/// transition discipline.
+#[derive(Default)]
+struct ConditionLogState {
+    warned: HashMap<crate::loops::SignalMetric, (u64, u64)>,
+}
+
+impl ConditionLogState {
+    /// Record a condition-warn decision: `true` when this call is a
+    /// transition (first occurrence or changed reading) and the warn
+    /// should emit; `false` when the condition persists unchanged — its
+    /// steady state is carried by the board's open condition card and the
+    /// telemetry heartbeat, not by per-tick log lines.
+    fn note_condition(&mut self, signal: &crate::loops::Signal) -> bool {
+        let fingerprint = (signal.value.to_bits(), signal.set_point.to_bits());
+        match self.warned.insert(signal.metric, fingerprint) {
+            Some(previous) if previous == fingerprint => false,
+            _ => true,
+        }
+    }
+
+    /// Drop conditions that left deviation so a recurrence warns again,
+    /// returning the cleared metrics for the clearing announcement.
+    fn clear_absent(
+        &mut self,
+        deviations: &[crate::loops::Deviation],
+    ) -> Vec<crate::loops::SignalMetric> {
+        let deviated: HashSet<crate::loops::SignalMetric> = deviations
+            .iter()
+            .map(|deviation| deviation.signal.metric)
+            .collect();
+        let mut cleared = Vec::new();
+        self.warned.retain(|metric, _| {
+            if deviated.contains(metric) {
+                true
+            } else {
+                cleared.push(*metric);
+                false
+            }
+        });
+        cleared
+    }
+}
+
 /// The Cybernetics Loop — homeostatic self-regulation.
 ///
 /// Implements the sense→compare→compute→act regulation cycle.
@@ -242,6 +293,11 @@ pub struct CyberneticsLoop {
     loop_quality: RwLock<LoopMetrics>,
     /// Coalesces only semantically identical persistent signal telemetry.
     loop_telemetry_state: Mutex<LoopTelemetryState>,
+    /// Log-surface condition coalescing for the degradation warn arms —
+    /// see [`ConditionLogState`] (the §9.4 transition discipline applied to
+    /// the warn surface: entry and changed readings emit, identical
+    /// persistent cycles are coalesced, clearing re-arms).
+    condition_log_state: Mutex<ConditionLogState>,
     /// Conditions already archived while board delivery was unavailable.
     fallback_alert_conditions: Mutex<HashSet<String>>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
@@ -345,6 +401,7 @@ impl CyberneticsLoop {
             impact_tick: tokio::sync::Mutex::new(()),
             loop_quality: RwLock::new(LoopMetrics::default()),
             loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
+            condition_log_state: Mutex::new(ConditionLogState::default()),
             fallback_alert_conditions: Mutex::new(HashSet::new()),
             stagnation_detector,
             sensor_registry,
@@ -721,6 +778,37 @@ impl CyberneticsLoop {
 }
 
 impl CyberneticsLoop {
+    /// §9.4's transition discipline on the log surface: the degradation warn
+    /// arms in `build_regulation_action` (tool reliability, native-first rate,
+    /// trust deviation) emit on entry and on a changed (value, set-point)
+    /// reading; an unchanged persistent condition is coalesced — the
+    /// board's open condition card and the telemetry heartbeat carry its
+    /// steady state, not per-tick log lines.
+    fn condition_warn_transition(&self, signal: &crate::loops::Signal) -> bool {
+        self.condition_log_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .note_condition(signal)
+    }
+
+    /// The clearing leg: after the cycle's actions are built, a warned
+    /// condition that left deviation announces once and re-arms its latch
+    /// so a recurrence warns again.
+    fn report_cleared_conditions(&self, deviations: &[crate::loops::Deviation]) {
+        for metric in self
+            .condition_log_state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear_absent(deviations)
+        {
+            tracing::info!(
+                target: "reg.cybernetics",
+                metric = metric.as_str(),
+                "Regulation condition cleared — back within set point"
+            );
+        }
+    }
+
     fn loop_telemetry_decision(
         &self,
         deviations: &[crate::loops::Deviation],
@@ -843,6 +931,10 @@ impl CyberneticsLoop {
             );
         }
         self.act(&actions).await;
+        // §9.4's clearing leg on the log surface: a warned condition that
+        // left deviation announces once and re-arms its warn latch. Runs
+        // after compute/act so this tick's own entries are never cleared.
+        self.report_cleared_conditions(&deviations);
 
         // Read fallible evidence before removing accepted work. Its entries
         // occupy their queue slots until retry/terminal/ready is decided, so

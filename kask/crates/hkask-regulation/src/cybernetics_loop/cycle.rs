@@ -1050,12 +1050,16 @@ impl super::CyberneticsLoop {
 
             // -- ToolReliability BelowSetPoint ------------------------------
             RegulationReason::ToolReliabilityDegraded => {
-                tracing::warn!(
-                    target: "reg.tool",
-                    reliability = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    "Tool reliability degraded — success rate below threshold"
-                );
+                // §9.4 on the log surface: the warn is transition-oriented
+                // (entry or changed reading), not per-tick.
+                if self.condition_warn_transition(&dev.signal) {
+                    tracing::warn!(
+                        target: "reg.tool",
+                        reliability = dev.signal.value,
+                        set_point = dev.signal.set_point,
+                        "Tool reliability degraded — success rate below threshold"
+                    );
+                }
                 let at = proposed.action_type;
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
@@ -1127,12 +1131,14 @@ impl super::CyberneticsLoop {
             // Carry the observed native-first rate into escalation evidence —
             // the drift signal the affordance-injection intervention targets.
             RegulationReason::NativeFirstRateExceeded => {
-                tracing::warn!(
-                    target: "reg.agent",
-                    native_first_rate = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    "Native-first rate exceeded — substantive turns completing without instruments"
-                );
+                if self.condition_warn_transition(&dev.signal) {
+                    tracing::warn!(
+                        target: "reg.agent",
+                        native_first_rate = dev.signal.value,
+                        set_point = dev.signal.set_point,
+                        "Native-first rate exceeded — substantive turns completing without instruments"
+                    );
+                }
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,
@@ -1169,12 +1175,14 @@ impl super::CyberneticsLoop {
                 ))
             }
             RegulationReason::TrustDeviationExceeded => {
-                tracing::warn!(
-                    target: "reg.trust",
-                    weighted_violation_count = dev.signal.value,
-                    set_point = dev.signal.set_point,
-                    "Trust-ledger deviation — explicit instruction violated"
-                );
+                if self.condition_warn_transition(&dev.signal) {
+                    tracing::warn!(
+                        target: "reg.trust",
+                        weighted_violation_count = dev.signal.value,
+                        set_point = dev.signal.set_point,
+                        "Trust-ledger deviation — explicit instruction violated"
+                    );
+                }
                 Some(RegulatoryAction::with_metric(
                     proposed.target,
                     proposed.action_type,

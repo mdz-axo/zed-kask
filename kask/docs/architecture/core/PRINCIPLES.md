@@ -1,7 +1,7 @@
 ---
 title: "hKask Architecture Principles"
 audience: [architects, developers, agents]
-last_updated: 2026-10-28
+last_updated: 2026-10-31
 version: "0.43.4"
 status: "Active"
 domain: "Cross-cutting"
@@ -221,6 +221,8 @@ Rollout `ImpactReport`s remain a separate measured channel.
 **§9.4 — Persistent-condition telemetry coalescing (2026-09-17)**
 
 `LoopMetricsTelemetry` is transition-oriented. A timestamp-free semantic fingerprint covers deviation metric, value, set-point, magnitude, direction, and computed advisories. The first condition and every changed fingerprint emit immediately. Semantically identical scheduled cycles are coalesced; the existing 360-tick hourly boundary emits one `steady_state_heartbeat` carrying `suppressed_steady_state_cycles`. Clearing emits immediately with `condition_cleared`. Rollout impact reports force emission even when the condition fingerprint is unchanged.
+
+The same transition discipline governs the log surface (2026-10-31): the degradation warn arms in `build_regulation_action` (`reg.tool` tool-reliability, `reg.agent` native-first rate, `reg.trust` trust-deviation) warn on entry and on a changed (value, set-point) reading, coalesce an unchanged persistent condition (its steady state is carried by the board's open condition card and the telemetry heartbeat), and emit one clearing line while re-arming the warn. Observed motive: a frozen reading re-warned byte-identically on every 10-second scheduled tick.
 
 This does not change board condition matching, archive retention, or the in-memory alert-log cap. `RegulationArchive` remains time-bounded by maintenance. Coalescing prevents unchanged loop-quality records from consuming the operational read budget. Idle heartbeats remain hourly and continue reporting the alert-log fill state.
 
