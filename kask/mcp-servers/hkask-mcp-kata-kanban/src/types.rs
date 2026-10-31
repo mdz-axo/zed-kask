@@ -139,6 +139,52 @@ pub struct GoalGetRequest {
     pub goal_id: String,
 }
 
+/// Input for `kanban_goal_trust_record` — one instruction-compliance
+/// event to append to the goal's running trust ledger (seam 6).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalTrustRecordRequest {
+    pub goal_id: String,
+    /// The instruction text as extracted at intake — verbatim, not
+    /// paraphrased.
+    pub instruction: String,
+    /// Whether the instruction was complied with or violated.
+    /// Must be "complied" or "violated".
+    pub status: String,
+    /// The severity class when the instruction is violated.
+    /// Must be "competence" or "integrity".
+    /// Required when status is "violated"; must be absent when status
+    /// is "complied".
+    pub severity: Option<String>,
+    /// Evidence for the compliance or violation claim — the pinned
+    /// test, the committed diff, the measured outcome. A violation
+    /// recorded without evidence is a fabricated citation.
+    pub evidence: String,
+    /// The operator's estimated cost when the instruction is violated:
+    /// the as-if-complied position (the expectation interest, per
+    /// Fuller–Perdue 1936–37), not the fix cost (the restitution
+    /// interest). Example: "operator re-derived the deliverable: 2 hours".
+    pub operator_cost: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct GoalTrustRecordResponse {
+    pub goal_id: String,
+    /// The number of trust events on the goal's ledger after this append.
+    pub trust_event_count: usize,
+    /// The goal's trust summary — the regulation signal (seam 7).
+    pub trust_summary: GoalTrustSummaryWire,
+}
+
+/// Wire format for the trust summary (the regulation signal).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalTrustSummaryWire {
+    pub total_instructions: usize,
+    pub complied: usize,
+    pub violated_competence: usize,
+    pub violated_integrity: usize,
+    pub has_integrity_violation: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GoalListRequest {}
 

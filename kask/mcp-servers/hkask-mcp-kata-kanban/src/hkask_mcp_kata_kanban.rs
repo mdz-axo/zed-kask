@@ -491,6 +491,86 @@ impl KanbanServer {
         .await
     }
 
+    /// Record an instruction-compliance event on the goal's running
+    /// trust ledger (seam 6). The ledger is the goal's trust account:
+    /// every explicit instruction extracted at intake is checked during
+    /// execution and the result is recorded here (append-only). The
+    /// severity class (competence when disclosed at detection, integrity
+    /// when discovered through concealment or misweighting — per Slovic
+    /// 1993 and Kim–Ferrin–Cooper–Dirks 2004) is the regulation signal:
+    /// `has_integrity_violation` is the escalation flag (a discovered
+    /// integrity failure resets trust to the prior across every future
+    /// deliverable, per Butler–Giuliano–Guiso 2009 and Akerlof 1970).
+    #[tool(
+        description = "Record an instruction-compliance event on a goal's running trust ledger. Takes a goal_id, the instruction text (verbatim from intake), whether it was complied or violated, the severity class when violated (competence = disclosed at detection / integrity = discovered through concealment), evidence for the claim, and the operator's estimated cost when violated (the expectation interest: the as-if-complied position, not the fix cost). The response carries the updated trust summary: the regulation signal for the curator loop."
+    )]
+    pub async fn kanban_goal_trust_record(
+        &self,
+        Parameters(request): Parameters<GoalTrustRecordRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "kanban_goal_trust_record", async {
+            let gid = parse_goal_id(&request.goal_id)?;
+            let status = match request.status.as_str() {
+                "complied" => GoalTrustStatus::Complied,
+                "violated" => GoalTrustStatus::Violated,
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "status must be \"complied\" or \"violated\", got {other:?}"
+                    )));
+                }
+            };
+            let severity = match (request.severity.as_deref(), status) {
+                (Some("competence"), GoalTrustStatus::Violated) => {
+                    Some(GoalTrustSeverity::Competence)
+                }
+                (Some("integrity"), GoalTrustStatus::Violated) => {
+                    Some(GoalTrustSeverity::Integrity)
+                }
+                (None, GoalTrustStatus::Complied) => None,
+                (Some(sev), GoalTrustStatus::Violated) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "severity must be \"competence\" or \"integrity\", got {sev:?}"
+                    )));
+                }
+                (Some(_), GoalTrustStatus::Complied) => {
+                    return Err(McpToolError::invalid_argument(
+                        "a complied event cannot carry a severity class",
+                    ));
+                }
+                (None, GoalTrustStatus::Violated) => {
+                    return Err(McpToolError::invalid_argument(
+                        "a violated event requires a severity class (competence or integrity)",
+                    ));
+                }
+            };
+            let event = GoalTrustEvent {
+                instruction: request.instruction.clone(),
+                status,
+                severity,
+                evidence: request.evidence.clone(),
+                operator_cost: request.operator_cost.clone(),
+                recorded_at: chrono::Utc::now(),
+            };
+            let goal = self
+                .service
+                .goal_trust_record(gid, event, self.webid)
+                .map_err(map_kanban_error)?;
+            let summary = goal.trust_summary();
+            respond(Ok(goal), |goal| GoalTrustRecordResponse {
+                goal_id: goal.id.to_string(),
+                trust_event_count: goal.trust_events.len(),
+                trust_summary: GoalTrustSummaryWire {
+                    total_instructions: summary.total_instructions,
+                    complied: summary.complied,
+                    violated_competence: summary.violated_competence,
+                    violated_integrity: summary.violated_integrity,
+                    has_integrity_violation: summary.has_integrity_violation,
+                },
+            })
+        })
+        .await
+    }
+
     /// Read the complete canonical specification and history, including archives.
     #[tool(
         description = "Get a caller-owned canonical goal with full original criteria, progress, closure, assessment, forecast and delivery history."
@@ -506,7 +586,23 @@ impl KanbanServer {
                 .goal_get(id, self.webid)
                 .map_err(map_kanban_error)?
                 .ok_or_else(|| McpToolError::not_found(format!("goal {id} not found")))?;
-            serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))
+            let summary = goal.trust_summary();
+            let mut value =
+                serde_json::to_value(&goal).map_err(|e| McpToolError::internal(e.to_string()))?;
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "trust_summary".into(),
+                    serde_json::to_value(GoalTrustSummaryWire {
+                        total_instructions: summary.total_instructions,
+                        complied: summary.complied,
+                        violated_competence: summary.violated_competence,
+                        violated_integrity: summary.violated_integrity,
+                        has_integrity_violation: summary.has_integrity_violation,
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))?,
+                );
+            }
+            Ok(value)
         })
         .await
     }
@@ -519,7 +615,33 @@ impl KanbanServer {
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            respond(self.service.goal_list(&self.webid), |goals| goals)
+            let goals = self
+                .service
+                .goal_list(&self.webid)
+                .map_err(map_kanban_error)?;
+            let enriched: Vec<serde_json::Value> = goals
+                .iter()
+                .map(|goal| {
+                    let summary = goal.trust_summary();
+                    let mut value = serde_json::to_value(goal)
+                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert(
+                            "trust_summary".into(),
+                            serde_json::to_value(GoalTrustSummaryWire {
+                                total_instructions: summary.total_instructions,
+                                complied: summary.complied,
+                                violated_competence: summary.violated_competence,
+                                violated_integrity: summary.violated_integrity,
+                                has_integrity_violation: summary.has_integrity_violation,
+                            })
+                            .map_err(|e| McpToolError::internal(e.to_string()))?,
+                        );
+                    }
+                    Ok(value)
+                })
+                .collect::<Result<Vec<_>, McpToolError>>()?;
+            serde_json::to_value(enriched).map_err(|e| McpToolError::internal(e.to_string()))
         })
         .await
     }
@@ -1627,8 +1749,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    26,
-    tool_surface_is_exactly_26_registered_tools,
+    27,
+    tool_surface_is_exactly_27_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."
@@ -1680,7 +1802,8 @@ fn mcp_goal_authority_is_only_declare_progress_and_full_reads() {
             "kanban_goal_create",
             "kanban_goal_get",
             "kanban_goal_judge",
-            "kanban_goal_list"
+            "kanban_goal_list",
+            "kanban_goal_trust_record"
         ]
     );
     let forged = serde_json::json!({ "goal_text":"forged human", "criteria":[{"description":"observable"}], "source":{"interaction_id":"worker","session_id":"worker","source":"human"}, "actor":"human", "achieved":true });

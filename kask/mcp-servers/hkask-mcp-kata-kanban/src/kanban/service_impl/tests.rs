@@ -2496,3 +2496,79 @@ fn goal_trust_record_rejects_violation_without_severity() {
             .contains("violated trust event requires a severity class")
     );
 }
+
+/// End-to-end: create a goal, record trust events, and read the
+/// trust summary back through the goal_get surface. This exercises
+/// the same flow an MCP caller would see: the goal JSON includes
+/// both the raw trust_events array and the computed trust_summary.
+#[test]
+fn goal_trust_end_to_end_creates_records_and_reads_summary() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: None,
+            },
+            owner,
+        )
+        .unwrap();
+
+    // Record a complied event.
+    svc.goal_trust_record(
+        goal.id,
+        GoalTrustEvent {
+            instruction: "follow the coding guidelines".into(),
+            status: GoalTrustStatus::Complied,
+            severity: None,
+            evidence: "all gates green".into(),
+            operator_cost: None,
+            recorded_at: chrono::Utc::now(),
+        },
+        owner,
+    )
+    .unwrap();
+
+    // Record an integrity violation (discovered, not disclosed).
+    svc.goal_trust_record(
+        goal.id,
+        GoalTrustEvent {
+            instruction: "report defects at their true severity".into(),
+            status: GoalTrustStatus::Violated,
+            severity: Some(GoalTrustSeverity::Integrity),
+            evidence: "defect classified as a nuance but was functional".into(),
+            operator_cost: Some("operator re-derived the deliverable: 3 hours".into()),
+            recorded_at: chrono::Utc::now(),
+        },
+        owner,
+    )
+    .unwrap();
+
+    // Read the goal back and verify the trust summary is correct.
+    let retrieved = svc.goal_get(goal.id, owner).unwrap().unwrap();
+    let summary = retrieved.trust_summary();
+    assert_eq!(summary.total_instructions, 2);
+    assert_eq!(summary.complied, 1);
+    assert_eq!(summary.violated_integrity, 1);
+    assert!(summary.has_integrity_violation);
+
+    // The serialized form includes the trust events (the Goal struct
+    // serializes its fields, including the trust_events Vec).
+    let json = serde_json::to_value(&retrieved).unwrap();
+    let events = json["trust_events"].as_array().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["instruction"], "follow the coding guidelines");
+    assert_eq!(events[1]["severity"], "integrity");
+}

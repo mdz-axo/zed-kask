@@ -65,6 +65,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         "kanban_goal_create" | "kanban_goal_judge" | "kanban_goal_list" | "kanban_goal_get" => {
             Some(STEP_VERIFICATION)
         }
+        // Trust-event recording is a verification step on the goal's
+        // compliance — the trust ledger is the accountability record.
+        "kanban_goal_trust_record" => Some(STEP_VERIFICATION),
         // Task state changes: create/move/reopen/assign/unassign/delete/
         // comment/add-deliverable/update each change a task's state.
         "kanban_task_create"
@@ -122,6 +125,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_board_update"
         | "kanban_goal_create"
         | "kanban_goal_judge"
+        | "kanban_goal_trust_record"
         | "kanban_task_create"
         | "kanban_task_move"
         | "kanban_task_reopen"

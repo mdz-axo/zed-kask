@@ -53,6 +53,9 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "Column" | "TaskStatus" => Some(PROCEDURE_EXECUTION_STATUS),
         "kanban_task_move" | "kanban_task_reopen" => Some(CHANGE_OF_STATUS),
         "kanban_task_verify" | "Verification" | "VerificationCriterion" => Some(STEP_VERIFICATION),
+        "kanban_goal_trust_record" | "GoalTrustEvent" | "GoalTrustSummary" => {
+            Some(STEP_VERIFICATION)
+        }
         "Comment" | "kanban_task_comment" => Some(USER_FEEDBACK_OCCURRENCE),
         "Comment.question" | "kanban_task_kata_prompt" => Some(USER_QUESTION_OCCURRENCE),
         "Assignee" | "kanban_task_assign" => Some(WAS_ASSOCIATED_WITH),
