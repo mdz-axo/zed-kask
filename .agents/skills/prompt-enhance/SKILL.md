@@ -12,6 +12,7 @@ General-purpose prompt enhancement skill for the zed-kask platform. Classifies p
 
 - **Initial condition:** the user's original prompt and intended use, effort tier, output destination, and known risks. Record what must remain unchanged; missing user intent is a question, not permission to invent it.
 - **Target condition:** an enhanced prompt preserving that intent, resolving identified Prohibition-tier defects, and honestly reporting proposed versus executed checks. Medium/high additionally target a decoupled critic `pass`; low has no independent critic and must report `skipped` rather than claiming verified quality. File output counts only after a successful write.
+- **Delivery guarantee (operator ruling 2026-10-30):** the invocation is incomplete until an enhanced prompt is delivered — every terminal state produces one, and no verify state withholds it. A verified `pass` delivers the prompt with its verdict; a failed, exhausted, pending or invalid verify delivers the last rewrite with that state honestly labeled; an interruption at any point (turn boundary, budget pressure, tool failure) makes the next turn's FIRST action the delivery of the last rewrite with the verify state labeled — never a pause without a deliverable. `skipped`, `fail` and `unresolved` are labels on a delivered prompt, never reasons to deliver nothing.
 
 ## When to Use
 
@@ -122,25 +123,37 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Raw JSON preflight (before every PE-State evaluation)
 
-PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam. The filter below matches the applied companion resource `raw-shape.jq`:
+PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam.
+
+**The durable review ledger.** The preflighted review-state file IS the invocation's durable ledger: write it under the run directory (default `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/review-state.json`, beside the default output path; write via terminal — the built-in file tools are sandboxed outside the project) at every state mutation — initialization, pending append, settle, correction. A resumed run re-derives nothing: load the ledger, preflight it, continue from the recorded state. An admitted-but-undispatched attempt is voided explicitly under the mid-run amendment route (Local PDCA item 5), never silently orphaned.
+
+**Digest identity binding (operator ruling 2026-10-30).** `prompt_revisions` and each attempt's identity field carry the SHA-256 digest (lowercase hex) of the revision's exact text — computed with `sha256sum` over the canonical revision file (`{run_dir}/revisions/rev-<n>.txt`, written at rewrite time) — not the full text. The canonical revision files and the delivered output carry the full texts; the gate env carries only digests, so the same preflighted object crosses the seam at ~2-3KB instead of ~19KB and the double-paste transcription risk is gone. Anyone can re-verify a delivered prompt against its recorded digest by re-hashing the text.
+
+The filter below matches the applied companion resource `raw-shape.jq`:
 
 ```jq
 # Preserve raw JSON identity before the lossy JSON -> Lisp bridge.
 # No review echo, scoring, call counter or shadow admission state.
+# Digest binding (operator ruling 2026-10-30): prompt identity crosses the
+# seam as a lowercase-hex SHA-256 digest; the full revision texts live in
+# the canonical revision files and the delivered output, never in the env.
+def digest:
+  type == "string" and test("^[0-9a-f]{64}$");
 def request_shape:
   type == "object" and
-  keys == ["attempt_id","kind","level","reviewed_prompt","reviewed_revision"] and
+  keys == ["attempt_id","kind","level","reviewed_prompt_digest","reviewed_revision"] and
   (.attempt_id | type == "number" and floor == .) and
   (.level | type == "number" and floor == .) and
   (.reviewed_revision | type == "number" and floor == .) and
-  (.reviewed_prompt | type == "string") and
+  (.reviewed_prompt_digest | digest) and
   (.kind | IN("initial","escalate","reprobe","correction","retry"));
 type == "object" and has("effort_tier") and has("request") and
-(.prompt_revisions | type == "array") and
+(.prompt_revisions | type == "array" and all(.[]; digest)) and
 (.critique_runs | type == "array") and
 (.request == null or (.request | request_shape)) and
 all(.critique_runs[];
   type == "object" and has("status") and has("outcome") and
+  has("reviewed_prompt_digest") and (.reviewed_prompt_digest | digest) and
   (if .status == "pending" then .outcome == null
    elif .status == "completed" then
     (.outcome | type == "object") and
@@ -149,24 +162,23 @@ all(.critique_runs[];
     all(.outcome.ratings[]; type == "object") and
     all(.outcome.findings[]; type == "object")
    else true end))
-
 ```
 
 This preflight is necessary because the Lisp JSON bridge represents `null`, `[]` and `{}` identically when empty. It cannot recover their original JSON types. The raw filter requires pending `outcome` to be EXACT JSON null and distinguishes snapshot `request: null` from a complete known five-field request object. Empty objects/arrays are neither pending null nor snapshot null. Its numeric request fields must be integer-valued; the Lisp gate still checks legal level/revision/identity values. Other than these producer-boundary shape checks, PE-State owns record admission, identity, threshold arithmetic and budgets. Interpreter errors or raw shape refusal mean incomplete/invalid review, never another free critique. Neither component establishes semantic quality, actual dispatch provenance, independence, or that the agent appended before sending; the executor must obey that ordering and retain its tool receipts.
 
-**Step budget and form extraction.** Supply `max_steps: 2000000` explicitly on every PE-State `lisp_eval` call — the 100000 default is exceeded by valid high-tier ledger states (two prompt revisions plus a bound critic outcome, ~19KB env; observed 2026-10-23, re-run at 2000000 passed), so a faithful first run of the documented form fails on valid input. Extract the PE-State form from this SKILL.md's source text, not from rendered skill content, and check paren balance (e.g. `awk`) before execution — transcribing the 92-line form from a rendered copy introduced paren errors (observed 2026-10-23: parse error, nothing consumed).
+**Step budget and form extraction.** Supply `max_steps: 2000000` explicitly on every PE-State `lisp_eval` call — the 100000 default is exceeded by valid high-tier ledger states (two prompt revisions plus a bound critic outcome, ~19KB in the pre-digest form; observed 2026-10-23, re-run at 2000000 passed), so a faithful first run of the documented form fails on valid input. Digest binding shrinks a valid env to ~2-3KB (ratings and findings dominate); keep the explicit `max_steps` regardless. Extract the PE-State form from this SKILL.md's source text — read `.agents/skills/prompt-enhance/SKILL.md` from the worktree, never a rendered copy — and check paren balance (e.g. `awk`) before execution — transcribing the long PE-State form from a rendered copy introduced paren errors (observed 2026-10-23: parse error, nothing consumed).
 
 ### Step 3 — Verify (enhance-verify.j2, medium/high only)
 
 1. Use the decoupled `grill-me` critic, preserving the existing challenge, verdict and findings policy. `low` skips the critic (`skipped`, empty ratings/findings); `medium` and `high` both start at level 1 (Recall + Mechanism). Level 2 adds Rationale; level 3 adds Edge Cases + Synthesis. Ratings contain exactly one row for each cumulative area at that level, no duplicate or unknown area; row order is irrelevant. Keep `Solid|Partial|Gap` unchanged. The independent critic supplies ratings, not threshold arithmetic.
-2. Initialize `critique_runs = []` and `prompt_revisions = [enhanced_prompt]` after the first rewrite. `prompt_revisions` freezes the exact initial text and, only after the one named-gap correction, its revised text. No separate critique execution count or completed-results list exists. Each attempt is one record:
+2. Initialize `critique_runs = []` and `prompt_revisions = [<digest of the enhanced prompt>]` after the first rewrite (see the digest identity binding above). `prompt_revisions` freezes the digest of the exact initial text and, only after the one named-gap correction, the digest of its revised text. No separate critique execution count or completed-results list exists. Each attempt is one record:
    ```json
    { "attempt_id": 1, "kind": "initial", "level": 1,
-     "reviewed_revision": 0, "reviewed_prompt": "<exact initial rewrite text>",
+     "reviewed_revision": 0, "reviewed_prompt_digest": "<sha256 hex of the exact initial rewrite text>",
      "status": "pending", "outcome": null }
    ```
-   `attempt_id` is the one-based log position, never reused. `kind` is `initial|escalate|reprobe|correction|retry`; `status` is `pending|completed|failed`. Only status/outcome change after dispatch; identity, level, kind and reviewed revision/text are immutable. Bind the returned raw outcome to the captured pending attempt, not a later prompt or caller-typed count. Completed outcomes retain the full critic result, including ratings, findings and verdict unchanged. On transport failure or invalid critic output, keep that SAME attempt as `failed`, preserving its raw outcome/error; never delete it from the budget.
-3. **PE-State replaces both old PE-3 and PE-2 forms.** Run the exact form below with JSON-text env `{ "effort_tier": <classified tier>, "prompt_revisions": <frozen texts>, "critique_runs": <all attempts>, "request": <planned attempt identity or null for snapshot> }`. A planned request contains the identity fields and `kind`, not a model-typed count. Require `input_valid: true` AND `admit: true`; interpreter errors also refuse dispatch. Then append the request with `status: "pending", outcome: null` BEFORE dispatch, and snapshot-check that log. A pending attempt blocks concurrent dispatch and counts toward exhaustion. Never append a completed result as a new attempt. Snapshot-check again after settling it.
+   `attempt_id` is the one-based log position, never reused. `kind` is `initial|escalate|reprobe|correction|retry`; `status` is `pending|completed|failed`. Only status/outcome change after dispatch; identity, level, kind and reviewed revision/digest are immutable. Bind the returned raw outcome to the captured pending attempt, not a later prompt or caller-typed count. Completed outcomes retain the full critic result, including ratings, findings and verdict unchanged. On transport failure or invalid critic output, keep that SAME attempt as `failed`, preserving its raw outcome/error; never delete it from the budget.
+3. **PE-State replaces both old PE-3 and PE-2 forms.** Run the exact form below with JSON-text env `{ "effort_tier": <classified tier>, "prompt_revisions": <frozen digests>, "critique_runs": <all attempts>, "request": <planned attempt identity or null for snapshot> }`. A planned request contains the identity fields and `kind`, not a model-typed count. Require `input_valid: true` AND `admit: true`; interpreter errors also refuse dispatch. Then append the request with `status: "pending", outcome: null` BEFORE dispatch, and snapshot-check that log. A pending attempt blocks concurrent dispatch and counts toward exhaustion. Never append a completed result as a new attempt. Snapshot-check again after settling it.
 
    ```lisp
 (begin
@@ -202,8 +214,9 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
     (and (listp r) (= (pe-get r "attempt_id") (+ index 1))
       (pe-level (pe-get r "level")) (pe-revision (pe-get r "reviewed_revision"))
       (< (pe-get r "reviewed_revision") (length prompt_revisions))
-      (stringp (pe-get r "reviewed_prompt"))
-      (string= (pe-get r "reviewed_prompt") (nth (pe-get r "reviewed_revision") prompt_revisions)))))
+      (stringp (pe-get r "reviewed_prompt_digest"))
+      (= (length (pe-get r "reviewed_prompt_digest")) 64)
+      (string= (pe-get r "reviewed_prompt_digest") (nth (pe-get r "reviewed_revision") prompt_revisions)))))
   (define pe-transition (lambda (prior r)
     (and (< (length prior) pe-limit) (pe-identity r (length prior))
       (if (is_null prior)
@@ -239,8 +252,8 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
     (if (is_null xs) found (pe-last-completed (cdr xs) (if (string= (pe-get (car xs) "status") "completed") (car xs) found)))))
   (define pe-input (and (member effort_tier (quote ("low" "medium" "high")))
     (listp prompt_revisions) (or (= (length prompt_revisions) 1) (= (length prompt_revisions) 2))
-    (stringp (car prompt_revisions)) (> (length (car prompt_revisions)) 0)
-    (if (= (length prompt_revisions) 2) (and (stringp (nth 1 prompt_revisions)) (> (length (nth 1 prompt_revisions)) 0) (not (string= (car prompt_revisions) (nth 1 prompt_revisions)))) true)
+    (stringp (car prompt_revisions)) (= (length (car prompt_revisions)) 64)
+    (if (= (length prompt_revisions) 2) (and (stringp (nth 1 prompt_revisions)) (= (length (nth 1 prompt_revisions)) 64) (not (string= (car prompt_revisions) (nth 1 prompt_revisions)))) true)
     (listp critique_runs) (<= (length critique_runs) pe-limit)
     (pe-history critique_runs (list))))
   (if (not pe-input)
@@ -265,9 +278,9 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
 
    The form replays every recorded admission before accepting the current state. Medium and high share the existing maximum of THREE critic attempts per invocation; low permits zero. Medium still has one completed primary review and at most one correction recheck, never semantic escalation/reprobe; failed-primary retries spend that same three-attempt budget, not a new allowance. Failed and in-flight attempts, same-level re-probes, and correction verification consume those same allowances. A failed attempt may retry only the same revision/level with remaining budget; no hidden recovery call. After a correction recheck, deliver; do not restart escalation, retry or reprobe.
    At high, a valid non-pass review with >=80% Solid admits ONLY `level = previous level + 1`; <40% admits ONLY a same-level re-probe with different angles. Exact 40% does not admit a reprobe. Invalid/empty ratings and failed/pending outcomes cannot authorize semantic escalation. A `pass` already satisfies the target and admits no extra call. These are the existing project threshold adaptations, not a new semantic scoring policy. Arithmetic eligibility says nothing about rating correctness or actual critic independence.
-4. Dispatch `enhance-verify` with its full existing context, adding `attempt_id` and `reviewed_revision` from the pending record; `round` is that record's `level` and `enhanced_prompt` is its `reviewed_prompt`. The original prompt, acceptance criteria, proxy set and checkability context stay frozen across reviews and the correction:
+4. Dispatch `enhance-verify` with its full existing context, adding `attempt_id` and `reviewed_revision` from the pending record; `round` is that record's `level` and `enhanced_prompt` is the exact text of that record's `reviewed_revision` — the canonical revision file its `reviewed_prompt_digest` binds. The original prompt, acceptance criteria, proxy set and checkability context stay frozen across reviews and the correction:
    ```json
-   { "enhanced_prompt": "<pending reviewed_prompt>", "original_prompt": "<original prompt>",
+   { "enhanced_prompt": "<exact text of the pending record's revision>", "original_prompt": "<original prompt>",
      "prompt_type": "<step 1>", "effort_tier": "<step 1>",
      "proxy_eval_set": [], "acceptance_criteria": [], "checkability_map": [],
      "unfold_mode_resolved": "<step 1>", "reference_models": [], "unfolded_plan": [],
@@ -280,8 +293,9 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
 
 1. **Plan/Do:** use the initial condition and target above; classify and rewrite once, then run the tier's verification stage. Do not call a model again when the target is already satisfied.
 2. **Check:** at medium/high, a `pass` with no unresolved Prohibition-tier issue meets the local target; `rewrite_needed` or `fail` carries the critic's specific gaps. At low, inspect the inline audit for unresolved Prohibition-tier issues, but keep the independent verdict `skipped` even when none is visible. A proposed `lisp_eval`, Lean, or empirical check in the prompt is not evidence it ran.
-3. **Act (one correction maximum):** on a named gap, rerender `enhance-rewrite` with the *original* `prompt`/`task`, previous `enhanced_prompt` as `prior_enhanced_prompt`, and the verify step's `findings` as `critic_feedback`. Preserve already satisfied constraints. Append the exact revised text as `prompt_revisions[1]` (only one correction). At medium/high, request a `correction` attempt at the last completed review's level, binding revision 1 and that exact text; run it only if PE-State admits it within the existing attempt budget. If exhausted or a prior attempt is still pending, do not dispatch: deliver the unresolved/unreviewed correction visibly, never reuse revision 0's pass. At low, recheck only the hard issue and retain `skipped`. If the target still fails, deliver with the failed verdict and remaining gap visible—never turn a failure into a `pass`. Do not loop on new stylistic suggestions or perform a second correction.
+3. **Act (one correction maximum):** on a named gap, rerender `enhance-rewrite` with the *original* `prompt`/`task`, previous `enhanced_prompt` as `prior_enhanced_prompt`, and the verify step's `findings` as `critic_feedback`. Preserve already satisfied constraints. Append the digest of the exact revised text as `prompt_revisions[1]` (only one correction; write the revised text as the canonical `rev-1.txt` and hash it). At medium/high, request a `correction` attempt at the last completed review's level, binding revision 1 and that exact text; run it only if PE-State admits it within the existing attempt budget. If exhausted or a prior attempt is still pending, do not dispatch: deliver the unresolved/unreviewed correction visibly, never reuse revision 0's pass. At low, recheck only the hard issue and retain `skipped`. If the target still fails, deliver with the failed verdict and remaining gap visible—never turn a failure into a `pass`. Do not loop on new stylistic suggestions or perform a second correction.
 4. **Post-delivery user amendment (new invocation, not Act re-entry):** Step 4 delivery terminates this invocation. If a later user message explicitly changes or adds a requirement, begin a new prompt-enhance invocation: pass the prior delivered enhanced prompt as `prompt`, pass the user's literal follow-on as `task`, and reset `critique_runs` to `[]` and start a fresh one-text `prompt_revisions` after its first rewrite. Preserve the prior run's verdict and change log as provenance. Only an explicit user turn may open this path; critic feedback, stylistic suggestions, or agent initiative never do. The new invocation retains its own one-correction maximum and independent verification.
+5. **Mid-run user amendment (pre-delivery; a new invocation, never a corrupting in-place edit):** an explicit user turn that changes or adds a requirement while verify is in flight opens a NEW invocation immediately: the prior invocation's last rewrite is the new baseline (`prior_enhanced_prompt` context), the user's literal message is the new `task`, and the new invocation restarts `critique_runs` at `[]` with a fresh one-digest `prompt_revisions` after its first rewrite. An admitted-but-undispatched attempt is voided un-dispatched — zero attempts consumed, recorded in the new change log as provenance; a dispatched-and-settled attempt stays in the prior ledger. The delivery guarantee binds throughout: the new invocation delivers, and if it is itself interrupted, its last rewrite is the deliverable. Only an explicit user turn opens this route; critic feedback, stylistic suggestions, or agent initiative never do.
 
 ### Step 4 — Output (enhance-output-render.j2, deterministic render)
 
@@ -297,7 +311,7 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
    ```
    Encode this whole context object once as JSON text for `render_template.context`; keep its seven array fields (`audit_findings`, `grill_ratings`, `grill_findings`, `mutations_applied`, `mutations_deferred`, `reference_models`, `unfolded_plan`) as arrays inside that object, never individually stringified. Use PE-State's scalar selected ID to select the ORIGINAL raw JSON review, and pass that raw review's `findings` unchanged as `grill_findings`, including on `rewrite_needed` or `fail`; do not reconstruct them from ratings or the verdict. At low effort pass `grill_verdict: "skipped"`, `grill_ratings: []`, `grill_findings: []`, `reference_models: []`, and `unfolded_plan: []` (if `rewrite_only`). A missing `grill_findings` field fails admission; a non-array value surfaces as `input_errors` and requires a corrected render. Do not pass a nested `verification` object or the retired `schema_defects` and `convergence_metric` fields.
 2. Deliver the rendered `delivered_output` to the user. `inline` displays it; `file` and `both` additionally require a separate file-write action. A render-only step NEVER writes a file (`output_path_written` stays empty). Report a path only after a successful write.
-3. Always include the change log: audit findings, critique verdict, ratings and specific findings, applied and deferred mutations. Preserve the selected critic's complete structured findings in both `delivered_output` and `change_log.grill_findings`; disclose PE-State's verification gap and selected review revision separately, never by rewriting or erasing those findings; a `rewrite_needed` or `fail` verdict must remain visible, never upgraded to verified.
+3. Always include the change log: audit findings, critique verdict, ratings and specific findings, applied and deferred mutations, and the delivered prompt's SHA-256 digest (the digest the gate bound) so the delivered text is verifiably the reviewed text — re-hash the delivered prompt to confirm. Preserve the selected critic's complete structured findings in both `delivered_output` and `change_log.grill_findings`; disclose PE-State's verification gap and selected review revision separately, never by rewriting or erasing those findings; a `rewrite_needed` or `fail` verdict must remain visible, never upgraded to verified.
 4. This step makes no LLM call. The skill is not complete until its enhanced prompt is delivered, not merely rendered.
 
 ## Executor discipline (operator-approved 2026-10-19, from the live lockout run)
@@ -306,11 +320,11 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
 
 - **Pre-send gate (Prohibition):** before any `render_template` call, verify the stage contract's required keys are present in `context` — never emit an empty `context` object. An empty context yields `missing required input field(s): ...`, which reads like a schema defect but is an empty-argument emission.
 - **Fallback:** if `render_template` fails for a reason that is not the context's content (tool hard-capped, populated context rejected, base-path error), read the stage template directly from `kask/registry/templates/prompt-enhance/<stage>.j2` and execute the stage against it — the stage's contract is the template's `[inference]` header wherever the instructions come from. Report the tool failure in the change log; never silently skip a stage's contract.
-- **Stop bound:** stop after 3 consecutive failures of the same call shape and report the blocker; the retry tracker hard-refuses the 5th identical input, so retrying into the cap is wasted turns.
+- **Stop bound:** stop after 3 consecutive failures of the same call shape and report the blocker; the retry tracker hard-refuses the 5th identical input, so retrying into the cap is wasted turns. Reporting the blocker includes delivering the last rewrite with the verify state honestly labeled (the delivery guarantee) — a blocked verify never blocks delivery.
 
 ## Regression case
 
-Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with a fresh attempt log and revision history and the prior delivered prompt as baseline; (c) PE-State replays NEW-data attempt logs: initial low/medium/high routing, exact-next escalation, same-level reprobe, failed/pending exhaustion, one revision-bound correction, exact area coverage, invalid vocabulary and inclusive/exclusive threshold boundaries. Scalar-selected raw findings still reach the actual finalizer unchanged; no malformed or stale result certifies the current prompt.
+Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with a fresh attempt log and revision history and the prior delivered prompt as baseline; (c) PE-State replays NEW-data attempt logs: initial low/medium/high routing, exact-next escalation, same-level reprobe, failed/pending exhaustion, one revision-bound correction, exact area coverage, invalid vocabulary and inclusive/exclusive threshold boundaries. Exercise the mid-run and interruption paths: (d) a mid-run explicit amendment opens a fresh invocation, voids an admitted-but-undispatched attempt with zero attempts consumed, and still delivers; (e) an interruption at any verify point delivers the last rewrite with the verify state labeled on the next turn — never a pause without a deliverable. Digest binding: (f) the preflight rejects a non-hex or non-64-character digest, the PE-State gate rejects a ledger whose attempt `reviewed_prompt_digest` does not match `prompt_revisions[reviewed_revision]`, and a delivered prompt re-hashes to its recorded digest. Scalar-selected raw findings still reach the actual finalizer unchanged; no malformed or stale result certifies the current prompt.
 
 ## Registry Templates
 
