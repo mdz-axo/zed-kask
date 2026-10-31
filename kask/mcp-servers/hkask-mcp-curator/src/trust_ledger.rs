@@ -106,11 +106,10 @@ impl CuratorTrustLedgerStore {
 
     /// File a proposal durably. The generative constraint is enforced at
     /// the storage boundary too: a proposal that does not teach is
-    /// invalid where the row is written, not only at resolve.
+    /// invalid where the row is written, not only at resolve — delegated
+    /// to the pure model's `validate` (one implementation, every boundary).
     pub fn file_proposal(&self, proposal: StoredProposal) -> Result<(), TrustError> {
-        if proposal.teaching_payload.trim().is_empty() {
-            return Err(TrustError::EmptyTeachingPayload);
-        }
+        proposal.payload().validate()?;
         let h_mem = trust_ledger_hmem::proposal_to_h_mem(&proposal, &self.webid);
         self.memory
             .store(h_mem)

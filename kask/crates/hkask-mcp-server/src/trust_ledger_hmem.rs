@@ -276,8 +276,9 @@ pub fn proposal_to_h_mem(proposal: &StoredProposal, webid: &WebID) -> HMem {
 
 /// Rebuild a filed proposal from its h_mem (the inverse of
 /// [`proposal_to_h_mem`]); absent fields fall back to the filed-state
-/// defaults (status `pending`, no resolution, no options).
-pub fn h_mem_to_proposal(h: &HMem) -> StoredProposal {
+/// defaults (status `pending`, no resolution, no options). Internal — the
+/// stores consume the find/list helpers, not the raw converter.
+fn h_mem_to_proposal(h: &HMem) -> StoredProposal {
     let v = &h.value;
     StoredProposal {
         proposal_id: h.attribute.clone(),
@@ -432,8 +433,9 @@ pub fn anchor_to_h_mem(anchor: &StoredAnchor, webid: &WebID) -> HMem {
 }
 
 /// Rebuild a recorded anchor from its h_mem (the inverse of
-/// [`anchor_to_h_mem`]).
-pub fn h_mem_to_anchor(h: &HMem) -> StoredAnchor {
+/// [`anchor_to_h_mem`]). Internal — the stores consume
+/// [`anchors_for_task`], not the raw converter.
+fn h_mem_to_anchor(h: &HMem) -> StoredAnchor {
     let v = &h.value;
     StoredAnchor {
         anchor_id: h.attribute.clone(),

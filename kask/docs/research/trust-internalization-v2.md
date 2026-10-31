@@ -111,6 +111,21 @@ acceptance attaches to a live (unverified) expectation — no
 double-supersede through a stale pending proposal. The wire format is
 shared with the kata-kanban's store so the two cannot drift.
 
+**Known edge — the residue path:** if a resolve's event mutation lands
+but the proposal-row write-back fails (a store failure at exactly that
+step), the proposal stays `pending` while its event reads `renegotiated`.
+A retried accept is refused naming the event's state (acceptance attaches
+to a live expectation); a retried reject would record a `rejected` row
+over an already-superseded event — a contradictory trail — so the honest
+reconciliation is to leave the proposal pending and read the event's
+oracle note, which names the acceptance the row lost. Reject-in-residue
+is deliberately not refused (the two-proposal case: rejecting a sibling
+of an accepted proposal is legitimate bookkeeping, indistinguishable
+from the residue by the rows alone); refusing it would require recording
+which proposal superseded which event — not added for a state that
+requires a store failure at one step of one tool call. The review reads
+both rows; the residue is visible, never silent.
+
 ## What survives from v1
 
 - the ledger substrate (events as h_mems), the fold (600-point scale,
