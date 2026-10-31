@@ -505,7 +505,8 @@ impl KanbanService {
         event: GoalTrustEvent,
         owner: WebID,
     ) -> Result<Goal, KanbanError> {
-        self.transition_goal(id, owner, true, |goal| {
+        let event_for_ledger = event.clone();
+        let goal = self.transition_goal(id, owner, true, |goal| {
             if goal.closure.is_some() {
                 return Err(invalid(
                     "work is closed; declare a successor for changed requirements",
@@ -526,7 +527,39 @@ impl KanbanService {
             }
             goal.trust_events.push(event);
             Ok(true)
-        })
+        })?;
+
+        // Bridge to the global trust ledger (seam 7). The per-goal
+        // event lands on the Goal (the atomic transition above); this
+        // h_mem lands in the same store under entity
+        // `"trust:ledger"` so the regulation loop's `TrustSensor`
+        // reads it. Both writes go to the same database (the
+        // kata-kanban's `HMemStore`); a bridge failure surfaces — the
+        // goal has the event, the ledger doesn't (transparent
+        // imperfection, never silent divergence).
+        let source = goal.source.interaction_id.clone();
+        let ledger_event = hkask_trust::LedgerEvent {
+            id: hkask_trust::LedgerEventId::new(),
+            text: event_for_ledger.instruction.clone(),
+            source,
+            weight: hkask_trust::Weight::Explicit,
+            outcome: match event_for_ledger.status {
+                GoalTrustStatus::Complied => hkask_trust::Outcome::Kept,
+                GoalTrustStatus::Violated => hkask_trust::Outcome::Violated,
+            },
+            ts: Utc::now(),
+            oracle_note: None,
+        };
+        let trust_store =
+            crate::trust_ledger::KanbanTrustLedgerStore::new(self.store.clone(), owner);
+        use hkask_trust::TrustLedgerStore;
+        trust_store.append(ledger_event).map_err(|e| {
+            invalid(format!(
+                "goal trust event recorded but trust-ledger bridge failed: {e}"
+            ))
+        })?;
+
+        Ok(goal)
     }
 
     /// Trusted host ingress. No actor string grants authority and no MCP route

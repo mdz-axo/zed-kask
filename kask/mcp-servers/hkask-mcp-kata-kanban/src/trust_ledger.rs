@@ -24,6 +24,13 @@ use hkask_types::WebID;
 /// The entity prefix for all trust-ledger h_mems.
 pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
 
+/// Re-export the types callers need (from `hkask-trust`) so they
+/// don't need to depend on `hkask-trust` directly.
+pub use hkask_trust::{
+    LedgerEvent as TrustLedgerEvent, LedgerEventId as TrustLedgerEventId, Outcome as TrustOutcome,
+    Weight as TrustWeight,
+};
+
 /// Stores each `LedgerEvent` as an h_mem in the kata-kanban's `HMemStore`:
 /// entity `"trust:ledger"`, attribute = the event id (a UUID), value =
 /// JSON carrying the full event. Binding 5's substrate for the kata-kanban.

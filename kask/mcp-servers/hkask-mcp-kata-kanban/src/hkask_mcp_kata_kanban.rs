@@ -17,6 +17,7 @@ pub(crate) mod pko;
 /// the lib; see the module docs for the no-`mod.rs` rationale).
 #[doc(hidden)]
 pub mod test_support;
+mod trust_ledger;
 pub mod types;
 
 // Re-export the kata-kanban service API at crate root (folded from hkask-services-kata-kanban).
