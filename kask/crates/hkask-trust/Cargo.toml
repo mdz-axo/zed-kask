@@ -1,0 +1,12 @@
+[package]
+name = "hkask-trust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The expectation-ledger trust model (P13): the anchored fold, the deception/omission cliff, priced violations, and the steer projection — pure computation, no storage"
+
+[lib]
+path = "src/hkask_trust.rs"
+
+[lints]
+workspace = true

@@ -269,6 +269,7 @@ members = [
     # kask/ — hKask integration (additive; upstream never touches here)
     # See kask/docs/architecture/zed-host-architecture-plan.md
     #
+    "kask/crates/hkask-trust",
     "kask/crates/hkask-types",
     "kask/crates/kask_bridge",
     "kask/crates/hkask-tool-port",
@@ -963,6 +964,7 @@ serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
 blake3 = "1"
+hkask-trust = { path = "kask/crates/hkask-trust" }
 hkask-types = { path = "kask/crates/hkask-types" }
 hkask-tool-port = { path = "kask/crates/hkask-tool-port" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }

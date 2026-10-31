@@ -8084,6 +8084,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-trust"
+version = "0.40.2"
+
+[[package]]
 name = "hkask-types"
 version = "0.40.2"
 dependencies = [
