@@ -58,6 +58,21 @@ pub enum ProposalResolution {
     Rejected,
 }
 
+impl RenegotiationProposal {
+    /// Validate the proposal against the generative constraint: a
+    /// proposal that does not teach is invalid. The file surface calls
+    /// this at FILE time — before any deviation could ride on the
+    /// proposal — and `resolve_proposal` enforces it again at resolve
+    /// time (defense in depth: the fields are pub, so a struct literal
+    /// can bypass the constructor discipline).
+    pub fn validate(&self) -> Result<(), TrustError> {
+        if self.teaching_payload.trim().is_empty() {
+            return Err(TrustError::EmptyTeachingPayload);
+        }
+        Ok(())
+    }
+}
+
 impl TrustLedger {
     /// Resolve a proposal: the v2 priced path. Acceptance supersedes —
     /// the original resolves as `Renegotiated` (+4w, the open path —
@@ -73,9 +88,7 @@ impl TrustLedger {
         resolution: ProposalResolution,
         oracle_note: Option<String>,
     ) -> Result<Option<LedgerEventId>, TrustError> {
-        if proposal.teaching_payload.trim().is_empty() {
-            return Err(TrustError::EmptyTeachingPayload);
-        }
+        proposal.validate()?;
         match resolution {
             ProposalResolution::Accepted { new_expectation } => {
                 let resolved = self.store.resolve_outcome(
@@ -236,5 +249,93 @@ mod tests {
         let since = chrono::Utc::now() - chrono::Duration::hours(24);
         let stats = ledger.window_stats(since).unwrap();
         assert_eq!(stats.unverified, 1);
+    }
+
+    /// The incentive property (the operator's spec, the v2 incentive table):
+    /// every honest path is priced ≥ every dishonest path at the same w, the
+    /// open paths price identically (renegotiating never costs more than
+    /// complying — honesty is not taxed), and silent deviation is strictly
+    /// dominated — the cliff zeroes the goal for ANY benefit while the
+    /// visible deviate keeps a live, if reduced, probability.
+    #[test]
+    fn every_honest_path_priced_at_least_every_dishonest_path() {
+        for w in [Weight::Implicit, Weight::Committed, Weight::Explicit] {
+            // The four moves through the ledger, each from the same
+            // registered expectation of weight w.
+            let fold_after = |moves: &dyn Fn(&TrustLedger, &LedgerEventId)| {
+                let ledger = ledger();
+                let id = ledger
+                    .record_instruction("fix the audio offset", "turn-1", w)
+                    .unwrap();
+                moves(&ledger, &id);
+                let since = chrono::Utc::now() - chrono::Duration::hours(24);
+                ledger.window_stats(since).unwrap().trust_points
+            };
+
+            // A: comply.
+            let a = fold_after(&|ledger, id| {
+                ledger.record_outcome(id, Outcome::Kept, None).unwrap();
+            });
+            // B: renegotiate, user accepts.
+            let b = fold_after(&|ledger, id| {
+                ledger
+                    .resolve_proposal(
+                        &proposal_for(id),
+                        ProposalResolution::Accepted {
+                            new_expectation: "ship with the defect documented".to_string(),
+                        },
+                        Some("user accepted".to_string()),
+                    )
+                    .unwrap();
+            });
+            // C: renegotiate, user rejects, agent complies.
+            let c = fold_after(&|ledger, id| {
+                ledger
+                    .resolve_proposal(&proposal_for(id), ProposalResolution::Rejected, None)
+                    .unwrap();
+                ledger.record_outcome(id, Outcome::Kept, None).unwrap();
+            });
+            // D: deviate visibly.
+            let d = fold_after(&|ledger, id| {
+                ledger.record_outcome(id, Outcome::Violated, None).unwrap();
+            });
+
+            // Every honest path ≥ every dishonest path at the same w.
+            for honest in [a, b, c] {
+                assert!(
+                    honest >= d,
+                    "honest {honest} must price ≥ dishonest {d} at w={}",
+                    w.points()
+                );
+            }
+            // The open paths price identically: renegotiating is never taxed
+            // against compliance — the property that makes honesty rational.
+            assert_eq!(a, b, "comply == renegotiate-accepted at w={}", w.points());
+            assert_eq!(
+                a,
+                c,
+                "comply == renegotiate-rejected-then-comply at w={}",
+                w.points()
+            );
+
+            // Silent deviation is strictly dominated: the same point loss as
+            // the visible deviate, plus the cliff — goal probability zero for
+            // ANY benefit, while the visible deviate keeps a live one.
+            let silent = crate::goal_probability_percent(crate::Reliance::Deceptive, 100);
+            assert_eq!(silent, 0, "the cliff zeroes the goal at w={}", w.points());
+            assert_eq!(
+                crate::delivered_value(crate::Reliance::Deceptive.percent(), 1_000_000),
+                0
+            );
+            let visible_reliance = d * 100 / crate::SCALE_POINTS;
+            let visible =
+                crate::goal_probability_percent(crate::Reliance::Honest(visible_reliance), 100);
+            assert!(
+                visible > 0,
+                "the visible deviate keeps reliance live ({visible} at w={}): \
+                 silent deviation is strictly dominated",
+                w.points()
+            );
+        }
     }
 }

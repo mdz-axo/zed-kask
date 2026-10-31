@@ -97,9 +97,19 @@ the user's acceptance is cited in the oracle note, not cryptographically
 enforced. The algedonic review + the user verify (same as v1: the agent
 could lie; the review catches it).
 
-**Map edge — the filing surface:** a proposal durably filed (awaiting
-the user's decision) needs store support — slice 2 (the operator gates
-tool contracts).
+**The filing surface (landed 2026-10-31):** a proposal files durably
+as a `trust:ledger:proposal` h_mem through the shared wire format
+(`hkask_mcp_server::trust_ledger_hmem`) — the curator tools
+`trust_ledger_file_proposal` / `trust_ledger_list_proposals` /
+`trust_ledger_resolve_proposal` carry the file → read → resolve
+round-trip over the real store. The filing timestamp makes the
+before-deviation ordering auditable: a violation outcome with no
+preceding proposal is the silent-deviation class, provable from the
+rows. The teaching payload is enforced at file time
+(`RenegotiationProposal::validate`), a proposal resolves once, and
+acceptance attaches to a live (unverified) expectation — no
+double-supersede through a stale pending proposal. The wire format is
+shared with the kata-kanban's store so the two cannot drift.
 
 ## What survives from v1
 
@@ -131,9 +141,15 @@ tool contracts).
 
 1. **Anchor surface** — a typed anchor recorded and surfaced before
    work: goal understanding, terrain, map edges; the user corrects
-   before work starts.
+   before work starts. LANDED 2026-10-31: the typed `Anchor`
+   (`hkask-trust`, constructor refusing the false anchor — empty map
+   edges claim omniscience) plus the curator tools
+   `trust_anchor_record` / `trust_anchor_get` (a later record for a
+   task key supersedes; the originals stay auditable in the trail).
 2. **Renegotiation proposal surface** — file, resolve, supersede (this
-   document); slice 1 (the pure model) lands with this document.
+   document); slice 1 (the pure model) lands with this document, and
+   the wiring (the durable proposal h_mem + the three curator tools)
+   landed 2026-10-31 — see the filing-surface note above.
 3. **Completion surface** — audit trail as curriculum on verify.
 4. **Eval protocol v2** — the replay set from the principal's
    adjudicated events, human ground truth, negative controls.

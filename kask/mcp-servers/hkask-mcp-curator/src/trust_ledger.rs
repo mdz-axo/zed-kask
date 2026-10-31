@@ -1,15 +1,20 @@
-//! Trust-ledger storage (Binding 5's substrate — trust events ARE h_mems).
+//! Trust-surface storage (Binding 5's substrate — trust events ARE
+//! h_mems; trust internalization v2 adds the proposal and anchor rows).
 //!
-//! The four MCP tools (`trust_ledger_record_instruction`,
+//! The MCP tools (`trust_ledger_record_instruction`,
 //! `trust_ledger_record_outcome`, `trust_ledger_state`,
-//! `trust_ledger_steer`) live on `CuratorServer` alongside the other
-//! curator tools (see the main file). This module provides the
-//! `CuratorTrustLedgerStore` — the `TrustLedgerStore` implementation that
-//! persists trust events as h_mems in the curator's `MemoryStore`
-//! (entity `trust:ledger`, attribute = the event id, value = JSON
-//! carrying the full event). The substrate-independent wire format and
-//! query logic live in `hkask_mcp_server::trust_ledger_hmem`, shared
-//! with the kata-kanban's store so the two cannot drift.
+//! `trust_ledger_steer`, plus the v2 surfaces `trust_ledger_file_proposal`,
+//! `trust_ledger_list_proposals`, `trust_ledger_resolve_proposal`,
+//! `trust_anchor_record`, `trust_anchor_get`) live on `CuratorServer`
+//! alongside the other curator tools (see the main file). This module
+//! provides the `CuratorTrustLedgerStore` — the `TrustLedgerStore`
+//! implementation that persists trust events as h_mems in the curator's
+//! `MemoryStore` (entity `trust:ledger`, attribute = the event id, value =
+//! JSON carrying the full event), plus the v2 substrate calls for filed
+//! proposals (entity `trust:ledger:proposal`) and recorded anchors
+//! (entity `trust:anchor`). The substrate-independent wire formats and
+//! query logic live in `hkask_mcp_server::trust_ledger_hmem`, shared with
+//! the kata-kanban's store so the two cannot drift.
 //!
 //! Binding 5 closes mechanically: trust events ARE h_mems, so
 //! `memory_insert`'s evidence gate (`fetch_existing_h_mem`) can cite a
@@ -18,8 +23,9 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use hkask_mcp_server::trust_ledger_hmem;
+use hkask_mcp_server::trust_ledger_hmem::{self, StoredAnchor, StoredProposal};
 use hkask_memory::MemoryStore;
+use hkask_storage::HMemId;
 use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, TrustError, TrustLedgerStore};
 use hkask_types::WebID;
 
@@ -80,6 +86,91 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
             .map_err(|_| TrustError::StoreUnavailable)?;
 
         Ok(trust_ledger_hmem::window_events(&h_mems, since))
+    }
+}
+
+/// The v2 trust surfaces (trust internalization v2): the proposal filing
+/// lifecycle and the anchor record, over the same `MemoryStore` substrate
+/// as the event rows.
+impl CuratorTrustLedgerStore {
+    /// Find one registered expectation by id — the proposal surface's
+    /// event-existence and live-state checks read the same rows the fold
+    /// reads.
+    pub fn event(&self, id: &LedgerEventId) -> Result<LedgerEvent, TrustError> {
+        let h_mems = self
+            .memory
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
+            .map_err(|_| TrustError::StoreUnavailable)?;
+        trust_ledger_hmem::find_event(&h_mems, id)
+    }
+
+    /// File a proposal durably. The generative constraint is enforced at
+    /// the storage boundary too: a proposal that does not teach is
+    /// invalid where the row is written, not only at resolve.
+    pub fn file_proposal(&self, proposal: StoredProposal) -> Result<(), TrustError> {
+        if proposal.teaching_payload.trim().is_empty() {
+            return Err(TrustError::EmptyTeachingPayload);
+        }
+        let h_mem = trust_ledger_hmem::proposal_to_h_mem(&proposal, &self.webid);
+        self.memory
+            .store(h_mem)
+            .map_err(|_| TrustError::StoreUnavailable)
+    }
+
+    /// All filed proposals (any status), newest-filed first — the
+    /// operator's decision surface reads the freshest proposal first.
+    pub fn list_proposals(&self) -> Result<Vec<StoredProposal>, TrustError> {
+        let h_mems = self
+            .memory
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_PROPOSAL_ENTITY)
+            .map_err(|_| TrustError::StoreUnavailable)?;
+        Ok(trust_ledger_hmem::proposals(&h_mems))
+    }
+
+    /// One filed proposal by id, plus its row id (the resolution's
+    /// update path needs the old row for the delete + insert replacement).
+    pub fn get_proposal(&self, proposal_id: &str) -> Result<(StoredProposal, HMemId), TrustError> {
+        let h_mems = self
+            .memory
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_PROPOSAL_ENTITY)
+            .map_err(|_| TrustError::StoreUnavailable)?;
+        trust_ledger_hmem::find_proposal(&h_mems, proposal_id)
+    }
+
+    /// Replace the proposal row with the decided one (delete + insert —
+    /// no update-in-place on the substrate, the same replacement path as
+    /// `resolve_outcome`).
+    pub fn update_proposal(
+        &self,
+        old_row: &HMemId,
+        proposal: StoredProposal,
+    ) -> Result<(), TrustError> {
+        self.memory
+            .delete_h_mem(old_row)
+            .map_err(|_| TrustError::StoreUnavailable)?;
+        let h_mem = trust_ledger_hmem::proposal_to_h_mem(&proposal, &self.webid);
+        self.memory
+            .store(h_mem)
+            .map_err(|_| TrustError::StoreUnavailable)
+    }
+
+    /// Record an anchor durably (the latest revision for its task key
+    /// becomes the current anchor).
+    pub fn record_anchor(&self, anchor: StoredAnchor) -> Result<(), TrustError> {
+        let h_mem = trust_ledger_hmem::anchor_to_h_mem(&anchor, &self.webid);
+        self.memory
+            .store(h_mem)
+            .map_err(|_| TrustError::StoreUnavailable)
+    }
+
+    /// The anchors recorded for one task key, highest revision first
+    /// (the current anchor, then the superseded audit trail).
+    pub fn anchors_for_task(&self, task_key: &str) -> Result<Vec<StoredAnchor>, TrustError> {
+        let h_mems = self
+            .memory
+            .query_deduped_untouched(trust_ledger_hmem::TRUST_ANCHOR_ENTITY)
+            .map_err(|_| TrustError::StoreUnavailable)?;
+        Ok(trust_ledger_hmem::anchors_for_task(&h_mems, task_key))
     }
 }
 

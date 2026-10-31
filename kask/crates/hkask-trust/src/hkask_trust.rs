@@ -209,6 +209,47 @@ impl fmt::Display for SteerProjection {
     }
 }
 
+/// The work anchor (trust internalization v2, step 1 — ontological
+/// anchoring): what the agent understands the goal to be, the terrain as
+/// the agent sees it, and the map edges — where the model's map ends, what
+/// it does not know yet. Recorded and surfaced BEFORE work proceeds so the
+/// operator corrects it in one read: a wrong anchor caught at intake costs
+/// one correction; caught after delivery it costs the task.
+///
+/// An anchor that claims no unknowns is a false anchor (claiming the map
+/// has no edges is claiming omniscience) — [`Anchor::new`] refuses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Anchor {
+    /// What I understand the goal to be.
+    pub goal_understanding: String,
+    /// The map as the agent sees it.
+    pub terrain: String,
+    /// Where the model's map ends — what it does not know yet. Non-empty
+    /// or the anchor is false.
+    pub map_edges: Vec<String>,
+}
+
+impl Anchor {
+    /// Construct an anchor, refusing the false anchor: map edges that are
+    /// absent or all whitespace claim the model's map has no edges, which
+    /// no honest map can.
+    pub fn new(
+        goal_understanding: String,
+        terrain: String,
+        map_edges: Vec<String>,
+    ) -> Result<Self, TrustError> {
+        let has_real_edges = map_edges.iter().any(|edge| !edge.trim().is_empty());
+        if !has_real_edges {
+            return Err(TrustError::EmptyMapEdges);
+        }
+        Ok(Self {
+            goal_understanding,
+            terrain,
+            map_edges,
+        })
+    }
+}
+
 /// The trust module's error. [`TrustError::StoreUnavailable`] must surface
 /// as sensor-unavailable — never serialized as an empty account (a broken
 /// feedback loop is worse than a surfaced outage; the regulation `Sensor`
@@ -219,6 +260,8 @@ pub enum TrustError {
     StoreUnavailable,
     /// A caller-named ledger event was not found (names the id).
     EventNotFound(String),
+    /// A caller-named renegotiation proposal was not found (names the id).
+    ProposalNotFound(String),
     /// An instruction was empty (or whitespace-only): the ledger's
     /// noise floor. An empty instruction is not an event.
     EmptyInstruction,
@@ -226,6 +269,10 @@ pub enum TrustError {
     /// proposal that does not teach is invalid (the generative
     /// constraint, trust internalization v2).
     EmptyTeachingPayload,
+    /// An anchor's map edges were empty — an anchor that claims no
+    /// unknowns is a false anchor (trust internalization v2, step 1: the
+    /// map edges are where the model's map ends).
+    EmptyMapEdges,
 }
 
 impl fmt::Display for TrustError {
@@ -240,6 +287,9 @@ impl fmt::Display for TrustError {
             TrustError::EventNotFound(id) => {
                 write!(f, "trust ledger event '{id}' not found")
             }
+            TrustError::ProposalNotFound(id) => {
+                write!(f, "trust ledger proposal '{id}' not found")
+            }
             TrustError::EmptyInstruction => {
                 write!(f, "the instruction text was empty — not an event")
             }
@@ -247,6 +297,12 @@ impl fmt::Display for TrustError {
                 write!(
                     f,
                     "the proposal's teaching payload was empty — a proposal that does not teach is invalid"
+                )
+            }
+            TrustError::EmptyMapEdges => {
+                write!(
+                    f,
+                    "the anchor's map edges were empty — an anchor that claims no unknowns is a false anchor"
                 )
             }
         }
@@ -402,5 +458,45 @@ mod tests {
         let msg = TrustError::StoreUnavailable.to_string();
         assert!(msg.contains("unknown"));
         assert!(msg.contains("not zero"));
+    }
+
+    /// An anchor that claims no unknowns is a false anchor (trust
+    /// internalization v2, step 1): the map edges are where the model's map
+    /// ends — an anchor with no map edges claims omniscience, and the
+    /// constructor refuses it. An anchor with real edges constructs.
+    #[test]
+    fn anchor_without_map_edges_is_a_false_anchor() {
+        let refused = Anchor::new(
+            "make the renegotiation surface usable end-to-end".to_string(),
+            "the pure model is live; the surfaces are not".to_string(),
+            vec![],
+        );
+        assert!(matches!(refused, Err(TrustError::EmptyMapEdges)));
+
+        // Whitespace-only edges claim nothing real either.
+        let blank = Anchor::new(
+            "the goal".to_string(),
+            "the terrain".to_string(),
+            vec!["   ".to_string()],
+        );
+        assert!(matches!(blank, Err(TrustError::EmptyMapEdges)));
+
+        let anchored = Anchor::new(
+            "make the renegotiation surface usable end-to-end".to_string(),
+            "the pure model is live; the surfaces are not".to_string(),
+            vec!["the algedonic review cadence".to_string()],
+        )
+        .expect("an anchor with real map edges constructs");
+        assert_eq!(anchored.map_edges.len(), 1);
+        assert!(anchored.goal_understanding.contains("end-to-end"));
+    }
+
+    /// EmptyMapEdges names the false-anchor rule in its message — the
+    /// refusal must tell the operator what an anchor is for.
+    #[test]
+    fn empty_map_edges_names_the_false_anchor_rule() {
+        let msg = TrustError::EmptyMapEdges.to_string();
+        assert!(msg.contains("map edges"));
+        assert!(msg.contains("false anchor"), "{msg}");
     }
 }

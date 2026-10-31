@@ -1668,6 +1668,354 @@ impl CuratorServer {
         })
         .await
     }
+
+    // ── Renegotiation proposals (trust internalization v2) ───────────
+
+    /// The v2 trust-surface store over the same memory the event rows
+    /// live in — the shared substrate calls for filed proposals and
+    /// recorded anchors (see `crate::trust_ledger`).
+    fn trust_store(&self) -> Result<crate::trust_ledger::CuratorTrustLedgerStore, McpToolError> {
+        let stores = self.db.get();
+        let memory = stores
+            .memory
+            .ok_or_else(|| McpToolError::failed_precondition("curator memory store unavailable"))?;
+        Ok(crate::trust_ledger::CuratorTrustLedgerStore::new(
+            memory, self.webid,
+        ))
+    }
+
+    #[tool(
+        description = "File a renegotiation proposal — the agent's REQUIRED move BEFORE deviating from a registered expectation (trust internalization v2). The proposal names the conflict with its measurements, the priced options, the recommendation, and the teaching payload (what the user will know after reading it that they didn't before — non-empty or the proposal is invalid). Filing durably records the before-deviation ordering: a violation outcome with no preceding proposal is the silent-deviation class, provable from the rows. The proposal then awaits the user's human decision (trust_ledger_list_proposals shows it; trust_ledger_resolve_proposal records the decision)."
+    )]
+    pub async fn trust_ledger_file_proposal(
+        &self,
+        Parameters(req): Parameters<TrustLedgerFileProposalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_file_proposal", async {
+            let store = self.trust_store()?;
+
+            let filed_at = chrono::Utc::now();
+            let proposal_id = hkask_trust::LedgerEventId::new().as_str().to_string();
+            let stored = hkask_mcp_server::trust_ledger_hmem::StoredProposal {
+                proposal_id: proposal_id.clone(),
+                event_id: req.event_id.clone(),
+                conflict: req.conflict.clone(),
+                options: req
+                    .options
+                    .iter()
+                    .map(
+                        |o| hkask_mcp_server::trust_ledger_hmem::StoredProposalOption {
+                            description: o.description.clone(),
+                            trust_delta_points: o.trust_delta_points,
+                            user_cost: o.user_cost.clone(),
+                        },
+                    )
+                    .collect(),
+                recommendation: req.recommendation.clone(),
+                teaching_payload: req.teaching_payload.clone(),
+                status: hkask_mcp_server::trust_ledger_hmem::PROPOSAL_STATUS_PENDING.to_string(),
+                filed_at,
+                resolution: None,
+            };
+
+            // The generative constraint, enforced at FILE time: a proposal
+            // that does not teach is invalid — before any deviation could
+            // ride on it.
+            stored.payload().validate().map_err(trust_error_to_mcp)?;
+
+            // The proposal attaches to a REGISTERED, live expectation:
+            // refused at file time, not at resolve time (after the
+            // deviation already rode on it).
+            let event_id = hkask_trust::LedgerEventId::from_string(&req.event_id);
+            let event = store.event(&event_id).map_err(trust_error_to_mcp)?;
+            if event.outcome != hkask_trust::Outcome::Unverified {
+                return Err(McpToolError::failed_precondition(format!(
+                    "trust ledger event '{}' is already resolved as {} — a proposal \
+                     attaches to a live expectation",
+                    req.event_id,
+                    ledger_outcome_str(event.outcome)
+                )));
+            }
+
+            store.file_proposal(stored).map_err(trust_error_to_mcp)?;
+            RegulationSpan::Curation.emit("trust_ledger_file_proposal");
+            Ok(serde_json::json!({
+                "proposal_id": proposal_id,
+                "event_id": req.event_id,
+                "status": "pending",
+                "filed_at": filed_at.to_rfc3339(),
+                "guidance": "Awaiting the user's decision (trust_ledger_list_proposals). \
+                 Deviating before the decision is the violation class; if the user \
+                 rejects, the original stands.",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "List filed renegotiation proposals — the operator's decision surface. Each proposal surfaces in full: the conflict with its measurements, the priced options, the recommendation, the teaching payload, and its status (pending / accepted / rejected) with the recorded resolution. Filter by status, or omit for all. The pending_count field is the standing number awaiting the user's decision."
+    )]
+    pub async fn trust_ledger_list_proposals(
+        &self,
+        Parameters(req): Parameters<TrustLedgerListProposalsRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_list_proposals", async {
+            let status = match req.status.as_deref().map(str::trim) {
+                None | Some("") => None,
+                Some(s @ ("pending" | "accepted" | "rejected")) => Some(s),
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "unknown status '{other}' — valid: pending, accepted, rejected \
+                         (omit for all)"
+                    )));
+                }
+            };
+
+            let store = self.trust_store()?;
+            let all = store.list_proposals().map_err(trust_error_to_mcp)?;
+            let pending_count = all
+                .iter()
+                .filter(|p| {
+                    p.status == hkask_mcp_server::trust_ledger_hmem::PROPOSAL_STATUS_PENDING
+                })
+                .count();
+            let filtered: Vec<serde_json::Value> = all
+                .iter()
+                .filter(|p| status.is_none_or(|s| p.status == s))
+                .map(proposal_json)
+                .collect();
+            let count = filtered.len();
+            Ok(serde_json::json!({
+                "proposals": filtered,
+                "count": count,
+                "pending_count": pending_count,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Record the user's decision on a filed renegotiation proposal: accept (the replacement expectation supersedes — the original resolves as renegotiated, the open path, and the replacement registers live with the original's weight and source) or reject (the original stands). The veto is human and the gate is procedural: this tool cannot authenticate its caller — the required oracle_note records what claims the human decision (a conversation reference, a review note), and the algedonic review verifies it. A proposal resolves once; a pending proposal whose event already carries an outcome is refused (no double-supersede)."
+    )]
+    pub async fn trust_ledger_resolve_proposal(
+        &self,
+        Parameters(req): Parameters<TrustLedgerResolveProposalRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_ledger_resolve_proposal", async {
+            // The request shape is validated before anything moves.
+            let accepted = match req.resolution.trim() {
+                "accept" => true,
+                "reject" => false,
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "unknown resolution '{other}' — valid: accept, reject"
+                    )));
+                }
+            };
+            let oracle_note = req.oracle_note.trim();
+            if oracle_note.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "oracle_note is required — it records what claims the human decision; \
+                     the algedonic review verifies it (the tool cannot authenticate \
+                     its caller)",
+                ));
+            }
+            let new_expectation = if accepted {
+                Some(
+                    req.new_expectation
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            McpToolError::invalid_argument(
+                                "accept requires the replacement expectation \
+                                 (new_expectation)",
+                            )
+                        })?
+                        .to_string(),
+                )
+            } else {
+                if req
+                    .new_expectation
+                    .as_deref()
+                    .is_some_and(|s| !s.trim().is_empty())
+                {
+                    return Err(McpToolError::invalid_argument(
+                        "reject contradicts a new_expectation — the original stands, \
+                         nothing replaces it",
+                    ));
+                }
+                None
+            };
+
+            let store = self.trust_store()?;
+            let (mut stored, old_row) = store
+                .get_proposal(&req.proposal_id)
+                .map_err(trust_error_to_mcp)?;
+            if stored.status != hkask_mcp_server::trust_ledger_hmem::PROPOSAL_STATUS_PENDING {
+                return Err(McpToolError::failed_precondition(format!(
+                    "proposal '{}' is already {} — the user's decision is recorded",
+                    req.proposal_id, stored.status
+                )));
+            }
+
+            // Acceptance attaches to a live expectation: if the event
+            // already carries an outcome (e.g. the agent complied after
+            // all), accept refuses — no double-supersede through a stale
+            // pending proposal.
+            if accepted {
+                let event_id = hkask_trust::LedgerEventId::from_string(&stored.event_id);
+                let event = store.event(&event_id).map_err(trust_error_to_mcp)?;
+                if event.outcome != hkask_trust::Outcome::Unverified {
+                    return Err(McpToolError::failed_precondition(format!(
+                        "trust ledger event '{}' is already resolved as {} — acceptance \
+                         supersedes a live expectation, not a resolved one",
+                        stored.event_id,
+                        ledger_outcome_str(event.outcome)
+                    )));
+                }
+            }
+
+            // The user's decision flows through the pure model: accept
+            // supersedes (original → Renegotiated, replacement live);
+            // reject leaves the original live.
+            let ledger = self.trust_ledger()?;
+            let resolution = if accepted {
+                hkask_trust::ProposalResolution::Accepted {
+                    new_expectation: new_expectation
+                        .clone()
+                        .expect("accept was validated to carry the replacement expectation"),
+                }
+            } else {
+                hkask_trust::ProposalResolution::Rejected
+            };
+            let new_event_id = ledger
+                .resolve_proposal(&stored.payload(), resolution, Some(oracle_note.to_string()))
+                .map_err(trust_error_to_mcp)?;
+
+            // Record the decision on the proposal row — the audit surface
+            // the algedonic review reads.
+            stored.status = if accepted {
+                hkask_mcp_server::trust_ledger_hmem::PROPOSAL_STATUS_ACCEPTED.to_string()
+            } else {
+                hkask_mcp_server::trust_ledger_hmem::PROPOSAL_STATUS_REJECTED.to_string()
+            };
+            stored.resolution = Some(
+                hkask_mcp_server::trust_ledger_hmem::ProposalResolutionRecord {
+                    decision: if accepted { "accepted" } else { "rejected" }.to_string(),
+                    resolved_at: chrono::Utc::now(),
+                    oracle_note: oracle_note.to_string(),
+                    new_expectation,
+                    new_event_id: new_event_id.as_ref().map(|id| id.as_str().to_string()),
+                },
+            );
+            store
+                .update_proposal(&old_row, stored)
+                .map_err(trust_error_to_mcp)?;
+
+            RegulationSpan::Curation.emit("trust_ledger_resolve_proposal");
+            Ok(serde_json::json!({
+                "proposal_id": req.proposal_id,
+                "resolution": if accepted { "accept" } else { "reject" },
+                "new_event_id": new_event_id.map(|id| id.as_str().to_string()),
+                "oracle_note": oracle_note,
+            }))
+        })
+        .await
+    }
+
+    // ── Work anchors (trust internalization v2, step 1) ──────────────
+
+    #[tool(
+        description = "Record the work anchor BEFORE work proceeds (trust internalization v2, step 1): the goal understanding (what the goal is understood to be), the terrain (the map as the agent sees it), and the map edges — where the model's map ends, what it does not know yet. The anchor is a shared object: the operator reads it (trust_anchor_get) and corrects it in one read — a wrong anchor caught at intake costs one correction; caught after delivery it costs the task. A later record for the same task_key supersedes (the latest becomes current; the originals stay auditable in the trail). An anchor that claims no unknowns is refused — a false anchor."
+    )]
+    pub async fn trust_anchor_record(
+        &self,
+        Parameters(req): Parameters<TrustAnchorRecordRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_anchor_record", async {
+            if req.task_key.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "task_key is required — an anchor belongs to a task",
+                ));
+            }
+
+            // The false-anchor refusal lives in the pure model: an anchor
+            // that claims no unknowns claims omniscience.
+            let anchor = hkask_trust::Anchor::new(
+                req.goal_understanding.clone(),
+                req.terrain.clone(),
+                req.map_edges.clone(),
+            )
+            .map_err(trust_error_to_mcp)?;
+
+            let store = self.trust_store()?;
+            let existing = store
+                .anchors_for_task(&req.task_key)
+                .map_err(trust_error_to_mcp)?;
+            let revision = existing.first().map(|a| a.revision).unwrap_or(0) + 1;
+            let recorded_at = chrono::Utc::now();
+            let anchor_id = hkask_trust::LedgerEventId::new().as_str().to_string();
+            let stored = hkask_mcp_server::trust_ledger_hmem::StoredAnchor {
+                anchor_id: anchor_id.clone(),
+                task_key: req.task_key.trim().to_string(),
+                goal_understanding: anchor.goal_understanding,
+                terrain: anchor.terrain,
+                map_edges: anchor.map_edges,
+                revision,
+                recorded_at,
+            };
+            store.record_anchor(stored).map_err(trust_error_to_mcp)?;
+
+            RegulationSpan::Curation.emit("trust_anchor_record");
+            Ok(serde_json::json!({
+                "anchor_id": anchor_id,
+                "task_key": req.task_key.trim(),
+                "revision": revision,
+                "status": if revision == 1 { "current" } else { "supersedes" },
+                "recorded_at": recorded_at.to_rfc3339(),
+                "guidance": "Surface this anchor to the user before work proceeds \
+                 (trust_anchor_get). The user corrects it in one read.",
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read the work anchor for a task: the current anchor (the highest revision — the goal understanding, the terrain, the map edges) plus the superseded trail (the original anchors stay auditable). The operator's one read: what the agent understood before work started, and where the agent's map ended."
+    )]
+    pub async fn trust_anchor_get(
+        &self,
+        Parameters(req): Parameters<TrustAnchorGetRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "trust_anchor_get", async {
+            if req.task_key.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "task_key is required — an anchor belongs to a task",
+                ));
+            }
+            let store = self.trust_store()?;
+            let anchors = store
+                .anchors_for_task(req.task_key.trim())
+                .map_err(trust_error_to_mcp)?;
+            if anchors.is_empty() {
+                return Err(McpToolError::not_found(format!(
+                    "no anchor recorded for task '{}' — nothing was anchored \
+                     before this read",
+                    req.task_key.trim()
+                )));
+            }
+            let current = anchor_json(&anchors[0]);
+            let superseded: Vec<serde_json::Value> =
+                anchors.iter().skip(1).map(anchor_json).collect();
+            Ok(serde_json::json!({
+                "task_key": req.task_key.trim(),
+                "current": current,
+                "superseded": superseded,
+            }))
+        })
+        .await
+    }
 }
 
 fn trust_error_to_mcp(e: hkask_trust::TrustError) -> McpToolError {
@@ -1678,13 +2026,71 @@ fn trust_error_to_mcp(e: hkask_trust::TrustError) -> McpToolError {
         hkask_trust::TrustError::EventNotFound(id) => {
             McpToolError::not_found(format!("trust ledger event '{id}' not found"))
         }
+        hkask_trust::TrustError::ProposalNotFound(id) => {
+            McpToolError::not_found(format!("trust ledger proposal '{id}' not found"))
+        }
         hkask_trust::TrustError::EmptyInstruction => {
             McpToolError::invalid_argument("instruction text was empty — not an event")
         }
         hkask_trust::TrustError::EmptyTeachingPayload => McpToolError::invalid_argument(
             "the proposal's teaching payload was empty — a proposal that does not teach is invalid",
         ),
+        hkask_trust::TrustError::EmptyMapEdges => McpToolError::invalid_argument(
+            "the anchor's map edges were empty — an anchor that claims no unknowns is a false anchor",
+        ),
     }
+}
+
+/// An outcome's wire spelling, for refusal messages that name the event's
+/// current state.
+fn ledger_outcome_str(outcome: hkask_trust::Outcome) -> &'static str {
+    match outcome {
+        hkask_trust::Outcome::Kept => "kept",
+        hkask_trust::Outcome::Violated => "violated",
+        hkask_trust::Outcome::Renegotiated => "renegotiated",
+        hkask_trust::Outcome::Unverified => "unverified",
+    }
+}
+
+/// One filed proposal in the list surface — the operator's decision read.
+fn proposal_json(p: &hkask_mcp_server::trust_ledger_hmem::StoredProposal) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "proposal_id": p.proposal_id,
+        "event_id": p.event_id,
+        "conflict": p.conflict,
+        "options": p.options.iter().map(|o| serde_json::json!({
+            "description": o.description,
+            "trust_delta_points": o.trust_delta_points,
+            "user_cost": o.user_cost,
+        })).collect::<Vec<_>>(),
+        "recommendation": p.recommendation,
+        "teaching_payload": p.teaching_payload,
+        "status": p.status,
+        "filed_at": p.filed_at.to_rfc3339(),
+    });
+    if let Some(r) = &p.resolution {
+        value["resolution"] = serde_json::json!({
+            "decision": r.decision,
+            "resolved_at": r.resolved_at.to_rfc3339(),
+            "oracle_note": r.oracle_note,
+            "new_expectation": r.new_expectation,
+            "new_event_id": r.new_event_id,
+        });
+    }
+    value
+}
+
+/// One recorded anchor in the read surface — the operator's one read.
+fn anchor_json(a: &hkask_mcp_server::trust_ledger_hmem::StoredAnchor) -> serde_json::Value {
+    serde_json::json!({
+        "anchor_id": a.anchor_id,
+        "task_key": a.task_key,
+        "goal_understanding": a.goal_understanding,
+        "terrain": a.terrain,
+        "map_edges": a.map_edges,
+        "revision": a.revision,
+        "recorded_at": a.recorded_at.to_rfc3339(),
+    })
 }
 
 // ── Server startup ─────────────────────────────────────────────────────
@@ -1853,8 +2259,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         CuratorServer::tool_router(),
         "tool_router",
-        19,
-        tool_surface_is_exactly_19_registered_tools,
+        24,
+        tool_surface_is_exactly_24_registered_tools,
     );
 
     /// The retired escalation/advice tool family must not reappear — the

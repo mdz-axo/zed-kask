@@ -27,7 +27,9 @@ pub struct TrustLedgerRecordInstructionRequest {
 pub struct TrustLedgerRecordOutcomeRequest {
     /// The ledger event id (from `trust_ledger_record_instruction`).
     pub event_id: String,
-    /// The verification outcome: "kept" | "violated" | "unverified".
+    /// The verification outcome: "kept" | "violated" | "unverified" |
+    /// "renegotiated" (v2 — the user accepted a replacement expectation
+    /// before deviation).
     pub outcome: String,
     /// What verified the outcome (a test name, a build, a grep, a re-run).
     /// When `None`, the outcome is model-judged (auditable in the row).
@@ -73,6 +75,88 @@ pub struct TrustLedgerSteerRequest {
     pub actions: Vec<TrustLedgerSteerActionInput>,
     /// The window in hours. Default 24.
     pub window_hours: Option<i64>,
+}
+
+/// One priced alternative inside a renegotiation proposal.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerProposalOptionInput {
+    /// What the agent would do instead.
+    pub description: String,
+    /// The option's priced trust delta in points (signed).
+    pub trust_delta_points: i32,
+    /// The option's cost to the user, stated.
+    pub user_cost: String,
+}
+
+/// `trust_ledger_file_proposal`: file a renegotiation proposal — the
+/// agent's required move BEFORE deviating from a registered expectation
+/// (trust internalization v2).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerFileProposalRequest {
+    /// The registered expectation in conflict (from
+    /// `trust_ledger_record_instruction`).
+    pub event_id: String,
+    /// What the agent found, with measurements.
+    pub conflict: String,
+    /// The priced alternatives (each: description, trust delta, user cost).
+    pub options: Vec<TrustLedgerProposalOptionInput>,
+    /// The agent's recommendation, and why.
+    pub recommendation: String,
+    /// What the user will know after reading it that they didn't before.
+    /// Non-empty or the proposal is invalid (the generative constraint).
+    pub teaching_payload: String,
+}
+
+/// `trust_ledger_list_proposals`: the operator's decision surface — the
+/// filed proposals awaiting (or carrying) the user's decision.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerListProposalsRequest {
+    /// Filter by status: "pending" | "accepted" | "rejected". Omit for all.
+    pub status: Option<String>,
+}
+
+/// `trust_ledger_resolve_proposal`: record the user's decision on a filed
+/// proposal. The veto is human and the gate is procedural: the oracle note
+/// records the claimed human decision and the algedonic review verifies it.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustLedgerResolveProposalRequest {
+    /// The proposal id (from `trust_ledger_file_proposal`).
+    pub proposal_id: String,
+    /// "accept" (the replacement supersedes) | "reject" (the original
+    /// stands).
+    pub resolution: String,
+    /// The replacement expectation, required on accept; must be absent on
+    /// reject.
+    pub new_expectation: Option<String>,
+    /// Required: records what claims the human decision (a conversation
+    /// reference, a review note). The tool cannot authenticate its caller —
+    /// this note is the audit surface the algedonic review verifies.
+    pub oracle_note: String,
+}
+
+/// `trust_anchor_record`: record the work anchor BEFORE work proceeds
+/// (trust internalization v2, step 1).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustAnchorRecordRequest {
+    /// The task the anchor belongs to (the operator's read key — a kanban
+    /// card id, a goal id, or a session's own key).
+    pub task_key: String,
+    /// What the agent understands the goal to be.
+    pub goal_understanding: String,
+    /// The map as the agent sees it.
+    pub terrain: String,
+    /// Where the model's map ends — what it does not know yet. Non-empty
+    /// or the anchor is false (an anchor that claims no unknowns claims
+    /// omniscience).
+    pub map_edges: Vec<String>,
+}
+
+/// `trust_anchor_get`: read the current anchor (and its superseded trail)
+/// for a task.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TrustAnchorGetRequest {
+    /// The task key the anchor belongs to.
+    pub task_key: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
