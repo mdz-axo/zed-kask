@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! hkask-trust — the expectation-ledger trust model (P13 substrate).
 //!
 //! The model, its parameter anchoring, and the operator rulings:
@@ -33,6 +34,12 @@
 //! serialize as an empty account.
 
 use std::fmt;
+
+pub mod ledger;
+pub use ledger::{
+    InMemoryTrustLedger, LedgerEvent, LedgerEventId, SteerAction, TrustLedger, TrustLedgerStore,
+    WindowStats,
+};
 
 /// Trust points: 600 = T 1.0 (definitional resolution).
 pub const SCALE_POINTS: i32 = 600;
@@ -206,6 +213,9 @@ pub enum TrustError {
     StoreUnavailable,
     /// A caller-named ledger event was not found (names the id).
     EventNotFound(String),
+    /// An instruction was empty (or whitespace-only): the ledger's
+    /// noise floor. An empty instruction is not an event.
+    EmptyInstruction,
 }
 
 impl fmt::Display for TrustError {
@@ -219,6 +229,9 @@ impl fmt::Display for TrustError {
             }
             TrustError::EventNotFound(id) => {
                 write!(f, "trust ledger event '{id}' not found")
+            }
+            TrustError::EmptyInstruction => {
+                write!(f, "the instruction text was empty — not an event")
             }
         }
     }
