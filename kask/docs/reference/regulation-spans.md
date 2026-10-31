@@ -66,7 +66,7 @@ Plain observability tracing targets outside the registry live on `hkask.*`
 instead — e.g. `hkask.mcp`, `hkask.regulation`, `hkask.sensor.ocr`, `hkask.paths`.
 Kask tracing targets using the `reg.*` prefix must be registered in
 `CANONICAL_NAMESPACES` or retargeted to `hkask.*`; performative log targets belong
-on `hkask.*`, not `reg.*` (`DIVERGENCE.md:211-215`, enforced by the reg-canonical
+on `hkask.*`, not `reg.*` (`DIVERGENCE.md:209-213`, enforced by the reg-canonical
 gate scanning `kask/crates/` and `kask/mcp-servers/`).
 
 `LoopMetricsTelemetry` exposes nullable `rollout_progress_score` from evidence-bearing impact reports; no advice-review progress score is computed. An unchanged persistent condition is summarized with `steady_state_heartbeat` and `suppressed_steady_state_cycles`; clearing is marked with `condition_cleared`. When board delivery is unavailable, successful archive fallback also latches the condition until it clears; failed persistence retries and recurrence emits again. Idle heartbeat, archive retention, and the diagnostic alert-log cap remain separate mechanisms.
