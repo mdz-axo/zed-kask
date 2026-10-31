@@ -58,7 +58,7 @@ echo "timestamp,n_build_procs,total_cpu_pct,total_rss_mb,busiest_proc" > "$TRACE
 
 # Per-pid cputime (clock ticks) at the previous sample.
 declare -A prev_ticks
-prev_now="$(date +%s)"
+prev_now="$(date +%s 2>/dev/null)"
 
 # sample_tree — the build-owned pids: descendants of $PPID (the install.sh
 # shell that started this sampler), minus the sampler's own subtree (the
@@ -97,7 +97,7 @@ while kill -0 "$PPID" 2>/dev/null; do
     sleep "$INTERVAL"
     kill -0 "$PPID" 2>/dev/null || break
 
-    now="$(date +%s)"
+    now="$(date +%s 2>/dev/null)"
     elapsed=$(( now - prev_now ))
     [ "$elapsed" -gt 0 ] || elapsed=1
 
@@ -144,7 +144,13 @@ while kill -0 "$PPID" 2>/dev/null; do
     cpu_pct="$(printf '%d.%d' $((cpu_x10 / 10)) $((cpu_x10 % 10)))"
     rss_mb="$(printf '%d.%d' $((total_rss_kb / 1024)) $(((total_rss_kb % 1024) * 10 / 1024)))"
 
-    echo "$(date +%H:%M:%S),$n_procs,$cpu_pct,$rss_mb,$busiest" >> "$TRACE_FILE"
+    # 2>/dev/null on each date: a SIGTERM landing mid-substitution (the
+    # stop protocol) kills the substitution's pipe reader with the write
+    # still in flight, and date's EPIPE noise inherits this script's
+    # stderr — observed live failing check-build-monitor on the runner
+    # 2026-10-31 ("date: write error: Broken pipe" in the silence
+    # fixture). Same discipline as the vanished-pid /proc read below.
+    echo "$(date +%H:%M:%S 2>/dev/null),$n_procs,$cpu_pct,$rss_mb,$busiest" >> "$TRACE_FILE"
 
     # This sample becomes the next baseline.
     unset prev_ticks

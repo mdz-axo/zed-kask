@@ -147,6 +147,8 @@ jobs:
     # their per-job cancellation groups).
     steps:
       - uses: actions/checkout@v4
+      - name: Install mold linker — .cargo/config.toml forces -fuse-ld=mold; without it every cargo build-script link dies (collect2: cannot find 'ld', observed reddening every check run via the lisp-forms selftest's cargo build)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq mold
       - name: §13.1 — no hKask crate depends on a zed-kask crate
         run: bash kask/scripts/check-hkask-no-zed-deps.sh
       - name: Zed isolation — upstream packaging/updater surfaces stay deleted
