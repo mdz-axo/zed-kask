@@ -39,7 +39,7 @@ pub use metacognition::{AlertEvent, AlertSink, HealthSnapshot, MetacognitionLoop
 
 /// The entity prefix for all trust-ledger h_mems (Binding 5's substrate —
 /// trust events ARE h_mems in the curator's store).
-pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
+pub use hkask_trust::TRUST_LEDGER_ENTITY;
 
 pub use loops::CurationInput;
 pub use loops::signals::Signal;

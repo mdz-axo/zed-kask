@@ -7996,6 +7996,7 @@ dependencies = [
  "chrono",
  "hkask-memory",
  "hkask-storage",
+ "hkask-trust",
  "hkask-types",
  "parking_lot",
  "serde",

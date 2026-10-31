@@ -25,7 +25,7 @@ use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, RenegotiationProposal, Tr
 use hkask_types::WebID;
 
 /// The entity for trust-ledger event h_mems.
-pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
+pub use hkask_trust::TRUST_LEDGER_ENTITY;
 
 /// The entity for filed renegotiation proposals (trust internalization
 /// v2): the agent's required move before deviating, durably awaiting the

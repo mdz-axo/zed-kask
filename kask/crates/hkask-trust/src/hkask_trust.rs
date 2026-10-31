@@ -53,6 +53,11 @@ pub const KEEP_PER_WEIGHT: i32 = 4;
 /// The 9/4 ratio is the anchored 2.25 loss-aversion asymmetry.
 pub const VIOLATE_PER_WEIGHT: i32 = 9;
 
+/// The h_mem entity prefix under which every trust-ledger event is stored
+/// (attribute = the event id). One home: writers and readers import it from
+/// here so the wire format cannot fork.
+pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";
+
 /// How explicitly an expectation was stated — the violation's weight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Weight {
