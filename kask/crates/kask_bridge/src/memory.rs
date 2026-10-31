@@ -17,6 +17,7 @@ use hkask_memory::{
 use hkask_storage::open_or_repair;
 #[cfg(test)]
 use hkask_storage::{EmbeddingStore, HMemStore};
+use hkask_trust::{self, KEEP_PER_WEIGHT, PRIOR_POINTS, SCALE_POINTS, VIOLATE_PER_WEIGHT};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -258,6 +259,104 @@ impl RealMemoryPort {
         self.curator_store
             .get()
             .ok_or_else(|| "curator trust-ledger store unavailable".to_string())
+    }
+
+    /// Read the current trust state from the ledger (entity
+    /// `"trust:ledger"`) in the given window and format it as a
+    /// short injection block for the context injector.
+    ///
+    /// The trust state is the trust-economics feedback signal
+    /// (P13): the folded trust points (0..=600), the delegation
+    /// radius (percent), the kept/violated/unverified counts,
+    /// and the operator cost of the most recent violation.
+    /// This is read-only — the agent sees the operator's
+    /// account, not its own self-report.
+    pub fn trust_state_summary(&self, window_hours: i64) -> Result<String, String> {
+        let store = self.trust_ledger_store()?;
+        let since = chrono::Utc::now() - chrono::Duration::hours(window_hours);
+
+        let h_mems = store
+            .query_deduped_untouched("trust:ledger")
+            .map_err(|e| format!("trust-ledger query failed: {e}"))?;
+
+        let mut kept = 0u32;
+        let mut violated = 0u32;
+        let mut unverified = 0u32;
+        let mut renegotiated = 0u32;
+        let mut weighted_violation = 0i64;
+        let mut last_violation_cost: Option<String> = None;
+        let mut last_violation_text: Option<String> = None;
+
+        for h in &h_mems {
+            let ts = h
+                .value
+                .get("ts")
+                .and_then(|t| t.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .ok_or_else(|| "trust event has invalid or missing ts".to_string())?;
+            if ts.with_timezone(&chrono::Utc) < since {
+                continue;
+            }
+
+            let text = h.value.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            let weight = h.value.get("weight").and_then(|w| w.as_i64()).unwrap_or(3);
+            let outcome = h
+                .value
+                .get("outcome")
+                .and_then(|o| o.as_str())
+                .unwrap_or("unverified");
+            let cost = h
+                .value
+                .get("operator_cost")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
+
+            match outcome {
+                "kept" => kept += 1,
+                "renegotiated" => renegotiated += 1,
+                "violated" => {
+                    violated += 1;
+                    weighted_violation += weight;
+                    if last_violation_cost.is_none() {
+                        last_violation_cost = cost;
+                        last_violation_text = Some(text.to_string());
+                    }
+                }
+                _ => unverified += 1,
+            }
+        }
+
+        // The fold: prior (300) + 4*kept − 9*violated, clamped to
+        // [0, 600] (the anchored trust-model's fold, P13).
+        let trust_points = (PRIOR_POINTS as i64 + KEEP_PER_WEIGHT as i64 * kept as i64
+            - VIOLATE_PER_WEIGHT as i64 * violated as i64)
+            .clamp(0, SCALE_POINTS as i64);
+        let delegation_radius = trust_points * 100 / SCALE_POINTS as i64;
+
+        let mut result = format!(
+            "[Trust state] T={}/{} (delegation radius {}%). \
+             Window: kept={}, violated={}, renegotiated={}, unverified={}.",
+            trust_points,
+            hkask_trust::SCALE_POINTS,
+            delegation_radius,
+            kept,
+            violated,
+            renegotiated,
+            unverified,
+        );
+
+        if violated > 0 {
+            result.push_str(&format!(
+                " Last violation: \"{}\"",
+                last_violation_text.unwrap_or_default()
+            ));
+            if let Some(cost) = last_violation_cost {
+                result.push_str(&format!(" (operator cost: {})", cost));
+            }
+            result.push_str(". This trust account is the operator's, not yours.");
+        }
+
+        Ok(result)
     }
 
     /// Construct a new `RealMemoryPort`.
