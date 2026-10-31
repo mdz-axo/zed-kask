@@ -18,10 +18,15 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "rustfmt gate: no git repo — cannot locate the workspace" >&2
-  exit 1
-}
+# REPO_ROOT override: export-based gating (pre-push runs this gate inside
+# a `git archive` export of the pushed commit, which has no .git — cargo
+# fmt needs no git; verified 2026-10-31) passes REPO_ROOT explicitly.
+if [ -z "${REPO_ROOT:-}" ]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "rustfmt gate: no git repo and no REPO_ROOT — cannot locate the workspace" >&2
+    exit 1
+  }
+fi
 cd "$REPO_ROOT"
 
 if ! command -v cargo >/dev/null 2>&1; then

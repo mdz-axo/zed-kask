@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Self-test for the pre-commit hook (kask/githooks/pre-commit): the
-# scoped tree-shape gate runner. The hook's RED proof is that the commit
-# which stages a watched-surface file on a red tree BLOCKS with the
-# gate named, and its scoping proof is that the SAME red tree does not
-# block a commit staging only an unwatched path:
+# scoped tree-shape gate runner. Since 2026-10-31 the gates read the
+# INDEX (the would-be commit) via a `git archive` export of
+# `git write-tree` — never the working tree — so another stream's
+# in-flight files are invisible to this commit (case 8 pins it). The
+# hook's RED proof is that the commit which stages a watched-surface
+# file whose STAGED content is red BLOCKS with the gate named, and its
+# scoping proof is that a red tree does not block a commit staging only
+# an unwatched path:
 #   1. A green fixture tree commits cleanly (the gates run and pass).
 #   2. A red docs tree (unregistered fence + stale count anchor) does
 #      NOT block a commit staging only crates/ code — scoping pins
@@ -15,6 +19,10 @@
 #   5. A frontmatter-less doc BLOCKS naming docs-frontmatter (count
 #      anchors updated, isolating the frontmatter class).
 #   6. A drifted mcp registry catalog row BLOCKS naming mcp-readme-counts.
+#   8. Another stream's UNSTAGED in-flight doc (frontmatter-less, so
+#      also count-drifting in the worktree) does NOT redden a commit
+#      staging a green doc: the gates read the index export, never the
+#      tree (2026-10-31 — under the pre-export design this case blocked).
 #   7. Containment: the hook names all five gate scripts explicitly —
 #      the blocking steps are greppable, never implicit.
 #
@@ -259,6 +267,22 @@ expect_contains "rejection names the readme-counts gate" "mcp-readme-counts" "$C
 git -C "$WORK" reset -q
 git -C "$WORK" checkout -q -- kask/docs/reference/mcp-servers/README.md
 
+# Case 8 (2026-10-31, the multi-stream isolation pin): a red doc sitting
+# UNSTAGED in the worktree — another stream's in-flight draft — does not
+# redden a commit staging a green doc. The gates read the index export,
+# never the tree: under the pre-export design this commit blocked (the
+# worktree-read gates saw the unstaged draft's frontmatter and count
+# drift); under index-export gating the draft is invisible, and its own
+# stream's commit is where its drift surfaces.
+printf '\nNote: concurrent-stream isolation case.\n' >> "$WORK/kask/docs/registered.md"
+printf '# No frontmatter here\n' > "$WORK/kask/docs/bad2.md"
+git -C "$WORK" add kask/docs/registered.md
+commit "green doc with another stream's unstaged draft present"
+expect_exit "another stream's unstaged in-flight doc does not redden my commit" 0 "$COMMIT_RC"
+git -C "$WORK" reset -q
+git -C "$WORK" checkout -q -- kask/docs/registered.md 2>/dev/null || true
+rm "$WORK/kask/docs/bad2.md"
+
 # Case 7: containment — the hook names all five gate scripts explicitly.
 hook_src="$(cat "$HOOK_SRC")"
 expect_contains "hook names the parity gate script"       "check-diagram-registry-parity.sh" "$hook_src"
@@ -269,7 +293,7 @@ expect_contains "hook names the readme-counts gate script" "check-mcp-readme-cou
 
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-commit hook runs the scoped tree-shape gates at the introducing commit (green allowed, unwatched-surface scoping, red blocked with attribution, containment all pinned)"
+  echo "SELFTEST OK: pre-commit hook runs the scoped tree-shape gates at the introducing commit, reading the index export (green allowed, unwatched-surface scoping, red staged-content blocked with attribution, another stream's unstaged draft invisible, containment all pinned)"
   exit 0
 fi
 echo "" >&2

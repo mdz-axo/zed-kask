@@ -25,10 +25,16 @@
 #             1 = rotted citations, 2 = usage/tooling.
 set -uo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "FAIL: not inside a git repository (run from within the repo)." >&2
-  exit 2
-}
+# REPO_ROOT override: export-based gating (pre-push/pre-commit run the
+# gates inside a `git archive` export of the gated commit, which has no
+# .git) passes REPO_ROOT explicitly; inside a real repo it is unset and
+# rev-parse resolves as before.
+if [ -z "${REPO_ROOT:-}" ]; then
+  REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "FAIL: not inside a git repository (run from within the repo, or set REPO_ROOT)." >&2
+    exit 2
+  }
+fi
 cd "$REPO_ROOT" || exit 2
 DOCS_ROOT="${DOCS_ROOT:-kask/docs}"
 
@@ -48,7 +54,17 @@ mapfile -t DOCS < <(find "$DOCS_ROOT" -name '*.md' | sort)
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-git ls-files '*.rs' | sort > "$TMP/rsfiles.txt"
+# Candidate .rs set: tracked files via git in a real repo; in export-gating
+# mode (REPO_ROOT passed by the hooks, no .git present) every file in the
+# export IS the tracked set, so find is the faithful equivalent — a failed
+# ls-files would silently empty the candidate list and rot every
+# path-resolved citation (observed 2026-10-31: 513 false-rotted on a green
+# push; pinned by the pre-push selftest's base-citation case).
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  git ls-files '*.rs' | sort > "$TMP/rsfiles.txt"
+else
+  (cd "$REPO_ROOT" && find . -type f -name '*.rs' | sed 's|^\./||' | sort) > "$TMP/rsfiles.txt"
+fi
 
 rotted=0; warn_line=0; warn_ambig=0; resolved=0
 

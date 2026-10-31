@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pre-push — net-lines + DIVERGENCE.md seam delta for the pushed range,
-# plus the seconds-tier invariant gates.
+# plus the invariant gates, run against the PUSHED COMMIT (never the
+# working tree).
 #
 # Simplification program, Phase 1.1 (mission 2026-10-01): "a visible number
 # at every push. Visible bloat gets challenged; invisible bloat compounds."
@@ -8,37 +9,45 @@
 # a push; printing the number is its whole job. The invariant gates below
 # BLOCK: a red gate tree does not leave this machine.
 #
-# Object alignment (2026-10-30): the gates read the working tree, but a
-# push ships commits — so the hook first refuses any push whose tree is
-# not exactly the pushed commit: uncommitted changes (staged, tracked,
-# or untracked), or a pushed sha other than HEAD. A green gate run then
-# attests exactly what ships; the false-green class — an uncommitted
-# fix greening a red tree while the push ships the stale commit behind
-# it (observed 2026-10-30, the kata-kanban citation fix at dry-run) — is
-# structurally gone. Historical-sha and tag pushes are refused for the
-# same reason: the tree gates cannot see them.
+# Object of attestation (2026-10-31): the gates read the PUSHED COMMIT,
+# via a `git archive` export — never the working tree. The 2026-10-30
+# object-alignment precondition (refuse any push while the tree held
+# uncommitted changes) is REMOVED: in a multi-agent tree with concurrent
+# streams always in flight, it blocked effectively every push and forced
+# the operator's agent to park and restore other streams' work by hand
+# (observed 2026-10-30/31: three park/restore cycles to land one push).
+# The export closes the false-green class that rule existed for — an
+# uncommitted fix greening a red push while the push ships the stale
+# commit behind it — because the gates cannot see the working tree at
+# all: a push of sha S is gated on exactly S's content, whether the
+# tree is busy, clean, or holding unrelated drift. The export is
+# read-only gate input (no .git, nothing checked out into the repo,
+# deleted when the hook exits) — not a second worktree.
+#
+# The export carries the pushed commit's OWN copies of the gate scripts
+# (kask/scripts/check-*.sh are tracked files), so a push is gated by the
+# gate set it ships — self-consistent by construction. A gate script
+# absent from an old pushed commit is reported unchecked, never silently
+# passed (CI remains the backstop).
 #
 # Gate set (each blocks; --no-verify is the operator's explicit bypass):
+# - retired-record (range-based, real repo): every skill retired in the
+#   pushed range is recorded in the same change (the D1 convention).
 # - check-diagram-registry-parity.sh (2026-10-23, EUREKA-1): mermaid fences
 #   == DIAGRAM_ALIGNMENT records == DIAGRAMS_INDEX rows.
 # - check-docs-count-gate.sh, check-skill-crossrefs.sh,
-#   check-docs-frontmatter.sh, check-retired-record.sh,
-# - check-docs-citations.sh (2026-10-24, EUREKA-2): the five gate families
-#   whose drift classes shipped through the wired-but-non-blocking CI
-#   exposure (measured evidence on the EUREKA-2 card). The four cheap gates
-#   run all-and-report (one push shows every drift class); citations runs
-#   last and only when the cheap set is green — its ~12s cost is never paid
-#   on an already-red push.
-# - check-mcp-readme-counts.sh (2026-10-30, media audit): the README's
-#   prose tool counts (catalog row, Live pin sites, arithmetic) agree
-#   with every server's live pin — the drift class that recurred three
-#   times while the pin stayed green.
-# - check-rustfmt.sh (2026-10-30): cargo fmt --all -- --check — the CI
-#   check job's Formatting step moved to the pre-push point. Fmt drift
-#   was the one invariant enforced only after the push: 18 consecutive
-#   pushes went red on GitHub while every local gate stayed green
-#   (2026-10-29/30). Runs in the green-only tail ahead of citations;
-#   check-only, never mutates the tree.
+#   check-docs-frontmatter.sh, check-mcp-readme-counts.sh:
+#   the five gate families whose drift classes shipped through the
+#   wired-but-non-blocking CI exposure (measured evidence on the
+#   EUREKA-2 card) — run all-and-report so one push shows every drift
+#   class.
+# - check-rustfmt.sh: cargo fmt --all -- —check, the CI check job's
+#   Formatting step (18 consecutive pushes went red on GitHub while
+#   every local gate stayed green, 2026-10-29/30). cargo fmt needs no
+#   .git (verified in an archive export 2026-10-31).
+# - check-docs-citations.sh: the file:line citation ladder, ~12s —
+#   runs last, only when the cheap set is green, so its cost is never
+#   paid on an already-red push.
 #
 # stdin (git pre-push protocol), one line per ref being pushed:
 #   <local_ref> <local_sha> <remote_ref> <remote_sha>
@@ -76,83 +85,82 @@ for line in "${ref_lines[@]}"; do
   fi
 done
 
-# ── Object-alignment precondition ─────────────────────────────────
-# The gates below read the working tree; this push ships $local_sha.
-# They attest the push only when the tree IS the pushed commit. Refuse
-# loudly on divergence instead of gating the wrong object — in both
-# directions: an uncommitted fix makes a red tree read green while the
-# push ships the stale commit behind a green gate run, and another
-# stream's in-flight red blocks a push of clean commits with findings
-# nobody can attribute to a commit. --no-verify remains the operator's
-# explicit bypass.
-head_sha="$(git rev-parse HEAD 2>/dev/null)"
-alignment_failed=0
-for line in "${ref_lines[@]}"; do
-  read -r local_ref local_sha remote_ref remote_sha <<<"$line"
-  [ "$local_sha" = "$ZERO" ] && continue # a deletion ships nothing to attest
-  if [ -n "$(git status --porcelain)" ]; then
-    echo "pre-push: object alignment — the working tree has uncommitted changes." >&2
-    echo "The gates read the tree; they would attest it, not commit $local_sha ($local_ref)." >&2
-    echo "Commit or remove them, then push; or push with --no-verify as the explicit choice." >&2
-    alignment_failed=1
-    break
-  fi
-  if [ "$local_sha" != "$head_sha" ]; then
-    echo "pre-push: object alignment — pushed $local_ref at $local_sha is not the current tree (HEAD $head_sha)." >&2
-    echo "The gates read the tree and cannot attest this push; push HEAD itself, or use --no-verify." >&2
-    alignment_failed=1
-  fi
-done
-[ "$alignment_failed" -ne 0 ] && exit 1
-
-# ── Invariant gates (blocking) ─────────────────────────────────────────────
+# ── Invariant gates ─────────────────────────────────────────────────────────
 gate_failures=()
 
-run_gate() { # run_gate <failure-name> <script> [args...] — records failures, never aborts
-  local name="$1"; shift
-  local script="$1"; shift
+run_gate() { # run_gate <name> <script> <gate-root> [args...] — records failures, never aborts
+  local name="$1" script="$2" gate_root="$3"; shift 3
   if [ ! -f "$script" ]; then
-    echo "[pre-push] warning: gate script not found at $script — unchecked on this push (CI remains the backstop)" >&2
+    echo "[pre-push] warning: gate script not present in the gated object ($name — $script) — unchecked on this push (CI remains the backstop)" >&2
     return 0
   fi
   local out
-  if ! out="$(bash "$script" "$@" 2>&1)"; then
+  if ! out="$(cd "$gate_root" && REPO_ROOT="$gate_root" bash "$script" "$@" 2>&1)"; then
     gate_failures+=("$name")
     printf '%s\n' "$out" >&2
   fi
   return 0
 }
 
-GATES_DIR="$REPO_ROOT/kask/scripts"
+GATES_DIR_REAL="$REPO_ROOT/kask/scripts"
 
-# Diagram-registry parity (EUREKA-1, the proven pattern).
-run_gate "diagram-registry-parity" "$GATES_DIR/check-diagram-registry-parity.sh"
-
-# The five cheap docs/skills/registration gates — run all, report all.
-run_gate "docs-count-gate"  "$GATES_DIR/check-docs-count-gate.sh"
-run_gate "skill-crossrefs"  "$GATES_DIR/check-skill-crossrefs.sh"
-run_gate "docs-frontmatter" "$GATES_DIR/check-docs-frontmatter.sh"
-run_gate "mcp-readme-counts" "$GATES_DIR/check-mcp-readme-counts.sh"
+# The range-based gate reads commits in the real repo — it is object-true
+# by construction and needs no export.
 if [ -n "$range_base" ]; then
-  run_gate "retired-record" "$GATES_DIR/check-retired-record.sh" --range "$range_base" "$range_head"
+  run_gate "retired-record" "$GATES_DIR_REAL/check-retired-record.sh" "$REPO_ROOT" --range "$range_base" "$range_head"
 else
   echo "[pre-push] note: no resolvable pushed range — retired-record unchecked on this push" >&2
 fi
 
-# Rustfmt, then citations — the green-only tail (fail-fast on cost): the
-# ~25s fmt check and the ~12s citations ladder are never paid on a push
-# that is already red.
-if [ "${#gate_failures[@]}" -eq 0 ]; then
-  run_gate "rustfmt" "$GATES_DIR/check-rustfmt.sh"
-fi
-if [ "${#gate_failures[@]}" -eq 0 ]; then
-  run_gate "docs-citations" "$GATES_DIR/check-docs-citations.sh"
-fi
+# ── Export gating: every unique pushed sha, gated on its own content ────────
+EXPORT_DIR=""
+cleanup() { [ -n "$EXPORT_DIR" ] && rm -rf "$EXPORT_DIR"; }
+trap cleanup EXIT
+
+gated=""
+for line in "${ref_lines[@]}"; do
+  read -r local_ref local_sha remote_ref remote_sha <<<"$line"
+  [ "$local_sha" = "$ZERO" ] && continue # a deletion ships nothing to attest
+  case " $gated " in *" $local_sha "*) continue ;; esac # gate each sha once
+  gated="$gated $local_sha"
+
+  EXPORT_DIR="$(mktemp -d)"
+  if ! git archive "$local_sha" | tar -x -C "$EXPORT_DIR" 2>/dev/null; then
+    echo "pre-push: cannot export $local_sha ($local_ref) for gating — refusing to attest what cannot be read" >&2
+    exit 1
+  fi
+
+  GATES_DIR="$EXPORT_DIR/kask/scripts"
+
+  # Diagram-registry parity (EUREKA-1, the proven pattern).
+  run_gate "diagram-registry-parity" "$GATES_DIR/check-diagram-registry-parity.sh" "$EXPORT_DIR"
+
+  # The five cheap docs/skills/registration gates — run all, report all.
+  run_gate "docs-count-gate"   "$GATES_DIR/check-docs-count-gate.sh"   "$EXPORT_DIR"
+  run_gate "skill-crossrefs"   "$GATES_DIR/check-skill-crossrefs.sh"   "$EXPORT_DIR"
+  run_gate "docs-frontmatter"  "$GATES_DIR/check-docs-frontmatter.sh"  "$EXPORT_DIR"
+  run_gate "mcp-readme-counts" "$GATES_DIR/check-mcp-readme-counts.sh" "$EXPORT_DIR"
+
+  # Rustfmt, then citations — the green-only tail (fail-fast on cost): the
+  # ~25s fmt check and the ~12s citations ladder are never paid on a push
+  # that is already red.
+  if [ "${#gate_failures[@]}" -eq 0 ]; then
+    run_gate "rustfmt" "$GATES_DIR/check-rustfmt.sh" "$EXPORT_DIR"
+  fi
+  if [ "${#gate_failures[@]}" -eq 0 ]; then
+    run_gate "docs-citations" "$GATES_DIR/check-docs-citations.sh" "$EXPORT_DIR"
+  fi
+
+  rm -rf "$EXPORT_DIR"
+  EXPORT_DIR=""
+done
 
 if [ "${#gate_failures[@]}" -gt 0 ]; then
   echo "pre-push: rejected — invariant gate(s) red: ${gate_failures[*]}" >&2
-  echo "Fix each gate's findings above (its output precedes this line), or push" >&2
-  echo "with --no-verify as an explicit operator choice." >&2
+  echo "Each gate's findings are printed above (its output precedes this line)." >&2
+  echo "The gates read the PUSHED COMMIT, not the working tree — in-flight work" >&2
+  echo "in the tree is not the cause; fix the pushed commits, or push with" >&2
+  echo "--no-verify as an explicit operator choice." >&2
   exit 1
 fi
 
