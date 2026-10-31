@@ -9417,6 +9417,7 @@ dependencies = [
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",
+ "hkask-trust",
  "hkask-types",
  "http_client",
  "language_model",
