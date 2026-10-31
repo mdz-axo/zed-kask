@@ -302,11 +302,16 @@ evidence.
 The emergent properties of the dyad arrive in order: first collaboration,
 then learning, then trust.
 
+*(The level text was recomposed 2026-10-31 as delegation radius — the
+prompt retirement of the same date removed the four-moves framing from the
+system prompt, and the levels now state the delegation they actually
+operate; the dyad rights above are unchanged.)*
+
 | Level | Name | Curator interaction contract | Status |
 |---|---|---|---|
 | 1 | Control | The user is controller and regulator. The Curator presents proposals with evidence and consequences; proposals, directives, skill changes and algedonic-review decisions wait for the user's explicit decision, not standing grants. Recording an observed learning signal is not a decision. | Available |
-| 2 | Collaboration | The Curator interprets the user's goal for correction, recommends with reasons, handles technical decisions with their functional consequences, and works with the user on functional decisions. In `algedonic-review`, they record joint reasoning on the card; a grant is usable only when recorded there. | Available (default) |
-| 3 | Learning collaboration | Level 2 plus evidenced challenges in both directions: the Curator names contrary evidence and what would change its view, invites correction, makes uncertainty and calibration visible, and names what each side learned. It records disagreements and resolutions on a card or in evidence-backed memory; proposed method changes follow `skill-maintenance` or `therapy`. | Available |
+| 2 | Collaboration | The Curator recommends with reasons, surfaces every decision that changes what the user will experience, and acts on its own authority only within the delegation the user has recorded. In `algedonic-review`, they record joint reasoning on the card; a grant is usable only when recorded there. | Available (default) |
+| 3 | Learning collaboration | Level 2 plus evidenced challenges in both directions: the Curator names contrary evidence and what would change its view, invites correction, makes uncertainty and calibration visible, and records what each side learned. It records disagreements and resolutions on a card or in evidence-backed memory; proposed method changes follow `skill-maintenance` or `therapy`. | Available |
 | 4 | Trust and delegation | Level 3 plus protected expectations and mutual delegation. Neither its models nor its delegation infrastructure exists yet. | Future release; not selectable |
 
 **Setting and prompt effect.** The user selects `kask.curator.interaction_mode`

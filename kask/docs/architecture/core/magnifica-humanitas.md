@@ -55,7 +55,7 @@ This is a **grounding charter, not a gate**: it supplies the *why* beneath princ
 
 **Grounds:** P13 (trust extends how far work can be delegated — renegotiation over silent violation), the subsidiarity design record ([`functional-interaction-spec.md`](../functional-interaction-spec.md); its prompt-side expression was retired 2026-10-31 — the value subsists, the mechanism does not). P10 (User Agency); P3 (settings exposure — all generative settings exposed to the user, no privileged engineer access).
 
-**Retired expression (2026-10-31):** the four-move working agreement was the subsidiarity structure; it never produced functional-term communication and was retired from the prompt. The value awaits a mechanism that works.
+**Live expression:** the dyad's delegation-radius levels (`kask.curator.interaction_mode`, functional-interaction-spec §9), the Task Execution ask-trigger, and the trust clause's renegotiate-openly line — subsidiarity as delegation radius, not communication register. (The four-moves expression was retired 2026-10-31: it never produced functional-term communication; the levels were recomposed as delegation radius the same day.)
 
 ### V5 — Non-Neutrality: Every Tool Embodies Choices
 
@@ -98,7 +98,7 @@ This charter is a **grounding charter (interpretive)** — it adds no new enforc
 | V1 Person-not-profile | IS | P6.1 per-user data directories; no shared profile layer |
 | V2 Truth as common good | IS | P8 anchoring (`onto_anchor`); grounding-verify; IS vs OUGHT honesty |
 | V3 Accountability | IS | Failure-signals rules (`.rules`); per-variant error classification |
-| V4 Subsidiarity | OUGHT | The value subsists (P13 delegation); its prompt-side four-moves expression was retired 2026-10-31 (`functional-interaction-spec.md` remains the design record) |
+| V4 Subsidiarity | IS | The dyad's delegation-radius levels (`kask.curator.interaction_mode`) + the Task Execution ask-trigger + the trust clause (`## Trust and expectations`) |
 | V5 Non-neutrality | IS (partial) | P3.1; design decisions recorded as choices (D-seams, ADRs). No general design-review gate exists. |
 | V6 Dignity of work | IS | Cowboying rule (`.rules`); skills as readable process surfaces |
 | V7 The limit as positive | IS | `PRINCIPLES.md` §0; P5 minimalist test |

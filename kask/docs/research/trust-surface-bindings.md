@@ -83,6 +83,15 @@ windowed-query shape already in production.
   is an observable cache-bust event.
 - **D/P:** D — the rendered clause text and the deterministic render; P — its
   application in decisions (gated by the ledger's D-recorded facts).
+- **Landed (2026-10-31):** the clause renders as `## Trust and expectations` in
+  `system_prompt.hbs` — the pricing statement, the cliff as a disclosure
+  duty, severity-first reporting, measured confidence, and
+  answer-the-question — citing P13 and the anchored model, with the
+  parameters left in the module (`hkask-trust`). Pinned by
+  `test_system_prompt_carries_trust_clause`. The clause is AMBIENT policy
+  at a recorded boundary, not a treatment variable: the boundary decision
+  record and the answer-the-question probe pre-registration live in
+  `kask/eval/register-adherence-v1/PROTOCOL.md`.
 
 ## Binding 2 — Regulation loop sense input (operator-gated)
 
