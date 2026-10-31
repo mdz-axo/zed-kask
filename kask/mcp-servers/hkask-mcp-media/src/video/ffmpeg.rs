@@ -161,8 +161,14 @@ fn selected_frame_timestamps(stderr: &str) -> Result<Vec<f64>, crate::MediaError
 
 /// Keyframe-match tolerance for a clip boundary: ffprobe's keyframe times
 /// and a caller's floats can differ by float slop far under a frame
-/// period.
+/// period. The alignment match is one-sided — the keyframe must be at or
+/// before the bound (see `plan_clip_segments`).
 const CLIP_KEYFRAME_MATCH_TOL: f64 = 0.001;
+
+/// Float-slop ceiling for "the keyframe IS the bound" in the one-sided
+/// alignment match: a keyframe at most this far past the bound still
+/// matches. Far under the match tolerance — never a substitute for it.
+const CLIP_KEYFRAME_MATCH_EPS: f64 = 1e-9;
 
 /// Every trim/segment boundary is lowered by this much so float drift
 /// between ffprobe's and ffmpeg's timestamps can only select the intended
@@ -239,10 +245,16 @@ fn clip_ceil_keyframe(keyframe_times: &[f64], t: f64) -> Option<f64> {
 /// with no copyable interior (inside one GOP, or no keyframe at or after
 /// `start`) is one whole-span re-encode.
 fn plan_clip_segments(keyframe_times: &[f64], start: f64, end: f64) -> Vec<ClipPlanSegment> {
+    // One-sided match (BUG 2, 2026-10-30): a bound is aligned only when its
+    // keyframe is at or before it. A keyframe AFTER the bound — even within
+    // the match tolerance — classifies unaligned: every copy path lands at
+    // the keyframe at or before its cut, so a bound below a keyframe reads
+    // from the PREVIOUS GOP's keyframe and GOP-widens the clip (reproduced
+    // live: a bound 0.6ms below a keyframe on a 1s-GOP source).
     let aligned = |bound: f64| {
         keyframe_times
             .iter()
-            .any(|k| (*k - bound).abs() < CLIP_KEYFRAME_MATCH_TOL)
+            .any(|k| *k <= bound + CLIP_KEYFRAME_MATCH_EPS && bound - *k < CLIP_KEYFRAME_MATCH_TOL)
     };
     let interior_start = if aligned(start) {
         Some(start)
@@ -1874,14 +1886,47 @@ mod tests {
     }
 
     /// Boundary float slop within the keyframe-match tolerance is
-    /// aligned, not a phantom boundary segment.
+    /// aligned, not a phantom boundary segment — when the keyframe is at
+    /// or before the bound (the one-sided match). Slop the other way is
+    /// the BUG 2 case, pinned by
+    /// `clip_plan_keyframe_after_bound_is_not_aligned`.
     #[test]
     fn clip_plan_tolerates_boundary_float_slop() {
         let keyframes = [0.0, 1.0, 2.0];
         assert_eq!(
-            clip_plan_modes(&plan_clip_segments(&keyframes, 0.9995, 1.9995)),
-            vec![("copy", 0.9995, 1.9995)],
-            "bounds within the 1ms tolerance of keyframes copy whole"
+            clip_plan_modes(&plan_clip_segments(&keyframes, 1.0005, 2.0005)),
+            vec![("copy", 1.0005, 2.0005)],
+            "bounds with float slop past their keyframes copy whole"
+        );
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.9999999999, 1.9999999999)),
+            vec![("copy", 0.9999999999, 1.9999999999)],
+            "sub-epsilon slop below a keyframe is still the keyframe"
+        );
+    }
+
+    /// The BUG 2 classification pin (2026-10-30): within the old ±1ms
+    /// tolerance, a bound is aligned only on the one-sided side — keyframe
+    /// at or before the bound. A keyframe after the bound classifies
+    /// unaligned so the boundary re-encodes instead of a copy that would
+    /// land at the previous GOP's keyframe. RED under the symmetric
+    /// `|keyframe - bound| < 1ms` check this replaces.
+    #[test]
+    fn clip_plan_keyframe_after_bound_is_not_aligned() {
+        let keyframes = [0.0, 1.0, 2.0];
+        // Start bound 0.6ms below keyframe 1.0: the copy span starts at
+        // the keyframe, never at the raw bound.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 0.9994, 2.5)),
+            vec![("copy", 1.0, 2.0), ("reencode", 2.0, 2.5)],
+            "a start bound below a keyframe is unaligned; the copy starts at the keyframe"
+        );
+        // End bound 0.6ms below keyframe 2.0: the copy cannot stop short
+        // of a keyframe — the span re-encodes whole.
+        assert_eq!(
+            clip_plan_modes(&plan_clip_segments(&keyframes, 1.0, 1.9994)),
+            vec![("reencode", 1.0, 1.9994)],
+            "an end bound below a keyframe is unaligned; no copy span ends there"
         );
     }
 
@@ -2181,6 +2226,55 @@ mod tests {
             (probed.duration_secs - 1.0).abs() < 0.05,
             "clip of [1.0, 2.0] must carry exactly 1.0s, carried {}s — the \
              stream-copy B-frame overshoot",
+            probed.duration_secs
+        );
+    }
+
+    /// The BUG 2 exactness pin (2026-10-30): a clip bound just BELOW a
+    /// keyframe is unaligned and re-encodes — the symmetric ±1ms
+    /// tolerance classified it aligned and let the copy seek the
+    /// previous GOP's keyframe, widening the clip (reproduced live: a
+    /// bound 0.6ms below a keyframe on a 1s-GOP source). The window
+    /// [0.9994, 1.0332) holds exactly the frame at 1.0s.
+    #[tokio::test]
+    async fn clip_bound_below_a_keyframe_is_exact_not_gop_widened() {
+        let runner = FfmpegRunner::detect();
+        if !runner.available {
+            eprintln!("skipping: ffmpeg not installed");
+            return;
+        }
+        runner.ensure_temp_dir().expect("temp dir");
+        let source = runner.output_path("mp4");
+        let mut generate = Command::new(&runner.ffmpeg_path);
+        generate
+            .arg("-f")
+            .arg("lavfi")
+            .arg("-i")
+            .arg("testsrc=duration=2.1:size=128x96:rate=30")
+            .arg("-g")
+            .arg("30")
+            .arg("-c:v")
+            .arg("mpeg4")
+            .arg("-y")
+            .arg(&source);
+        let generated = generate.output().await.expect("generate gop-1s source");
+        assert!(
+            generated.status.success(),
+            "gop-1s source generation failed: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        let clipped = runner
+            .clip(source.to_str().expect("utf-8 temp path"), 0.9994, 1.0332)
+            .await
+            .expect("clip must run ffmpeg to completion");
+        let probed = runner
+            .probe(clipped.to_str().expect("utf-8 temp path"))
+            .await
+            .expect("probe the clipped output");
+        assert!(
+            probed.duration_secs > 0.01 && probed.duration_secs < 0.1,
+            "clip of [0.9994, 1.0332] must carry exactly the frame at 1.0s \
+             (~0.033s), carried {}s — the GOP-widened ±1ms alignment",
             probed.duration_secs
         );
     }
