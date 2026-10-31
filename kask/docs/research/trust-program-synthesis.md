@@ -10,6 +10,8 @@ mds_categories: [domain, trust, evidence, lifecycle]
 
 # The Trust-Internalization Program — Synthesis Report (Part V)
 
+> **v2 note (2026-10-31):** the v1 eval protocol is superseded by the v2 replay-set protocol (anchored to the operator's adjudicated events — see `trust-internalization-v2.md`); the probe pattern and the ledger substrate carry over.
+
 **What this delivers, functionally.** A complete, grounded program that makes
 the cost of broken trust visible and priceable in the agent's decisions —
 the research that grounds it, the mathematical model that formalizes it, the

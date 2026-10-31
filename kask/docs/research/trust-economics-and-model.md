@@ -10,6 +10,8 @@ mds_categories: [domain, trust, evidence, lifecycle]
 
 # The Cost of Broken Trust — Economics Grounding and Mathematical Model (Parts I–II)
 
+> **v2 note (2026-10-31):** the model (the fold, the cliff, the pricing, the anchors) carries over unchanged; the v1 eval framing is superseded — see `trust-internalization-v2.md`.
+
 This document is the research and model deliverable of the trust-internalization
 program. It extends prior runs — `54a08fda88a5c74f` (trust's presence: Knack–Keefer
 1997, Slovic 1993, Lee–See 2004, Fuller–Perdue 1936/37, Butler–Giuliano–Guiso,

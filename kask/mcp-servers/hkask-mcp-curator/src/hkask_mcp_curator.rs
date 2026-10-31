@@ -1558,7 +1558,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Resolve a trust-ledger event's verification outcome: kept, violated, or unverified. The oracle_note names what verified it (a test name, a build, a grep, a re-run)."
+        description = "Resolve a trust-ledger event's verification outcome: kept, violated, unverified, or renegotiated (v2 — the user accepted a replacement expectation before deviation). The oracle_note names what verified it (a test name, a build, a grep, a re-run)."
     )]
     pub async fn trust_ledger_record_outcome(
         &self,
@@ -1587,7 +1587,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Read the windowed trust account: trust points (600 = 1.0), kept/violated/unverified counts, delegation radius percent. Default window: 24 hours (the algedonic review cycle)."
+        description = "Read the windowed trust account: trust points (600 = 1.0), kept/violated/unverified/renegotiated counts, delegation radius percent. Default window: 24 hours (the algedonic review cycle)."
     )]
     pub async fn trust_ledger_state(
         &self,

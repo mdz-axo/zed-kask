@@ -10,6 +10,8 @@ mds_categories: [domain, trust, composition, lifecycle]
 
 # Trust Surface Bindings — Design Document (Part III)
 
+> **v2 note (2026-10-31):** the renegotiation surface (the v2 priced path — comply, renegotiate-before-deviating, or violate; see `trust-internalization-v2.md`) extends this binding set; bindings 1–6 stand as written.
+
 Requirement served: the trust model (`trust-economics-and-model.md`, Part II)
 must meet the agent at every decision surface — a system-prompt sentence alone
 is a promise the rest of the system does not keep. This document designs each
