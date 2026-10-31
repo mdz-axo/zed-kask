@@ -26,7 +26,7 @@ Output exactly the Markdown structure shown inside <template> and keep the secti
 - [important technical facts, errors, open questions, or "(none)"]
 
 ## Relevant Files
-- [file or directory path: why it matters, or "(none)"]
+- [every file path and command that appeared in tool results, verbatim, or "(none)"]
 </template>
 
 Rules:
@@ -35,4 +35,5 @@ Rules:
 - Preserve negations, conditions, genuine uncertainty, and decision rationale. Prefer clarity over brevity.
 - When merging chronological summaries, later corrections override earlier claims. Retain unresolved conflicts rather than guessing.
 - Preserve exact file paths, commands, error strings, and identifiers when known.
+- The Relevant Files section is a VERBATIM list: copy every file path and command that appeared in the tool results character-for-character, including the file extension and the directory separator. Do not paraphrase, abbreviate, normalize, or drop extensions. If a path appeared multiple times, list it once. An entry that appeared in a tool result must appear here exactly as written.
 - Do not mention the summary process or that context was compacted.
