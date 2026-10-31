@@ -48,6 +48,8 @@ Decomposition, dependency mapping, base criterion scores (`base_gate_scores`) an
 
 ### task-breakdown-decompose
 
+0. **Trust intake (seam 3, structural):** Before decomposing, extract every explicit user instruction from the conversation verbatim into a numbered `intake_contract` array. Each entry is the instruction text as written, not paraphrased. Every task's `acceptance_criteria` must be consistent with the full `intake_contract`. A task that would violate an explicit instruction is infeasible (`ΔT_trust < 0`): the deliverable's value is `T_reliance · B` and an instruction-violating deliverable is rationally discounted to zero (Akerlof 1970). If any instruction is ambiguous, surface it as an `open_question`, not a silent resolution.
+
 1. Slice the work vertically AND write each task in ONE step — each vertical slice delivers one complete, testable feature path end-to-end, not a horizontal layer shared across features.
 2. Apply refinement directives from the previous evaluation when present; each directive names a criterion that scored above threshold and is addressed to a specific task — re-slice and re-write accordingly. The PDCA loop re-enters here so re-slicing and re-writing happen together.
 3. Schedule high-risk slices early (fail fast).

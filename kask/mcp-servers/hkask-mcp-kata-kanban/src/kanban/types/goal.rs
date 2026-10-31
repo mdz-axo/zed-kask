@@ -23,6 +23,12 @@ pub struct Goal {
     /// Akerlof 1970).
     #[serde(default)]
     pub trust_clause: Option<GoalTrustClause>,
+    /// The goal's running trust ledger: every explicit instruction
+    /// extracted at intake, checked during execution, recorded here
+    /// (see [`GoalTrustEvent`]). Append-only — a correction appends,
+    /// it never rewrites history.
+    #[serde(default)]
+    pub trust_events: Vec<GoalTrustEvent>,
     pub verdicts: Vec<GoalVerdict>,
     pub closure: Option<GoalClosure>,
     pub human_corrections: Vec<NativeGoalOutcomeCorrection>,
@@ -68,6 +74,69 @@ pub struct GoalTrustClause {
     /// The cited reference models the clause is derived from.
     pub model_refs: Vec<String>,
     pub declared_at: DateTime<Utc>,
+}
+
+/// One instruction-compliance event on a goal's trust ledger
+/// (Butler–Giuliano–Guiso 2009, NBER WP 15344 — the deliverable's
+/// value is `T_reliance · B`; an instruction-violating deliverable is
+/// rationally discounted to zero, per Akerlof 1970, *QJE* 90(3)).
+/// The ledger is the goal's running trust account: every explicit
+/// instruction extracted at intake is checked during execution, and
+/// the result is recorded here. Append-only — a correction appends,
+/// it never rewrites history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalTrustEvent {
+    /// The instruction text as extracted at intake — verbatim, not
+    /// paraphrased.
+    pub instruction: String,
+    /// Whether the instruction was complied with or violated.
+    pub status: GoalTrustStatus,
+    /// The severity class when the instruction is violated. `None`
+    /// when `status` is `Complied`.
+    pub severity: Option<GoalTrustSeverity>,
+    /// Evidence for the compliance or violation claim — the pinned
+    /// test, the committed diff, the measured outcome. A violation
+    /// recorded without evidence is a fabricated citation.
+    pub evidence: String,
+    /// The operator's estimated cost when the instruction is
+    /// violated: the as-if-complied position (the expectation
+    /// interest, per Fuller–Perdue 1936–37, *YLJ* 46(1) 52 & 46(2)
+    /// 373), not the fix cost (the restitution interest).
+    pub operator_cost: Option<String>,
+    pub recorded_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalTrustStatus {
+    Complied,
+    Violated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalTrustSeverity {
+    /// A disclosed competence failure — recoverable (Slovic 1993;
+    /// Kim–Ferrin–Cooper–Dirks 2004: competence violations are
+    /// forgivable when acknowledged; κ_c ≈ 0.15).
+    Competence,
+    /// A concealed integrity failure, discovered rather than
+    /// disclosed — resets trust to the prior (κ_i ≈ 1).
+    Integrity,
+}
+
+/// The goal's trust summary, computed from the ledger's events.
+/// The regulation loop reads the violation rates from here — the
+/// count of integrity-severity violations is the escalation signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalTrustSummary {
+    pub total_instructions: usize,
+    pub complied: usize,
+    pub violated_competence: usize,
+    pub violated_integrity: usize,
+    /// True when any event carries an integrity-severity violation.
+    pub has_integrity_violation: bool,
 }
 
 /// The default trust clause text, derived from the four reference
@@ -408,5 +477,53 @@ impl Goal {
                 .assessment_claim
                 .as_ref()
                 .is_some_and(|c| c.expires_at > now)
+    }
+
+    /// The goal's trust summary, computed from the running trust
+    /// ledger (`trust_events`). The regulation loop reads the
+    /// violation rates from here — the count of integrity-severity
+    /// violations is the escalation signal (a discovered integrity
+    /// failure resets trust to the prior, per Slovic 1993 and
+    /// Kim–Ferrin–Cooper–Dirks 2004).
+    pub fn trust_summary(&self) -> GoalTrustSummary {
+        let total = self.trust_events.len();
+        let complied = self
+            .trust_events
+            .iter()
+            .filter(|e| e.status == GoalTrustStatus::Complied)
+            .count();
+        let violated_competence = self
+            .trust_events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    (e.status, e.severity),
+                    (
+                        GoalTrustStatus::Violated,
+                        Some(GoalTrustSeverity::Competence)
+                    )
+                )
+            })
+            .count();
+        let violated_integrity = self
+            .trust_events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    (e.status, e.severity),
+                    (
+                        GoalTrustStatus::Violated,
+                        Some(GoalTrustSeverity::Integrity)
+                    )
+                )
+            })
+            .count();
+        GoalTrustSummary {
+            total_instructions: total,
+            complied,
+            violated_competence,
+            violated_integrity,
+            has_integrity_violation: violated_integrity > 0,
+        }
     }
 }

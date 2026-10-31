@@ -337,6 +337,7 @@ impl KanbanService {
             source: declaration.source,
             supersedes: declaration.supersedes,
             trust_clause: Some(trust_clause),
+            trust_events: vec![],
             spec_digest,
             verdicts: vec![],
             closure: None,
@@ -485,6 +486,45 @@ impl KanbanService {
                 nonempty(&result.note, "criterion evidence note")?;
             }
             goal.verdicts.push(verdict);
+            Ok(true)
+        })
+    }
+
+    /// Record a trust event on a goal's running trust ledger.
+    ///
+    /// The event captures one instruction-compliance outcome — the
+    /// instruction text as extracted at intake, whether it was complied
+    /// with or violated, the severity class when violated, and the
+    /// evidence for the claim. The ledger is append-only: recording a
+    /// correction appends a new event, it never rewrites the history.
+    /// The regulation loop reads the violation rates from the ledger
+    /// via [`Goal::trust_summary`].
+    pub fn goal_trust_record(
+        &self,
+        id: GoalID,
+        event: GoalTrustEvent,
+        owner: WebID,
+    ) -> Result<Goal, KanbanError> {
+        self.transition_goal(id, owner, true, |goal| {
+            if goal.closure.is_some() {
+                return Err(invalid(
+                    "work is closed; declare a successor for changed requirements",
+                ));
+            }
+            nonempty(&event.instruction, "trust event instruction")?;
+            nonempty(&event.evidence, "trust event evidence")?;
+            if event.status == GoalTrustStatus::Violated && event.severity.is_none() {
+                return Err(invalid("violated trust event requires a severity class"));
+            }
+            if event.status == GoalTrustStatus::Complied && event.severity.is_some() {
+                return Err(invalid(
+                    "complied trust event cannot carry a severity class",
+                ));
+            }
+            if event.recorded_at > self.goal_now() {
+                return Err(invalid("trust event recorded_at cannot be in the future"));
+            }
+            goal.trust_events.push(event);
             Ok(true)
         })
     }

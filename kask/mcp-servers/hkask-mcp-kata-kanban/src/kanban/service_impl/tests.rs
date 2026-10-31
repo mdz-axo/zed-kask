@@ -1,6 +1,7 @@
 use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
+use crate::kanban::types::goal::{GoalTrustEvent, GoalTrustSeverity, GoalTrustStatus};
 use crate::kanban::{
     Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskFilter,
     TaskSpec, TaskStatus,
@@ -2352,4 +2353,146 @@ fn goal_create_accepts_caller_supplied_trust_clause() {
         .expect("the caller-supplied clause is present");
     assert_eq!(clause.text, "Custom trust clause text");
     assert_eq!(clause.model_refs, vec!["CustomModel (2024)".to_string()]);
+}
+
+/// The goal's trust ledger records instruction compliance during the
+/// goal's lifecycle. Events are appended (never rewritten), the summary
+/// is computed from the events, and the regulation signal is the
+/// integrity-severity count.
+#[test]
+fn goal_trust_ledger_records_and_summarizes() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: None,
+            },
+            owner,
+        )
+        .unwrap();
+
+    // Record a complied event.
+    let complied = svc
+        .goal_trust_record(
+            goal.id,
+            GoalTrustEvent {
+                instruction: "do not break the user's trust".into(),
+                status: GoalTrustStatus::Complied,
+                severity: None,
+                evidence: "all gates green; no shortcuts taken".into(),
+                operator_cost: None,
+                recorded_at: chrono::Utc::now(),
+            },
+            owner,
+        )
+        .unwrap();
+    assert_eq!(complied.trust_events.len(), 1);
+    assert_eq!(complied.trust_events[0].status, GoalTrustStatus::Complied);
+
+    // Record a competence-severity violation (disclosed).
+    let violated = svc
+        .goal_trust_record(
+            goal.id,
+            GoalTrustEvent {
+                instruction: "do not break the user's trust".into(),
+                status: GoalTrustStatus::Violated,
+                severity: Some(GoalTrustSeverity::Competence),
+                evidence: "disclosed at detection; test failed; operator notified".into(),
+                operator_cost: Some("operator re-verified the deliverable: 15 minutes".into()),
+                recorded_at: chrono::Utc::now(),
+            },
+            owner,
+        )
+        .unwrap();
+    assert_eq!(violated.trust_events.len(), 2);
+
+    // The summary computes the regulation signal.
+    let summary = violated.trust_summary();
+    assert_eq!(summary.total_instructions, 2);
+    assert_eq!(summary.complied, 1);
+    assert_eq!(summary.violated_competence, 1);
+    assert_eq!(summary.violated_integrity, 0);
+    assert!(!summary.has_integrity_violation);
+
+    // An integrity-severity violation sets the escalation flag.
+    let integrity = svc
+        .goal_trust_record(
+            goal.id,
+            GoalTrustEvent {
+                instruction: "report defects at their true severity".into(),
+                status: GoalTrustStatus::Violated,
+                severity: Some(GoalTrustSeverity::Integrity),
+                evidence: "defect discovered by the operator after being classified as a nuance"
+                    .into(),
+                operator_cost: Some("operator re-derived the entire deliverable: 2 hours".into()),
+                recorded_at: chrono::Utc::now(),
+            },
+            owner,
+        )
+        .unwrap();
+    let summary = integrity.trust_summary();
+    assert_eq!(summary.violated_integrity, 1);
+    assert!(summary.has_integrity_violation);
+}
+
+/// A violated trust event without a severity class is rejected —
+/// every violation must be classified (competence or integrity)
+/// because the regulation loop differentiates on this.
+#[test]
+fn goal_trust_record_rejects_violation_without_severity() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: None,
+            },
+            owner,
+        )
+        .unwrap();
+
+    let result = svc.goal_trust_record(
+        goal.id,
+        GoalTrustEvent {
+            instruction: "do not break the user's trust".into(),
+            status: GoalTrustStatus::Violated,
+            severity: None,
+            evidence: "evidence".into(),
+            operator_cost: None,
+            recorded_at: chrono::Utc::now(),
+        },
+        owner,
+    );
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("violated trust event requires a severity class")
+    );
 }
