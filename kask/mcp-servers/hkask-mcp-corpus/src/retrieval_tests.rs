@@ -102,11 +102,23 @@ impl InferencePort for RecordingPort {
         if let Some(path) = &self.corrupt_centroid_db {
             // Fault after retrieval, before centroid validation: target the lookup,
             // not an earlier KNN/open failure that would leave the bug untested.
+            // The old corruption route is closed by design: since the storage
+            // dedupe (0a56a0278c) the vector lives in the vec0 virtual table,
+            // which validates writes (exact dimension enforced on
+            // INSERT/UPDATE — observed live), and every other strictly-read
+            // embeddings column is NOT NULL/PK-guarded — so no field-level
+            // corruption reaches the lookup-failure branch anymore. The
+            // remaining injectable lookup failure is the vector store itself:
+            // dropping vec_embeddings breaks the centroid read at the query
+            // layer, which must surface as an error — never as centroid_missing.
             let db = hkask_storage::open_or_repair(&path.to_string_lossy(), PASSPHRASE)
                 .expect("fault fixture database");
-            db.sqlite_pool().expect("pool").get().expect("connection")
-                .execute("UPDATE embeddings SET vector = X'00' WHERE entity_ref = 'style:test:hopper:centroid'", [])
-                .expect("corrupt centroid vector");
+            db.sqlite_pool()
+                .expect("pool")
+                .get()
+                .expect("connection")
+                .execute_batch("DROP TABLE vec_embeddings")
+                .expect("drop the vector store");
         }
         Box::pin(async move {
             let _lifetime = if let Some(probe) = &self.generation_lifetime {
@@ -1099,7 +1111,10 @@ async fn rewrite_centroid_lookup_failure_is_not_missing() {
         error.to_string().contains("Centroid lookup failed"),
         "{error}"
     );
-    assert!(error.to_string().contains("Dimension mismatch"), "{error}");
+    // The failure is the vector-store query (vec_embeddings gone), the
+    // schema's own write validation having closed the old corrupt-blob
+    // route (see the fixture comment in RecordingPort::generate).
+    assert!(error.to_string().contains("vec_embeddings"), "{error}");
     assert_eq!(
         port.prompts.lock().expect("prompts").len(),
         1,

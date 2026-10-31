@@ -353,8 +353,9 @@ fn load_source_pool(
         let rows = driver
             .query(
                 &format!(
-                    "SELECT entity_ref, vector, passage_text FROM embeddings \
-                     WHERE entity_ref IN ({placeholders})"
+                    "SELECT e.entity_ref, v.embedding, e.passage_text FROM embeddings e \
+                     JOIN vec_embeddings v ON v.rowid = e.rowid \
+                     WHERE e.entity_ref IN ({placeholders})"
                 ),
                 &params,
             )
