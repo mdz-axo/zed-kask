@@ -1502,6 +1502,7 @@ fn task_create_validates_goal_citations() {
                 },
                 forecast: None,
                 supersedes: None,
+                trust_clause: None,
             },
             owner,
         )
@@ -1573,6 +1574,7 @@ fn task_update_replaces_and_validates_goal_citations() {
                 },
                 forecast: None,
                 supersedes: None,
+                trust_clause: None,
             },
             owner,
         )
@@ -2250,4 +2252,104 @@ fn import_empty_board() {
         tasks.is_empty(),
         "imported empty board should have no tasks"
     );
+}
+
+/// Every goal carries the standing trust-economics clause
+/// ([`GoalTrustClause`]) — the ΔT_trust ≥ 0 constraint is structural,
+/// not a preference the caller can omit. The clause is populated from
+/// the default ([`GoalTrustClause::default_clause`]) when the
+/// declaration doesn't provide one, and is included in the goal's
+/// spec digest so it cannot be silently stripped.
+#[test]
+fn goal_create_carries_the_trust_clause_by_default() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: None,
+            },
+            owner,
+        )
+        .unwrap();
+
+    // The clause is present and populated with the default text.
+    let clause = goal
+        .trust_clause
+        .as_ref()
+        .expect("every goal carries the trust clause");
+    assert_eq!(
+        clause.text,
+        crate::kanban::types::goal::GOAL_TRUST_CLAUSE_TEXT,
+        "the default trust clause text is present"
+    );
+    assert!(
+        clause.text.contains("T_reliance"),
+        "the clause names the trust-economics constraint (Butler–Giuliano–Guiso 2009)"
+    );
+    assert!(
+        clause.text.contains("Akerlof 1970"),
+        "the clause cites the discounting model (Akerlof 1970)"
+    );
+    assert!(
+        clause.text.contains("Fuller–Perdue 1936"),
+        "the clause prices violations at the expectation interest (Fuller–Perdue 1936)"
+    );
+    assert!(
+        !clause.model_refs.is_empty(),
+        "the clause carries its cited reference models"
+    );
+}
+
+/// A caller-supplied trust clause overrides the default; the clause
+/// text is theirs, but the constraint (the clause is present and in
+/// the digest) is structural.
+#[test]
+fn goal_create_accepts_caller_supplied_trust_clause() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let custom_clause = crate::GoalTrustClause {
+        text: "Custom trust clause text".into(),
+        model_refs: vec!["CustomModel (2024)".into()],
+        declared_at: chrono::Utc::now(),
+    };
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: Some(custom_clause),
+            },
+            owner,
+        )
+        .unwrap();
+
+    let clause = goal
+        .trust_clause
+        .as_ref()
+        .expect("the caller-supplied clause is present");
+    assert_eq!(clause.text, "Custom trust clause text");
+    assert_eq!(clause.model_refs, vec!["CustomModel (2024)".to_string()]);
 }

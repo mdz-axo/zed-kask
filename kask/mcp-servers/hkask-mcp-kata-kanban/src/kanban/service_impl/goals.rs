@@ -309,13 +309,22 @@ impl KanbanService {
                 ));
             }
         }
+        // Every goal carries the standing trust-economics clause
+        // (see `GoalTrustClause`). If the declaration doesn't provide
+        // one, apply the default — trust is a feasibility constraint on
+        // the goal, not a preference weight the caller can omit.
+        let now = self.goal_now();
+        let trust_clause = declaration
+            .trust_clause
+            .clone()
+            .unwrap_or_else(|| GoalTrustClause::default_clause(now));
         let spec_digest = digest(&(
             &declaration.goal_text,
             &declaration.criteria,
             &declaration.source,
             declaration.supersedes,
+            &trust_clause,
         ))?;
-        let now = self.goal_now();
         let mut goal = Goal {
             schema_version: 3,
             id: GoalID::new(),
@@ -327,6 +336,7 @@ impl KanbanService {
             task_id: declaration.task_id,
             source: declaration.source,
             supersedes: declaration.supersedes,
+            trust_clause: Some(trust_clause),
             spec_digest,
             verdicts: vec![],
             closure: None,

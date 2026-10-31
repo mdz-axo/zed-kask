@@ -25,6 +25,7 @@ fn declaration() -> GoalDeclaration {
         },
         forecast: None,
         supersedes: None,
+        trust_clause: None,
     }
 }
 fn close(goal: &Goal, now: DateTime<Utc>, choice: HumanClosureChoice) -> NativeGoalClosure {

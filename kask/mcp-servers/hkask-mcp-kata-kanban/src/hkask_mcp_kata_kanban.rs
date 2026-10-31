@@ -433,6 +433,7 @@ impl KanbanServer {
                             .as_deref()
                             .map(parse_goal_id)
                             .transpose()?,
+                        trust_clause: None,
                     };
                     respond(self.service.goal_create(declaration, self.webid), |goal| {
                         goal

@@ -15,6 +15,14 @@ pub struct Goal {
     pub source: GoalSource,
     pub supersedes: Option<GoalID>,
     pub spec_digest: String,
+    /// The standing trust-economics clause on this goal (see
+    /// [`GoalTrustClause`]). Present on every goal created after this
+    /// field was added; `None` only on goals created before it existed.
+    /// Part of the spec digest: the ΔT_trust ≥ 0 constraint is
+    /// structural, not a preference weight (Butler–Giuliano–Guiso 2009;
+    /// Akerlof 1970).
+    #[serde(default)]
+    pub trust_clause: Option<GoalTrustClause>,
     pub verdicts: Vec<GoalVerdict>,
     pub closure: Option<GoalClosure>,
     pub human_corrections: Vec<NativeGoalOutcomeCorrection>,
@@ -38,6 +46,69 @@ pub struct GoalSource {
     pub source: String,
 }
 
+/// The standing trust-economics clause on a canonical goal (the
+/// systematized trust objective, anchored to the cited reference
+/// models — research runs `54a08fda88a5c74f` and `bfa9794d30fd64af`):
+/// every deliverable's value to the principal is `T_reliance · B`
+/// (Butler–Giuliano–Guiso 2009, "The Right Amount of Trust," NBER
+/// WP 15344); an unverifiable deliverable is rationally discounted to
+/// zero (Akerlof 1970, "The Market for Lemons," *QJE* 90(3):488–500);
+/// trust dynamics are asymmetric — competence violations are
+/// recoverable (κ_c ≈ 0.15), integrity violations reset to the prior
+/// (Slovic 1993, *Risk Analysis* 13(4); Kim–Ferrin–Cooper–Dirks 2004,
+/// *JAP* 89(1)–(4)); violations are priced at the expectation interest
+/// (Fuller–Perdue 1936–37, "The Reliance Interest in Contract
+/// Damages," 46 *YLJ* 52 & 373). Every goal carries this clause; it
+/// is part of the spec digest, so no worker can later claim the trust
+/// constraint wasn't in scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalTrustClause {
+    pub text: String,
+    /// The cited reference models the clause is derived from.
+    pub model_refs: Vec<String>,
+    pub declared_at: DateTime<Utc>,
+}
+
+/// The default trust clause text, derived from the four reference
+/// models in the doc comment on [`GoalTrustClause`].
+pub const GOAL_TRUST_CLAUSE_TEXT: &str = "No deliverable produced by violating an \
+    explicit user instruction is admissible evidence for this goal. The value of any \
+    deliverable is T_reliance · B (Butler–Giuliano–Guiso 2009): an unverifiable \
+    deliverable is rationally discounted to zero (Akerlof 1970). Trust dynamics are \
+    asymmetric (Slovic 1993; Kim–Ferrin–Cooper–Dirks 2004): a disclosed competence \
+    failure is recoverable; a discovered integrity failure (concealment, \
+    misweighting) resets trust to the prior across every future deliverable. All \
+    violations are priced at the expectation interest (Fuller–Perdue 1936), not the \
+    restitution interest: report the principal's as-if-complied position, not the \
+    cost of the fix.";
+
+/// The cited reference models the default trust clause derives from.
+pub const GOAL_TRUST_CLAUSE_MODEL_REFS: &[&str] = &[
+    "Butler–Giuliano–Guiso (2009), The Right Amount of Trust, NBER WP 15344",
+    "Akerlof (1970), The Market for Lemons, QJE 90(3)",
+    "Slovic (1993), Risk Analysis 13(4)",
+    "Kim–Ferrin–Cooper–Dirks (2004), JAP 89",
+    "Fuller–Perdue (1936–37), Yale Law Journal 46",
+];
+
+impl GoalTrustClause {
+    /// The default trust clause every goal carries, stamped `declared_at`
+    /// at goal creation. A caller may override the text; the clause is
+    /// always present — trust is a feasibility constraint on the goal,
+    /// not an optional preference weight.
+    pub fn default_clause(now: DateTime<Utc>) -> Self {
+        Self {
+            text: GOAL_TRUST_CLAUSE_TEXT.to_string(),
+            model_refs: GOAL_TRUST_CLAUSE_MODEL_REFS
+                .iter()
+                .map(|r| r.to_string())
+                .collect(),
+            declared_at: now,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalDeclaration {
     pub goal_text: String,
@@ -46,6 +117,9 @@ pub struct GoalDeclaration {
     pub source: GoalSource,
     pub forecast: Option<GoalForecast>,
     pub supersedes: Option<GoalID>,
+    /// The trust-economics clause. If absent at declaration, the
+    /// default is applied at creation (see [`GoalTrustClause`]).
+    pub trust_clause: Option<GoalTrustClause>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
