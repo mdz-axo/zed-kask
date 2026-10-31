@@ -1927,7 +1927,7 @@ form: "(= (+ a b) 3)"
             (list "ratings_valid" (pe-ratings ratings 3))
             (list "escalation_threshold" (and (pe-ratings ratings 3) (>= (* 5 (pe-solid ratings)) (* 4 (length ratings)))))
             (list "reprobe_threshold" (and (pe-ratings ratings 3) (< (* 5 (pe-solid ratings)) (* 2 (length ratings)))))))"#;
-        let transition = r#"(list (list "admit" (pe-transition prior request))))"#;
+        let transition = r#"(list (list "admit" (pe-transition critique_runs request))))"#;
         // These expressions are extracted from the same authored helper scope;
         // exact80/exact40 are helper tests, not fabricated reachable round histories.
         for needle in [

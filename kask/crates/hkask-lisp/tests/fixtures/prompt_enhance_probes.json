@@ -71,7 +71,7 @@
   },
   {
     "id": "L3-backward-L2-with-budget-not-confounded",
-    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"p0\"],\"prior\":[{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\",\"status\":\"completed\",\"outcome\":{\"verdict\":\"rewrite_needed\",\"ratings\":[{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"},{\"rating\":\"Solid\"}]}}],\"request\":{\"attempt_id\":2,\"level\":2,\"kind\":\"escalate\",\"reviewed_revision\":0,\"reviewed_prompt\":\"p0\"}}",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b5aa765d61d8327deb882cf99\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":3,\"reviewed_revision\":0,\"reviewed_prompt_digest\":\"5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b5aa765d61d8327deb882cf99\",\"status\":\"completed\",\"outcome\":{\"verdict\":\"rewrite_needed\",\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"fixture\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"fixture\"},{\"area\":\"Rationale\",\"rating\":\"Solid\",\"evidence\":\"fixture\"},{\"area\":\"Edge Cases\",\"rating\":\"Solid\",\"evidence\":\"fixture\"},{\"area\":\"Synthesis\",\"rating\":\"Solid\",\"evidence\":\"fixture\"}]}}],\"request\":{\"attempt_id\":2,\"level\":2,\"kind\":\"escalate\",\"reviewed_revision\":0,\"reviewed_prompt_digest\":\"5f4dcc3b5aa765d61d8327deb882cf995f4dcc3b5aa765d61d8327deb882cf99\"}}",
     "expect": {
       "admit": false
     },

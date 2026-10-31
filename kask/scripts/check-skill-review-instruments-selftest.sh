@@ -94,7 +94,15 @@ done
 
 # Positive: the live record reconciles — no name retired-and-shipped is absent
 # from the curated array.
-gap_out="$(bash "$GAP" 2>&1)"
+# Guarded: the instrument walks git history for deletion commits, so a
+# history-less environment (a git archive export, or a shallow checkout
+# without the deletion commits) fails HERE with a named cause instead of
+# aborting this selftest silently through set -e (observed on CI 2026-10-31:
+# the step's final four minutes of log were never captured, hiding this).
+gap_out="$(bash "$GAP" 2>&1)" || {
+  echo "FAIL: gap instrument did not run: $gap_out" >&2
+  exit 1
+}
 printf '%s\n' "$gap_out" | grep -q 'curated:' || {
   echo "FAIL: gap instrument did not report counts: $gap_out" >&2
   exit 1

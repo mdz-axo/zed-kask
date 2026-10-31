@@ -1765,7 +1765,7 @@ fn kanban_startup_requires_durable_storage() {
     let volatile_replay = ["IdempotencyStore", "::default()"].concat();
     let required_passphrase = [
         "CredentialRequirement::required(",
-        "\n                \"HKASK_DB_PASSPHRASE\"",
+        "\n            \"HKASK_DB_PASSPHRASE\"",
     ]
     .concat();
     assert!(!source.contains(&volatile_database));
