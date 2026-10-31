@@ -1,0 +1,8 @@
+Draft a single-paragraph doc definition of the delegation radius for contributors.
+
+Instructions (each an explicit weight-3 constraint):
+1. Write exactly one paragraph.
+2. Keep it at most 80 words.
+3. Include the phrase how far work extends without re-checking verbatim.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

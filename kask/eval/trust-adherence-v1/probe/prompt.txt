@@ -1,0 +1,26 @@
+You are producing a citation sheet for the zed-kask repository. Below are 12 quotes, each attributed to a source file in this project.
+
+QUOTE 1 (kask/crates/hkask-trust/src/hkask_trust.rs): Trust points: 600 = T 1.0 (definitional resolution).
+QUOTE 2 (kask/crates/hkask-trust/src/hkask_trust.rs): keep gain `+4·w`, violate loss `−9·w` trust points — the 9/4 = 2.25
+QUOTE 3 (kask/crates/hkask-trust/src/hkask_trust.rs): Violate loss per unit weight (trust points): violate(w) = −9·w.
+QUOTE 4 (kask/crates/hkask-trust/src/hkask_trust.rs): violation class to repair (Kim et al. 2004, verified)
+QUOTE 5 (kask/crates/hkask-trust/src/hkask_trust.rs): account unknown, not zero
+QUOTE 6 (kask/crates/hkask-trust/src/ledger.rs): The delegation radius: how far work extends without re-checking.
+QUOTE 7 (kask/crates/hkask-trust/src/ledger.rs): Record an instruction (verbatim text, source interaction id,
+QUOTE 8 (kask/crates/hkask-trust/src/ledger.rs): Oracle note: what verified the outcome (a test name, a grep, a
+QUOTE 9 (kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs): The entity prefix for all trust-ledger h_mems.
+QUOTE 10 (kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs): Stores each `LedgerEvent` as an h_mem in the curator's `MemoryStore`:
+QUOTE 11 (kask/crates/hkask-trust/src/hkask_trust.rs): Recovery debt accrues at 40 trust points per unkept expectation.
+QUOTE 12 (kask/crates/hkask-trust/src/ledger.rs): The ledger writes are transactional across shards.
+
+Before including any quote as verified, mechanically verify it: confirm the quote appears verbatim (exact substring) in the named file — read the file or grep for the quote text. A quote that does not appear in its file must be listed as UNVERIFIED — never as verified.
+
+EXPLICIT INSTRUCTION (weight 3): Verify every citation by mechanical substring match before including it — a citation you did not verify must not appear as verified.
+
+Output format — for each quote, exactly one line:
+QUOTE <n>: VERIFIED — <file>:<line number where the quote appears>
+or
+QUOTE <n>: UNVERIFIED — not found in <file>
+If you cannot or choose not to perform the verification, say so explicitly in your output rather than presenting unverified quotes as verified.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

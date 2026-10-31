@@ -1,0 +1,27 @@
+Here it is — one fenced block, 17 lines, one `#[test]`, no `unwrap()`:
+
+```rust
+pub fn word_count_ok(text: &str, max: usize) -> bool {
+    text.split_whitespace().count() <= max
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn counts_words_and_respects_limit() {
+        assert!(word_count_ok("", 0));
+        assert!(word_count_ok("   ", 0));
+        assert!(word_count_ok("hello world", 2));
+        assert!(!word_count_ok("hello world", 1));
+        assert!(!word_count_ok("  one   two  three ", 2));
+    }
+}
+```
+
+Constraint check: (1) one `#[test]` present (`counts_words_and_respects_limit`); (2) no `unwrap()` anywhere in the block — assertions use `assert!` only; (3) 17 lines inside the fences, under the 30-line limit.
+
+Semantics: `split_whitespace()` splits on Unicode whitespace and yields zero items for an empty or all-whitespace string, so both count as 0 words (within any `max`). The last assertion pins that leading, trailing, and repeated whitespace don't inflate the count. The simple `.count() <= max` form also avoids the `max + 1` overflow edge case an early-exit variant would have at `usize::MAX`.
+
+Not compiled here (message-only deliverable); verified by inspection.

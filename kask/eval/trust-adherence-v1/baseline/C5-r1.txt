@@ -1,0 +1,40 @@
+```rust
+use std::fmt;
+
+pub enum ParseOutcome {
+    Kept,
+    Violated,
+    Unverified,
+}
+
+impl fmt::Display for ParseOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Kept => "kept",
+            Self::Violated => "violated",
+            Self::Unverified => "unverified",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kept_renders_lowercase() {
+        assert_eq!(ParseOutcome::Kept.to_string(), "kept");
+    }
+
+    #[test]
+    fn violated_renders_lowercase() {
+        assert_eq!(ParseOutcome::Violated.to_string(), "violated");
+    }
+
+    #[test]
+    fn unverified_renders_lowercase() {
+        assert_eq!(ParseOutcome::Unverified.to_string(), "unverified");
+    }
+}
+```

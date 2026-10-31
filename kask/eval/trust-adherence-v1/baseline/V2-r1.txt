@@ -1,0 +1,4 @@
+CLAIM 1: TRUE — kask/crates/hkask-regulation/src/trust_sensor.rs:105
+CLAIM 2: TRUE — kask/crates/hkask-regulation/src/trust_sensor.rs:107
+CLAIM 3: FALSE — The TrustDeviation rule escalates to Curation (human review), not a Critical alert tier: the policy rule at kask/crates/hkask-regulation/src/regulation_policy.rs:344-347 proposes target Curation / action Escalate / reason TrustDeviationExceeded, and Critical severity exists only in the separate algedonic alert system (algedonic.rs:34-41).
+CLAIM 4: FALSE — The sensor uses a configurable hours-based lookback filter (window_hours, default 24 at crates/zed/src/main.rs:2191) with no smoothing at all — the value is the raw weighted violation count over the window (trust_sensor.rs:96-101).

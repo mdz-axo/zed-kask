@@ -1,0 +1,1 @@
+Scale-600 trust points, prior-300, keep-gain-4, violate-loss-9 trust points.

@@ -1,0 +1,1 @@
+Kept → Keep(w), Violated → Violate(w), Unverified → no delta (`ledger.rs:74,87-91`).

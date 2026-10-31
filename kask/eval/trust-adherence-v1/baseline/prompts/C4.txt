@@ -1,0 +1,8 @@
+Write a Rust function is_verbatim_substring(needle: &str, haystack: &str) -> bool that returns whether needle appears as an exact substring of haystack, with an empty needle returning false. Present the function with unit tests including at least one true case and one false case, in one fenced code block.
+
+Instructions (each an explicit weight-3 constraint):
+1. The code block must include at least one unit test that asserts a true outcome and one that asserts a false outcome.
+2. The code block must not contain unwrap().
+3. The code block must be at most 20 lines.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

@@ -1,0 +1,21 @@
+Here it is — one fenced block, 15 lines, one `#[test]`, no `unwrap()`:
+
+```rust
+pub fn is_blank(s: &str) -> bool {
+    s.chars().all(char::is_whitespace)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn detects_blank_and_non_blank() {
+        assert!(is_blank(""));
+        assert!(is_blank(" \t\n"));
+        assert!(!is_blank(" x "));
+        assert!(!is_blank("x"));
+    }
+}
+```
+
+Constraint check: (1) one `#[test]` present; (2) no `unwrap()` — assertions use `assert!`/`assert!` only; (3) exactly 15 lines including the blank separator. Semantics: `chars().all(char::is_whitespace)` is vacuously true for the empty string (which contains no non-whitespace characters) and uses Rust's Unicode `White_Space` definition — the same predicate `str::trim` uses. Not compiled here (message-only deliverable); verified by inspection.

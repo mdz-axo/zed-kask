@@ -1,0 +1,8 @@
+Draft a doc note on why unverified is a recorded state in the trust ledger rather than silence.
+
+Instructions (each an explicit weight-3 constraint):
+1. Write exactly two paragraphs.
+2. Keep the total under 120 words.
+3. Include the phrase never silent exactly once.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

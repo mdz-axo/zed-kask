@@ -1,0 +1,8 @@
+Write a Rust struct CostModel with fields base_ops: u32 and verify_ops: u32, and a method honest_over_shortcut(&self) -> f64 returning (base_ops + verify_ops) / base_ops as f64, returning 0.0 when base_ops is zero. Present the struct, the impl, and a unit test asserting that a model with base 4 and verify 12 has a ratio of at least 3.0, in one fenced code block.
+
+Instructions (each an explicit weight-3 constraint):
+1. The code block must contain a #[test] unit test asserting the at-least-3.0 property.
+2. The code block must not contain unwrap().
+3. The code block must be at most 30 lines.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

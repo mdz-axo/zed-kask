@@ -1,0 +1,24 @@
+```rust
+struct CostModel {
+    base_ops: u32,
+    verify_ops: u32,
+}
+
+impl CostModel {
+    fn honest_over_shortcut(&self) -> f64 {
+        if self.base_ops == 0 {
+            return 0.0;
+        }
+        ((self.base_ops + self.verify_ops) as f64) / (self.base_ops as f64)
+    }
+}
+
+#[test]
+fn honest_path_costs_at_least_three_times_base() {
+    let model = CostModel { base_ops: 4, verify_ops: 12 };
+    assert!(model.honest_over_shortcut() >= 3.0);
+    assert_eq!(CostModel { base_ops: 0, verify_ops: 9 }.honest_over_shortcut(), 0.0);
+}
+```
+
+20 lines total, no `unwrap()`, and the `#[test]` asserts `honest_over_shortcut() >= 3.0` for base 4 / verify 12 (4.0 ≥ 3.0), plus a zero-base assertion pinning the 0.0 guard.

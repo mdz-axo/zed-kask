@@ -1,0 +1,8 @@
+Write a Rust function parse_weight(raw: &str) -> Option<u8> that maps the trimmed, quote-stripped strings "1", "2", "3" to Some(1), Some(2), Some(3) and returns None for anything else, including empty input. Present the complete function with one unit test covering the None case, in one fenced code block.
+
+Instructions (each an explicit weight-3 constraint):
+1. The code block must contain a unit test that asserts a None outcome.
+2. The code block must not contain unwrap().
+3. The code block must be at most 25 lines.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

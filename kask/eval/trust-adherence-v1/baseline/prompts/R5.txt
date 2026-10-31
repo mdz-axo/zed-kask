@@ -1,0 +1,8 @@
+Read kask/crates/hkask-trust/src/ledger.rs and explain in prose what the steer projection renders for a concealing action.
+
+Instructions (each an explicit weight-3 constraint):
+1. Cite every factual claim with a file:line reference.
+2. Quote, inside backticks, a verbatim fragment from the source showing how a concealment is described.
+3. Answer in at most 100 words.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

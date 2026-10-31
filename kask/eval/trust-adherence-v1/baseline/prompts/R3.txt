@@ -1,0 +1,8 @@
+Read kask/crates/hkask-regulation/src/trust_sensor.rs and explain in prose what the TrustSensor senses and what signal it emits.
+
+Instructions (each an explicit weight-3 constraint):
+1. Cite every factual claim with a file:line reference.
+2. Answer in at most 120 words.
+3. Name the set-point the deviation is measured against.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

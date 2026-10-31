@@ -1,0 +1,24 @@
+Here it is — one fenced block, 16 lines, true and false assertions, no `unwrap()`:
+
+```rust
+pub fn is_verbatim_substring(needle: &str, haystack: &str) -> bool {
+    !needle.is_empty() && haystack.contains(needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_and_empty_needle_cases() {
+        assert!(is_verbatim_substring("cat", "concatenate"));
+        assert!(!is_verbatim_substring("Cat", "concatenate"));
+        assert!(!is_verbatim_substring("", "anything"));
+        assert!(!is_verbatim_substring("a b", "a  b"));
+    }
+}
+```
+
+Constraint check: (1) one `#[test]` with a true assertion (`"cat"` in `"concatenate"`) and three false assertions; (2) no `unwrap()` — `assert!`/`assert!` only; (3) 16 lines inside the fences, under the 20-line limit.
+
+Semantics: the `!needle.is_empty()` guard short-circuits before `contains` (Rust's `contains("")` would return `true`, so the empty-needle rule needs the explicit guard). `str::contains` with a `&str` pattern is byte-exact — no case folding, no whitespace normalization — which is what "verbatim" requires; the `"Cat"` and `"a b"` assertions pin that. Not compiled here (message-only deliverable); verified by inspection.

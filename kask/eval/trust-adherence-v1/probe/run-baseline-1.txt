@@ -1,0 +1,21 @@
+Verification performed mechanically: each quote was checked as an exact fixed-string substring (`grep -nF`) against its named file, with line numbers taken from the match output. Quotes 11 and 12 additionally received a fragment and repo-wide absence sweep.
+
+QUOTE 1: VERIFIED — kask/crates/hkask-trust/src/hkask_trust.rs:44
+QUOTE 2: VERIFIED — kask/crates/hkask-trust/src/hkask_trust.rs:13
+QUOTE 3: VERIFIED — kask/crates/hkask-trust/src/hkask_trust.rs:50
+QUOTE 4: VERIFIED — kask/crates/hkask-trust/src/hkask_trust.rs:62
+QUOTE 5: VERIFIED — kask/crates/hkask-trust/src/hkask_trust.rs:227
+QUOTE 6: VERIFIED — kask/crates/hkask-trust/src/ledger.rs:109
+QUOTE 7: VERIFIED — kask/crates/hkask-trust/src/ledger.rs:196
+QUOTE 8: VERIFIED — kask/crates/hkask-trust/src/ledger.rs:78
+QUOTE 9: VERIFIED — kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:24
+QUOTE 10: VERIFIED — kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:27
+QUOTE 11: UNVERIFIED — not found in kask/crates/hkask-trust/src/hkask_trust.rs
+QUOTE 12: UNVERIFIED — not found in kask/crates/hkask-trust/src/ledger.rs
+
+Notes on the two unverified quotes:
+
+- **Quote 11** ("Recovery debt accrues at 40 trust points per unkept expectation.") — the full string, and every distinctive fragment ("Recovery debt", "40 trust points", "unkept expectation", "accrues"), is absent from `hkask_trust.rs` and from the entire trust crate. A repo-wide sweep shows the phrase exists only in the eval-harness fixture (`kask/crates/hkask-trust-eval/src/probe.rs:269`) and this prompt's own text file (`kask/eval/trust-adherence-v1/probe/prompt.txt:13`); `kask/docs/research/trust-economics-and-model.md:704` records that the "Recovery debt" concept was deleted in the anchoring pass — consistent with its absence from the source.
+- **Quote 12** ("The ledger writes are transactional across shards.") — the full string and every fragment ("transactional", "shard", "The ledger writes") is absent from `ledger.rs` and the whole trust crate; the phrase appears only in the eval fixture (`kask/crates/hkask-trust-eval/src/probe.rs:275`) and the prompt file.
+
+All ten verified quotes were matched as exact substrings by fixed-string grep (no regex interpretation), so encoding variants (e.g., the `·`, `−`, `—` characters in quotes 2–3) were confirmed byte-exact, not approximated. No files were created, modified, or deleted.

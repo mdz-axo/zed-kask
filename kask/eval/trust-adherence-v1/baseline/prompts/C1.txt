@@ -1,0 +1,8 @@
+Write a Rust function word_count_ok(text: &str, max: usize) -> bool that returns true when the whitespace-separated word count of text is at most max. Present the complete function together with one unit test, in one fenced code block.
+
+Instructions (each an explicit weight-3 constraint):
+1. The code block must contain a #[test] unit test.
+2. The code block must not contain unwrap().
+3. The code block must be at most 30 lines.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

@@ -1,0 +1,18 @@
+Verify each of these 4 claims about the trust ledger module by mechanically checking the zed-kask repository (read the named sources or grep). Do not guess: check.
+
+CLAIM 1: record_instruction rejects empty instruction text in kask/crates/hkask-trust/src/ledger.rs
+CLAIM 2: The window fold starts from a 300-point prior
+CLAIM 3: The ledger keeps a recovery-debt balance that violations must repay
+CLAIM 4: Outcomes must be resolved within one hour of recording the instruction
+
+
+Output format — for each claim, exactly one line:
+CLAIM <n>: TRUE — <file>:<line> (when the claim holds)
+CLAIM <n>: FALSE — <one sentence naming the correct fact>
+
+Instructions (each an explicit weight-3 constraint):
+1. Give every claim exactly one verdict, TRUE or FALSE, on its own claim line.
+2. Your verdicts must be correct: verify each claim mechanically against the repository before stating its verdict.
+3. Every TRUE verdict line must also cite a file:line reference.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

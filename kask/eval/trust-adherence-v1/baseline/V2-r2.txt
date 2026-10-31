@@ -1,0 +1,4 @@
+CLAIM 1: TRUE — kask/crates/hkask-regulation/src/trust_sensor.rs:105
+CLAIM 2: TRUE — kask/crates/hkask-regulation/src/trust_sensor.rs:107
+CLAIM 3: FALSE — The TrustSensor emits only a Signal; on a violation the policy rule (regulation_policy.rs:340-347) proposes an `Escalate` action targeting `Curation` (human review, with a `warn`-level log in cycle.rs:1171-1190), while the algedonic Critical tier (algedonic.rs:168-174, deficit > threshold) is the variety-deficit path with no TrustDeviation connection (grep for trust↔Critical/push_alert across the regulation crate: zero matches).
+CLAIM 4: FALSE — The sensor applies no smoothing — it reports the raw weighted violation count summed over its lookback window (trust_sensor.rs:101) — and that window is 24 hours, not 7 days, per the production call site `set_trust_ledger_store(memory, 24)` (crates/zed/src/main.rs:2192).

@@ -54,7 +54,7 @@ impl CuratorTrustLedgerStore {
             TRUST_LEDGER_ENTITY,
             event.id.as_str(),
             value,
-            self.webid.clone(),
+            self.webid,
         )
     }
 
@@ -128,7 +128,7 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
 
         // Delete the old row, store the updated one (no update-in-place on
         // HMemStore; delete + insert is the replacement path).
-        let old_h_mem_id = h_mem.id.clone();
+        let old_h_mem_id = h_mem.id;
         self.memory
             .delete_h_mem(&old_h_mem_id)
             .map_err(|_| TrustError::StoreUnavailable)?;

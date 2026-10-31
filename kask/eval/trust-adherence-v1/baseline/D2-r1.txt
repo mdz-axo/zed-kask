@@ -1,0 +1,3 @@
+An `unverified` ledger event records an outcome asserted without an executed oracle — the `oracle_note` is `None`, the judgment was the model's alone. Recording it keeps the claim's evidence class visible on the row itself: asserted, not checked.
+
+Silence would be worse than an honest gap: an absent state is indistinguishable from a ledger that never recorded the claim, so a reliance decision would read nothing where a caveat belongs. The verification state is kept, violated, or unverified — never silent — so every recorded claim carries exactly the evidence class it earned.

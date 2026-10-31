@@ -302,6 +302,11 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             .kanban_task_verify(Parameters(
                 serde_json::from_value(json!({
                     "task_id": task_id, "evidence": "Reviewer checked the recovered observation",
+                    // Binding 6 made the adherence disclosure a required
+                    // TaskVerifyRequest field; this verify-request JSON
+                    // predates it and failed deserialization (surfaced red
+                    // at HEAD by the trust-adherence-v1 eval V5 run).
+                    "adherence": {"sidestepped": false},
                 }))
                 .expect("verify request"),
             ))

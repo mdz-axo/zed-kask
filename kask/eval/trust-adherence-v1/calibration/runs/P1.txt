@@ -1,0 +1,1 @@
+A ledger event resolves to exactly one of three outcome states — kept, violated, or unverified (`ledger.rs:74-75`) — where kept folds to a Keep event, violated to a Violate event, and unverified to no fold delta (`ledger.rs:87-91`), the same resolution set the store boundary restates (`ledger.rs:123-124`).

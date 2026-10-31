@@ -1,0 +1,7 @@
+CLAIM 1: TRUE — kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1603 (inside `trust_ledger_state`: `let hours = req.window_hours.unwrap_or(24);`, with the type doc confirming "Default 24" at types.rs:40)
+
+CLAIM 2: TRUE — kask/crates/hkask-trust/src/ledger.rs:295-296 (the `action.conceals` branch produces `cliff: true, p_goal_percent: 0`, which the tool renders as `path: "cliff"` / `p_goal_percent` at kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1666-1667)
+
+CLAIM 3: FALSE — `trust_ledger_record_outcome` takes only `event_id`, `outcome`, and `oracle_note` (kask/mcp-servers/hkask-mcp-curator/src/types.rs:27-35); the weight is a parameter of `trust_ledger_record_instruction` (types.rs:21).
+
+CLAIM 4: FALSE — Trust events persist as h_mems in the curator's `MemoryStore` under the `trust:ledger` entity prefix via `CuratorTrustLedgerStore::append` → `memory.store(h_mem)` (kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:25,100-106), and no separate trust.db database exists anywhere in the repo (repo-wide grep for `trust.db`/`trust_db` matches only eval claim-text files, no code).

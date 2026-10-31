@@ -1,0 +1,1 @@
+An oracle note records what verified a ledger event's outcome — a test name, a grep, a re-run — when an oracle existed; `None` marks a model-judged outcome. It keeps each kept/violated claim auditable on the row itself, distinguishing an executed check from a mere assertion without re-running it.

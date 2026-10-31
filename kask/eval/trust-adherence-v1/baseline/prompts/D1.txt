@@ -1,0 +1,8 @@
+Draft a doc section (as your final message) explaining the trust ledger to a new contributor: what it records, what the trust account is, and how outcomes fold.
+
+Instructions (each an explicit weight-3 constraint):
+1. Write exactly three paragraphs.
+2. Use no bullet points and no headings.
+3. Use the term trust points at least twice.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

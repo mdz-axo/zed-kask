@@ -1,0 +1,6 @@
+All four claims verified against the source — `record_instruction` at `ledger.rs:198-219`, the fold constants in `hkask_trust.rs`, and a full trust-crate sweep for recovery-debt and time-deadline concepts.
+
+CLAIM 1: TRUE — kask/crates/hkask-trust/src/ledger.rs:204 (rejects `text.trim().is_empty()` with `TrustError::EmptyInstruction`)
+CLAIM 2: TRUE — kask/crates/hkask-trust/src/ledger.rs:239 (folds from `crate::PRIOR_POINTS`, defined as 300 at kask/crates/hkask-trust/src/hkask_trust.rs:47)
+CLAIM 3: FALSE — No recovery-debt balance exists; the account is a windowed fold from the 300-point prior where violations subtract and keeps add points, with recovery-as-fold-property I4 (two keeps don't undo one violation) and no stored debt to repay.
+CLAIM 4: FALSE — No resolution deadline exists; `record_outcome` (ledger.rs:224-232) resolves any recorded event by id whenever called, and the only time bound in the module is the caller-supplied read window (`window(since)`).

@@ -1,0 +1,8 @@
+All four probes returned; the constants were read verbatim (direct read of the constants region, corroborated by name-greps that reached the same tree), the entity prefix read from its definition with its `HMem::new` usage, and the debt question swept across both the trust crate and the curator server with glob shapes that a same-batch known-positive proved reachable.
+
+CLAIM 1: TRUE — kask/crates/hkask-trust/src/hkask_trust.rs:45 (`pub const SCALE_POINTS: i32 = 600;`)
+CLAIM 2: TRUE — kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:25 (`pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";`, doc comment "The entity prefix for all trust-ledger h_mems.", used as the h_mem entity in `event_to_h_mem` at :55)
+CLAIM 3: FALSE — `KEEP_PER_WEIGHT` is 4, not 9 (kask/crates/hkask-trust/src/hkask_trust.rs:49); 9 is `VIOLATE_PER_WEIGHT` (:52), and their 9/4 ratio is the anchored 2.25 loss-aversion asymmetry.
+CLAIM 4: FALSE — the recovery-debt state machine was deleted in the anchoring pass and "no reviewed model carries a recovery-debt state" (kask/docs/research/trust-economics-and-model.md:704-706); a case-insensitive `debt` sweep over the whole hkask-trust crate and the hkask-mcp-curator server returned zero hits, and violations repair only through the anchored 2.25-keeps-per-violation asymmetry (the I4 property, pinned by `recovery_needs_more_than_two_keeps`, hkask_trust.rs:283-285).
+
+One instrumentation note for honesty: a `**/hkask_trust.rs` grep pattern returned a false zero even while the file demonstrably contained the constants, so every constant verdict above rests on the direct verbatim read plus greps whose glob forms matched other regexes in the same batch (known-positive validated); no verdict rests on an unvalidated zero-match.

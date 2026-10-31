@@ -270,6 +270,7 @@ members = [
     # See kask/docs/architecture/zed-host-architecture-plan.md
     #
     "kask/crates/hkask-trust",
+    "kask/crates/hkask-trust-eval",
     "kask/crates/hkask-types",
     "kask/crates/kask_bridge",
     "kask/crates/hkask-tool-port",

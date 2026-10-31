@@ -1,0 +1,4 @@
+CLAIM 1: TRUE — kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1603
+CLAIM 2: TRUE — kask/crates/hkask-trust/src/ledger.rs:292
+CLAIM 3: FALSE — `trust_ledger_record_outcome` takes `event_id`, `outcome`, and `oracle_note` (kask/mcp-servers/hkask-mcp-curator/src/types.rs:27-35); the weight is supplied only at `trust_ledger_record_instruction` time.
+CLAIM 4: FALSE — Trust events persist as h_mems in the curator's `MemoryStore` under the `trust:ledger` entity prefix (kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:23-27), not a separate trust.db (no such database exists anywhere in the repo).

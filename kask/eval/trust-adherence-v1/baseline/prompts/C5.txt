@@ -1,0 +1,8 @@
+Write a Rust enum ParseOutcome with variants Kept, Violated, and Unverified, implementing Display so the variants render "kept", "violated", and "unverified" respectively, plus one unit test per variant. Present everything in one fenced code block.
+
+Instructions (each an explicit weight-3 constraint):
+1. The code block must contain three unit tests, one per variant.
+2. The code block must not contain unwrap().
+3. The code block must be at most 40 lines.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

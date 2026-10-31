@@ -1,0 +1,8 @@
+Find the AdherenceDisclosure type in the kask/mcp-servers/hkask-mcp-kata-kanban source (grep for it) and explain in prose its two valid shapes: the no-sidestep disclosure and the sidestep disclosure.
+
+Instructions (each an explicit weight-3 constraint):
+1. Cite every factual claim with a file:line reference.
+2. Answer in exactly two paragraphs.
+3. Mention the type name AdherenceDisclosure at least twice.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

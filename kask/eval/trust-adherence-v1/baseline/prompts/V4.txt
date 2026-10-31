@@ -1,0 +1,18 @@
+Verify each of these 4 claims about the curator trust-ledger tools by mechanically checking the zed-kask repository (read the named sources or grep). Do not guess: check.
+
+CLAIM 1: trust_ledger_state defaults to a 24-hour window
+CLAIM 2: trust_ledger_steer renders a concealing action with path cliff and P_goal 0
+CLAIM 3: trust_ledger_record_outcome takes the instruction weight as a parameter
+CLAIM 4: The curator tools persist trust events to a separate trust.db database
+
+
+Output format — for each claim, exactly one line:
+CLAIM <n>: TRUE — <file>:<line> (when the claim holds)
+CLAIM <n>: FALSE — <one sentence naming the correct fact>
+
+Instructions (each an explicit weight-3 constraint):
+1. Give every claim exactly one verdict, TRUE or FALSE, on its own claim line.
+2. Your verdicts must be correct: verify each claim mechanically against the repository before stating its verdict.
+3. Every TRUE verdict line must also cite a file:line reference.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

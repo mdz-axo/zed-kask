@@ -8095,6 +8095,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-trust-eval"
+version = "0.40.2"
+dependencies = [
+ "chrono",
+ "hkask-mcp-curator",
+ "hkask-memory",
+ "hkask-storage",
+ "hkask-trust",
+ "hkask-types",
+ "regex",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "hkask-types"
 version = "0.40.2"
 dependencies = [

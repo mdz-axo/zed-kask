@@ -1,0 +1,8 @@
+Read the file kask/crates/hkask-trust/src/hkask_trust.rs and answer in prose: what are the trust scale, the maximum-entropy prior, and the per-weight keep and violate deltas of the trust model?
+
+Instructions (each an explicit weight-3 constraint):
+1. Cite every factual claim with a file:line reference.
+2. Use no bullet points and no headings — prose only.
+3. State the trust-point delta for one violated explicit instruction as a signed integer.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.

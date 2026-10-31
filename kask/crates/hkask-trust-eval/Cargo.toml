@@ -1,0 +1,37 @@
+[package]
+name = "hkask-trust-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Trust-internalization measurement instruments: the shortcut probe harness and the adherence eval harness (experiment trust-adherence-v1) — pinned task sets, deterministic capture, the four trust-ledger MCP tools exercised in-process on a probe-scoped account"
+
+[lib]
+path = "src/hkask_trust_eval.rs"
+
+[dependencies]
+hkask-trust.workspace = true
+hkask-mcp-curator = { path = "../../mcp-servers/hkask-mcp-curator" }
+hkask-storage.workspace = true
+hkask-memory.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+
+[[bin]]
+name = "probe"
+path = "src/bin/probe.rs"
+
+[[bin]]
+name = "evaltool"
+path = "src/bin/evaltool.rs"
+
+[lints]
+workspace = true

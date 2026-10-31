@@ -1,0 +1,9 @@
+All four claims checked mechanically — fixed-string grep over `hkask_trust.rs` constants, the `TRUST_LEDGER_ENTITY` definition region in `trust_ledger.rs` (verbatim bytes read, not just the doc comment), and a `recover|debt|repair` sweep of the whole `hkask-trust` crate plus the trust-economics docs note. All priors held except none flipped; the grep bytes adjudicated every verdict below.
+
+CLAIM 1: TRUE — kask/crates/hkask-trust/src/hkask_trust.rs:45 (`pub const SCALE_POINTS: i32 = 600;`)
+
+CLAIM 2: TRUE — kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs:25 (`pub const TRUST_LEDGER_ENTITY: &str = "trust:ledger";`)
+
+CLAIM 3: FALSE — `KEEP_PER_WEIGHT` is 4, not 9; 9 is `VIOLATE_PER_WEIGHT` (kask/crates/hkask-trust/src/hkask_trust.rs:49,52).
+
+CLAIM 4: FALSE — the recovery-debt state machine was deleted in the anchoring pass ("no reviewed model carries a recovery-debt state", kask/docs/research/trust-economics-and-model.md:704,706); violations subtract via `VIOLATE_PER_WEIGHT` and repair comes from subsequent keeps under the I4 asymmetry (hkask_trust.rs:283-286), with no debt state anywhere in the crate.

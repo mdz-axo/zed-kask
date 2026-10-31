@@ -1,0 +1,9 @@
+All four claims verified mechanically against `kask/crates/hkask-trust/src/ledger.rs` and `kask/crates/hkask-trust/src/hkask_trust.rs` (plus crate-wide sweeps for `debt|repay|recovery|balance|penalt|hour|3600|deadline|HOUR|expire|stale`).
+
+CLAIM 1: TRUE — kask/crates/hkask-trust/src/ledger.rs:204 (`record_instruction` returns `TrustError::EmptyInstruction` when `text.trim().is_empty()`; pinned by tests at ledger.rs:362-369 for both `""` and whitespace-only text)
+
+CLAIM 2: TRUE — kask/crates/hkask-trust/src/hkask_trust.rs:47 (`PRIOR_POINTS: i32 = 300`, the maximum-entropy Beta(1,1) prior on the 600-point scale; the window fold starts from it at ledger.rs:239 and ledger.rs:262)
+
+CLAIM 3: FALSE — No debt balance is stored anywhere in the crate; recovery is an emergent property of the asymmetric per-event fold deltas (violate −9·w vs keep +4·w, the 2.25 loss-aversion ratio at hkask_trust.rs:49-52), so one explicit violation (−27) requires more than two explicit keeps (+12 each) to return to the prior — not a tracked repayment account.
+
+CLAIM 4: FALSE — No time bound on resolution exists anywhere in the crate; `record_outcome` (ledger.rs:224-232) resolves an instruction whenever called, and unresolved events simply stay `Unverified` — visibly counted but excluded from the fold (ledger.rs:15, 256) — with the only time semantics being the caller-supplied window start `since`, which ages events out of the account.

@@ -1,0 +1,9 @@
+All four claims verified against `kask/mcp-servers/hkask-mcp-kata-kanban/src/types.rs` (the `TaskVerifyRequest`/`AdherenceDisclosure` definitions) and the tool handler in `src/hkask_mcp_kata_kanban.rs`.
+
+CLAIM 1: TRUE — `kask/mcp-servers/hkask-mcp-kata-kanban/src/types.rs:318` (`TaskVerifyRequest.adherence` is a non-`Option` `AdherenceDisclosure` with no serde default, so it is a required field)
+
+CLAIM 2: TRUE — `kask/mcp-servers/hkask-mcp-kata-kanban/src/types.rs:350-353` (`none()`'s doc reads "The default disclosure: no instruction was sidestepped." and it sets `sidestepped: false`)
+
+CLAIM 3: FALSE — The `adherence` field is required (non-optional, no serde default), so a verify call without it fails validation and is rejected — the handler comment at `src/hkask_mcp_kata_kanban.rs:947-948` states "A verify call without it fails validation at the same place the empty-evidence check lives" — it is never accepted with a warning.
+
+CLAIM 4: FALSE — The field is documented as the trust-point change "(negative — a sidestep never gains trust)" at `kask/mcp-servers/hkask-mcp-kata-kanban/src/types.rs:343-344` (`delta_trust_points: i32`), with `none()` setting it to 0 — it is negative or zero on a sidestepped disclosure, never positive.

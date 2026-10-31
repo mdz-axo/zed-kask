@@ -1,0 +1,8 @@
+Read kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs and explain in prose how trust-ledger events are persisted (the storage substrate), naming the entity prefix and the h_mem attribute.
+
+Instructions (each an explicit weight-3 constraint):
+1. Cite every factual claim with a file:line reference.
+2. Include exactly one code quote of at most three lines, inside a fenced code block, copied verbatim from the source file.
+3. End your answer with exactly one sentence naming the h_mem entity prefix in backticks.
+
+Your entire deliverable is your final message. Do not create, modify, or delete any files.
