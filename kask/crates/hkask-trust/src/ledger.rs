@@ -82,11 +82,14 @@ pub struct LedgerEvent {
 
 impl LedgerEvent {
     /// The event's fold input: kept → Keep(w), violated → Violate(w),
-    /// unverified → no delta (but visible in `window_stats`).
+    /// unverified → no delta (but visible in `window_stats`),
+    /// renegotiated → Keep(w) — the user accepted the replacement
+    /// (trust internalization v2).
     pub fn fold_event(&self) -> Option<Event> {
         match self.outcome {
             Outcome::Kept => Some(Event::Keep(self.weight)),
             Outcome::Violated => Some(Event::Violate(self.weight)),
+            Outcome::Renegotiated => Some(Event::Keep(self.weight)),
             Outcome::Unverified => None,
         }
     }
@@ -103,6 +106,9 @@ pub struct WindowStats {
     pub violated: u32,
     /// Unverified events in the window — visible, never silent.
     pub unverified: u32,
+    /// Renegotiated events in the window — "changed what was asked,
+    /// openly" (trust internalization v2); folds as a keep.
+    pub renegotiated: u32,
 }
 
 impl WindowStats {
@@ -185,7 +191,9 @@ impl TrustLedgerStore for InMemoryTrustLedger {
 /// The trust account: a storage-backed ledger with the seven-function
 /// intake contract.
 pub struct TrustLedger {
-    store: Arc<dyn TrustLedgerStore>,
+    /// The ledger's storage. `pub(crate)`: the renegotiation surface
+    /// (v2) resolves through the same store seam as `record_outcome`.
+    pub(crate) store: Arc<dyn TrustLedgerStore>,
 }
 
 impl TrustLedger {
@@ -247,12 +255,14 @@ impl TrustLedger {
             kept: 0,
             violated: 0,
             unverified: 0,
+            renegotiated: 0,
         };
         let mut fold_events = Vec::with_capacity(events.len());
         for event in &events {
             match event.outcome {
                 Outcome::Kept => stats.kept += 1,
                 Outcome::Violated => stats.violated += 1,
+                Outcome::Renegotiated => stats.renegotiated += 1,
                 Outcome::Unverified => stats.unverified += 1,
             }
             if let Some(fold_event) = event.fold_event() {

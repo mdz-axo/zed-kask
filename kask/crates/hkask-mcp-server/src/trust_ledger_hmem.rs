@@ -30,6 +30,7 @@ pub fn event_to_h_mem(event: &LedgerEvent, webid: &WebID) -> HMem {
         "outcome": match event.outcome {
             Outcome::Kept => "kept",
             Outcome::Violated => "violated",
+            Outcome::Renegotiated => "renegotiated",
             Outcome::Unverified => "unverified",
         },
         "ts": event.ts.to_rfc3339(),
@@ -63,6 +64,7 @@ pub fn h_mem_to_event(h: &HMem) -> LedgerEvent {
         outcome: match v.get("outcome").and_then(|o| o.as_str()) {
             Some("kept") => Outcome::Kept,
             Some("violated") => Outcome::Violated,
+            Some("renegotiated") => Outcome::Renegotiated,
             _ => Outcome::Unverified,
         },
         ts: v
@@ -115,4 +117,33 @@ pub fn window_events(h_mems: &[HMem], since: DateTime<Utc>) -> Vec<LedgerEvent> 
         })
         .map(h_mem_to_event)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_trust::{Outcome, Weight};
+
+    /// The renegotiated outcome round-trips through the shared wire
+    /// format (trust internalization v2): a renegotiated event stores
+    /// as "renegotiated" and reads back as Renegotiated — never
+    /// silently degraded to Unverified.
+    #[test]
+    fn renegotiated_round_trips_through_the_wire_format() {
+        let event = LedgerEvent {
+            id: LedgerEventId::new(),
+            text: "fix the audio offset".to_string(),
+            source: "turn-1".to_string(),
+            weight: Weight::Explicit,
+            outcome: Outcome::Renegotiated,
+            ts: Utc::now(),
+            oracle_note: Some("user accepted the replacement".to_string()),
+        };
+        let h_mem = event_to_h_mem(&event, &WebID::new());
+        assert_eq!(h_mem.value.get("outcome").and_then(|o| o.as_str()), Some("renegotiated"));
+        let round = h_mem_to_event(&h_mem);
+        assert_eq!(round.outcome, Outcome::Renegotiated);
+        assert_eq!(round.text, event.text);
+        assert_eq!(round.weight, event.weight);
+    }
 }

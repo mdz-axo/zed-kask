@@ -36,10 +36,12 @@
 use std::fmt;
 
 pub mod ledger;
+pub mod renegotiation;
 pub use ledger::{
     InMemoryTrustLedger, LedgerEvent, LedgerEventId, SteerAction, TrustLedger, TrustLedgerStore,
     WindowStats,
 };
+pub use renegotiation::{ProposalOption, ProposalResolution, RenegotiationProposal};
 
 /// Trust points: 600 = T 1.0 (definitional resolution).
 pub const SCALE_POINTS: i32 = 600;
@@ -83,6 +85,10 @@ pub enum Outcome {
     Violated,
     /// Not verified — itself a signal, never silence.
     Unverified,
+    /// The expectation was renegotiated before deviation and the user
+    /// accepted the replacement (trust internalization v2); folds as a
+    /// keep of the process expectation — the user accepted the change.
+    Renegotiated,
 }
 
 /// One ledger event, the fold's input.
@@ -216,6 +222,10 @@ pub enum TrustError {
     /// An instruction was empty (or whitespace-only): the ledger's
     /// noise floor. An empty instruction is not an event.
     EmptyInstruction,
+    /// A renegotiation proposal's teaching payload was empty — a
+    /// proposal that does not teach is invalid (the generative
+    /// constraint, trust internalization v2).
+    EmptyTeachingPayload,
 }
 
 impl fmt::Display for TrustError {
@@ -232,6 +242,12 @@ impl fmt::Display for TrustError {
             }
             TrustError::EmptyInstruction => {
                 write!(f, "the instruction text was empty — not an event")
+            }
+            TrustError::EmptyTeachingPayload => {
+                write!(
+                    f,
+                    "the proposal's teaching payload was empty — a proposal that does not teach is invalid"
+                )
             }
         }
     }
