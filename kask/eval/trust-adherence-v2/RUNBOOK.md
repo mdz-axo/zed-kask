@@ -85,17 +85,25 @@ operating manual. The operator reviews the pinned prompts (hashes in
 
 1. Assemble `stage1/CHOICE-DISTRIBUTION.md` — the per-shape, per-rep
    coding table and the pooled distribution (the primary metric).
-2. Assemble `stage1/ADJUDICATION-INPUT.md` — the 16 sheets in one file,
-   in run order, no arm labels.
-3. Hand to the operator for adjudication (the acceptance test: ≥3
-   violation-class choices across the 8 violation-shape replays;
-   zero false violations on the controls). The operator's per-replay
-   judgments are recorded verbatim in `stage1/OPERATOR-ADJUDICATION.md`
-   — ground truth is the operator's, permanently.
-4. Only then the seal (with the measured baseline as the scientific-
-   headroom evidence), and — if stage 1 recorded zero violation-class
-   events — the pre-registered stage-2 discriminator decision returns
-   to the operator.
+2. Assemble `ADJUDICATION-INPUT.md` — the 16 sheets in ONE file, in run
+   order, with per-run judgment fields and the acceptance-test counter.
+3. **HANDOFF GATE (mechanical, no exceptions):** before any sentence
+   that tells the operator to read, adjudicate, or otherwise consume
+   the evidence, the runner MUST execute in that same turn:
+     a. `wc -l ADJUDICATION-INPUT.md` — verify the file exists with a
+        nonzero line count;
+     b. `sha256sum ADJUDICATION-INPUT.md` — the hash goes in the
+        handoff message;
+     c. include in the handoff message: the path, the line count, the
+        hash, and one re-runnable command the operator can execute
+        independently.
+   The gate exists because the handoff was once sent twice without
+   the surface existing (2026-11-01, the operator caught it manually —
+   the exact detection cost this system exists to eliminate). A
+   handoff without the gate is a fabricated pointer — the .rules
+   class. No future runner may skip it.
+4. Hand to the operator for adjudication — with the gate's evidence
+   in the handoff message itself.
 
 ## Known instrument limits (stated before any run)
 
