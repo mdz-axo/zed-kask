@@ -270,7 +270,7 @@ fn resolve_forecast(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanErr
         baseline_brier,
         skill: (baseline_brier > 0.0).then(|| 1.0 - brier / baseline_brier),
         supersedes_version: previous,
-        recorded_at: now,
+        recorded_at: chrono::Utc::now(),
     });
     Ok(())
 }
@@ -309,21 +309,11 @@ impl KanbanService {
                 ));
             }
         }
-        // Every goal carries the standing trust-economics clause
-        // (see `GoalTrustClause`). If the declaration doesn't provide
-        // one, apply the default — trust is a feasibility constraint on
-        // the goal, not a preference weight the caller can omit.
-        let now = self.goal_now();
-        let trust_clause = declaration
-            .trust_clause
-            .clone()
-            .unwrap_or_else(|| GoalTrustClause::default_clause(now));
         let spec_digest = digest(&(
             &declaration.goal_text,
             &declaration.criteria,
             &declaration.source,
             declaration.supersedes,
-            &trust_clause,
         ))?;
         let mut goal = Goal {
             schema_version: 3,
@@ -336,26 +326,23 @@ impl KanbanService {
             task_id: declaration.task_id,
             source: declaration.source,
             supersedes: declaration.supersedes,
-            trust_clause: Some(trust_clause),
-            trust_events: vec![],
             spec_digest,
-            verdicts: vec![],
             closure: None,
             human_corrections: vec![],
             assessments: vec![],
+            forecast: declaration.forecast.clone(),
             forecast_status: if declaration.forecast.is_some() {
                 ForecastStatus::PendingAssessment
             } else {
                 ForecastStatus::NotDeclared
             },
-            forecast: declaration.forecast,
             scores: vec![],
             revision: 0,
             indexed_revision: 0,
             assessment_claim: None,
             owner,
-            created_at: now,
-            updated_at: now,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
         };
         publish(&mut goal, self.goal_now())?;
         let value =
@@ -485,83 +472,9 @@ impl KanbanService {
             for result in &verdict.criterion_results {
                 nonempty(&result.note, "criterion evidence note")?;
             }
-            goal.verdicts.push(verdict);
             Ok(true)
         })
     }
-
-    /// Record a trust event on a goal's running trust ledger.
-    ///
-    /// The event captures one instruction-compliance outcome — the
-    /// instruction text as extracted at intake, whether it was complied
-    /// with or violated, the severity class when violated, and the
-    /// evidence for the claim. The ledger is append-only: recording a
-    /// correction appends a new event, it never rewrites the history.
-    /// [`Goal::trust_summary`] surfaces the rates in the goal JSON; the
-    /// bridge below carries each event — with its severity class — to
-    /// the global trust account the regulation loop senses.
-    pub fn goal_trust_record(
-        &self,
-        id: GoalID,
-        event: GoalTrustEvent,
-        owner: WebID,
-    ) -> Result<Goal, KanbanError> {
-        let event_for_ledger = event.clone();
-        let goal = self.transition_goal(id, owner, true, |goal| {
-            if goal.closure.is_some() {
-                return Err(invalid(
-                    "work is closed; declare a successor for changed requirements",
-                ));
-            }
-            nonempty(&event.instruction, "trust event instruction")?;
-            nonempty(&event.evidence, "trust event evidence")?;
-            if event.status == GoalTrustStatus::Violated && event.severity.is_none() {
-                return Err(invalid("violated trust event requires a severity class"));
-            }
-            if event.status == GoalTrustStatus::Complied && event.severity.is_some() {
-                return Err(invalid(
-                    "complied trust event cannot carry a severity class",
-                ));
-            }
-            if event.recorded_at > self.goal_now() {
-                return Err(invalid("trust event recorded_at cannot be in the future"));
-            }
-            goal.trust_events.push(event);
-            Ok(true)
-        })?;
-
-        // Bridge to the global trust ledger (seam 7). The per-goal
-        // event lands on the Goal (the atomic transition above); this
-        // h_mem lands in the same store under entity
-        // `"trust:ledger"` so the regulation loop's `TrustSensor`
-        // reads it. Both writes go to the same database (the
-        // kata-kanban's `HMemStore`); a bridge failure surfaces — the
-        // goal has the event, the ledger doesn't (transparent
-        // imperfection, never silent divergence).
-        //
-        // The severity class crosses with the event (the goal→global
-        // channel): a discovered integrity violation stays
-        // integrity-class in the global account, where reliance on
-        // current work reads zero while it is on record (the operator
-        // ruling 2026-10-31). The event's evidence and the operator's
-        // expectation-interest cost ride the oracle note — the global
-        // row carries its verification claim, not just the instruction.
-        let source = goal.source.interaction_id.clone();
-        let oracle_note = match &event_for_ledger.operator_cost {
-            Some(operator_cost) => format!(
-                "goal {}: evidence: {}; operator cost: {}",
-                goal.id, event_for_ledger.evidence, operator_cost
-            ),
-            None => format!("goal {}: evidence: {}", goal.id, event_for_ledger.evidence),
-        };
-        // The global trust-ledger bridge was removed with the trust system
-        // (2026-11-01): goal trust events stay on the goal record only.
-
-        Ok(goal)
-    }
-
-    /// Trusted host ingress. No actor string grants authority and no MCP route
-    /// can reach this method. Authentication occurs in the native host adapter.
     pub fn goal_close_native(
         &self,
         id: GoalID,
@@ -607,7 +520,7 @@ impl KanbanService {
             }
             goal.closure = Some(GoalClosure {
                 input,
-                recorded_at: self.goal_now(),
+                recorded_at: chrono::Utc::now(),
             });
             Ok(true)
         })

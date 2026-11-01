@@ -433,12 +433,6 @@ impl KanbanServer {
                             .as_deref()
                             .map(parse_goal_id)
                             .transpose()?,
-                        // None means the service applies the default trust
-                        // clause (see [`types::goal::GoalTrustClause`]).
-                        // The MCP route doesn't accept a custom trust
-                        // clause — the clause is structural, not a
-                        // caller preference.
-                        trust_clause: None,
                     };
                     respond(self.service.goal_create(declaration, self.webid), |goal| {
                         goal
@@ -489,100 +483,15 @@ impl KanbanServer {
                 |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
                     verdict: verdict,
-                    verdict_count: goal.verdicts.len(),
                 },
             )
         })
         .await
     }
 
-    /// Record an instruction-compliance event on the goal's running
-    /// trust ledger (seam 6). The ledger is the goal's trust account:
-    /// every explicit instruction extracted at intake is checked during
-    /// execution and the result is recorded here (append-only). The
-    /// severity class (competence when disclosed at detection, integrity
-    /// when discovered through concealment or misweighting — per Slovic
-    /// 1993 and Kim–Ferrin–Cooper–Dirks 2004) crosses to the global
-    /// account with the event: a discovered integrity failure zeroes
-    /// reliance on current work while on record (the operator ruling
-    /// 2026-10-31), and the response's `has_integrity_violation` flags
-    /// it for the caller's surface.
-    #[tool(
-        description = "Record an instruction-compliance event on a goal's running trust ledger. Takes a goal_id, the instruction text (verbatim from intake), whether it was complied or violated, the severity class when violated (competence = disclosed at detection / integrity = discovered through concealment), evidence for the claim, and the operator's estimated cost when violated (the expectation interest: the as-if-complied position, not the fix cost). The response carries the updated trust summary (the goal's violation counts); the event also crosses to the global trust account the regulation loop senses."
-    )]
-    pub async fn kanban_goal_trust_record(
-        &self,
-        Parameters(request): Parameters<GoalTrustRecordRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "kanban_goal_trust_record", async {
-            let gid = parse_goal_id(&request.goal_id)?;
-            let status = match request.status.as_str() {
-                "complied" => GoalTrustStatus::Complied,
-                "violated" => GoalTrustStatus::Violated,
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "status must be \"complied\" or \"violated\", got {other:?}"
-                    )));
-                }
-            };
-            let severity = match (request.severity.as_deref(), status) {
-                (Some("competence"), GoalTrustStatus::Violated) => {
-                    Some(GoalTrustSeverity::Competence)
-                }
-                (Some("integrity"), GoalTrustStatus::Violated) => {
-                    Some(GoalTrustSeverity::Integrity)
-                }
-                (None, GoalTrustStatus::Complied) => None,
-                (Some(sev), GoalTrustStatus::Violated) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "severity must be \"competence\" or \"integrity\", got {sev:?}"
-                    )));
-                }
-                (Some(_), GoalTrustStatus::Complied) => {
-                    return Err(McpToolError::invalid_argument(
-                        "a complied event cannot carry a severity class",
-                    ));
-                }
-                (None, GoalTrustStatus::Violated) => {
-                    return Err(McpToolError::invalid_argument(
-                        "a violated event requires a severity class (competence or integrity)",
-                    ));
-                }
-            };
-            let event = GoalTrustEvent {
-                instruction: request.instruction.clone(),
-                status,
-                severity,
-                evidence: request.evidence.clone(),
-                operator_cost: request.operator_cost.clone(),
-                recorded_at: chrono::Utc::now(),
-            };
-            let goal = self
-                .service
-                .goal_trust_record(gid, event, self.webid)
-                .map_err(map_kanban_error)?;
-            let summary = goal.trust_summary();
-            respond(Ok(goal), |goal| GoalTrustRecordResponse {
-                goal_id: goal.id.to_string(),
-                trust_event_count: goal.trust_events.len(),
-                trust_summary: summary,
-            })
-        })
-        .await
-    }
-
-    /// A goal serialized with its `trust_summary` folded in — the JSON
-    /// shape both `kanban_goal_get` and `kanban_goal_list` return.
-    fn goal_with_trust_summary(goal: &Goal) -> Result<serde_json::Value, McpToolError> {
-        let summary = goal.trust_summary();
+    fn goal_with_summary(goal: &Goal) -> Result<serde_json::Value, McpToolError> {
         let mut value =
             serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))?;
-        if let Some(obj) = value.as_object_mut() {
-            obj.insert(
-                "trust_summary".into(),
-                serde_json::to_value(summary).map_err(|e| McpToolError::internal(e.to_string()))?,
-            );
-        }
         Ok(value)
     }
 
@@ -601,7 +510,7 @@ impl KanbanServer {
                 .goal_get(id, self.webid)
                 .map_err(map_kanban_error)?
                 .ok_or_else(|| McpToolError::not_found(format!("goal {id} not found")))?;
-            Self::goal_with_trust_summary(&goal)
+            Self::goal_with_summary(&goal)
         })
         .await
     }
@@ -611,7 +520,7 @@ impl KanbanServer {
     )]
     pub async fn kanban_goal_list(
         &self,
-        Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
+        Parameters(_): Parameters<()>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
             let goals = self
@@ -620,7 +529,7 @@ impl KanbanServer {
                 .map_err(map_kanban_error)?;
             let enriched: Vec<serde_json::Value> = goals
                 .iter()
-                .map(Self::goal_with_trust_summary)
+                .map(Self::goal_with_summary)
                 .collect::<Result<Vec<_>, McpToolError>>()?;
             serde_json::to_value(enriched).map_err(|e| McpToolError::internal(e.to_string()))
         })
@@ -921,40 +830,23 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(
-        description = "Record verification evidence for a task in Review. The evidence text is the pass signal; acceptance criteria are guidance, not a gate. The adherence disclosure states whether any explicit instruction was sidestepped (Binding 6)."
-    )]
+    #[tool()]
     pub async fn kanban_task_verify(
         &self,
-        Parameters(TaskVerifyRequest {
-            task_id,
-            evidence,
-            adherence,
-        }): Parameters<TaskVerifyRequest>,
+        Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_verify", async {
             let tid = parse_task_id(&task_id)?;
             if evidence.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("evidence must not be empty"));
             }
-            // Binding 6: the adherence disclosure must be present.
-            // A verify call without it fails validation at the same place
-            // the empty-evidence check lives (the tool contract change).
-            // `sidestepped: true` requires a non-empty description naming
-            // what was sidestepped (the claim is a claim, not a vibe).
-            if adherence.sidestepped && adherence.description.as_deref().unwrap_or("").trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "adherence.sidestepped is true but adherence.description is empty — name what was sidestepped",
-                ));
-            }
             respond(
-                self.service.task_verify(tid, &evidence, self.webid, adherence),
+                self.service.task_verify(tid, &evidence, self.webid),
                 |(task, verification)| TaskVerifyResponse {
                     task_id: task.id.to_string(),
                     passed: verification.passed,
                     reasoning: verification.reasoning,
                     new_status: task.status.to_string(),
-                    adherence: verification.adherence,
                 },
             )
         })
@@ -1799,7 +1691,6 @@ fn mcp_goal_authority_is_only_declare_progress_and_full_reads() {
             "kanban_goal_get",
             "kanban_goal_judge",
             "kanban_goal_list",
-            "kanban_goal_trust_record"
         ]
     );
     let forged = serde_json::json!({ "goal_text":"forged human", "criteria":[{"description":"observable"}], "source":{"interaction_id":"worker","session_id":"worker","source":"human"}, "actor":"human", "achieved":true });

@@ -54,11 +54,7 @@ pub enum RegulationData {
     /// self-heal.
     NativeFirstRateExceeded { rate: f64, threshold: f64 },
 
-    /// Trust-ledger deviation exceeded the set-point (0) — the weighted
-    /// violation count from the trust ledger rose above zero (Binding 2,
-    /// trust-internalization program).
     ///
-    /// TrustDeviationExceeded removed 2026-11-01 with the trust system.
 
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]

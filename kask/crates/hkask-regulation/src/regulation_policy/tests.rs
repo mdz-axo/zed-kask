@@ -36,7 +36,6 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
             | PassRate
             | TestCoverage
             | MutationScore
-            | TrustDeviation => vec![
                 VarietyDeficit,
                 MemoryLife,
                 TripleCount,
@@ -58,7 +57,6 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
                 PassRate,
                 TestCoverage,
                 MutationScore,
-                TrustDeviation,
             ],
         }
     };

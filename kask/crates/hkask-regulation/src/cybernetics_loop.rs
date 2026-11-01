@@ -546,7 +546,6 @@ impl CyberneticsLoop {
 impl CyberneticsLoop {
     /// §9.4's transition discipline on the log surface: the degradation warn
     /// arms in `build_regulation_action` (tool reliability, native-first rate,
-    /// trust deviation) emit on entry and on a changed (value, set-point)
     /// reading; an unchanged persistent condition is coalesced — the
     /// board's open condition card and the telemetry heartbeat carry its
     /// steady state, not per-tick log lines.

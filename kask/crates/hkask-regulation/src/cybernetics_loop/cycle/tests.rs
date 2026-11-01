@@ -1745,7 +1745,6 @@ fn condition_warn_latch_classifies_transitions() {
     );
 }
 
-/// All three condition-warn arms (tool reliability, native-first, trust
 /// deviation) route their warns through the §9.4 latch: the first action
 /// build consumes the transition, so the identical next cycle coalesces
 /// instead of re-warning. Driven through `build_regulation_action` so the
@@ -1759,7 +1758,6 @@ fn warn_arms_route_through_the_condition_latch() {
         for (metric, value, set_point) in [
             (SignalMetric::ToolReliability, 0.2, 0.8),
             (SignalMetric::NativeFirstRate, 0.7, 0.5),
-            (SignalMetric::TrustDeviation, 1.0, 0.0),
         ] {
             let signal = Signal::new(LoopId::Cybernetics, metric, value, set_point);
             let deviation = Deviation::from_signal(&signal)
