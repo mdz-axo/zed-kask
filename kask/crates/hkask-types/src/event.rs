@@ -96,11 +96,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.agent",
     "reg.affordance",
     "reg.gate",
-    // ── Trust ledger ──
-    // reg.trust — the cybernetics loop's trust-deviation escalation evidence,
-    // emitted by the TrustDeviationExceeded path (cybernetics_loop/cycle.rs)
-    // when the weighted instruction-violation count from the trust ledger
-    // exceeds its set point. Same loop-connected family as reg.agent.
+    // ── Trust ledger (retired 2026-11-01) ──
+    // reg.trust — no live emitter since the trust system's removal; the
+    // namespace stays admitted so rows persisted before the removal still
+    // decode. Same loop-connected family as reg.agent.
     "reg.trust",
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's

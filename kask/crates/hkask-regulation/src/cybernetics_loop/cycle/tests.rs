@@ -1745,7 +1745,8 @@ fn condition_warn_latch_classifies_transitions() {
     );
 }
 
-/// deviation) route their warns through the §9.4 latch: the first action
+/// Both condition-warn arms (tool reliability, native-first deviation)
+/// route their warns through the §9.4 latch: the first action
 /// build consumes the transition, so the identical next cycle coalesces
 /// instead of re-warning. Driven through `build_regulation_action` so the
 /// pin covers the arm wiring itself, not just the helper.

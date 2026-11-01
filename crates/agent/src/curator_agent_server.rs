@@ -47,9 +47,7 @@ use crate::{CURATOR_AGENT_ID, ThreadStore};
 /// environment charter,
 /// `kask/docs/architecture/core/co-research-environment.md` — and its
 /// collaboration test; the `### Values grounding` block carries the values
-/// charter. Keep each in step with its charter. The Curator Role block also
-/// names the trust-ledger tools — the recording surface of the trust-surface
-/// bindings.
+/// charter. Keep each in step with its charter.
 pub const CURATOR_STATIC_CONTEXT: &str = "\
 ## Identity\n\
 \n\
@@ -74,10 +72,6 @@ In addition to your coding agent capabilities, you:\n\
   to record the request, then hand it to an agent: create a kanban task with\n\
   the request, its evidence and verification criteria, and delegate it\n\
 - Escalate domain-level concerns to the user for human review\n\
-- Record kept and violated expectations through the `trust_ledger_*` tools\n\
-  (`trust_ledger_record_instruction`, `trust_ledger_record_outcome`), and\n\
-  report the trust account via `trust_ledger_state` when the operator\n\
-  reviews the system's work\n\
 \n\
 ### Learning loop\n\
 \n\

@@ -270,7 +270,7 @@ fn resolve_forecast(goal: &mut Goal, now: DateTime<Utc>) -> Result<(), KanbanErr
         baseline_brier,
         skill: (baseline_brier > 0.0).then(|| 1.0 - brier / baseline_brier),
         supersedes_version: previous,
-        recorded_at: chrono::Utc::now(),
+        recorded_at: now,
     });
     Ok(())
 }
@@ -341,8 +341,8 @@ impl KanbanService {
             indexed_revision: 0,
             assessment_claim: None,
             owner,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: self.goal_now(),
+            updated_at: self.goal_now(),
         };
         publish(&mut goal, self.goal_now())?;
         let value =

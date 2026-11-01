@@ -4,38 +4,6 @@ Goals separate immutable requirements, worker progress, independent assessment,
 and authenticated human decisions. Forecasts are optional and resolve only
 against the human outcome. No probability is synthesized for ordinary goals.
 
-## Trust-economics layer
-
-Every goal carries a standing `GoalTrustClause` as part of the specification
-digest: the value of a deliverable is `T_reliance · B` (Butler–Giuliano–Guiso
-2009), an unverifiable deliverable is rationally discounted to zero (Akerlof
-1970), trust dynamics are asymmetric (Slovic 1993; Kim–Ferrin–Cooper–Dirks
-2004), and violations are priced at the expectation interest (Fuller–Perdue
-1936–37). The clause is structural, not a caller preference — the MCP route
-always passes `None` and the service applies the default.
-
-Each goal also carries a running trust ledger (`Vec<GoalTrustEvent>`,
-append-only) recorded via `kanban_goal_trust_record`. An event captures the
-instruction text (verbatim from intake), whether it was complied with or
-violated, the severity class when violated (`competence` for a disclosed
-failure, `integrity` for a discovered one), evidence for the claim, and the
-operator's estimated cost (the expectation interest: the as-if-complied
-position, not the fix cost). `trust_summary()` surfaces the violation
-counts in the goal JSON (`kanban_goal_trust_record` / `kanban_goal_get` /
-`kanban_goal_list`); every event also bridges to the global trust account
-carrying its severity class, where a discovered integrity violation zeroes
-reliance on current work while on record (the operator ruling's cliff).
-
-Every `goal_trust_record` also writes an h_mem with entity `"trust:ledger"`
-to the kata-kanban's own `HMemStore` — the same entity the regulation loop's
-`TrustSensor` reads. Tight coupling: the zed main process opens the
-kata-kanban's DB via `open_kanban_trust_store` and wires both the curator's
-and kata-kanban's `MemoryStore` handles into the sensor, so trust events
-recorded on any goal are visible to the regulation loop. A bridge failure
-surfaces (the goal has the event, the global ledger doesn't); a kata-kanban
-store-open failure degrades to curator-only (the sensor still reads the
-curator's events).
-
 ## Supported data
 
 **Forward-only policy:** obsolete goal-schema data is discarded, not migrated.
@@ -53,9 +21,8 @@ remain errors. There is no rejected-row map, rejection cache, historical-key
 discovery, or machine resolver.
 
 `Goal` retains the declaration/source, criterion IDs and specification digest,
-worker verdict history, original native closure, human corrections, assessment
-attempts with exact observed input and result/failure, optional frozen forecast,
-and score history. `revision` advances when that meaningful state changes.
+original native closure, human corrections, assessment attempts with exact
+observed input and result/failure, optional frozen forecast, and score history. `revision` advances when that meaningful state changes.
 `indexed_revision` records the last current-state recall publication; there is
 no separate dirty flag, snapshot backlog, or per-event delivery receipt.
 
@@ -115,7 +82,7 @@ producer-authenticity claim.
 
 Exact fetched contents or explicit unavailable/mismatch receipts are persisted
 before inference. The assessor sees only the frozen specification, manifest,
-and observed artifacts—not worker verdicts, human labels, forecast or scores.
+and observed artifacts—not human labels, forecast or scores.
 No fetched contents produces deterministic Unknown without a model request.
 Completion must cover each criterion once, and support/contradiction must cite
 actually fetched digest-matched IDs. Strict `AssessmentResult` and

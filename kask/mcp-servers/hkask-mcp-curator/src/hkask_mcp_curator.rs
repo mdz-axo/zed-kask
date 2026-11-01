@@ -1680,8 +1680,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         CuratorServer::tool_router(),
         "tool_router",
-        24,
-        tool_surface_is_exactly_24_registered_tools,
+        15,
+        tool_surface_is_exactly_15_registered_tools,
     );
 
     /// The retired escalation/advice tool family must not reappear — the

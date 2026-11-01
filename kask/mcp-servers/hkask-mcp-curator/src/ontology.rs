@@ -64,10 +64,10 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "curator_memory_prune"
         | "curator_memory_dedup"
         | "curator_memory_backfill_embeddings"
-        | "curator_memory_extract"
+        | "curator_memory_extract" => Some(STEP_EXECUTION),
         // The liveness check verifies the server's readiness — the
         // stores are attached and responsive.
-        | "curator_ping" => Some(STEP_VERIFICATION),
+        "curator_ping" => Some(STEP_VERIFICATION),
         _ => None,
     }
 }
@@ -86,6 +86,13 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "curator_memory_backfill_embeddings"
         | "curator_memory_extract"
         | "curator_report_skill_use_issue" => Some(DATASET),
+        "curator_memory_recall"
+        | "curator_semantic_search"
+        | "curator_federated_search"
+        | "curator_consult"
+        | "curator_algedonic_log"
+        | "reg_query"
+        | "curator_ping" => Some(REPORT),
         _ => None,
     }
 }

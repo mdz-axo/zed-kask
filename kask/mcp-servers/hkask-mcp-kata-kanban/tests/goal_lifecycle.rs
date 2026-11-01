@@ -25,7 +25,6 @@ fn declaration() -> GoalDeclaration {
         },
         forecast: None,
         supersedes: None,
-        trust_clause: None,
     }
 }
 fn close(goal: &Goal, now: DateTime<Utc>, choice: HumanClosureChoice) -> NativeGoalClosure {
@@ -707,5 +706,4 @@ fn declaration_and_worker_progress_preserve_exact_criterion_obligations() {
         f.service.goal_judge(goal.id, report, f.owner).is_err(),
         "every criterion must be covered"
     );
-    assert_eq!(f.goal(goal.id).verdicts.len(), 1);
 }

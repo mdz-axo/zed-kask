@@ -38,9 +38,8 @@ use crate::inference_embedding::LanguageModelEmbeddingPort;
 mod curator_stores;
 pub(crate) use curator_stores::curator_db_path;
 pub use curator_stores::{
-    CuratorRegulationArchive, hydrate_operator_feedback, load_operator_feedback,
-    open_curator_regulation_archive, persist_operator_feedback, persist_skill_outcome,
-    persist_skill_tool_failure,
+    CuratorRegulationArchive, hydrate_operator_feedback, open_curator_regulation_archive,
+    persist_operator_feedback, persist_skill_outcome, persist_skill_tool_failure,
 };
 pub(crate) use curator_stores::{CuratorStore, build_curator_consolidation};
 
@@ -1370,6 +1369,31 @@ pub(crate) mod tests {
             webid,
         )
         .with_confidence(hkask_types::Confidence::new(0.1))
+    }
+
+    fn in_memory_port_with_embeddings() -> RealMemoryPort {
+        in_memory_port_with_embed_fn(Arc::new(|_text: &str| vec![0.25; 1024]))
+    }
+
+    pub(crate) fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
+    {
+        let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
+            embed_fn,
+            tokio::runtime::Handle::current(),
+        );
+        port_with(in_memory_curator_store(), embedding_port, None, 0, 0.3)
+    }
+
+    pub(crate) fn in_memory_port_with_external_fixture() -> RealMemoryPort {
+        let mut port = in_memory_port_with_embed_fn(Arc::new(|_query: &str| {
+            let mut vector = vec![0.0; 1024];
+            vector[0] = 1.0;
+            vector
+        }));
+        port.external_passphrase = "test-passphrase".to_string();
+        port
     }
 
     fn in_memory_port_with_cadence(

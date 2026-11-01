@@ -443,13 +443,13 @@ impl KanbanServer {
         .await
     }
 
-    /// Record a judge verdict against a goal's criteria. Verdict semantics:
+    /// Report a judge verdict against a goal's criteria. Verdict semantics:
     /// `done` (all criteria
     /// satisfied), `continue` (work continues), `blocked` (unachievable or
-    /// needs user input). Verdicts append to a history — the history IS the
-    /// learning.
+    /// needs user input). The verdict is validated against the frozen
+    /// criteria and advances the goal's revision; it is not stored.
     #[tool(
-        description = "Record a judge verdict (done/continue/blocked) with confidence and a result for every criterion of the goal."
+        description = "Report a judge verdict (done/continue/blocked) with confidence and a result for every criterion of the goal."
     )]
     pub async fn kanban_goal_judge(
         &self,
@@ -490,9 +490,7 @@ impl KanbanServer {
     }
 
     fn goal_with_summary(goal: &Goal) -> Result<serde_json::Value, McpToolError> {
-        let mut value =
-            serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))?;
-        Ok(value)
+        serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))
     }
 
     /// Read the complete canonical specification and history, including archives.
@@ -520,7 +518,7 @@ impl KanbanServer {
     )]
     pub async fn kanban_goal_list(
         &self,
-        Parameters(_): Parameters<()>,
+        Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
             let goals = self
@@ -1637,8 +1635,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    27,
-    tool_surface_is_exactly_27_registered_tools,
+    26,
+    tool_surface_is_exactly_26_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."

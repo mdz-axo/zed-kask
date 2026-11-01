@@ -54,8 +54,6 @@ pub enum RegulationData {
     /// self-heal.
     NativeFirstRateExceeded { rate: f64, threshold: f64 },
 
-    ///
-
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]
     #[default]

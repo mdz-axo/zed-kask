@@ -188,48 +188,6 @@ mod tests {
     }
 
     #[test]
-    fn test_system_prompt_carries_trust_clause() {
-        // Binding 1 (trust-surface-bindings.md), landed 2026-10-31, anchor
-        // duty added same-day by operator approval: the prompt states the
-        // trust POLICY — the anchor duty (record and surface the work
-        // anchor before work), pricing, the cliff as a disclosure duty,
-        // severity-first reporting, measured confidence, answer-the-
-        // question — and cites its authority. Parameters stay in the
-        // module (`hkask-trust`): consumers get the policy, not the
-        // formula. The boundary record and the answer-the-question probe
-        // pre-registration live in `kask/eval/register-adherence-v1/`.
-        let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
-            project: &project,
-            available_tools: vec!["echo".into()],
-            model_name: None,
-            date: "2026-01-01".to_string(),
-            user_agents_md: None,
-            static_context: None,
-            sandboxing: false,
-            is_linux: false,
-            is_windows: false,
-            mcp_tools_hidden: 0,
-        };
-        let rendered = template.render(&Templates::new()).unwrap();
-        assert!(rendered.contains("## Trust and expectations"));
-        for phrase in [
-            "Anchor visibly before work",
-            "trust_anchor_record",
-            "caught after delivery it costs the task",
-            "task cost plus trust cost",
-            "renegotiate it openly",
-            "verification must disclose sidestepping",
-            "what is violated, broken, or unverified",
-            "never as a feeling",
-            "Answer the question the person asked",
-            "kask/docs/research/trust-economics-and-model.md",
-        ] {
-            assert!(rendered.contains(phrase), "trust clause missing: {phrase}");
-        }
-    }
-
-    #[test]
     fn test_system_prompt_renders_session_context_without_rules_or_agents_md() {
         // Regression: the `static_context` (Session Context) block was nested
         // inside `{{#if (or user_agents_md has_rules)}}`, so it was silently

@@ -37,7 +37,6 @@ pub struct GoalSource {
     pub source: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GoalDeclaration {
     pub goal_text: String,
@@ -335,5 +334,4 @@ impl Goal {
                 .as_ref()
                 .is_some_and(|c| c.expires_at > now)
     }
-
 }

@@ -249,10 +249,6 @@ async fn newer_revision_or_producer_wins_over_older_inflight_preparation() {
         let rows = memory.h_mems_by_entity_prefix(&entity).expect("recall");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].value["revision"], retained.revision);
-        assert_eq!(
-            rows[0].value["verdicts"].as_array().expect("history").len(),
-            usize::from(advance_revision)
-        );
         let passage = hkask_memory::semantic_passage_for_h_mem(&rows[0]).expect("passage");
         assert!(
             memory

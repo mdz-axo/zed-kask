@@ -35,7 +35,7 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
             | ToolReliability
             | PassRate
             | TestCoverage
-            | MutationScore
+            | MutationScore => vec![
                 VarietyDeficit,
                 MemoryLife,
                 TripleCount,

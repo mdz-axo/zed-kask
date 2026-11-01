@@ -138,6 +138,9 @@ pub struct GoalGetRequest {
     pub goal_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoalListRequest {}
+
 // ── Task tools ─────────────────────────────────────────────────────────────
 
 /// One goal-criterion citation for `kanban_task_create`'s `advances`.

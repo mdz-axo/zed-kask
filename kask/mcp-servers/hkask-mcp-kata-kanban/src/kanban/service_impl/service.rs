@@ -880,7 +880,7 @@ impl KanbanService {
                 "No evidence provided — task not verified.".into()
             };
 
-            let verification = Verification::new(passed, reasoning.clone(), verifier);
+            let verification = Verification::new(passed, reasoning, verifier);
             task.verification = Some(verification.clone());
 
             if passed {
