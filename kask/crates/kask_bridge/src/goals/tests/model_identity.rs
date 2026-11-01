@@ -62,7 +62,6 @@ impl InferencePort for Producer {
                 requested_model: requested,
                 actual_model: actual,
                 usage: InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }

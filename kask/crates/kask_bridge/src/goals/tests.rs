@@ -104,7 +104,6 @@ impl InferencePort for Provider {
                 finish_reason: "stop".into(),
                 tool_calls: vec![],
                 reasoning: None,
-                cost_usd: None,
             })
         })
     }
@@ -132,7 +131,6 @@ impl InferencePort for Provider {
                 requested_model: model.clone(),
                 actual_model: Some(model),
                 usage: InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }

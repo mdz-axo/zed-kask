@@ -37,7 +37,6 @@ impl InferencePort for MockPort {
                 finish_reason: "stop".into(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: Some(0.01),
             })
         })
     }
@@ -211,8 +210,6 @@ async fn public_tagging_identity_contract() {
     assert_eq!(summary["planned_batches"], 1);
     assert_eq!(summary["provider_responses"], 1);
     assert_eq!(summary["successful_response_usage"]["total_tokens"], 2);
-    assert_eq!(summary["reported_cost_usd"], 0.01);
-    assert_eq!(summary["cost_reporting_complete"], true);
     assert_eq!(rows[0]["entity_ref"], long_ref);
     let prompt = port.prompts.lock().expect("prompts").join("\n");
     assert!(prompt.contains("Passage item-0"));
@@ -301,8 +298,6 @@ async fn public_tagging_identity_contract() {
             .contains("mock inference failure")
     }));
     assert_eq!(summary["provider_responses"], 0);
-    assert_eq!(summary["reported_cost_usd"], Value::Null);
-    assert_eq!(summary["cost_reporting_complete"], false);
     assert_eq!(port.prompts.lock().expect("prompts").len(), 1);
 
     // Multibyte strings cross both former byte-slice panic boundaries.

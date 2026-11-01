@@ -325,7 +325,6 @@ impl InferencePort for VisionPort {
                 finish_reason: "stop".into(),
                 tool_calls: vec![],
                 reasoning: None,
-                cost_usd: None,
             })
         })
     }

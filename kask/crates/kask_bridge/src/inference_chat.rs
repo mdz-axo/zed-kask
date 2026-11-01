@@ -278,7 +278,6 @@ struct StreamAccumulator {
     tool_calls: Vec<StructuredToolCall>,
     finish_reason: Option<String>,
     usage: InferenceUsage,
-    cost_usd: Option<f64>,
 }
 
 impl StreamAccumulator {
@@ -290,7 +289,6 @@ impl StreamAccumulator {
             tool_calls: Vec::new(),
             finish_reason: None,
             usage: InferenceUsage::default(),
-            cost_usd: None,
         }
     }
 
@@ -352,7 +350,6 @@ impl StreamAccumulator {
                     // Unrepresentable totals are unknown, never wrapped or truncated.
                     reported: total.is_some(),
                 };
-                self.cost_usd = token_usage.cost;
             }
             Ok(_) => {}
             Err(error) => return Err(inference_error_from_completion(error)),
@@ -386,7 +383,6 @@ impl StreamAccumulator {
             } else {
                 Some(self.reasoning)
             },
-            cost_usd: self.cost_usd,
         }
     }
 
@@ -403,7 +399,6 @@ impl StreamAccumulator {
             ),
             usage: Some(self.usage),
             tool_calls: self.tool_calls,
-            cost_usd: self.cost_usd,
         }
     }
 }
@@ -902,7 +897,6 @@ impl LanguageModelInferencePort {
                         finish_reason: None,
                         usage: None,
                         tool_calls: Vec::new(),
-                        cost_usd: None,
                     }))
                     .map_err(|_| {
                         InferenceError::Connection("inference stream receiver closed".into())
@@ -1424,7 +1418,6 @@ mod tests {
                         output_tokens: 7,
                         cache_creation_input_tokens: 3,
                         cache_read_input_tokens: 5,
-                        cost: Some(0.01),
                     },
                 ),
             ))
@@ -1433,7 +1426,6 @@ mod tests {
         assert_eq!(result.usage.prompt_tokens, 12);
         assert_eq!(result.usage.total_tokens, 19);
         assert!(result.usage.reported);
-        assert_eq!(result.cost_usd, Some(0.01));
     }
 
     #[test]

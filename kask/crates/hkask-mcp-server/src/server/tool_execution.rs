@@ -9,7 +9,6 @@ use super::error::McpToolError;
 
 struct RecordedUsage {
     usage: InferenceUsage,
-    cost_usd: Option<f64>,
 }
 
 tokio::task_local! {
@@ -18,11 +17,11 @@ tokio::task_local! {
 
 /// Record inference usage for the current tool call's response envelope.
 /// Outside an execution scope there is no response to attach it to.
-pub fn record_tool_usage(usage: InferenceUsage, cost_usd: Option<f64>) {
+pub fn record_tool_usage(usage: InferenceUsage) {
     match TOOL_USAGE.try_with(|records| {
         records
             .lock()
-            .map(|mut records| records.push(RecordedUsage { usage, cost_usd }))
+            .map(|mut records| records.push(RecordedUsage { usage }))
             .map_err(|error| error.to_string())
     }) {
         Ok(Ok(())) => {}
@@ -49,18 +48,12 @@ fn usage_json(records: &[RecordedUsage]) -> Value {
         .iter()
         .map(|record| u64::from(record.usage.total_tokens))
         .sum();
-    let costs: Vec<f64> = records
-        .iter()
-        .filter_map(|record| record.cost_usd)
-        .collect();
-    let cost_usd = (!costs.is_empty()).then(|| costs.iter().sum::<f64>());
     serde_json::json!({
         "calls": records.len(),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
         "reported": records.iter().all(|record| record.usage.reported),
-        "cost_usd": cost_usd,
     })
 }
 
@@ -149,14 +142,14 @@ mod tests {
         let context = Context;
         let (first, second) = tokio::join!(
             execute_tool(&context, "first", async {
-                record_tool_usage(usage(10, true), Some(0.01));
+                record_tool_usage(usage(10, true));
                 tokio::task::yield_now().await;
-                record_tool_usage(usage(7, false), None);
+                record_tool_usage(usage(7, false));
                 Ok(serde_json::json!({}))
             }),
             execute_tool(&context, "second", async {
                 tokio::task::yield_now().await;
-                record_tool_usage(usage(3, true), None);
+                record_tool_usage(usage(3, true));
                 Ok(serde_json::json!({}))
             }),
         );
@@ -167,9 +160,7 @@ mod tests {
         assert_eq!(first["usage"]["completion_tokens"], 4);
         assert_eq!(first["usage"]["total_tokens"], 21);
         assert_eq!(first["usage"]["reported"], false);
-        assert_eq!(first["usage"]["cost_usd"], 0.01);
         assert_eq!(second["usage"]["calls"], 1);
         assert_eq!(second["usage"]["total_tokens"], 5);
-        assert!(second["usage"]["cost_usd"].is_null());
     }
 }

@@ -484,7 +484,6 @@ impl InferenceIpcClient {
                 requested_model,
                 actual_model,
                 usage,
-                cost_usd,
             } => Ok(hkask_types::EmbeddingBatch {
                 vectors: embeddings,
                 requested_model: if requested_model.is_empty() {
@@ -494,7 +493,6 @@ impl InferenceIpcClient {
                 },
                 actual_model,
                 usage,
-                cost_usd,
             }),
             InferenceOutcome::Error { error } => Err(match error.code.as_str() {
                 "InvalidRequest" => EmbeddingGenerationError::InvalidRequest(error.message),
@@ -572,15 +570,9 @@ impl InferenceIpcClient {
         };
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
-            InferenceOutcome::RerankScores {
-                scores,
-                usage,
-                cost_usd,
-            } => Ok(hkask_types::RerankBatch {
-                scores,
-                usage,
-                cost_usd,
-            }),
+            InferenceOutcome::RerankScores { scores, usage } => {
+                Ok(hkask_types::RerankBatch { scores, usage })
+            }
             other => Err(unexpected_outcome_error(&method, other)),
         }
     }
@@ -912,7 +904,6 @@ mod tests {
                         requested_model: "Provider/requested-alias".to_string(),
                         actual_model: actual_model.clone(),
                         usage: hkask_types::InferenceUsage::default(),
-                        cost_usd: None,
                     },
                     1,
                 )
@@ -1117,7 +1108,6 @@ mod tests {
                     requested_model: "fixture/requested".to_string(),
                     actual_model: Some("fixture/actual".to_string()),
                     usage: hkask_types::InferenceUsage::default(),
-                    cost_usd: None,
                 },
                 1,
             )

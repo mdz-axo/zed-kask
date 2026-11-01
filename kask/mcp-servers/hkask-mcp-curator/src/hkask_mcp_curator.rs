@@ -385,7 +385,7 @@ impl CuratorServer {
             .ok_or(SemanticRecallError::NoVector)?;
         // S-01 completion: the embedding call's measured usage flows to the
         // executing tool's envelope (the consult/search retrieval family).
-        hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
+        hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
         self.semantic_recall_fragments_for_vector(
             &query_vector,
             limit,
@@ -502,7 +502,7 @@ impl CuratorServer {
             })?;
             // S-01 completion: the federated embedding call's measured
             // usage flows to the executing tool's envelope.
-            hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
+            hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
 
             let mut statuses = Vec::new();
             let mut batches = Vec::new();
@@ -2129,7 +2129,7 @@ async fn semantic_embedding(
                 "embedding failed — memory was NOT stored: {error}"
             ))
         })?;
-    hkask_mcp_server::server::record_tool_usage(batch.usage, batch.cost_usd);
+    hkask_mcp_server::server::record_tool_usage(batch.usage);
     if batch.vectors.len() != 1 || batch.vectors[0].is_empty() {
         return Err(McpToolError::failed_precondition(
             "embedding failed — expected one nonempty vector; memory was NOT stored",

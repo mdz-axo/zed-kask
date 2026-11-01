@@ -588,9 +588,6 @@ struct ChatUsage {
     prompt_tokens: Option<u32>,
     completion_tokens: Option<u32>,
     total_tokens: Option<u32>,
-    cost: Option<f64>,
-    estimated_cost: Option<f64>,
-    market_cost: Option<f64>,
 }
 #[derive(serde::Deserialize)]
 struct ChatResponse {
@@ -796,15 +793,6 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
             // `usage` wire field yields reported=false — never a fabricated
             // zero measurement.
             let usage = usage_from_wire(parsed.usage.as_ref());
-            // Same compatible-provider precedence as D20's Usage::token_usage:
-            // market (BYOK) cost, billed cost, then estimated cost. Invalid
-            // negative/non-finite sentinels are absent, not free calls.
-            let cost_usd = parsed.usage.as_ref().and_then(|usage| {
-                [usage.market_cost, usage.cost, usage.estimated_cost]
-                    .into_iter()
-                    .flatten()
-                    .find(|cost| cost.is_finite() && *cost >= 0.0)
-            });
 
             Ok(hkask_types::InferenceResult {
                 text,
@@ -813,7 +801,6 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                 finish_reason: choice.finish_reason.unwrap_or_default(),
                 tool_calls: Vec::new(),
                 reasoning: choice.message.reasoning,
-                cost_usd,
             })
         })
     }
@@ -934,7 +921,6 @@ impl hkask_types::InferencePort for DirectEmbeddingPort {
                     },
                     None => hkask_types::InferenceUsage::default(),
                 },
-                cost_usd: None,
             })
         })
     }
@@ -1009,26 +995,11 @@ mod tests {
         use hkask_types::InferencePort;
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
         let cases = [
-            (serde_json::json!({"cost":0.01}), Some(0.01)),
-            (serde_json::json!({"estimated_cost":0.02}), Some(0.02)),
-            (
-                serde_json::json!({"cost":0.01,"estimated_cost":0.02}),
-                Some(0.01),
-            ),
-            (
-                serde_json::json!({"cost":0.0,"market_cost":0.03}),
-                Some(0.03),
-            ),
-            (serde_json::json!({"cost":0.0}), Some(0.0)),
-            (serde_json::json!({"cost":-1.0}), None),
-            (
-                serde_json::json!({"market_cost":-1.0,"cost":0.01}),
-                Some(0.01),
-            ),
-            (serde_json::json!({}), None),
-            (serde_json::Value::Null, None),
+            serde_json::json!({"cost":0.01}),
+            serde_json::json!({}),
+            serde_json::Value::Null,
         ];
-        for (usage, expected_cost) in cases {
+        for usage in cases {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
             let url = format!("http://{}", listener.local_addr()?);
             let returned_model = if usage.is_null() {
@@ -1087,8 +1058,10 @@ mod tests {
                 returned_model.unwrap_or_default(),
                 "missing model must not become the requested alias"
             );
-            assert_eq!(result.cost_usd, expected_cost, "usage={usage}");
-            assert!(!result.usage.reported, "cost alone is not a token report");
+            assert!(
+                !result.usage.reported,
+                "usage without token counts is not a token report"
+            );
         }
         Ok(())
     }

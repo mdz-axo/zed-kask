@@ -502,12 +502,10 @@ mod tests {
 
         // Native providers without MCP-child consumers stay at their canonical
         // api_url slots but must not be granted to, or restart, any child.
-        for native_only in ["RUNPOD_API_KEY"] {
-            assert!(
-                !urls.iter().any(|(var, _)| var == native_only),
-                "native-only provider {native_only} must not enter MCP child env"
-            );
-        }
+        assert!(
+            !urls.iter().any(|(var, _)| var == "RUNPOD_API_KEY"),
+            "native-only provider RUNPOD_API_KEY must not enter MCP child env"
+        );
         let data_service_urls = super::data_service_credential_urls();
         assert!(
             data_service_urls
@@ -587,12 +585,10 @@ mod tests {
         // Negative controls — recognized providers with no embeddings endpoint
         // are rejected before credential resolution, so the startup
         // announcement cannot fire for a route that would fail on every call.
-        for model in ["RunPod/kask-ocr"] {
-            assert!(
-                super::embedding_provider_descriptor(model).is_none(),
-                "'{model}' must not resolve an embedding port (no /embeddings endpoint)"
-            );
-        }
+        assert!(
+            super::embedding_provider_descriptor("RunPod/kask-ocr").is_none(),
+            "'RunPod/kask-ocr' must not resolve an embedding port (no /embeddings endpoint)"
+        );
     }
 
     /// expect: "An embedding model naming a provider with no /embeddings
@@ -622,15 +618,17 @@ mod tests {
 
         // Ineligible routes: keys ARE present at their slots, so these
         // rejections are eligibility rejections, not missing-key failures.
-        for model in ["RunPod/serverless-model"] {
-            let resolved =
-                super::resolve_embedding_credentials(model, &credentials, &async_cx).await;
-            assert!(
-                resolved.is_none(),
-                "embedding model '{model}' must not resolve: its provider serves no \
-                 /embeddings endpoint at its api_url, so the route cannot succeed"
-            );
-        }
+        let resolved = super::resolve_embedding_credentials(
+            "RunPod/serverless-model",
+            &credentials,
+            &async_cx,
+        )
+        .await;
+        assert!(
+            resolved.is_none(),
+            "embedding model 'RunPod/serverless-model' must not resolve: its provider serves no \
+             /embeddings endpoint at its api_url, so the route cannot succeed"
+        );
 
         for (model, expected_key) in [
             ("DeepInfra/BAAI/bge-large", "deepinfra-fixture-key"),

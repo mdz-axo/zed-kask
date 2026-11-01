@@ -1823,10 +1823,7 @@ impl ResearchServer {
                                 // S-01 completion: the embedding call's
                                 // measured usage flows to the executing
                                 // tool's envelope.
-                                hkask_mcp_server::server::record_tool_usage(
-                                    batch.usage.clone(),
-                                    batch.cost_usd,
-                                );
+                                hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
                                 Some(content_indices.into_iter().zip(batch.vectors).collect())
                             }
                             Ok(batch) => {

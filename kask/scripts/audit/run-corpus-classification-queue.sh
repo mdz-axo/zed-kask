@@ -80,7 +80,7 @@ strand_guard() {
     fi
 }
 
-spent=$(jq -s '[.[] | if (.status == "completed" or (.status | startswith("failed")) or .status == "reconciled_partial") and .cost_reporting_complete == true then .reported_cost_usd elif (.status | startswith("failed")) or .status == "reconciled_partial" then .reserved_cost_usd elif .status == "pending" and .reserved_cost_usd != null then .reserved_cost_usd else empty end] | add // 0' "$queue")
+spent=$(jq -s '[.[] | if .status == "pending" and .reserved_cost_usd != null then .reserved_cost_usd else (.accounted_cost_usd // 0) end] | add // 0' "$queue")
 mapfile -t units < "$queue"
 planned=${#units[@]}
 completed=$(jq -s '[.[] | select(.status == "completed")] | length' "$queue")
@@ -190,8 +190,6 @@ for row in "${units[@]}"; do
     tagged=$(jq -r '.tagged' <<<"$summary")
     failed=$(jq -r '.failed' <<<"$summary")
     total=$(jq -r '.total_chunks' <<<"$summary")
-    cost_complete=$(jq -r '.cost_reporting_complete' <<<"$summary")
-    cost=$(jq -r '.reported_cost_usd' <<<"$summary")
     output_rows=$(wc -l < "$output" | tr -d ' ')
 
     if (( total != rows || tagged + failed != total || output_rows != rows )); then
@@ -202,14 +200,7 @@ for row in "${units[@]}"; do
         exit 65
     fi
     accounted_cost=$estimated_unit_cost
-    reserved_cost=$estimated_unit_cost
-    if [[ "$cost_complete" == true ]] && jq -en --arg value "$cost" '$value | tonumber | . >= 0' >/dev/null 2>&1; then
-        accounted_cost=$cost
-        reserved_cost=null
-    else
-        cost=null
-        cost_complete=false
-    fi
+    reserved_cost=null
 
     input_refs=$(mktemp)
     output_refs=$(mktemp)
@@ -236,12 +227,12 @@ for row in "${units[@]}"; do
     if (( failed != 0 )); then
         failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         patch=$(jq -cn --arg failed_at "$failed_at" --arg output_sha256 "$output_sha256" \
-            --argjson tagged "$tagged" --argjson failed "$failed" --argjson cost "$cost" \
-            --argjson cost_complete "$cost_complete" --argjson reserved_cost "$reserved_cost" \
+            --argjson tagged "$tagged" --argjson failed "$failed" \
+            --argjson accounted_cost "$accounted_cost" --argjson reserved_cost "$reserved_cost" \
             --argjson cumulative_cost "$spent" \
             '{status:"failed_classification",failed_at:$failed_at,tagged:$tagged,failed:$failed,
-              reported_cost_usd:$cost,cost_reporting_complete:$cost_complete,
-              reserved_cost_usd:$reserved_cost,cumulative_accounted_cost_usd:$cumulative_cost,
+              accounted_cost_usd:$accounted_cost,reserved_cost_usd:$reserved_cost,
+              cumulative_accounted_cost_usd:$cumulative_cost,
               output_sha256:$output_sha256}')
         update_unit "$unit" "$patch"
         unit_terminal=true
@@ -250,35 +241,20 @@ for row in "${units[@]}"; do
             "$unit" "$tagged" "$failed" "$spent" >&2
         continue
     fi
-    if [[ "$cost_complete" != true ]]; then
-        failed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        patch=$(jq -cn --arg failed_at "$failed_at" --arg output_sha256 "$output_sha256" \
-            --argjson tagged "$tagged" --argjson reserved_cost "$reserved_cost" \
-            --argjson cumulative_cost "$spent" \
-            '{status:"failed_cost_reporting",failed_at:$failed_at,tagged:$tagged,failed:0,
-              reported_cost_usd:null,cost_reporting_complete:false,reserved_cost_usd:$reserved_cost,
-              cumulative_accounted_cost_usd:$cumulative_cost,output_sha256:$output_sha256,
-              error:"provider cost reporting incomplete"}')
-        update_unit "$unit" "$patch"
-        unit_terminal=true
-        unresolved_failed=$((unresolved_failed + 1))
-        printf 'unit=%s terminal_cost_unknown rows=%d reserved_cost_usd=%s\n' "$unit" "$rows" "$reserved_cost" >&2
-        continue
-    fi
 
     completed=$((completed + 1))
     completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     patch=$(jq -cn --arg completed_at "$completed_at" --arg output_sha256 "$output_sha256" \
-        --argjson tagged "$tagged" --argjson cost "$cost" --argjson cumulative_cost "$spent" \
+        --argjson tagged "$tagged" --argjson accounted_cost "$accounted_cost" --argjson cumulative_cost "$spent" \
         '{status:"completed",completed_at:$completed_at,tagged:$tagged,failed:0,
-          reported_cost_usd:$cost,cost_reporting_complete:true,
-          cumulative_reported_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
+          accounted_cost_usd:$accounted_cost,
+          cumulative_accounted_cost_usd:$cumulative_cost,output_sha256:$output_sha256}')
     update_unit "$unit" "$patch"
     unit_terminal=true
-    printf 'unit=%s completed=%d/%d rows=%d cumulative_cost_usd=%s\n' "$unit" "$completed" "$planned" "$rows" "$spent" >&2
+    printf 'unit=%s completed=%d/%d rows=%d cumulative_accounted_cost_usd=%s\n' "$unit" "$completed" "$planned" "$rows" "$spent" >&2
 
     if ! jq -en --argjson spent "$spent" --argjson cap "$max_cost" '$spent <= $cap' >/dev/null; then
-        echo "actual cumulative cost reached beyond authorized cap after $unit: spent=$spent cap=$max_cost" >&2
+        echo "estimated cumulative cost reached beyond authorized cap after $unit: spent=$spent cap=$max_cost" >&2
         exit 75
     fi
 done

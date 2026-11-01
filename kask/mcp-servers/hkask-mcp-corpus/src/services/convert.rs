@@ -1682,7 +1682,6 @@ mod ocr_guards {
             finish_reason: "stop".to_string(),
             tool_calls: vec![],
             reasoning: None,
-            cost_usd: None,
         }
     }
 

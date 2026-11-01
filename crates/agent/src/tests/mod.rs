@@ -3641,7 +3641,6 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             output_tokens: 16_000,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     cx.run_until_parked();
@@ -3704,7 +3703,6 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
             output_tokens: 20_000,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     cx.run_until_parked();
@@ -3760,7 +3758,6 @@ async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppCont
             output_tokens: 50,
             cache_creation_input_tokens: 25,
             cache_read_input_tokens: 75,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -4086,7 +4083,6 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             output_tokens: 16_000,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -4138,7 +4134,6 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
             output_tokens: 20_000,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -6476,7 +6471,6 @@ async fn test_tokens_before_message(cx: &mut TestAppContext) {
             output_tokens: 50,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -6518,7 +6512,6 @@ async fn test_tokens_before_message(cx: &mut TestAppContext) {
             output_tokens: 75,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -6580,7 +6573,6 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
             output_tokens: 50,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -6601,7 +6593,6 @@ async fn test_tokens_before_message_after_truncate(cx: &mut TestAppContext) {
             output_tokens: 75,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);
@@ -8643,7 +8634,6 @@ async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
             output_tokens: 0,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
 
@@ -8787,7 +8777,6 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
             output_tokens: 0,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
 
@@ -8861,7 +8850,6 @@ async fn test_subagent_no_context_window_warning_when_already_at_warning(cx: &mu
             output_tokens: 0,
             cache_creation_input_tokens: 0,
             cache_read_input_tokens: 0,
-            cost: None,
         }),
     );
     fake.end_last(&model);

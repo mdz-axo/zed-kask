@@ -354,7 +354,7 @@ pub(crate) async fn llm_rerank(
         Ok(batch) => {
             // S-01 completion: the rerank call's measured usage flows to
             // the executing tool's envelope (the deep-strategy web_search).
-            hkask_mcp_server::server::record_tool_usage(batch.usage.clone(), batch.cost_usd);
+            hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
             batch.scores
         }
         Err(error) => {
@@ -538,7 +538,6 @@ mod rerank_tests {
                 Ok(hkask_types::RerankBatch {
                     scores,
                     usage: hkask_types::InferenceUsage::default(),
-                    cost_usd: None,
                 })
             })
         }

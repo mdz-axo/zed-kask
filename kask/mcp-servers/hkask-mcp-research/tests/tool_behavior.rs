@@ -469,7 +469,6 @@ stub_inference_port! {
             Ok(hkask_types::RerankBatch {
                 scores,
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }
@@ -2916,7 +2915,6 @@ stub_inference_port! {
                 requested_model: String::new(),
                 actual_model: None,
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }

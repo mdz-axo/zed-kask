@@ -227,7 +227,7 @@ while IFS= read -r line; do
                     output=$(jq -r '.output' <<<"$arguments")
                     total=$(wc -l < "$chunks" | tr -d ' ')
                     jq -c '. + {classification:{status:"classified",ontology_protocol:"published-term-resolution-v1"},candidate_terms:["one","two","three"],ontology_tags:{core:["5w1h_core"]},concepts:["5w1h_core"]}' "$chunks" > "$output"
-                    respond "$id" "$(jq -cn --argjson total "$total" '{total_chunks:$total,tagged:$total,failed:0,reported_cost_usd:0.001,cost_reporting_complete:true}')"
+                    respond "$id" "$(jq -cn --argjson total "$total" '{total_chunks:$total,tagged:$total,failed:0}')"
                     ;;
                 *)
                     jq -cn --argjson id "$id" '{jsonrpc:"2.0",id:$id,error:{code:-32601,message:"unsupported"}}'

@@ -76,7 +76,7 @@ jq -c '. + {classification:{status:"classified",ontology_protocol:"published-ter
           candidate_terms:["one","two","three"],ontology_tags:{core:["5w1h_core"]},
           concepts:["5w1h_core"]}' "$input" > "$output"
 summary=$(jq -cn --argjson total "$(wc -l < "$input" | tr -d ' ')" \
-    '{total_chunks:$total,tagged:$total,failed:0,reported_cost_usd:0.001,cost_reporting_complete:true}')
+    '{total_chunks:$total,tagged:$total,failed:0}')
 # The queue unwraps: text -> fromjson -> .content (the summary object).
 text=$(jq -cn --argjson content "$summary" '{content:$content}')
 jq -cn --arg text "$text" '{jsonrpc:"2.0",id:2,result:{content:[{type:"text",text:$text}],isError:false}}' > "$response"

@@ -287,7 +287,6 @@ pub trait InferencePort: Send + Sync {
                 requested_model,
                 actual_model: batch.actual_model,
                 usage: batch.usage,
-                cost_usd: batch.cost_usd,
             })
         })
     }
@@ -402,7 +401,6 @@ impl From<InferenceResult> for InferenceStreamChunk {
             finish_reason: Some(r.finish_reason),
             usage: Some(r.usage),
             tool_calls: r.tool_calls,
-            cost_usd: r.cost_usd,
         }
     }
 }

@@ -117,7 +117,6 @@ impl hkask_types::InferencePort for ConstantEmbedPort {
                 requested_model: String::new(),
                 actual_model: None,
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }
@@ -170,7 +169,6 @@ impl hkask_types::InferencePort for ActualFormEmbedPort {
                 requested_model,
                 actual_model: Some("provider/actual-form".to_string()),
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }

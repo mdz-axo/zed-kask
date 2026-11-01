@@ -552,18 +552,6 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cache_read_input_tokens: u64,
-    // zed-kask D20: observed USD cost of this completion, as reported by the
-    // provider in its `usage` object (`usage.cost` / `usage.estimated_cost` /
-    // `usage.market_cost`). `None` when the provider doesn't report cost
-    // (Anthropic, Ollama, local). Cost observability only — surfaced via
-    // `InferenceResult.cost_usd` in `kask_bridge` so the operator can see what
-    // inference costs; nothing gates on it (budgets are deprecated, operator
-    // ruling 2026-09-04). Populated by the OpenRouter and OpenAI-compatible
-    // provider impls; `None` elsewhere.
-    // Pinned by `test_token_usage_cost_round_trips` in this crate + the bridge
-    // cost-extraction test in `kask_bridge`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost: Option<f64>,
 }
 
 impl TokenUsage {
@@ -585,11 +573,6 @@ impl Add<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 + other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
-            // Cumulative USD cost sums across turns; `None` only when neither side reported a cost.
-            cost: match (self.cost, other.cost) {
-                (None, None) => None,
-                (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
-            },
         }
     }
 }
@@ -604,11 +587,6 @@ impl Sub<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 - other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens - other.cache_read_input_tokens,
-            // USD cost delta; `None` only when neither side reported a cost.
-            cost: match (self.cost, other.cost) {
-                (None, None) => None,
-                (a, b) => Some(a.unwrap_or(0.0) - b.unwrap_or(0.0)),
-            },
         }
     }
 }
@@ -1412,66 +1390,5 @@ raw: {"errors":[{"message":"AiError: {\"message\":\"Requested token count exceed
         assert_eq!(deserialized.id, original.id);
         assert_eq!(deserialized.name, original.name);
         assert_eq!(deserialized.thought_signature, None);
-    }
-
-    /// D20: `TokenUsage.cost` round-trips through serde and defaults to `None`
-    /// when the provider omits it (Anthropic, Ollama, local).
-    #[test]
-    fn test_token_usage_cost_round_trips() {
-        let with_cost = TokenUsage {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            cost: Some(0.001),
-        };
-        let serialized = serde_json::to_value(&with_cost).unwrap();
-        // `cost` is serialized when present.
-        assert_eq!(serialized["cost"], serde_json::json!(0.001));
-        let back: TokenUsage = serde_json::from_value(serialized).unwrap();
-        assert_eq!(back.cost, Some(0.001));
-
-        // Omitted `cost` deserializes to `None` (backward-compatible).
-        let without_cost = serde_json::json!({
-            "input_tokens": 10,
-            "output_tokens": 5
-        });
-        let parsed: TokenUsage = serde_json::from_value(without_cost).unwrap();
-        assert_eq!(parsed.cost, None);
-        // And `None` is skipped on serialize.
-        let none_serialized = serde_json::to_value(&parsed).unwrap();
-        assert!(none_serialized.get("cost").is_none());
-    }
-
-    /// D20: `Add`/`Sub` for `TokenUsage` sum/subtract `cost` for cumulative
-    /// accounting; `None` only when neither side reported a cost.
-    #[test]
-    fn test_token_usage_cost_adds_and_subs() {
-        let a = TokenUsage {
-            input_tokens: 1,
-            output_tokens: 1,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            cost: Some(0.001),
-        };
-        let b = TokenUsage {
-            input_tokens: 1,
-            output_tokens: 1,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            cost: Some(0.002),
-        };
-        assert_eq!((a + b).cost, Some(0.003));
-        assert_eq!((b - a).cost, Some(0.001));
-
-        let none = TokenUsage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            cost: None,
-        };
-        assert_eq!((a + none).cost, Some(0.001));
-        assert_eq!((none + none).cost, None);
     }
 }

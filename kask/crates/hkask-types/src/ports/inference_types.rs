@@ -80,9 +80,8 @@ pub enum InferenceError {
 /// `reported` distinguishes "the provider did not report usage" from a
 /// genuine zero-token call (P8: absence must never be recorded as zero).
 /// A provider that omits the `usage` wire field yields `reported: false`
-/// with zeroed counts — readers that care about token/cost accounting
-/// check the flag before trusting the numbers. Mirrors `InferenceResult`'s
-/// `cost_usd: Option<f64>` absence modeling (D20).
+/// with zeroed counts — readers that care about token accounting
+/// check the flag before trusting the numbers.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InferenceUsage {
     pub prompt_tokens: u32,
@@ -143,15 +142,6 @@ pub struct InferenceResult {
     /// excluded from context history and episodic storage by default.
     #[serde(default)]
     pub reasoning: Option<String>,
-    /// The USD cost of this inference call, observed from the provider's
-    /// response (`usage.cost` / `market_cost` / `estimated_cost`), not an
-    /// operator-configured price table. Populated by the `InferencePort` impl
-    /// that has access to the provider's raw response (the direct-HTTP
-    /// backends); `None` when the provider reports no cost (e.g. local Ollama,
-    /// or the zed IPC bridge path which surfaces only token counts) —
-    /// unpriced calls are free and not charged.
-    #[serde(default)]
-    pub cost_usd: Option<f64>,
 }
 
 /// Streaming inference chunk — one piece of a streaming LLM response.
@@ -163,5 +153,4 @@ pub struct InferenceStreamChunk {
     pub finish_reason: Option<String>,
     pub usage: Option<InferenceUsage>,
     pub tool_calls: Vec<StructuredToolCall>,
-    pub cost_usd: Option<f64>,
 }

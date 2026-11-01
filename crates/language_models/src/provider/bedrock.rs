@@ -2704,7 +2704,6 @@ pub fn map_to_language_model_completion_events(
                                     .cache_read_input_tokens
                                     .unwrap_or_default()
                                     as u64,
-                                cost: None,
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {

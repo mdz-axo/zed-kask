@@ -392,7 +392,7 @@ impl CorpusServer {
                             "Tag response rejected — batch will get visible fallback outcomes"
                         );
                     }
-                    Ok((result, response.usage, response.cost_usd))
+                    Ok((result, response.usage))
 
                 });
                 handles.push((start_idx, batch_len, handle));
@@ -402,23 +402,17 @@ impl CorpusServer {
             // a panic because they are retained outside the spawned task.
             let mut results = Vec::with_capacity(total);
             let mut provider_responses = 0usize;
-            let mut cost_reports = 0usize;
             let mut prompt_tokens = 0u64;
             let mut completion_tokens = 0u64;
             let mut total_tokens = 0u64;
-            let mut reported_cost_usd = 0.0f64;
             let mut repaired_outer_arrays = 0usize;
             for (start_idx, batch_len, handle) in handles {
                 let outcome = match handle.await {
-                    Ok(Ok((result, usage, cost_usd))) => {
+                    Ok(Ok((result, usage))) => {
                         provider_responses += 1;
                         prompt_tokens += u64::from(usage.prompt_tokens);
                         completion_tokens += u64::from(usage.completion_tokens);
                         total_tokens += u64::from(usage.total_tokens);
-                        if let Some(cost_usd) = cost_usd {
-                            cost_reports += 1;
-                            reported_cost_usd += cost_usd;
-                        }
                         result
                     }
                     Ok(Err(error)) => Err(error),
@@ -535,9 +529,6 @@ impl CorpusServer {
                 m
             };
 
-            let cost_reporting_complete =
-                provider_responses == num_batches && cost_reports == provider_responses;
-            let reported_cost = cost_reporting_complete.then_some(reported_cost_usd);
             let result = json!({
                 "total_chunks": total,
                 "tagged": c,
@@ -552,8 +543,6 @@ impl CorpusServer {
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,
                 },
-                "reported_cost_usd": reported_cost,
-                "cost_reporting_complete": cost_reporting_complete,
                 "repaired_outer_arrays": repaired_outer_arrays,
             });
 

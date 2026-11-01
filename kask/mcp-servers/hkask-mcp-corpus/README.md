@@ -191,9 +191,8 @@ remain measurable but do not imply classification. The returned `tagged` count
 is **classified successes**; `tagged + failed = total_chunks`. Dry-run reports
 inputs only and writes no tagged artifact. A full-source QA pipeline requires all
 input identities classified, irrespective of the shared 10% degraded threshold.
-The summary reports planned batches, provider responses, successful-response token
-usage, `reported_cost_usd`, and whether cost reporting is complete. A null cost is
-unknown—not zero—and must not be used to justify expansion under a dollar ceiling.
+The summary reports planned batches, provider responses, and successful-response
+token usage.
 
 The classifier returns a compact tuple containing its short correlation ID,
 exceptional `who/when/where/why` dimensions, and 3–5 raw `candidate_terms`. The
@@ -437,7 +436,7 @@ errors. Join failures retain prompt identity for a failed-prompt row.
 | `tokens_used` | Total usage across every returned planning/writing provider response, including rejected responses |
 | `completion_tokens_used`, `completion_token_reporting_complete` | Completion-token coverage; incomplete reporting is unknown, never zero |
 | `finish_reason_counts`, `finish_reason_reporting_complete` | Provider stop-reason distribution and whether every provider response reported one |
-| `provider_responses`, `reported_cost_usd`, `cost_reporting_complete` | Cost coverage; null/incomplete cost is unknown, never zero |
+| `provider_responses` | Count of provider responses included in the summary |
 | `output` | Requested destination |
 | `degraded` | Shared failure-rate classification, at least 10%; not completeness |
 

@@ -1263,7 +1263,6 @@ mod tests {
                 total_tokens: 0,
                 reported: false,
             },
-            cost_usd: None,
         }
     }
 
@@ -1350,7 +1349,6 @@ mod tests {
             finish_reason: "stop".to_string(),
             tool_calls: Vec::new(),
             reasoning: None,
-            cost_usd: None,
         }
     }
 

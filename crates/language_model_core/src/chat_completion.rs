@@ -209,12 +209,6 @@ pub struct Usage {
     pub completion_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     // zed-kask: D20 — preserve observed cost across every compatible provider.
-    #[serde(default)]
-    pub cost: Option<f64>,
-    #[serde(default)]
-    pub estimated_cost: Option<f64>,
-    #[serde(default)]
-    pub market_cost: Option<f64>,
     /// Prompt-cache usage when reported by the provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_tokens_details: Option<PromptTokensDetails>,
@@ -252,8 +246,6 @@ impl Usage {
             output_tokens: completion_tokens,
             cache_creation_input_tokens,
             cache_read_input_tokens,
-            // zed-kask: D20 — BYOK market cost takes precedence over billed cost.
-            cost: self.market_cost.or(self.cost).or(self.estimated_cost),
         })
     }
 }
@@ -961,7 +953,6 @@ mod tests {
                 cached_tokens: Some(5),
                 cache_write_tokens: Some(3),
             }),
-            ..Default::default()
         };
         let token_usage = usage.token_usage().unwrap();
         assert_eq!(token_usage.input_tokens, 4);
@@ -1016,41 +1007,6 @@ mod tests {
     }
 
     #[test]
-    fn test_map_event_populates_cost_from_usage() {
-        // zed-kask: D20 — exercise wire decoding as well as mapping. In
-        // particular, a zero billed cost must not hide a BYOK market cost.
-        for (cost_fields, expected) in [
-            (json!({"cost": 0.001}), Some(0.001)),
-            (json!({"estimated_cost": 0.002}), Some(0.002)),
-            (json!({"cost": 0.001, "estimated_cost": 0.002}), Some(0.001)),
-            (json!({"cost": 0.0, "market_cost": 0.003}), Some(0.003)),
-            (json!({"cost": 0.0}), Some(0.0)),
-            (json!({}), None),
-        ] {
-            let mut usage = cost_fields;
-            usage["prompt_tokens"] = json!(12);
-            usage["completion_tokens"] = json!(7);
-            usage["prompt_tokens_details"] = json!({
-                "cached_tokens": 5,
-                "cache_write_tokens": 3,
-            });
-            let event = serde_json::from_value(json!({"choices": [], "usage": usage}))
-                .expect("valid cost-bearing usage chunk");
-            let events = map_completion_events(vec![event]);
-            assert!(matches!(
-                events.as_slice(),
-                [LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                    input_tokens: 4,
-                    output_tokens: 7,
-                    cache_creation_input_tokens: 3,
-                    cache_read_input_tokens: 5,
-                    cost,
-                })] if *cost == expected
-            ));
-        }
-    }
-
-    #[test]
     fn stream_maps_stop_with_tool_calls_to_tool_use_stop() {
         // zed-kask: D36 — GLM emits "stop" even after streaming tool calls.
         let chunks = serde_json::from_value(json!([
@@ -1078,7 +1034,7 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [..,
-                LanguageModelCompletionEvent::UsageUpdate(TokenUsage { cost: Some(0.001), .. }),
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage { .. }),
                 LanguageModelCompletionEvent::ToolUse(tool_use),
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse),
             ] if tool_use.is_input_complete
@@ -1494,7 +1450,6 @@ mod tests {
                 completion_tokens: Some(7),
                 total_tokens: Some(18),
                 prompt_tokens_details: None,
-                ..Default::default()
             }),
         });
 
@@ -1506,7 +1461,6 @@ mod tests {
                     output_tokens: 7,
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
-                    cost: None,
                 })),
                 Ok(LanguageModelCompletionEvent::Text(text)),
                 Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
@@ -1539,7 +1493,6 @@ mod tests {
                 completion_tokens: Some(5),
                 total_tokens: Some(18),
                 prompt_tokens_details: None,
-                ..Default::default()
             }),
         });
 
@@ -1551,7 +1504,6 @@ mod tests {
                     output_tokens: 5,
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
-                    cost: None,
                 })),
                 Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                     is_input_complete: false,
@@ -1654,7 +1606,6 @@ mod tests {
                     output_tokens: 500,
                     cache_creation_input_tokens: 1_000,
                     cache_read_input_tokens: 6_000,
-                    cost: None,
                 })
             )
         }));

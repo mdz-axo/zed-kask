@@ -3241,7 +3241,6 @@ mod tool_behavior_tests {
                 finish_reason: "stop".to_string(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: None,
             };
             Box::pin(async move { Ok(result) })
         },
@@ -4047,7 +4046,6 @@ mod tool_behavior_tests {
                         finish_reason: "stop".to_string(),
                         tool_calls: Vec::new(),
                         reasoning: None,
-                        cost_usd: None,
                     })
                 })
             }
@@ -7638,7 +7636,6 @@ mod tool_behavior_tests {
                 finish_reason: "stop".to_string(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: None,
             };
             Box::pin(async move { Ok(result) })
         },
@@ -10013,7 +10010,6 @@ mod tool_behavior_tests {
                 finish_reason: "stop".to_string(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: None,
             };
             Box::pin(async move { Ok(result) })
         },
@@ -11550,7 +11546,6 @@ mod gallery_lifecycle_tests {
                     finish_reason: "stop".into(),
                     tool_calls: vec![],
                     reasoning: None,
-                    cost_usd: None,
                 })
             })
         }

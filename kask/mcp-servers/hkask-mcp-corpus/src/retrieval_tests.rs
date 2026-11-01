@@ -49,7 +49,6 @@ impl InferencePort for IdentityPort {
                 requested_model,
                 actual_model,
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }
@@ -149,7 +148,6 @@ impl InferencePort for RecordingPort {
                 finish_reason: "stop".into(),
                 tool_calls: Vec::new(),
                 reasoning: None,
-                cost_usd: None,
             })
         })
     }
@@ -213,7 +211,6 @@ impl InferencePort for RecordingPort {
                 requested_model,
                 actual_model: None,
                 usage: hkask_types::InferenceUsage::default(),
-                cost_usd: None,
             })
         })
     }

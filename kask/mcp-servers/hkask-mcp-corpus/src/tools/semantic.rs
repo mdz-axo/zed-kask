@@ -91,7 +91,6 @@ mod identity_tests {
             requested_model: "requested/model".to_string(),
             actual_model: actual_model.map(str::to_string),
             usage: hkask_types::InferenceUsage::default(),
-            cost_usd: None,
         }
     }
 

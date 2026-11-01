@@ -310,7 +310,7 @@ pub async fn score_rationale(
     // usage in the tool envelope so the billed-token axis is observable
     // at the caller. The envelope aggregates every record a handler
     // makes; this is the prediction-markets server's only inference call.
-    hkask_mcp_server::server::record_tool_usage(result.usage.clone(), result.cost_usd);
+    hkask_mcp_server::server::record_tool_usage(result.usage.clone());
 
     // Parse the JSON response from the LLM. The LLM may wrap the JSON in
     // markdown or add prose; fall back to extracting the first {...} block.

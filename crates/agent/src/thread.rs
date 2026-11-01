@@ -6651,7 +6651,6 @@ fn accumulate_request_usage(
     current.cache_read_input_tokens = previous
         .cache_read_input_tokens
         .max(update.cache_read_input_tokens);
-    current.cost = None;
     *cumulative = *cumulative
         + TokenUsage {
             input_tokens: current.input_tokens.saturating_sub(previous.input_tokens),
@@ -6662,7 +6661,6 @@ fn accumulate_request_usage(
             cache_read_input_tokens: current
                 .cache_read_input_tokens
                 .saturating_sub(previous.cache_read_input_tokens),
-            cost: None,
         };
 }
 
@@ -11334,7 +11332,6 @@ mod tests {
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 195_000,
                         output_tokens: 0,
-                        cost: None,
                     },
                 );
 
@@ -11369,7 +11366,6 @@ mod tests {
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 195_000,
                         output_tokens: 0,
-                        cost: None,
                     },
                 );
 
@@ -13151,7 +13147,6 @@ mod tests {
             output_tokens: 9,
             cache_creation_input_tokens: 2,
             cache_read_input_tokens: 3,
-            cost: None,
         };
         let final_usage = TokenUsage {
             input_tokens: 500,

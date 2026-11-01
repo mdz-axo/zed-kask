@@ -211,9 +211,6 @@ pub enum InferenceOutcome {
         /// `reported: false` (honest absence, never a fabricated zero).
         #[serde(default)]
         usage: crate::ports::InferenceUsage,
-        /// The USD cost observed from the provider response, when present.
-        #[serde(default)]
-        cost_usd: Option<f64>,
     },
     /// Model list from `InferenceMethod::ListModels`.
     ModelList {
@@ -236,9 +233,6 @@ pub enum InferenceOutcome {
         /// `Embeddings` variant).
         #[serde(default)]
         usage: crate::ports::InferenceUsage,
-        /// The USD cost observed from the provider response, when present.
-        #[serde(default)]
-        cost_usd: Option<f64>,
     },
     /// Error from the inference port.
     Error {

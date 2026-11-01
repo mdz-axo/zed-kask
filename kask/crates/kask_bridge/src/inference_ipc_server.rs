@@ -923,7 +923,6 @@ async fn dispatch(
                 requested_model: batch.requested_model,
                 actual_model: batch.actual_model,
                 usage: batch.usage,
-                cost_usd: batch.cost_usd,
             },
             Err(e) => embed_error_outcome(e),
         };
@@ -1081,7 +1080,6 @@ async fn dispatch(
                     // reports `reported: false` (honest absence, never a
                     // fabricated zero; mcp-tool-review S-01 completion).
                     usage: hkask_types::InferenceUsage::default(),
-                    cost_usd: None,
                 };
             }
             Err(e) => {
@@ -1186,7 +1184,6 @@ mod tests {
             finish_reason: "stop".to_string(),
             tool_calls: Vec::new(),
             reasoning: None,
-            cost_usd: None,
         }
     }
 

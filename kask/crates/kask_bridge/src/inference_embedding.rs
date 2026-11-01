@@ -218,7 +218,6 @@ impl LanguageModelEmbeddingPort {
                                     },
                                     None => hkask_types::InferenceUsage::default(),
                                 },
-                                cost_usd: None,
                             })
                         }
                         .await;
@@ -300,7 +299,6 @@ impl LanguageModelEmbeddingPort {
                         // — no provider, no tokens, no cost. `reported:
                         // false` keeps the absence honest.
                         usage: hkask_types::InferenceUsage::default(),
-                        cost_usd: None,
                     })
                 };
                 let _ = req.reply.send(result);

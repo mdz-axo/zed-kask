@@ -37,7 +37,6 @@ fn response_metadata(response: &InferenceResult) -> QaResponseMetadata {
         tokens_used: u64::from(response.usage.total_tokens),
         completion_tokens: Some(u64::from(response.usage.completion_tokens)),
         finish_reason: Some(response.finish_reason.clone()),
-        cost_usd: response.cost_usd,
     }
 }
 
@@ -56,7 +55,6 @@ fn qa_completion(
         tokens_used: u64::from(response.usage.total_tokens),
         completion_tokens: Some(u64::from(response.usage.completion_tokens)),
         finish_reason: Some(response.finish_reason),
-        cost_usd: response.cost_usd,
     }
 }
 
@@ -586,7 +584,6 @@ mod tests {
                     finish_reason: "stop".into(),
                     tool_calls: Vec::new(),
                     reasoning: None,
-                    cost_usd: Some(0.01),
                 })
             })
         }
@@ -787,14 +784,6 @@ mod tests {
         assert_eq!(summary["grounding_status"], "pending_external_verification");
         assert_eq!(summary["provider_responses"], 4);
         assert_eq!(summary["tokens_used"], 40);
-        assert!(
-            (summary["reported_cost_usd"]
-                .as_f64()
-                .expect("reported cost")
-                - 0.04)
-                .abs()
-                < 1e-12
-        );
         assert_eq!(port.calls.load(Ordering::SeqCst), 4);
         let rows = records(&output)?;
         assert_eq!(rows.len(), 4);

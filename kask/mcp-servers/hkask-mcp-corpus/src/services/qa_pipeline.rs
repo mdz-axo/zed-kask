@@ -892,7 +892,6 @@ pub(crate) struct QaResponseMetadata {
     pub tokens_used: u64,
     pub completion_tokens: Option<u64>,
     pub finish_reason: Option<String>,
-    pub cost_usd: Option<f64>,
 }
 
 pub(crate) struct QaCompletion {
@@ -901,7 +900,6 @@ pub(crate) struct QaCompletion {
     pub tokens_used: u64,
     pub completion_tokens: Option<u64>,
     pub finish_reason: Option<String>,
-    pub cost_usd: Option<f64>,
 }
 
 /// Per-prompt inference failure to produce a QA completion. Recorded via
@@ -934,8 +932,6 @@ pub(crate) struct QaOutput<W: Write> {
     finish_reason_counts: BTreeMap<String, usize>,
     finish_reason_reports: usize,
     provider_responses: usize,
-    cost_reports: usize,
-    reported_cost_usd: f64,
     adjudication_protocol: Option<String>,
     reviewed_passage_admits: usize,
     reviewed_passage_skips: usize,
@@ -960,8 +956,6 @@ impl<W: Write> QaOutput<W> {
             finish_reason_counts: BTreeMap::new(),
             finish_reason_reports: 0,
             provider_responses: 0,
-            cost_reports: 0,
-            reported_cost_usd: 0.0,
             adjudication_protocol: None,
             reviewed_passage_admits: 0,
             reviewed_passage_skips: 0,
@@ -1011,10 +1005,6 @@ impl<W: Write> QaOutput<W> {
                 .entry(finish_reason.clone())
                 .or_default() += 1;
             self.finish_reason_reports += 1;
-        }
-        if let Some(cost_usd) = metadata.cost_usd {
-            self.cost_reports += 1;
-            self.reported_cost_usd += cost_usd;
         }
     }
 
@@ -1078,7 +1068,6 @@ impl<W: Write> QaOutput<W> {
                     tokens_used: completion.tokens_used,
                     completion_tokens: completion.completion_tokens,
                     finish_reason: completion.finish_reason.clone(),
-                    cost_usd: completion.cost_usd,
                 };
                 self.record_response(&metadata);
                 completion_metadata =
@@ -1159,12 +1148,6 @@ impl<W: Write> QaOutput<W> {
         }
         let outcome = BatchOutcome::from_counts(self.prompts_failed, self.prompts_total);
         outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
-        let expected_inferred_prompts = self
-            .prompts_total
-            .saturating_sub(self.reviewed_passage_skips);
-        let cost_reporting_complete = self.provider_responses >= expected_inferred_prompts
-            && self.cost_reports == self.provider_responses;
-        let reported_cost_usd = cost_reporting_complete.then_some(self.reported_cost_usd);
         let completion_token_reporting_complete =
             self.completion_token_reports == self.provider_responses;
         let finish_reason_reporting_complete =
@@ -1189,8 +1172,6 @@ impl<W: Write> QaOutput<W> {
             "finish_reason_counts": self.finish_reason_counts,
             "finish_reason_reporting_complete": finish_reason_reporting_complete,
             "provider_responses": self.provider_responses,
-            "reported_cost_usd": reported_cost_usd,
-            "cost_reporting_complete": cost_reporting_complete,
             "output": output,
             "degraded": BatchOutcome::is_degraded(self.prompts_failed, self.prompts_total),
         }))
@@ -1384,7 +1365,6 @@ mod tests {
             tokens_used: 10,
             completion_tokens: Some(5),
             finish_reason: Some("stop".into()),
-            cost_usd: Some(0.01),
         })
     }
 
@@ -1500,7 +1480,6 @@ mod tests {
                     tokens_used: 7,
                     completion_tokens: Some(5),
                     finish_reason: Some("length".into()),
-                    cost_usd: Some(0.02),
                 }),
                 "offline-model",
             )?;
@@ -1514,8 +1493,6 @@ mod tests {
             assert_eq!(summary["completion_token_reporting_complete"], true);
             assert_eq!(summary["finish_reason_counts"]["length"], 1);
             assert_eq!(summary["finish_reason_reporting_complete"], true);
-            assert_eq!(summary["reported_cost_usd"], 0.02);
-            assert_eq!(summary["cost_reporting_complete"], true);
             let row: serde_json::Value = serde_json::from_slice(&bytes)?;
             assert_eq!(row["prompt_id"], "qa-1");
             assert!(row["error"].as_str().expect("error").contains("rejected"));
@@ -1710,7 +1687,6 @@ mod tests {
             tokens_used: 10,
             completion_tokens: Some(5),
             finish_reason: Some("stop".into()),
-            cost_usd: Some(0.01),
         });
         let mut bytes = Vec::new();
         let mut output = QaOutput::new(&mut bytes, 1);

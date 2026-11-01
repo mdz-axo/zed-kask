@@ -1511,7 +1511,6 @@ pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
         output_tokens: usage.output_tokens.unwrap_or_default(),
         cache_creation_input_tokens: 0,
         cache_read_input_tokens,
-        cost: None,
     }
 }
 
@@ -1776,7 +1775,6 @@ mod tests {
                 output_tokens: 3,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 2,
-                cost: None,
             }
         );
 

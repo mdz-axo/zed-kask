@@ -17,7 +17,7 @@
 ## Status at a glance
 
 - **Release 0.40.0** — the workspace version, inherited by the `zed` package (D7; pinned by `kask/scripts/check-version-sync.sh`). Current upstream base: upstream main `37faef81f7` (the 2026-10-27 re-link + merge; the dated merge record lives in git history).
-- **Divergence surface: D1–D98** — 67 active seams in the table below (plus the three removal records D90–D92); 28 retired (see Retired seams — numbers are never reused). These seams, the supporting files, and the root `Cargo.toml` workspace arrays are the only edits outside `kask/`.
+- **Divergence surface: D1–D98** — 66 active seams in the table below (plus the three removal records D90–D92); 29 retired (see Retired seams — numbers are never reused). These seams, the supporting files, and the root `Cargo.toml` workspace arrays are the only edits outside `kask/`.
 - **`kask/` is additive** — `git merge upstream/main` never conflicts with it, and hKask crates never depend on zed-kask crates (see Governing invariant).
 - **Reading order:** the seam table is the operative register; the Retired seams list sits directly under it; the Upstream-sync runbook is the merge procedure; dated sync/merge records live in git history.
 

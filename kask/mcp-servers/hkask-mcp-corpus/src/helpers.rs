@@ -118,7 +118,7 @@ pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
 /// surface no usage at the port — those paths stay unrecorded by API
 /// shape, not by omission.
 pub(crate) fn record_usage(result: &hkask_types::ports::InferenceResult) {
-    hkask_mcp_server::server::record_tool_usage(result.usage.clone(), result.cost_usd);
+    hkask_mcp_server::server::record_tool_usage(result.usage.clone());
 }
 
 pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
