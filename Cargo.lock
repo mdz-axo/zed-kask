@@ -7704,7 +7704,6 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-storage",
- "hkask-trust",
  "hkask-types",
  "regex",
  "rmcp",
@@ -7751,7 +7750,6 @@ dependencies = [
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-storage",
- "hkask-trust",
  "hkask-types",
  "regex",
  "rmcp",
@@ -7893,7 +7891,6 @@ dependencies = [
  "hkask-keystore",
  "hkask-memory",
  "hkask-storage",
- "hkask-trust",
  "hkask-types",
  "libc",
  "rmcp",
@@ -7984,7 +7981,6 @@ dependencies = [
  "chrono",
  "hkask-memory",
  "hkask-storage",
- "hkask-trust",
  "hkask-types",
  "parking_lot",
  "serde",
@@ -8075,31 +8071,6 @@ dependencies = [
  "hkask-types",
  "serde_json",
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "hkask-trust"
-version = "0.40.2"
-dependencies = [
- "chrono",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "hkask-trust-eval"
-version = "0.40.2"
-dependencies = [
- "hkask-mcp-curator",
- "hkask-memory",
- "hkask-storage",
- "hkask-types",
- "regex",
- "rmcp",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
 ]
 
 [[package]]
@@ -9404,7 +9375,6 @@ dependencies = [
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",
- "hkask-trust",
  "hkask-types",
  "http_client",
  "language_model",

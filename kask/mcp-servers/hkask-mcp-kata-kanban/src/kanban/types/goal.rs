@@ -492,7 +492,7 @@ impl Goal {
     /// account (`goal_trust_record`'s bridge) carrying its severity
     /// class, where a discovered integrity violation zeroes reliance
     /// on current work while on record (the operator ruling's cliff —
-    /// `WindowStats::reliance_points` in `hkask-trust`).
+    /// `WindowStats::reliance_points` in ``).
     pub fn trust_summary(&self) -> GoalTrustSummary {
         let total = self.trust_events.len();
         let complied = self

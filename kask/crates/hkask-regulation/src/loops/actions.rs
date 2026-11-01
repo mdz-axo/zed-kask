@@ -58,13 +58,7 @@ pub enum RegulationData {
     /// violation count from the trust ledger rose above zero (Binding 2,
     /// trust-internalization program).
     ///
-    /// Carries the weighted violation count at escalation time; the
-    /// corrective is the human review (a trust breach reaches the
-    /// reviewable board), not a self-heal.
-    TrustDeviationExceeded {
-        weighted_violation_count: f64,
-        threshold: f64,
-    },
+    /// TrustDeviationExceeded removed 2026-11-01 with the trust system.
 
     /// No typed regulation data — used for non-regulation actions.
     #[serde(rename = "no_data")]

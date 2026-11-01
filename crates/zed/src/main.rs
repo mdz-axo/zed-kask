@@ -2062,63 +2062,6 @@ fn main() {
                                     .detach();
                                 }
 
-                                // Wire the trust-ledger sensor into the
-                                // cybernetics loop (Binding 2, trust-
-                                // internalization program). Tight coupling:
-                                // the sensor reads trust-ledger h_mems from
-                                // BOTH the curator's MemoryStore AND the
-                                // kata-kanban's MemoryStore (opened over the
-                                // same SQLite file the kata-kanban MCP
-                                // server writes to). The sensor aggregates
-                                // across stores and emits a `TrustDeviation`
-                                // signal (set-point 0.0: any positive
-                                // weighted-violation count is a deviation).
-                                match real_memory_typed.trust_ledger_store() {
-                                    Ok(curator_memory) => {
-                                        // Tight coupling: also open the
-                                        // kata-kanban's DB for the trust sensor.
-                                        // A failure to open degrades to
-                                        // curator-only (not zero: the sensor
-                                        // still reads the curator's events).
-                                        let kanban_memory =
-                                            kask_bridge::open_kanban_trust_store(
-                                                &passphrase,
-                                            );
-                                        let stores = match kanban_memory {
-                                            Some(kanban) => vec![curator_memory, kanban],
-                                            None => {
-                                                log::warn!(
-                                                    "kata-kanban trust store not opened — the trust sensor and the injected trust state read the curator only"
-                                                );
-                                                vec![curator_memory]
-                                            }
-                                        };
-                                        // One store set, every reader: the injected
-                                        // trust state reads the SAME stores the
-                                        // sensor reads, so the agent's self-state
-                                        // is the account the loop regulates by.
-                                        real_memory_typed
-                                            .set_trust_ledger_stores(stores.clone());
-                                        let loop_for_trust =
-                                            cybernetics_loop_for_panel_deferred.clone();
-                                        gpui_tokio::Tokio::spawn(cx, async move {
-                                            let mut loop_guard =
-                                                loop_for_trust.write().await;
-                                            loop_guard
-                                                .set_trust_ledger_stores(stores, 24);
-                                        })
-                                        .detach();
-                                        log::info!(
-                                            "hKask trust-ledger sensor wired — the regulation loop senses trust deviations from both the curator and kata-kanban (set-point 0.0, window 24h)"
-                                        );
-                                    }
-                                    Err(error) => {
-                                        log::warn!(
-                                            "hKask trust-ledger sensor not wired: {error} — the regulation loop is blind to trust deviations"
-                                        );
-                                    }
-                                }
-
                                 // zed-kask: D87 — wire the experimentation health
                                 // source into the cybernetics loop (§P8.9
                                 // step 1 — the Layer-A afferent pathway for

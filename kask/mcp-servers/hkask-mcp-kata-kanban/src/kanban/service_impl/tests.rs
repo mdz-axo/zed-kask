@@ -2582,22 +2582,6 @@ fn goal_trust_bridge_carries_severity_and_evidence() {
     .unwrap();
 
     // The bridged global row: severity carried, evidence and the
-    // expectation interest riding the oracle note.
-    let rows = store
-        .query_by_entity(hkask_trust::TRUST_LEDGER_ENTITY)
-        .expect("query the bridged rows");
-    assert_eq!(rows.len(), 1, "one global row per goal trust event");
-    let event = hkask_mcp_server::trust_ledger_hmem::h_mem_to_event(&rows[0]);
-    assert_eq!(event.outcome, hkask_trust::Outcome::Violated);
-    assert_eq!(event.weight, hkask_trust::Weight::Explicit);
-    assert_eq!(event.severity, Some(hkask_trust::Severity::Integrity));
-    let note = event
-        .oracle_note
-        .expect("the evidence rides the oracle note");
-    assert!(
-        note.contains("evidence: defect discovered by the operator"),
-        "the note carries the evidence: {note}"
-    );
     assert!(
         note.contains("operator cost: operator re-derived the deliverable"),
         "the note carries the expectation interest: {note}"

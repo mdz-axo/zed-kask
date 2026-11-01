@@ -65,18 +65,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         | "curator_memory_dedup"
         | "curator_memory_backfill_embeddings"
         | "curator_memory_extract"
-        | "trust_ledger_record_instruction"
-        | "trust_ledger_record_outcome"
-        | "trust_ledger_state"
-        | "trust_ledger_steer"
-        | "trust_ledger_file_proposal"
-        | "trust_ledger_list_proposals"
-        | "trust_ledger_resolve_proposal"
-        | "trust_anchor_record"
-        | "trust_anchor_get" => Some(STEP_EXECUTION),
         // The liveness check verifies the server's readiness — the
         // stores are attached and responsive.
-        "curator_ping" => Some(STEP_VERIFICATION),
+        | "curator_ping" => Some(STEP_VERIFICATION),
         _ => None,
     }
 }
@@ -94,23 +85,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "curator_memory_dedup"
         | "curator_memory_backfill_embeddings"
         | "curator_memory_extract"
-        | "trust_ledger_record_instruction"
-        | "trust_ledger_record_outcome"
-        | "trust_ledger_file_proposal"
-        | "trust_ledger_resolve_proposal"
-        | "trust_anchor_record" => Some(DATASET),
-        "curator_memory_recall"
-        | "curator_semantic_search"
-        | "curator_federated_search"
-        | "curator_consult"
-        | "curator_algedonic_log"
-        | "reg_query"
-        | "curator_ping"
-        | "trust_ledger_state"
-        | "trust_ledger_steer"
-        | "trust_ledger_list_proposals"
-        | "trust_anchor_get" => Some(REPORT),
-        "curator_report_skill_use_issue" => Some(DATASET),
+        | "curator_report_skill_use_issue" => Some(DATASET),
         _ => None,
     }
 }

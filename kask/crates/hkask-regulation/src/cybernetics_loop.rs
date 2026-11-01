@@ -445,30 +445,6 @@ impl CyberneticsLoop {
         );
     }
 
-    /// Wire the trust-ledger sensor after construction (Binding 2,
-    /// trust-internalization program).
-    ///
-    /// The sensor reads trust-ledger h_mems from EVERY store it's given
-    /// (Binding 5's substrate — trust events ARE h_mems). Tight
-    /// coupling: the caller provides both the curator's `MemoryStore`
-    /// and any other store that carries trust events (the kata-kanban's
-    /// `MemoryStore` over the kata-kanban database path, opened by the
-    /// host). The `MemoryStore` handles are the same ones the servers
-    /// write through; this sensor reads them for the weighted
-    /// violation count. The set-point is 0.0 — any positive count is
-    /// a deviation. Any store unavailable → sensor returns None
-    /// (never zero).
-    pub fn set_trust_ledger_stores(
-        &mut self,
-        stores: Vec<Arc<hkask_memory::MemoryStore>>,
-        window_hours: i64,
-    ) {
-        self.sensor_registry.replace(
-            crate::loops::SignalMetric::TrustDeviation,
-            Arc::new(crate::trust_sensor::TrustSensor::new(stores, window_hours)),
-        );
-    }
-
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
     ///
     /// Delegates to `RegulationLedger::record_outcome`. Called by `McpRuntime`

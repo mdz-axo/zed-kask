@@ -554,30 +554,8 @@ impl KanbanService {
             ),
             None => format!("goal {}: evidence: {}", goal.id, event_for_ledger.evidence),
         };
-        let ledger_event = hkask_trust::LedgerEvent {
-            id: hkask_trust::LedgerEventId::new(),
-            text: event_for_ledger.instruction.clone(),
-            source,
-            weight: hkask_trust::Weight::Explicit,
-            severity: event_for_ledger.severity.map(|severity| match severity {
-                GoalTrustSeverity::Competence => hkask_trust::Severity::Competence,
-                GoalTrustSeverity::Integrity => hkask_trust::Severity::Integrity,
-            }),
-            outcome: match event_for_ledger.status {
-                GoalTrustStatus::Complied => hkask_trust::Outcome::Kept,
-                GoalTrustStatus::Violated => hkask_trust::Outcome::Violated,
-            },
-            ts: Utc::now(),
-            oracle_note: Some(oracle_note),
-        };
-        let trust_store =
-            crate::trust_ledger::KanbanTrustLedgerStore::new(self.store.clone(), owner);
-        use hkask_trust::TrustLedgerStore;
-        trust_store.append(ledger_event).map_err(|e| {
-            invalid(format!(
-                "goal trust event recorded but trust-ledger bridge failed: {e}"
-            ))
-        })?;
+        // The global trust-ledger bridge was removed with the trust system
+        // (2026-11-01): goal trust events stay on the goal record only.
 
         Ok(goal)
     }

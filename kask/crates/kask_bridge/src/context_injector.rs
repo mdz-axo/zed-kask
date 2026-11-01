@@ -433,26 +433,6 @@ impl ContextInjector for BridgeContextInjector {
             }
 
             let mut context_text = String::new();
-            // Trust-state injection (P13, seam 7 closing): the agent sees
-            // the operator's trust account — the folded trust points and
-            // the delegation radius.
-            // This is the regulation loop's control signal fed back to the
-            // controlled system (the agent). Read from the trust ledger
-            // (entity `trust:ledger`), not from the agent's self-report.
-            // A read error degrades to no injection (the agent still gets
-            // its memory recall), not to a false "T=0" claim.
-            match memory_port.trust_state_summary(24) {
-                Ok(trust_state) => {
-                    context_text.push_str(&trust_state);
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        error = %error,
-                        "trust-state injection unavailable — the agent does not see its trust account this turn"
-                    );
-                }
-            }
             if !prompt_filtered.is_empty() {
                 if !context_text.is_empty() {
                     context_text.push_str("\n\n");
