@@ -503,12 +503,13 @@ impl KanbanServer {
     /// execution and the result is recorded here (append-only). The
     /// severity class (competence when disclosed at detection, integrity
     /// when discovered through concealment or misweighting — per Slovic
-    /// 1993 and Kim–Ferrin–Cooper–Dirks 2004) is the regulation signal:
-    /// `has_integrity_violation` is the escalation flag (a discovered
-    /// integrity failure resets trust to the prior across every future
-    /// deliverable, per Butler–Giuliano–Guiso 2009 and Akerlof 1970).
+    /// 1993 and Kim–Ferrin–Cooper–Dirks 2004) crosses to the global
+    /// account with the event: a discovered integrity failure zeroes
+    /// reliance on current work while on record (the operator ruling
+    /// 2026-10-31), and the response's `has_integrity_violation` flags
+    /// it for the caller's surface.
     #[tool(
-        description = "Record an instruction-compliance event on a goal's running trust ledger. Takes a goal_id, the instruction text (verbatim from intake), whether it was complied or violated, the severity class when violated (competence = disclosed at detection / integrity = discovered through concealment), evidence for the claim, and the operator's estimated cost when violated (the expectation interest: the as-if-complied position, not the fix cost). The response carries the updated trust summary: the regulation signal for the curator loop."
+        description = "Record an instruction-compliance event on a goal's running trust ledger. Takes a goal_id, the instruction text (verbatim from intake), whether it was complied or violated, the severity class when violated (competence = disclosed at detection / integrity = discovered through concealment), evidence for the claim, and the operator's estimated cost when violated (the expectation interest: the as-if-complied position, not the fix cost). The response carries the updated trust summary (the goal's violation counts); the event also crosses to the global trust account the regulation loop senses."
     )]
     pub async fn kanban_goal_trust_record(
         &self,

@@ -2443,8 +2443,8 @@ fn goal_create_accepts_caller_supplied_trust_clause() {
 
 /// The goal's trust ledger records instruction compliance during the
 /// goal's lifecycle. Events are appended (never rewritten), the summary
-/// is computed from the events, and the regulation signal is the
-/// integrity-severity count.
+/// is computed from the events, and each event bridges to the global
+/// account carrying its severity class.
 #[test]
 fn goal_trust_ledger_records_and_summarizes() {
     let svc = KanbanService::new(make_store());
@@ -2505,7 +2505,7 @@ fn goal_trust_ledger_records_and_summarizes() {
         .unwrap();
     assert_eq!(violated.trust_events.len(), 2);
 
-    // The summary computes the regulation signal.
+    // The summary counts the classes.
     let summary = violated.trust_summary();
     assert_eq!(summary.total_instructions, 2);
     assert_eq!(summary.complied, 1);
@@ -2513,7 +2513,8 @@ fn goal_trust_ledger_records_and_summarizes() {
     assert_eq!(summary.violated_integrity, 0);
     assert!(!summary.has_integrity_violation);
 
-    // An integrity-severity violation sets the escalation flag.
+    // An integrity-severity violation sets the flag the goal JSON
+    // surfaces.
     let integrity = svc
         .goal_trust_record(
             goal.id,
@@ -2534,9 +2535,78 @@ fn goal_trust_ledger_records_and_summarizes() {
     assert!(summary.has_integrity_violation);
 }
 
+/// The goal→global bridge carries the severity class and the evidence
+/// (the channel the account's cliff reads): an integrity-severity
+/// violation lands in the global ledger (entity `trust:ledger`) as an
+/// Integrity-class explicit event whose oracle note carries the goal's
+/// evidence and the operator's expectation-interest cost — the fields the
+/// global account and the injected trust state read.
+#[test]
+fn goal_trust_bridge_carries_severity_and_evidence() {
+    let store = make_store();
+    let svc = KanbanService::new(store.clone());
+    let owner = WebID::new();
+    let goal = svc
+        .goal_create(
+            crate::GoalDeclaration {
+                goal_text: "The user can see which work serves which goal".into(),
+                criteria: vec![VerificationCriterion::new(
+                    "criterion 0 is observable".into(),
+                )],
+                task_id: None,
+                source: crate::GoalSource {
+                    interaction_id: "source-turn".into(),
+                    session_id: "test-session".into(),
+                    source: "explicit-spec".into(),
+                },
+                forecast: None,
+                supersedes: None,
+                trust_clause: None,
+            },
+            owner,
+        )
+        .unwrap();
+
+    svc.goal_trust_record(
+        goal.id,
+        GoalTrustEvent {
+            instruction: "report defects at their true severity".into(),
+            status: GoalTrustStatus::Violated,
+            severity: Some(GoalTrustSeverity::Integrity),
+            evidence: "defect discovered by the operator after classification".into(),
+            operator_cost: Some("operator re-derived the deliverable: 2 hours".into()),
+            recorded_at: chrono::Utc::now(),
+        },
+        owner,
+    )
+    .unwrap();
+
+    // The bridged global row: severity carried, evidence and the
+    // expectation interest riding the oracle note.
+    let rows = store
+        .query_by_entity(hkask_trust::TRUST_LEDGER_ENTITY)
+        .expect("query the bridged rows");
+    assert_eq!(rows.len(), 1, "one global row per goal trust event");
+    let event = hkask_mcp_server::trust_ledger_hmem::h_mem_to_event(&rows[0]);
+    assert_eq!(event.outcome, hkask_trust::Outcome::Violated);
+    assert_eq!(event.weight, hkask_trust::Weight::Explicit);
+    assert_eq!(event.severity, Some(hkask_trust::Severity::Integrity));
+    let note = event
+        .oracle_note
+        .expect("the evidence rides the oracle note");
+    assert!(
+        note.contains("evidence: defect discovered by the operator"),
+        "the note carries the evidence: {note}"
+    );
+    assert!(
+        note.contains("operator cost: operator re-derived the deliverable"),
+        "the note carries the expectation interest: {note}"
+    );
+}
+
 /// A violated trust event without a severity class is rejected —
 /// every violation must be classified (competence or integrity)
-/// because the regulation loop differentiates on this.
+/// because the global account's cliff differentiates on this.
 #[test]
 fn goal_trust_record_rejects_violation_without_severity() {
     let svc = KanbanService::new(make_store());

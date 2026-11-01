@@ -37,6 +37,7 @@ use std::fmt;
 
 pub mod ledger;
 pub mod renegotiation;
+pub mod wire;
 pub use ledger::{
     InMemoryTrustLedger, LedgerEvent, LedgerEventId, SteerAction, TrustLedger, TrustLedgerStore,
     WindowStats,
@@ -94,6 +95,24 @@ pub enum Outcome {
     /// accepted the replacement (trust internalization v2); folds as a
     /// keep of the process expectation — the user accepted the change.
     Renegotiated,
+}
+
+/// The violation's severity class (Kim–Ferrin–Cooper–Dirks 2004, full text
+/// verified; operator ruling 2026-10-31 in `trust-economics-and-model.md`):
+/// a disclosed competence failure is recoverable through keeps at the
+/// account's rate; a **discovered** integrity failure (concealment,
+/// misweighting) zeroes reliance on current work — the goal fails with
+/// certainty, benefit-independent — and repair is partial at best ("neither
+/// of these responses appears to have repaired trust completely").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    /// A competence failure — recoverable; the fold prices it −9·w like
+    /// every violation, and keeps rebuild the account at +4·w.
+    Competence,
+    /// An integrity failure — concealment, misweighting — the cliff class:
+    /// while one is on record in the window, the delegation radius (the
+    /// reliance on current work) reads zero.
+    Integrity,
 }
 
 /// One ledger event, the fold's input.

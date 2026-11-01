@@ -48,7 +48,7 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
         let h_mem = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.memory
             .store(h_mem)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "store", e))?;
         Ok(())
     }
 
@@ -61,7 +61,9 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
 
         let (event, old_h_mem_id) =
             trust_ledger_hmem::resolve_event(&h_mems, id, outcome, oracle_note)?;
@@ -70,11 +72,11 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
         // HMemStore; delete + insert is the replacement path).
         self.memory
             .delete_h_mem(&old_h_mem_id)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "delete_h_mem", e))?;
         let updated = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.memory
             .store(updated)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "store", e))?;
 
         Ok(event)
     }
@@ -83,7 +85,9 @@ impl TrustLedgerStore for CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
 
         Ok(trust_ledger_hmem::window_events(&h_mems, since))
     }
@@ -100,7 +104,9 @@ impl CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
         trust_ledger_hmem::find_event(&h_mems, id)
     }
 
@@ -113,7 +119,7 @@ impl CuratorTrustLedgerStore {
         let h_mem = trust_ledger_hmem::proposal_to_h_mem(&proposal, &self.webid);
         self.memory
             .store(h_mem)
-            .map_err(|_| TrustError::StoreUnavailable)
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "store", e))
     }
 
     /// All filed proposals (any status), newest-filed first — the
@@ -122,7 +128,9 @@ impl CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_PROPOSAL_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
         Ok(trust_ledger_hmem::proposals(&h_mems))
     }
 
@@ -132,7 +140,9 @@ impl CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_PROPOSAL_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
         trust_ledger_hmem::find_proposal(&h_mems, proposal_id)
     }
 
@@ -146,11 +156,11 @@ impl CuratorTrustLedgerStore {
     ) -> Result<(), TrustError> {
         self.memory
             .delete_h_mem(old_row)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "delete_h_mem", e))?;
         let h_mem = trust_ledger_hmem::proposal_to_h_mem(&proposal, &self.webid);
         self.memory
             .store(h_mem)
-            .map_err(|_| TrustError::StoreUnavailable)
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "store", e))
     }
 
     /// Record an anchor durably (the latest revision for its task key
@@ -159,7 +169,7 @@ impl CuratorTrustLedgerStore {
         let h_mem = trust_ledger_hmem::anchor_to_h_mem(&anchor, &self.webid);
         self.memory
             .store(h_mem)
-            .map_err(|_| TrustError::StoreUnavailable)
+            .map_err(|e| trust_ledger_hmem::store_unavailable("curator", "store", e))
     }
 
     /// The anchors recorded for one task key, highest revision first
@@ -168,7 +178,9 @@ impl CuratorTrustLedgerStore {
         let h_mems = self
             .memory
             .query_deduped_untouched(trust_ledger_hmem::TRUST_ANCHOR_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("curator", "query_deduped_untouched", e)
+            })?;
         Ok(trust_ledger_hmem::anchors_for_task(&h_mems, task_key))
     }
 }

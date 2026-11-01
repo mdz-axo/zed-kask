@@ -2,18 +2,18 @@
 //! events ARE h_mems; trust internalization v2 adds the proposal and
 //! anchor entities).
 //!
-//! One copy of the substrate-independent core: the event↔h_mem wire format
-//! (entity `trust:ledger`, attribute = the event id, value = JSON carrying
-//! the full event), the proposal↔h_mem wire format (entity
-//! `trust:ledger:proposal`, attribute = the proposal id), the anchor↔h_mem
-//! wire format (entity `trust:anchor`, attribute = the anchor id), the
-//! find-and-resolve reconstruction, and the window filter. The server stores
-//! (the curator's `CuratorTrustLedgerStore` over `MemoryStore`, the
+//! The event's wire encode/decode lives in `hkask_trust::wire` — the type
+//! owner's single home, shared by every reader of the ledger (both server
+//! stores, the regulation `TrustSensor`, and the bridge's injected trust
+//! state): one wire form, one decode, one set of fallback rules. This
+//! module is the substrate glue: event↔h_mem rows (entity `trust:ledger`,
+//! attribute = the event id, value = the wire form), the proposal↔h_mem
+//! wire format (entity `trust:ledger:proposal`), the anchor↔h_mem wire
+//! format (entity `trust:anchor`), the find-and-resolve reconstruction,
+//! and the window filter over the shared decode. The server stores (the
+//! curator's `CuratorTrustLedgerStore` over `MemoryStore`, the
 //! kata-kanban's `KanbanTrustLedgerStore` over `HMemStore`) supply only
-//! their substrate calls — insert / delete / query — so the wire formats
-//! cannot drift between them. The regulation loop's own constant
-//! (`hkask-regulation`) reads events by the same entity from its store:
-//! this module owns the servers' copy of that cross-crate contract.
+//! their substrate calls — insert / delete / query.
 //!
 //! The proposal and anchor entities are exact-match distinct from
 //! `trust:ledger` (the stores query `WHERE entity = ?`), so the event
@@ -21,7 +21,7 @@
 
 use chrono::{DateTime, Utc};
 use hkask_storage::{HMem, HMemId};
-use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, RenegotiationProposal, TrustError, Weight};
+use hkask_trust::{LedgerEvent, LedgerEventId, Outcome, RenegotiationProposal, TrustError};
 use hkask_types::WebID;
 
 /// The entity for trust-ledger event h_mems.
@@ -46,63 +46,21 @@ pub const PROPOSAL_STATUS_ACCEPTED: &str = "accepted";
 pub const PROPOSAL_STATUS_REJECTED: &str = "rejected";
 
 /// Serialize a trust event into its h_mem: entity `trust:ledger`,
-/// attribute = the event id, value = JSON carrying the full event.
+/// attribute = the event id, value = the event's wire form (the one
+/// encode home — `hkask_trust::wire`).
 pub fn event_to_h_mem(event: &LedgerEvent, webid: &WebID) -> HMem {
-    let value = serde_json::json!({
-        "text": event.text,
-        "source": event.source,
-        "weight": event.weight.points(),
-        "outcome": match event.outcome {
-            Outcome::Kept => "kept",
-            Outcome::Violated => "violated",
-            Outcome::Renegotiated => "renegotiated",
-            Outcome::Unverified => "unverified",
-        },
-        "ts": event.ts.to_rfc3339(),
-        "oracle_note": event.oracle_note,
-    });
-    HMem::new(TRUST_LEDGER_ENTITY, event.id.as_str(), value, *webid)
+    HMem::new(
+        TRUST_LEDGER_ENTITY,
+        event.id.as_str(),
+        hkask_trust::wire::event_to_wire(event),
+        *webid,
+    )
 }
 
-/// Rebuild a trust event from its h_mem (the inverse of
-/// [`event_to_h_mem`]); absent fields fall back to empty/unverified
-/// defaults and the event id from the attribute.
+/// Rebuild a trust event from its h_mem (the row key is the attribute;
+/// the decode is the one home — `hkask_trust::wire`).
 pub fn h_mem_to_event(h: &HMem) -> LedgerEvent {
-    let v = &h.value;
-    LedgerEvent {
-        id: LedgerEventId::from_string(&h.attribute),
-        text: v
-            .get("text")
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string(),
-        source: v
-            .get("source")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
-        weight: match v.get("weight").and_then(|w| w.as_i64()) {
-            Some(1) => Weight::Implicit,
-            Some(2) => Weight::Committed,
-            _ => Weight::Explicit,
-        },
-        outcome: match v.get("outcome").and_then(|o| o.as_str()) {
-            Some("kept") => Outcome::Kept,
-            Some("violated") => Outcome::Violated,
-            Some("renegotiated") => Outcome::Renegotiated,
-            _ => Outcome::Unverified,
-        },
-        ts: v
-            .get("ts")
-            .and_then(|t| t.as_str())
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(Utc::now),
-        oracle_note: v
-            .get("oracle_note")
-            .and_then(|n| n.as_str())
-            .map(|s| s.to_string()),
-    }
+    hkask_trust::wire::event_from_wire(&h.attribute, &h.value)
 }
 
 /// Find the event's row among the store's query results and rebuild it with
@@ -127,21 +85,15 @@ pub fn resolve_event(
     Ok((event, h_mem.id))
 }
 
-/// The events in `h_mems` recorded at or after `since` — the ts parsed from
-/// each row's JSON; a row without a parseable ts is in no window.
+/// The events in `h_mems` recorded at or after `since` — the shared
+/// window rule over the shared decode (a row without a parseable ts is
+/// in no window).
 pub fn window_events(h_mems: &[HMem], since: DateTime<Utc>) -> Vec<LedgerEvent> {
-    h_mems
+    let rows: Vec<(&str, &serde_json::Value)> = h_mems
         .iter()
-        .filter(|h| {
-            h.value
-                .get("ts")
-                .and_then(|t| t.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc) >= since)
-                .unwrap_or(false)
-        })
-        .map(h_mem_to_event)
-        .collect()
+        .map(|h| (h.attribute.as_str(), &h.value))
+        .collect();
+    hkask_trust::wire::window_from_rows(rows, since)
 }
 
 /// Find one registered expectation by id among the store's event rows —
@@ -153,6 +105,28 @@ pub fn find_event(h_mems: &[HMem], id: &LedgerEventId) -> Result<LedgerEvent, Tr
         .find(|h| h.attribute == id.as_str())
         .map(h_mem_to_event)
         .ok_or_else(|| TrustError::EventNotFound(id.to_string()))
+}
+
+/// Classify a substrate failure as [`TrustError::StoreUnavailable`],
+/// warning with the underlying error and the failed call — the operator
+/// can distinguish "not configured" from "configured but broken", and
+/// which substrate call broke (the coarse-failure-signal trap:
+/// `StoreUnavailable`'s Display text is intentionally fixed; the cause
+/// rides the log). One rule, one place: every substrate call in both
+/// server stores routes here.
+pub fn store_unavailable<E: std::fmt::Debug>(
+    substrate: &'static str,
+    op: &'static str,
+    error: E,
+) -> TrustError {
+    tracing::warn!(
+        target: "trust.ledger",
+        substrate = substrate,
+        op = op,
+        error = ?error,
+        "trust-ledger substrate call failed — the store is unavailable, not empty"
+    );
+    TrustError::StoreUnavailable
 }
 
 // ── Renegotiation proposals (trust internalization v2) ───────────────────
@@ -493,7 +467,8 @@ pub fn anchors_for_task(h_mems: &[HMem], task_key: &str) -> Vec<StoredAnchor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_trust::{Outcome, Weight};
+    use chrono::Utc;
+    use hkask_trust::{Outcome, Severity, Weight};
 
     /// The renegotiated outcome round-trips through the shared wire
     /// format (trust internalization v2): a renegotiated event stores
@@ -507,6 +482,7 @@ mod tests {
             source: "turn-1".to_string(),
             weight: Weight::Explicit,
             outcome: Outcome::Renegotiated,
+            severity: None,
             ts: Utc::now(),
             oracle_note: Some("user accepted the replacement".to_string()),
         };
@@ -519,6 +495,36 @@ mod tests {
         assert_eq!(round.outcome, Outcome::Renegotiated);
         assert_eq!(round.text, event.text);
         assert_eq!(round.weight, event.weight);
+    }
+
+    /// The severity class travels the row (the goal→global bridge's
+    /// channel): an integrity-class violation encodes as "integrity"
+    /// and reads back Integrity — the cliff stays reachable from the
+    /// h_mem substrate.
+    #[test]
+    fn severity_travels_the_row() {
+        let event = |severity| LedgerEvent {
+            id: LedgerEventId::new(),
+            text: "report defects at their true severity".to_string(),
+            source: "turn-1".to_string(),
+            weight: Weight::Explicit,
+            outcome: Outcome::Violated,
+            severity: Some(severity),
+            ts: Utc::now(),
+            oracle_note: None,
+        };
+        for (severity, wire_name) in [
+            (Severity::Integrity, "integrity"),
+            (Severity::Competence, "competence"),
+        ] {
+            let original = event(severity);
+            let h_mem = event_to_h_mem(&original, &WebID::new());
+            assert_eq!(
+                h_mem.value.get("severity").and_then(|s| s.as_str()),
+                Some(wire_name)
+            );
+            assert_eq!(h_mem_to_event(&h_mem).severity, Some(severity));
+        }
     }
 
     /// A filed proposal round-trips through the shared wire format: the

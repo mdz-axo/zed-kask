@@ -20,8 +20,11 @@ instruction text (verbatim from intake), whether it was complied with or
 violated, the severity class when violated (`competence` for a disclosed
 failure, `integrity` for a discovered one), evidence for the claim, and the
 operator's estimated cost (the expectation interest: the as-if-complied
-position, not the fix cost). `trust_summary()` computes the regulation signal
-from the ledger; `has_integrity_violation` is the escalation flag.
+position, not the fix cost). `trust_summary()` surfaces the violation
+counts in the goal JSON (`kanban_goal_trust_record` / `kanban_goal_get` /
+`kanban_goal_list`); every event also bridges to the global trust account
+carrying its severity class, where a discovered integrity violation zeroes
+reliance on current work while on record (the operator ruling's cliff).
 
 Every `goal_trust_record` also writes an h_mem with entity `"trust:ledger"`
 to the kata-kanban's own `HMemStore` — the same entity the regulation loop's

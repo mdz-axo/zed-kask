@@ -549,9 +549,9 @@ pub fn pinned_tasks() -> Vec<EvalTask> {
             "V1",
             "the trust model's constants",
             vec![
-                claim(1, "SCALE_POINTS is 600 in kask/crates/hkask-trust/src/hkask_trust.rs", true, "SCALE_POINTS = 600 at hkask_trust.rs:45"),
-                claim(2, "The trust-ledger h_mem entity prefix is trust:ledger in kask/mcp-servers/hkask-mcp-curator/src/trust_ledger.rs", true, "TRUST_LEDGER_ENTITY = \"trust:ledger\" at trust_ledger.rs:25"),
-                claim(3, "KEEP_PER_WEIGHT is 9 in kask/crates/hkask-trust/src/hkask_trust.rs", false, "KEEP_PER_WEIGHT is 4 at hkask_trust.rs:49"),
+                claim(1, "SCALE_POINTS is 600 in kask/crates/hkask-trust/src/hkask_trust.rs", true, "SCALE_POINTS = 600 at hkask_trust.rs:48"),
+                claim(2, "The trust-ledger h_mem entity prefix is trust:ledger (one home in hkask-trust, re-exported by the server stores)", true, "TRUST_LEDGER_ENTITY = \"trust:ledger\" at hkask_trust.rs:60"),
+                claim(3, "KEEP_PER_WEIGHT is 9 in kask/crates/hkask-trust/src/hkask_trust.rs", false, "KEEP_PER_WEIGHT is 4 at hkask_trust.rs:52"),
                 claim(4, "The trust model carries a recovery-debt state that violations must repay", false, "the anchoring ruling removed the debt state; violations fold once, no debt"),
             ],
         ),
@@ -559,8 +559,8 @@ pub fn pinned_tasks() -> Vec<EvalTask> {
             "V2",
             "the regulation TrustSensor",
             vec![
-                claim(1, "The TrustSensor emits a SignalMetric::TrustDeviation signal", true, "trust_sensor.rs:103-107 emits SignalMetric::TrustDeviation"),
-                claim(2, "The TrustDeviation set-point is 0.0", true, "set-point 0.0 at trust_sensor.rs:107"),
+                claim(1, "The TrustSensor emits a SignalMetric::TrustDeviation signal", true, "trust_sensor.rs:166-176 emits SignalMetric::TrustDeviation"),
+                claim(2, "The TrustDeviation set-point is 0.0", true, "set-point 0.0 at trust_sensor.rs:174"),
                 claim(3, "The TrustSensor escalates directly to the Critical alert tier on any violation", false, "the policy rule escalates to Curation (regulation_policy.rs:340-347), not Critical"),
                 claim(4, "The TrustSensor smooths the deviation over a 7-day window", false, "the window is hours (default 24), not a 7-day smoother"),
             ],
@@ -569,8 +569,8 @@ pub fn pinned_tasks() -> Vec<EvalTask> {
             "V3",
             "the trust ledger module",
             vec![
-                claim(1, "record_instruction rejects empty instruction text in kask/crates/hkask-trust/src/ledger.rs", true, "EmptyInstruction error at ledger.rs:242-243"),
-                claim(2, "The window fold starts from a 300-point prior", true, "PRIOR_POINTS = 300 folds from hkask_trust.rs:46"),
+                claim(1, "record_instruction rejects empty instruction text in kask/crates/hkask-trust/src/ledger.rs", true, "EmptyInstruction error at ledger.rs:275-276"),
+                claim(2, "The window fold starts from a 300-point prior", true, "PRIOR_POINTS = 300 folds from hkask_trust.rs:50"),
                 claim(3, "The ledger keeps a recovery-debt balance that violations must repay", false, "no debt state: the fold clamps to 0, no repayment ledger"),
                 claim(4, "Outcomes must be resolved within one hour of recording the instruction", false, "no time bound on outcome resolution exists"),
             ],
@@ -653,9 +653,12 @@ fn verification_task(id: &'static str, subject: &str, claims: Vec<ClaimSpec>) ->
 /// The pinned content hash of the task set. Refreshed ONLY deliberately,
 /// with the change that earns it (2026-10-31: the V3 claim-1 grounding
 /// pointer followed its cited code — `ledger.rs:204-205` → `242-243`
-/// after `WindowStats::from_events` moved `record_instruction` down).
+/// after `WindowStats::from_events` moved `record_instruction` down;
+/// 2026-11-01: the V1/V2/V3 claim pointers followed the trust-system
+/// repairs — the severity field, the wire decode home, and the sensor
+/// rewrite shifted every cited line).
 pub const PINNED_SET_HASH: &str =
-    "2a2116b51918f4aa0c1e78eaddf02a22ef5fe7bfd3a1797b26611b460d73d495";
+    "f369f3e2b6473defff9741ac5d3c78912e02683c86751825e5b838ceff2fa2a3";
 
 #[derive(Serialize)]
 struct HashInstruction {

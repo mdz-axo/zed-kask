@@ -55,14 +55,21 @@ II), the parameter set (operator-ratified g, l, ρ, κ, T_0, W), and storage.
 ledger — the standing trap (no `unwrap_or(0)` on sense inputs) is enforced at
 the module boundary so no consumer can accidentally commit it.
 
-Storage decision for the implementation pass: events as episodic h_mems in the
-curator store (entity `trust:ledger:<id>`) makes binding 5 near-free — the
-`memory_insert` evidence gate already requires citing an existing h_mem, and
-the ledger event IS one. The constraint to honor: one store, three readers
-(agent, regulation loop, curator server), no silent fallbacks — the
-`regulation_store()` accessor pattern
-(`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:862`) shows the
-windowed-query shape already in production.
+Storage decision, reconciled 2026-11-01: events are episodic h_mems in TWO
+stores — the curator's sovereign `curator.db` (instruction-level expectations,
+the `trust_ledger_*` tools) and the kata-kanban's own DB (goal-trust events,
+bridged by `goal_trust_record`). The wire encode/decode lives in ONE place —
+`hkask_trust::wire`, the type owner's home — and the entity constant lives in
+`hkask-trust` (`TRUST_LEDGER_ENTITY`), so the two stores cannot fork the
+format and no reader can fork the decode. The constraint this reconciliation
+replaced "one store, three readers" with: ONE STORE SET, EVERY READER — the
+regulation `TrustSensor` AND the agent's injected trust state
+(`trust_state_summary`) both read the union (wired in `main.rs` with the same
+`Vec<Arc<MemoryStore>>`, union-deduped by event id); the curator tools read
+the curator store; the kata-kanban tools read theirs. Binding 5 still closes
+mechanically: a trust event's h_mem is citable as `memory_insert` evidence.
+No silent fallbacks — an unavailable store surfaces, never reads as an empty
+account.
 
 ## Binding 1 — System prompt (operator-gated)
 

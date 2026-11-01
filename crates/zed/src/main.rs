@@ -2088,11 +2088,17 @@ fn main() {
                                             Some(kanban) => vec![curator_memory, kanban],
                                             None => {
                                                 log::warn!(
-                                                    "kata-kanban trust store not opened — the trust sensor reads the curator only"
+                                                    "kata-kanban trust store not opened — the trust sensor and the injected trust state read the curator only"
                                                 );
                                                 vec![curator_memory]
                                             }
                                         };
+                                        // One store set, every reader: the injected
+                                        // trust state reads the SAME stores the
+                                        // sensor reads, so the agent's self-state
+                                        // is the account the loop regulates by.
+                                        real_memory_typed
+                                            .set_trust_ledger_stores(stores.clone());
                                         let loop_for_trust =
                                             cybernetics_loop_for_panel_deferred.clone();
                                         gpui_tokio::Tokio::spawn(cx, async move {

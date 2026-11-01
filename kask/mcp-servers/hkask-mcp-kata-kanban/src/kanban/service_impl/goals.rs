@@ -497,8 +497,9 @@ impl KanbanService {
     /// with or violated, the severity class when violated, and the
     /// evidence for the claim. The ledger is append-only: recording a
     /// correction appends a new event, it never rewrites the history.
-    /// The regulation loop reads the violation rates from the ledger
-    /// via [`Goal::trust_summary`].
+    /// [`Goal::trust_summary`] surfaces the rates in the goal JSON; the
+    /// bridge below carries each event — with its severity class — to
+    /// the global trust account the regulation loop senses.
     pub fn goal_trust_record(
         &self,
         id: GoalID,
@@ -537,18 +538,37 @@ impl KanbanService {
         // kata-kanban's `HMemStore`); a bridge failure surfaces — the
         // goal has the event, the ledger doesn't (transparent
         // imperfection, never silent divergence).
+        //
+        // The severity class crosses with the event (the goal→global
+        // channel): a discovered integrity violation stays
+        // integrity-class in the global account, where reliance on
+        // current work reads zero while it is on record (the operator
+        // ruling 2026-10-31). The event's evidence and the operator's
+        // expectation-interest cost ride the oracle note — the global
+        // row carries its verification claim, not just the instruction.
         let source = goal.source.interaction_id.clone();
+        let oracle_note = match &event_for_ledger.operator_cost {
+            Some(operator_cost) => format!(
+                "goal {}: evidence: {}; operator cost: {}",
+                goal.id, event_for_ledger.evidence, operator_cost
+            ),
+            None => format!("goal {}: evidence: {}", goal.id, event_for_ledger.evidence),
+        };
         let ledger_event = hkask_trust::LedgerEvent {
             id: hkask_trust::LedgerEventId::new(),
             text: event_for_ledger.instruction.clone(),
             source,
             weight: hkask_trust::Weight::Explicit,
+            severity: event_for_ledger.severity.map(|severity| match severity {
+                GoalTrustSeverity::Competence => hkask_trust::Severity::Competence,
+                GoalTrustSeverity::Integrity => hkask_trust::Severity::Integrity,
+            }),
             outcome: match event_for_ledger.status {
                 GoalTrustStatus::Complied => hkask_trust::Outcome::Kept,
                 GoalTrustStatus::Violated => hkask_trust::Outcome::Violated,
             },
             ts: Utc::now(),
-            oracle_note: None,
+            oracle_note: Some(oracle_note),
         };
         let trust_store =
             crate::trust_ledger::KanbanTrustLedgerStore::new(self.store.clone(), owner);

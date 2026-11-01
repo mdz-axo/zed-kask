@@ -41,7 +41,7 @@ impl TrustLedgerStore for KanbanTrustLedgerStore {
         let h_mem = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.store
             .insert(&h_mem)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("kata-kanban", "insert", e))?;
         Ok(())
     }
 
@@ -54,7 +54,9 @@ impl TrustLedgerStore for KanbanTrustLedgerStore {
         let h_mems = self
             .store
             .query_by_entity(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("kata-kanban", "query_by_entity", e)
+            })?;
 
         let (event, old_h_mem_id) =
             trust_ledger_hmem::resolve_event(&h_mems, id, outcome, oracle_note)?;
@@ -63,11 +65,11 @@ impl TrustLedgerStore for KanbanTrustLedgerStore {
         // on HMemStore; delete + insert is the replacement path).
         self.store
             .delete_by_id(&old_h_mem_id)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("kata-kanban", "delete_by_id", e))?;
         let updated = trust_ledger_hmem::event_to_h_mem(&event, &self.webid);
         self.store
             .insert(&updated)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| trust_ledger_hmem::store_unavailable("kata-kanban", "insert", e))?;
 
         Ok(event)
     }
@@ -76,7 +78,9 @@ impl TrustLedgerStore for KanbanTrustLedgerStore {
         let h_mems = self
             .store
             .query_by_entity(trust_ledger_hmem::TRUST_LEDGER_ENTITY)
-            .map_err(|_| TrustError::StoreUnavailable)?;
+            .map_err(|e| {
+                trust_ledger_hmem::store_unavailable("kata-kanban", "query_by_entity", e)
+            })?;
 
         Ok(trust_ledger_hmem::window_events(&h_mems, since))
     }

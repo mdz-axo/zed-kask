@@ -20,10 +20,11 @@
 //!   system; the regulation `Sensor` contract "None is not evidence of
 //!   recovery" carries the same rule).
 //!
-//! Storage is a trait ([`TrustLedgerStore`]); the production impl (events
-//! as curator h_mems, entity `trust:ledger:<id>`) lives in the curator
-//! server. [`InMemoryTrustLedger`] is the test double and the in-process
-//! store for the regulation loop's reads.
+//! Storage is a trait ([`TrustLedgerStore`]); the production impls (events
+//! as h_mems, entity `trust:ledger`, attribute = the event id) live in the
+//! curator and kata-kanban servers over the one wire form ([`crate::wire`]).
+//! [`InMemoryTrustLedger`] is the test double; the regulation loop reads
+//! `MemoryStore`s through the same wire module (`trust_sensor.rs`).
 
 use std::fmt;
 use std::sync::{Arc, Mutex};
@@ -73,6 +74,13 @@ pub struct LedgerEvent {
     pub weight: Weight,
     /// The verification state: kept, violated, or unverified (never silent).
     pub outcome: Outcome,
+    /// The violation's severity class, when the expectation was violated.
+    /// `None` for kept/unverified/renegotiated events and for violations
+    /// the recording surface does not classify. A discovered integrity
+    /// failure ([`crate::Severity::Integrity`]) is the cliff class: it
+    /// zeroes [`WindowStats::reliance_points`] while on record (the
+    /// operator ruling 2026-10-31).
+    pub severity: Option<crate::Severity>,
     /// When the instruction was recorded.
     pub ts: DateTime<Utc>,
     /// Oracle note: what verified the outcome (a test name, a grep, a
@@ -109,6 +117,12 @@ pub struct WindowStats {
     /// Renegotiated events in the window — "changed what was asked,
     /// openly" (trust internalization v2); folds as a keep.
     pub renegotiated: u32,
+    /// Violated events carrying the integrity severity class in the
+    /// window — the cliff class (the operator ruling 2026-10-31): while
+    /// the count is positive,
+    /// [`reliance_points`](Self::reliance_points) and the delegation
+    /// radius read zero.
+    pub integrity_violations: u32,
 }
 
 impl WindowStats {
@@ -125,6 +139,7 @@ impl WindowStats {
             violated: 0,
             unverified: 0,
             renegotiated: 0,
+            integrity_violations: 0,
         };
         let mut fold_events = Vec::with_capacity(events.len());
         for event in events {
@@ -134,6 +149,11 @@ impl WindowStats {
                 Outcome::Renegotiated => stats.renegotiated += 1,
                 Outcome::Unverified => stats.unverified += 1,
             }
+            if event.outcome == Outcome::Violated
+                && event.severity == Some(crate::Severity::Integrity)
+            {
+                stats.integrity_violations += 1;
+            }
             if let Some(fold_event) = event.fold_event() {
                 fold_events.push(fold_event);
             }
@@ -142,11 +162,24 @@ impl WindowStats {
         stats
     }
 
-    /// The delegation radius: how far work extends without re-checking.
-    /// T is the radius in trust points; the account's resolution is the
-    /// percent scale.
+    /// The reliance on current work, in trust points: the folded account,
+    /// except while any integrity-severity violation is on record in the
+    /// window — then zero (the operator ruling 2026-10-31: a discovered
+    /// integrity failure — concealment, misweighting — zeroes reliance on
+    /// current work; the goal fails with certainty, benefit-independent).
+    pub fn reliance_points(&self) -> i32 {
+        if self.integrity_violations > 0 {
+            0
+        } else {
+            self.trust_points
+        }
+    }
+
+    /// The delegation radius: how far work extends without re-checking —
+    /// [`reliance_points`](Self::reliance_points) on the percent scale
+    /// (zero under the integrity cliff).
     pub fn delegation_radius_percent(&self) -> i32 {
-        self.trust_points * 100 / crate::SCALE_POINTS
+        self.reliance_points() * 100 / crate::SCALE_POINTS
     }
 }
 
@@ -168,8 +201,8 @@ pub trait TrustLedgerStore: Send + Sync {
     fn window(&self, since: DateTime<Utc>) -> Result<Vec<LedgerEvent>, TrustError>;
 }
 
-/// The in-memory store: the test double and the regulation loop's
-/// in-process read.
+/// The in-memory store: the test double. (The regulation loop reads
+/// `MemoryStore`s through the [`crate::wire`] decode — `trust_sensor.rs`.)
 #[derive(Default)]
 pub struct InMemoryTrustLedger {
     events: Mutex<Vec<LedgerEvent>>,
@@ -249,6 +282,7 @@ impl TrustLedger {
             source: source.to_string(),
             weight,
             outcome: Outcome::Unverified,
+            severity: None,
             ts: Utc::now(),
             oracle_note: None,
         };
@@ -270,11 +304,10 @@ impl TrustLedger {
     }
 
     /// The window's folded trust state in points (the prior anchors the
-    /// fold; the window bounds it).
+    /// fold; the window bounds it) — the canonical fold via
+    /// [`WindowStats::from_events`], never a second fold path.
     pub fn trust_state(&self, since: DateTime<Utc>) -> Result<i32, TrustError> {
-        let events = self.store.window(since)?;
-        let fold_events: Vec<Event> = events.iter().filter_map(|e| e.fold_event()).collect();
-        Ok(crate::trust_points_from(crate::PRIOR_POINTS, &fold_events))
+        Ok(self.window_stats(since)?.trust_points)
     }
 
     /// The window's visible counts plus the fold's result.
@@ -474,6 +507,7 @@ mod tests {
                 source: "i".into(),
                 weight: Weight::Implicit,
                 outcome: Outcome::Kept,
+                severity: None,
                 ts: Utc::now(),
                 oracle_note: None,
             },
@@ -483,6 +517,7 @@ mod tests {
                 source: "i".into(),
                 weight: Weight::Committed,
                 outcome: Outcome::Violated,
+                severity: None,
                 ts: Utc::now(),
                 oracle_note: None,
             },
@@ -492,6 +527,7 @@ mod tests {
                 source: "i".into(),
                 weight: Weight::Explicit,
                 outcome: Outcome::Renegotiated,
+                severity: None,
                 ts: Utc::now(),
                 oracle_note: None,
             },
@@ -500,9 +536,51 @@ mod tests {
         assert_eq!(stats.kept, 1);
         assert_eq!(stats.violated, 1);
         assert_eq!(stats.renegotiated, 1);
+        assert_eq!(stats.integrity_violations, 0);
         // 300 + 4·1 − 9·2 + 4·3 (renegotiated folds as a keep) = 298.
         assert_eq!(stats.trust_points, crate::PRIOR_POINTS + 4 - 18 + 12);
         assert_eq!(stats.delegation_radius_percent(), 49);
+    }
+
+    /// The operator ruling's cliff: a discovered integrity-severity
+    /// violation zeroes reliance on current work (`reliance_points`, the
+    /// delegation radius) while it is on record — while the fold keeps
+    /// its −9·w pricing, and a competence violation of the same weight
+    /// stays recoverable.
+    #[test]
+    fn integrity_violation_zeroes_reliance_not_the_fold() {
+        let violated_explicit = |severity| LedgerEvent {
+            id: LedgerEventId::new(),
+            text: "violated explicit".into(),
+            source: "i".into(),
+            weight: Weight::Explicit,
+            outcome: Outcome::Violated,
+            severity: Some(severity),
+            ts: Utc::now(),
+            oracle_note: None,
+        };
+        let integrity = WindowStats::from_events(&[violated_explicit(crate::Severity::Integrity)]);
+        assert_eq!(integrity.integrity_violations, 1);
+        assert_eq!(
+            integrity.trust_points, 273,
+            "the fold keeps its −9·w pricing"
+        );
+        assert_eq!(
+            integrity.reliance_points(),
+            0,
+            "the cliff: reliance is zero"
+        );
+        assert_eq!(integrity.delegation_radius_percent(), 0);
+
+        let competence =
+            WindowStats::from_events(&[violated_explicit(crate::Severity::Competence)]);
+        assert_eq!(competence.integrity_violations, 0);
+        assert_eq!(competence.reliance_points(), 273);
+        assert_eq!(
+            competence.delegation_radius_percent(),
+            45,
+            "competence stays recoverable"
+        );
     }
 
     /// StoreUnavailable surfaces — never serialized as an empty account.

@@ -119,10 +119,15 @@ pub enum GoalTrustStatus {
 pub enum GoalTrustSeverity {
     /// A disclosed competence failure — recoverable (Slovic 1993;
     /// Kim–Ferrin–Cooper–Dirks 2004: competence violations are
-    /// forgivable when acknowledged; κ_c ≈ 0.15).
+    /// forgivable when acknowledged).
     Competence,
-    /// A concealed integrity failure, discovered rather than
-    /// disclosed — resets trust to the prior (κ_i ≈ 1).
+    /// An integrity failure — concealment, misweighting — discovered
+    /// rather than disclosed: the cliff class (the operator ruling
+    /// 2026-10-31). The goal→global bridge carries the class to the
+    /// global account, where reliance on current work reads zero while
+    /// it is on record; repair is partial at best (Kim–Ferrin–Cooper–
+    /// Dirks 2004: "neither of these responses appears to have repaired
+    /// trust completely").
     Integrity,
 }
 
@@ -147,7 +152,8 @@ pub const GOAL_TRUST_CLAUSE_TEXT: &str = "No deliverable produced by violating a
     deliverable is rationally discounted to zero (Akerlof 1970). Trust dynamics are \
     asymmetric (Slovic 1993; Kim–Ferrin–Cooper–Dirks 2004): a disclosed competence \
     failure is recoverable; a discovered integrity failure (concealment, \
-    misweighting) resets trust to the prior across every future deliverable. All \
+    misweighting) zeroes reliance on current work — the goal fails with \
+    certainty — and repair is partial at best. All \
     violations are priced at the expectation interest (Fuller–Perdue 1936), not the \
     restitution interest: report the principal's as-if-complied position, not the \
     cost of the fix.";
@@ -480,11 +486,13 @@ impl Goal {
     }
 
     /// The goal's trust summary, computed from the running trust
-    /// ledger (`trust_events`). The regulation loop reads the
-    /// violation rates from here — the count of integrity-severity
-    /// violations is the escalation signal (a discovered integrity
-    /// failure resets trust to the prior, per Slovic 1993 and
-    /// Kim–Ferrin–Cooper–Dirks 2004).
+    /// ledger (`trust_events`). Real consumers: the goal JSON surface
+    /// (`kanban_goal_trust_record` / `kanban_goal_get` /
+    /// `kanban_goal_list`). Each event also crosses to the global
+    /// account (`goal_trust_record`'s bridge) carrying its severity
+    /// class, where a discovered integrity violation zeroes reliance
+    /// on current work while on record (the operator ruling's cliff —
+    /// `WindowStats::reliance_points` in `hkask-trust`).
     pub fn trust_summary(&self) -> GoalTrustSummary {
         let total = self.trust_events.len();
         let complied = self

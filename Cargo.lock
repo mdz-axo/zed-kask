@@ -8082,6 +8082,7 @@ name = "hkask-trust"
 version = "0.40.2"
 dependencies = [
  "chrono",
+ "serde_json",
  "uuid",
 ]
 

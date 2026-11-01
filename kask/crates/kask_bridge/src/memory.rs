@@ -244,6 +244,14 @@ pub struct RealMemoryPort {
     tokio_handle: tokio::runtime::Handle,
     /// Ingestion concurrency limiter.
     ingest_semaphore: tokio::sync::Semaphore,
+    /// Every store that carries trust-ledger events for the agent's
+    /// injected trust state (Binding 5): the curator's sovereign store
+    /// AND the kata-kanban's (goal-trust events bridge there). Set at
+    /// wiring time ([`RealMemoryPort::set_trust_ledger_stores`]) with
+    /// the same store vec the regulation `TrustSensor` reads. Empty
+    /// until wired: the summary then falls back to the curator store
+    /// alone (the historical behavior), never to no account.
+    trust_ledger_stores: std::sync::Mutex<Vec<Arc<MemoryStore>>>,
 }
 
 impl RealMemoryPort {
@@ -262,29 +270,81 @@ impl RealMemoryPort {
             .ok_or_else(|| "curator trust-ledger store unavailable".to_string())
     }
 
+    /// Configure the store set the injected trust state reads
+    /// (Binding 5): the same `Vec<Arc<MemoryStore>>` the regulation
+    /// `TrustSensor` reads — the curator's AND the kata-kanban's — so
+    /// the agent's injected account is the same account the loop
+    /// regulates by (one store set, every reader).
+    pub fn set_trust_ledger_stores(&self, stores: Vec<Arc<MemoryStore>>) {
+        match self.trust_ledger_stores.lock() {
+            Ok(mut set) => {
+                tracing::info!(
+                    target: "reg.memory",
+                    stores = stores.len(),
+                    "trust-state injection store set configured (curator + kata-kanban)"
+                );
+                *set = stores;
+            }
+            Err(_) => tracing::warn!(
+                target: "reg.memory",
+                "trust-ledger store set poisoned — the injected trust state stays on its current store set"
+            ),
+        }
+    }
+
     /// Read the current trust state from the ledger (entity
     /// `TRUST_LEDGER_ENTITY`) in the given window and format it as a
     /// short injection block for the context injector.
     ///
     /// The trust state is the trust-economics feedback signal
     /// (P13): the folded trust points (0..=600), the delegation
-    /// radius (percent), the kept/violated/unverified counts,
-    /// and the most recent violation.
-    /// Rows are decoded and windowed by the canonical wire module
-    /// (`trust_ledger_hmem::window_events`) and folded by the model's
+    /// radius (percent — zero while an integrity-severity violation
+    /// is on record, the operator ruling's cliff), the
+    /// kept/violated/integrity/renegotiated/unverified counts, and
+    /// the most recent violation. Rows are decoded and windowed by
+    /// the one wire home (`hkask_trust::wire` via
+    /// `trust_ledger_hmem::window_events`) and folded by the model's
     /// own count+fold (`WindowStats::from_events`: keep +4·w, violate
-    /// −9·w, renegotiated folds as a keep) — the same account the
-    /// curator and kata-kanban stores report, not a local
-    /// re-derivation that can drift from them.
-    /// This is read-only — the agent sees the operator's
-    /// account, not its own self-report.
+    /// −9·w, renegotiated folds as a keep) — the same account every
+    /// reader shares. The read spans every configured store
+    /// (set_trust_ledger_stores — the curator's AND the kata-kanban's,
+    /// the same set the regulation sensor reads), union-deduped by
+    /// event id: the two populations are disjoint by write path today
+    /// and the dedupe guards a future double-write. This is read-only
+    /// — the agent sees the operator's account, not its own
+    /// self-report.
     pub fn trust_state_summary(&self, window_hours: i64) -> Result<String, String> {
-        let store = self.trust_ledger_store()?;
         let since = chrono::Utc::now() - chrono::Duration::hours(window_hours);
 
-        let h_mems = store
-            .query_deduped_untouched(TRUST_LEDGER_ENTITY)
-            .map_err(|e| format!("trust-ledger query failed: {e}"))?;
+        // The configured store set (the same vec the regulation sensor
+        // reads); the curator store alone before wiring — never no
+        // account.
+        let stores: Vec<Arc<MemoryStore>> = {
+            let configured = self
+                .trust_ledger_stores
+                .lock()
+                .map_err(|_| "trust-ledger store set poisoned".to_string())?;
+            match configured.len() {
+                0 => vec![self.trust_ledger_store()?],
+                _ => configured.clone(),
+            }
+        };
+
+        // Union the rows across stores, deduped by event id (the row
+        // key): the populations are disjoint by write path; the dedupe
+        // guards a future double-write.
+        let mut h_mems: Vec<hkask_storage::HMem> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for store in &stores {
+            for h in store
+                .query_deduped_untouched(TRUST_LEDGER_ENTITY)
+                .map_err(|e| format!("trust-ledger query failed: {e}"))?
+            {
+                if seen.insert(h.attribute.clone()) {
+                    h_mems.push(h);
+                }
+            }
+        }
 
         // Canonical decode + window rule (a row without a parseable ts
         // is in no window) — the same read the stores feed their folds.
@@ -300,15 +360,28 @@ impl RealMemoryPort {
 
         let mut result = format!(
             "[Trust state] T={}/{} (delegation radius {}%). \
-             Window: kept={}, violated={}, renegotiated={}, unverified={}.",
+             Window: kept={}, violated={}, integrity={}, renegotiated={}, unverified={}.",
             stats.trust_points,
             hkask_trust::SCALE_POINTS,
             stats.delegation_radius_percent(),
             stats.kept,
             stats.violated,
+            stats.integrity_violations,
             stats.renegotiated,
             stats.unverified,
         );
+
+        // The operator ruling's cliff, surfaced: while an integrity
+        // violation is on record, reliance on current work is zero —
+        // the radius already reads it; the sentence names why.
+        if stats.integrity_violations > 0 {
+            result.push_str(&format!(
+                " Integrity cliff: {} integrity-severity violation(s) on record — \
+                 reliance on current work is zero until re-earned; the goal fails \
+                 with certainty (the operator ruling's cliff).",
+                stats.integrity_violations
+            ));
+        }
 
         if let Some(violation) = last_violation {
             result.push_str(&format!(" Last violation: \"{}\"", violation.text));
@@ -382,6 +455,7 @@ impl RealMemoryPort {
             confidence_floor,
             tokio_handle,
             ingest_semaphore: tokio::sync::Semaphore::new(resolve_ingest_concurrency()),
+            trust_ledger_stores: std::sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -1388,6 +1462,7 @@ pub(crate) mod tests {
             confidence_floor,
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
+            trust_ledger_stores: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -1508,6 +1583,7 @@ pub(crate) mod tests {
             source: "interaction-test".to_string(),
             weight,
             outcome,
+            severity: None,
             ts: chrono::Utc::now() - chrono::Duration::hours(hours_ago),
             oracle_note: None,
         }
@@ -1540,7 +1616,7 @@ pub(crate) mod tests {
             "{summary}"
         );
         assert!(
-            summary.contains("kept=0, violated=0, renegotiated=0, unverified=0"),
+            summary.contains("kept=0, violated=0, integrity=0, renegotiated=0, unverified=0"),
             "{summary}"
         );
         assert!(!summary.contains("Last violation"), "{summary}");
@@ -1601,7 +1677,7 @@ pub(crate) mod tests {
         let summary = port.trust_state_summary(24).expect("summary");
         assert!(summary.contains("T=316/600"), "{summary}");
         assert!(
-            summary.contains("kept=1, violated=0, renegotiated=1, unverified=0"),
+            summary.contains("kept=1, violated=0, integrity=0, renegotiated=1, unverified=0"),
             "{summary}"
         );
     }
@@ -1649,6 +1725,100 @@ pub(crate) mod tests {
         let summary = port.trust_state_summary(24).expect("summary");
         assert!(summary.contains("T=300/600"), "{summary}");
         assert!(summary.contains("violated=0"), "{summary}");
+    }
+
+    /// One store set, every reader: a goal-trust event that lands only
+    /// in the kata-kanban store (the bridge's write path) appears in
+    /// the injected trust state — the half-account gap this pins
+    /// closed. The store set is the same vec the regulation sensor
+    /// reads.
+    #[tokio::test]
+    async fn trust_summary_reads_the_kata_kanban_store_too() {
+        let port = in_memory_port();
+        let curator = port.trust_ledger_store().expect("ledger store");
+        let driver = hkask_storage::SqliteDriver::in_memory_driver();
+        let h_mem_store =
+            hkask_storage::HMemStore::from_driver(driver.clone()).expect("in-memory h_mem store");
+        let embedding_store = hkask_storage::EmbeddingStore::from_driver(driver, 0)
+            .expect("in-memory embedding store");
+        let kata =
+            std::sync::Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+
+        port.set_trust_ledger_stores(vec![curator, kata.clone()]);
+        store_trust_event(
+            &kata,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Explicit,
+                0,
+                "kata-only violation",
+            ),
+        );
+
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("violated=1"), "{summary}");
+        assert!(
+            summary.contains("Last violation: \"kata-only violation\""),
+            "{summary}"
+        );
+    }
+
+    /// Union-dedupe: the same event id in both stores counts once —
+    /// the populations are disjoint by write path today; the dedupe
+    /// guards a future double-write.
+    #[tokio::test]
+    async fn trust_summary_dedupes_the_same_row_across_stores() {
+        let port = in_memory_port();
+        let curator = port.trust_ledger_store().expect("ledger store");
+        let driver = hkask_storage::SqliteDriver::in_memory_driver();
+        let h_mem_store =
+            hkask_storage::HMemStore::from_driver(driver.clone()).expect("in-memory h_mem store");
+        let embedding_store = hkask_storage::EmbeddingStore::from_driver(driver, 0)
+            .expect("in-memory embedding store");
+        let kata =
+            std::sync::Arc::new(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
+
+        let event = trust_ledger_event(
+            Outcome::Violated,
+            hkask_trust::Weight::Explicit,
+            0,
+            "double-written violation",
+        );
+        port.set_trust_ledger_stores(vec![curator.clone(), kata.clone()]);
+        store_trust_event(&curator, &port.curator_webid, &event);
+        store_trust_event(&kata, &port.curator_webid, &event);
+
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=273/600"), "{summary}");
+        assert!(summary.contains("violated=1"), "{summary}");
+    }
+
+    /// The operator ruling's cliff, surfaced end-to-end: an
+    /// integrity-severity violation in the window keeps its −9·w fold
+    /// pricing (T=273) but zeroes the delegation radius and names the
+    /// cliff in the injected sentence.
+    #[tokio::test]
+    async fn trust_summary_surfaces_the_integrity_cliff() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        let mut integrity_event = trust_ledger_event(
+            Outcome::Violated,
+            hkask_trust::Weight::Explicit,
+            0,
+            "misweighted the severity field",
+        );
+        integrity_event.severity = Some(hkask_trust::Severity::Integrity);
+        store_trust_event(&store, &port.curator_webid, &integrity_event);
+
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=273/600"), "{summary}");
+        assert!(summary.contains("delegation radius 0%"), "{summary}");
+        assert!(summary.contains("integrity=1"), "{summary}");
+        assert!(
+            summary.contains("Integrity cliff: 1 integrity-severity violation"),
+            "{summary}"
+        );
     }
 
     /// The most recent violation is the one named — rows come back
@@ -1705,6 +1875,7 @@ pub(crate) mod tests {
             confidence_floor: 0.3,
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
+            trust_ledger_stores: std::sync::Mutex::new(Vec::new()),
         };
         let error = port.trust_state_summary(24).expect_err("unavailable store");
         assert!(

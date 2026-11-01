@@ -1602,6 +1602,7 @@ impl CuratorServer {
                 "trust_points": stats.trust_points,
                 "kept": stats.kept,
                 "violated": stats.violated,
+                "integrity_violations": stats.integrity_violations,
                 "unverified": stats.unverified,
                 "renegotiated": stats.renegotiated,
                 "delegation_radius_percent": stats.delegation_radius_percent(),
@@ -1622,7 +1623,13 @@ impl CuratorServer {
             let ledger = self.trust_ledger()?;
             let hours = req.window_hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours);
-            let trust = ledger.trust_state(since).map_err(trust_error_to_mcp)?;
+            let stats = ledger.window_stats(since).map_err(trust_error_to_mcp)?;
+            // The cliff-aware input: honest paths project from the
+            // reliance on current work (zero while an integrity
+            // violation is on record — the operator ruling's cliff),
+            // consistent with the delegation radius the state tool
+            // reports.
+            let trust = stats.reliance_points();
 
             let actions: Vec<hkask_trust::SteerAction> = req
                 .actions
@@ -1662,7 +1669,8 @@ impl CuratorServer {
                 .collect();
 
             Ok(serde_json::json!({
-                "trust_points": trust,
+                "trust_points": stats.trust_points,
+                "reliance_points": trust,
                 "projections": rendered,
             }))
         })
