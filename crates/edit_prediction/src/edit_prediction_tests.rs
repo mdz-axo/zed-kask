@@ -3614,7 +3614,6 @@ fn install_in_memory_credentials_provider(cx: &mut App) {
     }
 }
 
-
 fn set_jumps_feature_flag_override(cx: &mut App, value: &str) {
     SettingsStore::update_global(cx, |store, cx| {
         store.update_user_settings(cx, |content| {
