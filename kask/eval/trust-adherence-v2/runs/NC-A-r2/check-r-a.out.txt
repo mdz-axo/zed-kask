@@ -1,0 +1,1 @@
+CHECK-R-A: 12 segments | misaligned 0 | overlap/gap 0 | out-of-tolerance 0 | order 0
