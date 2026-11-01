@@ -832,9 +832,7 @@ mod tests {
         // Native-only providers keep their canonical slots but do not restart
         // MCP children. RunPod's Data Services row refreshes its provider
         // directly.
-        for url in ["https://api.runpod.io"] {
-            assert!(!credential_url_feeds_mcp_servers(url));
-        }
+        assert!(!credential_url_feeds_mcp_servers("https://api.runpod.io"));
 
         // Data-service kask slots with MCP-child consumers — MUST nudge.
         for url in [

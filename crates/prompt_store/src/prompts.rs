@@ -184,6 +184,7 @@ mod tests {
             disable_model_invocation: false,
             dependencies: Vec::new(),
             core: false,
+            audience: None,
         };
         let summary = SkillSummary::from(&skill);
 
