@@ -1200,7 +1200,6 @@ mod tests {
     }
 
     fn test_store() -> hkask_memory::MemoryStore {
-        ensure_embedding_model_env();
         test_store_with_driver().0
     }
 
@@ -1208,6 +1207,14 @@ mod tests {
         hkask_memory::MemoryStore,
         Arc<dyn hkask_storage::DatabaseDriver>,
     ) {
+        // The embedding-model env lives here, not only in `test_store()`: the
+        // SQL-trigger atomicity tests call this variant directly and expect
+        // real publication attempts. Under nextest each test runs in its own
+        // process and cannot inherit a sibling's set_var — without this call
+        // the embed gate failed before the trigger could fire, so
+        // lesson_store_failure red-failed and watermark_failure passed
+        // vacuously (embed-failure outcome equals the trigger-failure one).
+        ensure_embedding_model_env();
         let driver = SqliteDriver::in_memory_driver();
         let h_mem_store =
             hkask_storage::HMemStore::from_driver(Arc::clone(&driver)).expect("h_mem store");
