@@ -10,6 +10,7 @@
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
 //! wired (at startup), the thread's ingest call site no-ops on `None`.
 
+use hkask_mcp_server::trust_ledger_hmem;
 use hkask_memory::{
     ExternalPassageBatch, FederatedSourceSpec, FederatedSourcesManifest, MemoryConsolidator,
     MemoryStore, ReadOnlyPassageSource,
@@ -17,7 +18,7 @@ use hkask_memory::{
 use hkask_storage::open_or_repair;
 #[cfg(test)]
 use hkask_storage::{EmbeddingStore, HMemStore};
-use hkask_trust::{self, KEEP_PER_WEIGHT, PRIOR_POINTS, SCALE_POINTS, VIOLATE_PER_WEIGHT};
+use hkask_trust::{self, Outcome, TRUST_LEDGER_ENTITY, WindowStats};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, WebID};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -262,13 +263,19 @@ impl RealMemoryPort {
     }
 
     /// Read the current trust state from the ledger (entity
-    /// `"trust:ledger"`) in the given window and format it as a
+    /// `TRUST_LEDGER_ENTITY`) in the given window and format it as a
     /// short injection block for the context injector.
     ///
     /// The trust state is the trust-economics feedback signal
     /// (P13): the folded trust points (0..=600), the delegation
     /// radius (percent), the kept/violated/unverified counts,
-    /// and the operator cost of the most recent violation.
+    /// and the most recent violation.
+    /// Rows are decoded and windowed by the canonical wire module
+    /// (`trust_ledger_hmem::window_events`) and folded by the model's
+    /// own count+fold (`WindowStats::from_events`: keep +4·w, violate
+    /// −9·w, renegotiated folds as a keep) — the same account the
+    /// curator and kata-kanban stores report, not a local
+    /// re-derivation that can drift from them.
     /// This is read-only — the agent sees the operator's
     /// account, not its own self-report.
     pub fn trust_state_summary(&self, window_hours: i64) -> Result<String, String> {
@@ -276,83 +283,35 @@ impl RealMemoryPort {
         let since = chrono::Utc::now() - chrono::Duration::hours(window_hours);
 
         let h_mems = store
-            .query_deduped_untouched("trust:ledger")
+            .query_deduped_untouched(TRUST_LEDGER_ENTITY)
             .map_err(|e| format!("trust-ledger query failed: {e}"))?;
 
-        let mut kept = 0u32;
-        let mut violated = 0u32;
-        let mut unverified = 0u32;
-        let mut renegotiated = 0u32;
-        let mut weighted_violation = 0i64;
-        let mut last_violation_cost: Option<String> = None;
-        let mut last_violation_text: Option<String> = None;
+        // Canonical decode + window rule (a row without a parseable ts
+        // is in no window) — the same read the stores feed their folds.
+        let events = trust_ledger_hmem::window_events(&h_mems, since);
 
-        for h in &h_mems {
-            let ts = h
-                .value
-                .get("ts")
-                .and_then(|t| t.as_str())
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .ok_or_else(|| "trust event has invalid or missing ts".to_string())?;
-            if ts.with_timezone(&chrono::Utc) < since {
-                continue;
-            }
+        // The anchored fold — weight-scaled, renegotiated-as-keep,
+        // clamped to [0, 600] from the prior.
+        let stats = WindowStats::from_events(&events);
 
-            let text = h.value.get("text").and_then(|t| t.as_str()).unwrap_or("");
-            let weight = h.value.get("weight").and_then(|w| w.as_i64()).unwrap_or(3);
-            let outcome = h
-                .value
-                .get("outcome")
-                .and_then(|o| o.as_str())
-                .unwrap_or("unverified");
-            let cost = h
-                .value
-                .get("operator_cost")
-                .and_then(|c| c.as_str())
-                .map(|s| s.to_string());
-
-            match outcome {
-                "kept" => kept += 1,
-                "renegotiated" => renegotiated += 1,
-                "violated" => {
-                    violated += 1;
-                    weighted_violation += weight;
-                    if last_violation_cost.is_none() {
-                        last_violation_cost = cost;
-                        last_violation_text = Some(text.to_string());
-                    }
-                }
-                _ => unverified += 1,
-            }
-        }
-
-        // The fold: prior (300) + 4*kept − 9*violated, clamped to
-        // [0, 600] (the anchored trust-model's fold, P13).
-        let trust_points = (PRIOR_POINTS as i64 + KEEP_PER_WEIGHT as i64 * kept as i64
-            - VIOLATE_PER_WEIGHT as i64 * violated as i64)
-            .clamp(0, SCALE_POINTS as i64);
-        let delegation_radius = trust_points * 100 / SCALE_POINTS as i64;
+        // Rows come back newest-first (`valid_from DESC`), so the first
+        // violated event in the window is the most recent violation.
+        let last_violation = events.iter().find(|e| e.outcome == Outcome::Violated);
 
         let mut result = format!(
             "[Trust state] T={}/{} (delegation radius {}%). \
              Window: kept={}, violated={}, renegotiated={}, unverified={}.",
-            trust_points,
+            stats.trust_points,
             hkask_trust::SCALE_POINTS,
-            delegation_radius,
-            kept,
-            violated,
-            renegotiated,
-            unverified,
+            stats.delegation_radius_percent(),
+            stats.kept,
+            stats.violated,
+            stats.renegotiated,
+            stats.unverified,
         );
 
-        if violated > 0 {
-            result.push_str(&format!(
-                " Last violation: \"{}\"",
-                last_violation_text.unwrap_or_default()
-            ));
-            if let Some(cost) = last_violation_cost {
-                result.push_str(&format!(" (operator cost: {})", cost));
-            }
+        if let Some(violation) = last_violation {
+            result.push_str(&format!(" Last violation: \"{}\"", violation.text));
             result.push_str(". This trust account is the operator's, not yours.");
         }
 
@@ -1531,6 +1490,227 @@ pub(crate) mod tests {
         }));
         port.external_passphrase = "test-passphrase".to_string();
         port
+    }
+
+    /// A canonical trust-ledger event — the fields the wire module
+    /// serializes. Summary tests write rows through
+    /// `trust_ledger_hmem::event_to_h_mem` so they read the production
+    /// wire format, not a hand-rolled one.
+    fn trust_ledger_event(
+        outcome: Outcome,
+        weight: hkask_trust::Weight,
+        hours_ago: i64,
+        text: &str,
+    ) -> hkask_trust::LedgerEvent {
+        hkask_trust::LedgerEvent {
+            id: hkask_trust::LedgerEventId::new(),
+            text: text.to_string(),
+            source: "interaction-test".to_string(),
+            weight,
+            outcome,
+            ts: chrono::Utc::now() - chrono::Duration::hours(hours_ago),
+            oracle_note: None,
+        }
+    }
+
+    fn store_trust_event(
+        store: &Arc<MemoryStore>,
+        webid: &WebID,
+        event: &hkask_trust::LedgerEvent,
+    ) {
+        let h_mem = trust_ledger_hmem::event_to_h_mem(event, webid);
+        store.store(h_mem).expect("store trust-ledger row");
+    }
+
+    // ── trust_state_summary — the injected trust account (P13) ─────────
+    //
+    // The summary is the regulation loop's control signal fed back to
+    // the agent. These pins hold it to the anchored model's fold
+    // (+4·w per keep, −9·w per violation, renegotiated folds as a keep)
+    // over the canonical wire format — the count-based fold this
+    // replaced read one violated explicit as −9 instead of −27.
+
+    /// An empty window folds to the prior: T=300/600, radius 50%.
+    #[tokio::test]
+    async fn trust_summary_empty_window_folds_the_prior() {
+        let port = in_memory_port();
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(
+            summary.contains("T=300/600 (delegation radius 50%)"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("kept=0, violated=0, renegotiated=0, unverified=0"),
+            "{summary}"
+        );
+        assert!(!summary.contains("Last violation"), "{summary}");
+    }
+
+    /// A violated explicit instruction costs 9·3 = 27 points, not 9 —
+    /// the fold is weight-scaled (291 here is the count-fold smell).
+    #[tokio::test]
+    async fn trust_summary_violation_is_weight_scaled() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Explicit,
+                0,
+                "verify every quote",
+            ),
+        );
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=273/600"), "{summary}");
+        assert!(summary.contains("violated=1"), "{summary}");
+        assert!(
+            summary.contains("Last violation: \"verify every quote\""),
+            "{summary}"
+        );
+    }
+
+    /// Renegotiated folds as a weight-scaled keep (trust
+    /// internalization v2): kept implicit (+4) + renegotiated
+    /// explicit (+12) → 316.
+    #[tokio::test]
+    async fn trust_summary_renegotiated_folds_as_a_weight_scaled_keep() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Kept,
+                hkask_trust::Weight::Implicit,
+                0,
+                "kept implicit",
+            ),
+        );
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Renegotiated,
+                hkask_trust::Weight::Explicit,
+                0,
+                "renegotiated",
+            ),
+        );
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=316/600"), "{summary}");
+        assert!(
+            summary.contains("kept=1, violated=0, renegotiated=1, unverified=0"),
+            "{summary}"
+        );
+    }
+
+    /// Mixed weights scale both sides: kept implicit (+4) and
+    /// violated committed (−18) → 286.
+    #[tokio::test]
+    async fn trust_summary_mixed_weights_scale_both_sides() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(Outcome::Kept, hkask_trust::Weight::Implicit, 0, "kept"),
+        );
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Committed,
+                0,
+                "violated",
+            ),
+        );
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=286/600"), "{summary}");
+    }
+
+    /// Events outside the window age out; the prior holds.
+    #[tokio::test]
+    async fn trust_summary_old_events_age_out() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Explicit,
+                48,
+                "old violation",
+            ),
+        );
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(summary.contains("T=300/600"), "{summary}");
+        assert!(summary.contains("violated=0"), "{summary}");
+    }
+
+    /// The most recent violation is the one named — rows come back
+    /// newest-first (`valid_from DESC`).
+    #[tokio::test]
+    async fn trust_summary_names_the_most_recent_violation() {
+        let port = in_memory_port();
+        let store = port.trust_ledger_store().expect("ledger store");
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Explicit,
+                2,
+                "older violation",
+            ),
+        );
+        store_trust_event(
+            &store,
+            &port.curator_webid,
+            &trust_ledger_event(
+                Outcome::Violated,
+                hkask_trust::Weight::Explicit,
+                1,
+                "newer violation",
+            ),
+        );
+
+        let summary = port.trust_state_summary(24).expect("summary");
+        assert!(
+            summary.contains("Last violation: \"newer violation\""),
+            "{summary}"
+        );
+        assert!(!summary.contains("older violation"), "{summary}");
+    }
+
+    /// A read error degrades to an error, never to a false T=0 or
+    /// T=300 claim — the injector warns and injects nothing.
+    #[tokio::test]
+    async fn trust_summary_unavailable_store_surfaces_not_zero() {
+        let embedding_port = LanguageModelEmbeddingPort::for_tests();
+        let port = RealMemoryPort {
+            curator_store: Arc::new(CuratorStore::for_tests(None)),
+            embedding_port: Some(embedding_port),
+            embedding_model: "test-model".to_string(),
+            external_passphrase: String::new(),
+            external_sources: Arc::new(std::sync::Mutex::new(None)),
+            classifier_model: None,
+            template_root: std::path::PathBuf::from("test-registry-root"),
+            curator_webid: WebID::from_persona(b"curator"),
+            curator_consolidation: Arc::new(RwLock::new(None)),
+            consolidation_cadence_secs: 0,
+            confidence_floor: 0.3,
+            tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
+        };
+        let error = port.trust_state_summary(24).expect_err("unavailable store");
+        assert!(
+            error.contains("curator trust-ledger store unavailable"),
+            "{error}"
+        );
     }
 
     /// A selected sealed source returns passage provenance; manifest changes

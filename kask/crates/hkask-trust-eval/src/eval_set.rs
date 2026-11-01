@@ -569,7 +569,7 @@ pub fn pinned_tasks() -> Vec<EvalTask> {
             "V3",
             "the trust ledger module",
             vec![
-                claim(1, "record_instruction rejects empty instruction text in kask/crates/hkask-trust/src/ledger.rs", true, "EmptyInstruction error at ledger.rs:204-205"),
+                claim(1, "record_instruction rejects empty instruction text in kask/crates/hkask-trust/src/ledger.rs", true, "EmptyInstruction error at ledger.rs:242-243"),
                 claim(2, "The window fold starts from a 300-point prior", true, "PRIOR_POINTS = 300 folds from hkask_trust.rs:46"),
                 claim(3, "The ledger keeps a recovery-debt balance that violations must repay", false, "no debt state: the fold clamps to 0, no repayment ledger"),
                 claim(4, "Outcomes must be resolved within one hour of recording the instruction", false, "no time bound on outcome resolution exists"),
@@ -651,9 +651,11 @@ fn verification_task(id: &'static str, subject: &str, claims: Vec<ClaimSpec>) ->
 // ── The content pin ───────────────────────────────────────────────────────
 
 /// The pinned content hash of the task set. Refreshed ONLY deliberately,
-/// with the change that earns it.
+/// with the change that earns it (2026-10-31: the V3 claim-1 grounding
+/// pointer followed its cited code — `ledger.rs:204-205` → `242-243`
+/// after `WindowStats::from_events` moved `record_instruction` down).
 pub const PINNED_SET_HASH: &str =
-    "7be8d7acf8158539e640e2dcc26c3c9d042703d647337305c56ea489698a78f7";
+    "2a2116b51918f4aa0c1e78eaddf02a22ef5fe7bfd3a1797b26611b460d73d495";
 
 #[derive(Serialize)]
 struct HashInstruction {

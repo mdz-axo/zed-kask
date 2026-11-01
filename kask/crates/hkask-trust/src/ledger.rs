@@ -112,6 +112,36 @@ pub struct WindowStats {
 }
 
 impl WindowStats {
+    /// The window's visible counts plus the fold's result for an
+    /// already-decoded window of events — the one count+fold every
+    /// reader of the ledger shares (the stores decode rows into
+    /// `LedgerEvent`s; this computes the account). Weight-scaled
+    /// (+4·w / −9·w), renegotiated folds as a keep, clamped to
+    /// [0, SCALE_POINTS] from the prior.
+    pub fn from_events(events: &[LedgerEvent]) -> Self {
+        let mut stats = WindowStats {
+            trust_points: crate::PRIOR_POINTS,
+            kept: 0,
+            violated: 0,
+            unverified: 0,
+            renegotiated: 0,
+        };
+        let mut fold_events = Vec::with_capacity(events.len());
+        for event in events {
+            match event.outcome {
+                Outcome::Kept => stats.kept += 1,
+                Outcome::Violated => stats.violated += 1,
+                Outcome::Renegotiated => stats.renegotiated += 1,
+                Outcome::Unverified => stats.unverified += 1,
+            }
+            if let Some(fold_event) = event.fold_event() {
+                fold_events.push(fold_event);
+            }
+        }
+        stats.trust_points = crate::trust_points_from(crate::PRIOR_POINTS, &fold_events);
+        stats
+    }
+
     /// The delegation radius: how far work extends without re-checking.
     /// T is the radius in trust points; the account's resolution is the
     /// percent scale.
@@ -250,27 +280,7 @@ impl TrustLedger {
     /// The window's visible counts plus the fold's result.
     pub fn window_stats(&self, since: DateTime<Utc>) -> Result<WindowStats, TrustError> {
         let events = self.store.window(since)?;
-        let mut stats = WindowStats {
-            trust_points: crate::PRIOR_POINTS,
-            kept: 0,
-            violated: 0,
-            unverified: 0,
-            renegotiated: 0,
-        };
-        let mut fold_events = Vec::with_capacity(events.len());
-        for event in &events {
-            match event.outcome {
-                Outcome::Kept => stats.kept += 1,
-                Outcome::Violated => stats.violated += 1,
-                Outcome::Renegotiated => stats.renegotiated += 1,
-                Outcome::Unverified => stats.unverified += 1,
-            }
-            if let Some(fold_event) = event.fold_event() {
-                fold_events.push(fold_event);
-            }
-        }
-        stats.trust_points = crate::trust_points_from(crate::PRIOR_POINTS, &fold_events);
-        Ok(stats)
+        Ok(WindowStats::from_events(&events))
     }
 
     /// The delegation radius in percent: how far work extends without
@@ -450,6 +460,49 @@ mod tests {
             .unwrap();
         let stats = ledger.window_stats(since).unwrap();
         assert_eq!(stats.trust_points, 297, "300 - 27 + 12 + 12");
+    }
+
+    /// `from_events` (the shared count+fold) is weight-scaled on both
+    /// sides and folds renegotiated as a keep — the exact account
+    /// `window_stats` reports, computable from any decoded window.
+    #[test]
+    fn from_events_is_the_canonical_weight_scaled_fold() {
+        let events = vec![
+            LedgerEvent {
+                id: LedgerEventId::new(),
+                text: "kept implicit".into(),
+                source: "i".into(),
+                weight: Weight::Implicit,
+                outcome: Outcome::Kept,
+                ts: Utc::now(),
+                oracle_note: None,
+            },
+            LedgerEvent {
+                id: LedgerEventId::new(),
+                text: "violated committed".into(),
+                source: "i".into(),
+                weight: Weight::Committed,
+                outcome: Outcome::Violated,
+                ts: Utc::now(),
+                oracle_note: None,
+            },
+            LedgerEvent {
+                id: LedgerEventId::new(),
+                text: "renegotiated explicit".into(),
+                source: "i".into(),
+                weight: Weight::Explicit,
+                outcome: Outcome::Renegotiated,
+                ts: Utc::now(),
+                oracle_note: None,
+            },
+        ];
+        let stats = WindowStats::from_events(&events);
+        assert_eq!(stats.kept, 1);
+        assert_eq!(stats.violated, 1);
+        assert_eq!(stats.renegotiated, 1);
+        // 300 + 4·1 − 9·2 + 4·3 (renegotiated folds as a keep) = 298.
+        assert_eq!(stats.trust_points, crate::PRIOR_POINTS + 4 - 18 + 12);
+        assert_eq!(stats.delegation_radius_percent(), 49);
     }
 
     /// StoreUnavailable surfaces — never serialized as an empty account.

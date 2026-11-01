@@ -434,8 +434,8 @@ impl ContextInjector for BridgeContextInjector {
 
             let mut context_text = String::new();
             // Trust-state injection (P13, seam 7 closing): the agent sees
-            // the operator's trust account — the folded trust points, the
-            // delegation radius, and the cost of the most recent violation.
+            // the operator's trust account — the folded trust points and
+            // the delegation radius.
             // This is the regulation loop's control signal fed back to the
             // controlled system (the agent). Read from the trust ledger
             // (entity `trust:ledger`), not from the agent's self-report.
