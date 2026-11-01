@@ -172,7 +172,8 @@ pub(crate) struct GoalTrustRecordResponse {
     pub goal_id: String,
     /// The number of trust events on the goal's ledger after this append.
     pub trust_event_count: usize,
-    /// The goal's trust summary — the regulation signal (seam 7).
+    /// The goal's trust summary — the goal JSON's violation counts (seam
+    /// 7); each event also bridges to the global trust account.
     pub trust_summary: GoalTrustSummary,
 }
 

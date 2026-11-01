@@ -579,8 +579,8 @@ pub fn pinned_tasks() -> Vec<EvalTask> {
             "V4",
             "the curator trust-ledger tools",
             vec![
-                claim(1, "trust_ledger_state defaults to a 24-hour window", true, "window_hours.unwrap_or(24) at hkask_mcp_curator.rs:1603"),
-                claim(2, "trust_ledger_steer renders a concealing action with path cliff and P_goal 0", true, "steer renders path cliff, p_goal 0 for conceals at hkask_mcp_curator.rs:1660-1672"),
+                claim(1, "trust_ledger_state defaults to a 24-hour window", true, "window_hours.unwrap_or(24) at hkask_mcp_curator.rs:1598"),
+                claim(2, "trust_ledger_steer renders a concealing action with path cliff and P_goal 0", true, "steer renders path cliff, p_goal 0 for conceals at hkask_mcp_curator.rs:1661-1668"),
                 claim(3, "trust_ledger_record_outcome takes the instruction weight as a parameter", false, "it takes event_id, outcome, oracle_note — no weight"),
                 claim(4, "The curator tools persist trust events to a separate trust.db database", false, "events persist as h_mems in the curator's MemoryStore"),
             ],
@@ -656,9 +656,11 @@ fn verification_task(id: &'static str, subject: &str, claims: Vec<ClaimSpec>) ->
 /// after `WindowStats::from_events` moved `record_instruction` down;
 /// 2026-11-01: the V1/V2/V3 claim pointers followed the trust-system
 /// repairs — the severity field, the wire decode home, and the sensor
-/// rewrite shifted every cited line).
+/// rewrite shifted every cited line; same day, pass 2: the V4 pointers
+/// followed the curator tool edits and the pre-existing 1603 drift —
+/// every claim pointer now names its cited code's current line).
 pub const PINNED_SET_HASH: &str =
-    "f369f3e2b6473defff9741ac5d3c78912e02683c86751825e5b838ceff2fa2a3";
+    "36a6f79393e1169dac6ad777eceb106aef84e4723f0b9166239a325720f0ad7d";
 
 #[derive(Serialize)]
 struct HashInstruction {
