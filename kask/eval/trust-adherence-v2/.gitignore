@@ -1,0 +1,5 @@
+# Fixtures are regenerated from the pinned generator (gen-fixtures.sh,
+# hash-asserted); the 250MB oracle blob and the git fixture repos stay out
+# of the tree. Run evidence (runs/) IS committed — it is the adjudication
+# record, the v1 pattern.
+fixtures/
