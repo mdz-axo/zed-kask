@@ -1,34 +1,5 @@
 use super::*;
 
-/// Pins the per-metric impact direction: fleet health, tool
-/// reliability, and pass rate improve upward; variety deficit
-/// improves downward; everything else has no verified impact path
-/// (`verify_impact` falls back to any-nonzero-delta).
-#[test]
-fn impact_direction_covers_the_verifiable_metrics() {
-    assert_eq!(
-        SignalMetric::ContextServerHealth.impact_direction(),
-        Some(true)
-    );
-    assert_eq!(SignalMetric::ToolReliability.impact_direction(), Some(true));
-    assert_eq!(SignalMetric::PassRate.impact_direction(), Some(true));
-    assert_eq!(SignalMetric::VarietyDeficit.impact_direction(), Some(false));
-    assert_eq!(
-        SignalMetric::OcrSilentFailures.impact_direction(),
-        Some(false)
-    );
-    assert_eq!(
-        SignalMetric::ExperimentationStuckExperiments.impact_direction(),
-        Some(false)
-    );
-    assert_eq!(
-        SignalMetric::NativeFirstRate.impact_direction(),
-        Some(false),
-        "an increase in native-first turns is a degradation, not an improvement"
-    );
-    assert_eq!(SignalMetric::TestCoverage.impact_direction(), None);
-}
-
 /// Pins the strict boundary semantics: a value exactly AT the
 /// set-point is not a deviation. This is the boundary check behind
 /// `tool_reliability_degraded` and friends — non-strict (`>=`/`<=`)

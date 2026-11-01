@@ -41,26 +41,6 @@ pub(crate) const DEFAULT_OUTCOME_WARNING_THRESHOLD: f64 = 0.50;
 pub(crate) const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
 
 /// Default stagnation detection threshold (5 cycles).
-///
-/// After this many consecutive cycles of the same ineffective (metric, action)
-/// pair, a regulatory-plateau alert is triggered (persisted to the review
-/// queue; the `RegulatoryPlateau` SignalMetric/policy rule was removed
-/// 2026-08-30 as a superseded duplicate of this direct path).
-pub(crate) const DEFAULT_STAGNATION_THRESHOLD: u32 = 5;
-
-/// Default stage threshold for ActionDecision: 5% relative worsening.
-///
-/// When an action worsens its target metric by less than this ratio,
-/// it's accepted as noise. Between this and `DEFAULT_BLOCK_WORSENING_RATIO`,
-/// it's staged for review.
-pub(crate) const DEFAULT_STAGE_WORSENING_RATIO: f64 = 0.05;
-
-/// Default block threshold for ActionDecision: 20% relative worsening.
-///
-/// When an action worsens its target metric by this ratio or more,
-/// the (metric, action_type) pair is blocked until Curation intervenes.
-pub(crate) const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
-
 /// Default tool reliability threshold (0.80 = 80% success rate).
 ///
 /// When the aggregate tool success rate drops below this, the
@@ -173,17 +153,6 @@ pub struct SetPoints {
     // ── Loop regulation (v0.30.0) ──
     /// Maximum regulation iterations per cycle. Default: 100.
     pub max_iterations: u32,
-    // ── Stagnation detection (v0.31.0, Fermi pattern) ──
-    /// Per-metric stagnation thresholds. Key: metric name (snake_case),
-    /// value: cycles before the regulatory-plateau alert. Unlisted metrics
-    /// use `DEFAULT_STAGNATION_THRESHOLD` (5).
-    pub stagnation_thresholds: std::collections::HashMap<String, u32>,
-    /// Action decision stage threshold: max relative worsening before
-    /// an action is staged for review (0.0–1.0). Default: 0.05.
-    pub stage_worsening_ratio: f64,
-    /// Action decision block threshold: min relative worsening to
-    /// hard-block an action (0.0–1.0). Default: 0.20.
-    pub block_worsening_ratio: f64,
 
     /// Minimum tool reliability (success rate) before the Cybernetics Loop
     /// escalates. Sensed from `RegulationLedger::outcome_breakdown` via the
@@ -253,9 +222,6 @@ pub(crate) struct SetPointsConfig {
     pub outcome_warning_threshold: Option<f64>,
     pub outcome_critical_threshold: Option<f64>,
     pub max_iterations: Option<u32>,
-    pub stagnation_thresholds: Option<std::collections::HashMap<String, u32>>,
-    pub stage_worsening_ratio: Option<f64>,
-    pub block_worsening_ratio: Option<f64>,
 
     pub tool_reliability_threshold: Option<f64>,
     pub native_first_rate_threshold: Option<f64>,
@@ -297,9 +263,6 @@ impl Default for SetPoints {
             outcome_warning_threshold: DEFAULT_OUTCOME_WARNING_THRESHOLD,
             outcome_critical_threshold: DEFAULT_OUTCOME_CRITICAL_THRESHOLD,
             max_iterations: DEFAULT_MAX_ITERATIONS,
-            stagnation_thresholds: std::collections::HashMap::new(),
-            stage_worsening_ratio: DEFAULT_STAGE_WORSENING_RATIO,
-            block_worsening_ratio: DEFAULT_BLOCK_WORSENING_RATIO,
 
             tool_reliability_threshold: DEFAULT_TOOL_RELIABILITY_THRESHOLD,
             native_first_rate_threshold: DEFAULT_NATIVE_FIRST_RATE_THRESHOLD,
@@ -342,16 +305,6 @@ impl SetPoints {
                 .outcome_critical_threshold
                 .unwrap_or(defaults.outcome_critical_threshold),
             max_iterations: config.max_iterations.unwrap_or(defaults.max_iterations),
-            stagnation_thresholds: config
-                .stagnation_thresholds
-                .clone()
-                .unwrap_or(defaults.stagnation_thresholds),
-            stage_worsening_ratio: config
-                .stage_worsening_ratio
-                .unwrap_or(defaults.stage_worsening_ratio),
-            block_worsening_ratio: config
-                .block_worsening_ratio
-                .unwrap_or(defaults.block_worsening_ratio),
 
             tool_reliability_threshold: config
                 .tool_reliability_threshold
@@ -415,13 +368,6 @@ impl SetPoints {
 
         if self.max_iterations == 0 {
             return Err(anyhow::anyhow!("max_iterations must be > 0"));
-        }
-        if self.stage_worsening_ratio >= self.block_worsening_ratio {
-            return Err(anyhow::anyhow!(
-                "stage_worsening_ratio ({}) must be < block_worsening_ratio ({})",
-                self.stage_worsening_ratio,
-                self.block_worsening_ratio
-            ));
         }
 
         if self.dampen_window_secs == 0 {

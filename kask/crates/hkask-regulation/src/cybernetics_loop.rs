@@ -28,94 +28,15 @@
 mod cycle;
 mod directive;
 
-use crate::dampener::{Dampener, StagnationDetector};
+use crate::dampener::Dampener;
 
-/// Why a [`RolloutEventSource`] call could not be served.
-///
-/// The regulation crate owns the port but not the storage engine, so the
-/// adapter's concrete error type is not nameable here. Each variant carries
-/// the adapter's rendered detail; the variant itself is the part the loop
-/// reasons about (a failed read blinds `verify_impact`; a failed write-back
-/// only loses the persisted verdict).
-#[derive(Debug, thiserror::Error)]
-pub enum RolloutEventError {
-    /// The backing store could not be queried for the rollout's events. The
-    /// loop cannot tell "no baseline" from "store down", so it must warn
-    /// rather than treat the absence as a measurement.
-    #[error("event store query failed: {detail}")]
-    Query { detail: String },
-    /// The impact verdict could not be appended. The loop's in-memory
-    /// `ImpactReport` is unaffected; only the durable record is lost.
-    #[error("impact verdict write-back failed: {detail}")]
-    WriteBack { detail: String },
-}
-
-/// A read-and-write view of rollout events for impact verification and
-/// impact- verdict write-back (event-substrate phase 6). The regulation
-/// crate defines the port; the kask_bridge side implements it over
-/// `hkask-event-store`. This keeps the regulation crate dependency-light
-/// (no storage dep) while letting `verify_impact` answer "for rollout R,
-/// what was the metric before action A and after it?" as a query instead
-/// of a special-case struct walk, and write its impact verdict back so
-/// downstream event-store readers can see "the regulation system verified
-/// this action's impact."
-///
-/// Canonical model: Agent Lightning's `RewardData.source` — the
-/// regulation loop's impact verdict is a `regulation_impact`-sourced
-/// verdict event, distinct from `deterministic_evaluator` (the harness's
-/// check) and `operator` (a human stamp).
-#[derive(Debug, Clone, PartialEq)]
-pub struct RolloutMetricObservation {
-    pub before: f64,
-    pub after: f64,
-    pub sample_sizes: Option<(u64, u64)>,
-}
-
-pub trait RolloutEventSource: Send + Sync {
-    /// The value of `metric` for `rollout_id` at the event position
-    /// `before_position` (the last event before the action) and at the
-    /// rollout's end. `None` when the rollout has no event for that metric
-    /// — absence, not zero (a fabricated 0 would read as a real measurement).
-    fn metric_observation(
-        &self,
-        rollout_id: &str,
-        metric: &str,
-        before_position: i64,
-    ) -> Result<Option<RolloutMetricObservation>, RolloutEventError>;
-
-    /// Write the regulation loop's impact verdict back to the event store
-    /// as a `verdict` event with `source: regulation_impact`. Closes the
-    /// feedback loop: the loop measured the action's impact and persists
-    /// its judgment so downstream consumers can see it alongside the
-    /// deterministic-evaluator verdicts the harness wrote.
-    ///
-    /// Takes primitives (not `VerdictSource`) so the regulation crate stays
-    /// dependency-light — the adapter maps to the typed wire string.
-    ///
-    /// `before`/`after` are the metric values the loop measured.
-    /// `improved` is the loop's directional judgment. `decision` is the
-    /// `ActionDecision` string ("Accept"/"Worsen"/"Block").
-    ///
-    /// A write failure returns `Err` — the caller warns and continues
-    /// (the loop's internal `ImpactReport` is unaffected; only the
-    /// store write-back is lost). Never silently drops.
-    fn append_impact_verdict(
-        &self,
-        rollout_id: &str,
-        metric: &str,
-        before: f64,
-        after: f64,
-        improved: bool,
-        decision: &str,
-    ) -> Result<(), RolloutEventError>;
-}
 use crate::energy::{CallCapManager, CallMeterOutcome};
 use crate::sensor_provider::{SensorBus, VarietySensor};
 
 use crate::runtime::RegulationLedger;
 use crate::set_points::SetPoints;
 
-use crate::loops::{ActionDecision, CurationInput, LoopMetrics, TriggerOrigin};
+use crate::loops::{CurationInput, LoopMetrics, TriggerOrigin};
 
 use hkask_types::CuratorDirective;
 use hkask_types::WebID;
@@ -124,52 +45,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::{RwLock, mpsc};
-
-/// Runtime-calibratable regulation thresholds — mutable layer over `SetPoints` defaults.
-struct CalibratedThresholds {
-    stagnation_thresholds: HashMap<String, u32>,
-    block_worsening_ratio: f64,
-}
-
-const MAX_SUBMITTED_ROLLOUT_CHECKS: usize = 64;
-const MAX_ROLLOUT_READ_ATTEMPTS: u8 = 3;
-
-/// Admission result for a rollout impact check.
-///
-/// Acceptance means only that the check is retained for the next assessment
-/// pass. It does not imply that assessment ran or that a verdict was written.
-#[must_use = "the producer must retain its source event until submission is accepted"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RolloutImpactSubmission {
-    Accepted,
-    QueueFull { capacity: usize },
-}
-
-#[derive(Clone)]
-struct RolloutImpactCheck {
-    rollout_id: String,
-    before_position: i64,
-    metric: String,
-    read_attempts: u8,
-}
-
-struct PreparedImpactCheck {
-    check: RolloutImpactCheck,
-    metric: crate::loops::SignalMetric,
-    observation: RolloutMetricObservation,
-}
-
-/// One tick's read of the accepted-check worklist. `ready` carries the
-/// checks whose evidence was read for verdict classification, `retry` the
-/// checks a store-read error retained for a later tick, and `exhausted`
-/// the checks dropped after `MAX_ROLLOUT_READ_ATTEMPTS` failed reads —
-/// the lost assessments the tick must escalate before they leave the
-/// worklist unverified.
-struct ImpactPreparation {
-    ready: Vec<PreparedImpactCheck>,
-    retry: Vec<RolloutImpactCheck>,
-    exhausted: Vec<RolloutImpactCheck>,
-}
 
 #[derive(Default)]
 struct LoopTelemetryState {
@@ -278,17 +153,6 @@ pub struct CyberneticsLoop {
     /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
     /// Direct curator directive channel: Curation → Cybernetics.
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
-    /// Externally-submitted rollout impact checks, claimed by the next
-    /// `tick` and answered by `verify_impact` once their evidence is read;
-    /// a store-read error retains a check in this queue for a later tick
-    /// within `MAX_ROLLOUT_READ_ATTEMPTS`. Producers (the rollout harness,
-    /// the Curator) submit a `RolloutImpactCheck` when they want the loop to
-    /// verify a rollout's metric movement across an action — this is the
-    /// producer side of the event-substrate phase 6 seam.
-    submitted_rollout_checks: tokio::sync::Mutex<Vec<RolloutImpactCheck>>,
-    /// Serializes ticks so only one claims accepted checks at a time;
-    /// a cancelled tick releases it with unprepared checks still queued.
-    impact_tick: tokio::sync::Mutex<()>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
     /// Coalesces only semantically identical persistent signal telemetry.
@@ -300,18 +164,9 @@ pub struct CyberneticsLoop {
     condition_log_state: Mutex<ConditionLogState>,
     /// Conditions already archived while board delivery was unavailable.
     fallback_alert_conditions: Mutex<HashSet<String>>,
-    /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
-    /// Fermi-inspired early-stopping pattern for cybernetic regulation.
-    stagnation_detector: Arc<StagnationDetector>,
     /// Pluggable metric sensors (Fermi Extractor pattern).
     sensor_registry: Arc<SensorBus>,
     observations: parking_lot::Mutex<HashMap<crate::loops::SignalMetric, crate::loops::Signal>>,
-    /// Runtime-calibratable thresholds — updated by `SetPointCalibrator` background task.
-    calibrated_thresholds: Arc<RwLock<CalibratedThresholds>>,
-    /// Optional rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for before/after metric values named by a
-    /// typed `RolloutImpactCheck`; there is no advisory re-sense fallback.
-    rollout_events: Option<Arc<dyn RolloutEventSource>>,
     /// Optional context-server health source retained so advisory construction
     /// can carry the current fleet counts as quantitative trigger evidence.
     /// The sensor registry holds a `ContextServerHealthSensor` wrapping the
@@ -350,15 +205,7 @@ impl CyberneticsLoop {
             std::time::Duration::from_secs(set_points.override_cooldown_secs),
         ));
         let max_iterations = set_points.max_iterations;
-        let stagnation_detector = Arc::new(
-            StagnationDetector::new(crate::set_points::DEFAULT_STAGNATION_THRESHOLD)
-                .with_per_metric_thresholds(set_points.stagnation_thresholds.clone()),
-        );
         let call_cap_manager = Arc::new(RwLock::new(CallCapManager::new()));
-        let calibrated_thresholds = Arc::new(RwLock::new(CalibratedThresholds {
-            stagnation_thresholds: set_points.stagnation_thresholds.clone(),
-            block_worsening_ratio: set_points.block_worsening_ratio,
-        }));
         let sensor_registry = {
             let registry = SensorBus::new();
 
@@ -397,17 +244,12 @@ impl CyberneticsLoop {
             alerts_tx: None,
             alert_email_sink: None,
             curator_directive_rx: None,
-            submitted_rollout_checks: tokio::sync::Mutex::new(Vec::new()),
-            impact_tick: tokio::sync::Mutex::new(()),
             loop_quality: RwLock::new(LoopMetrics::default()),
             loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
             condition_log_state: Mutex::new(ConditionLogState::default()),
             fallback_alert_conditions: Mutex::new(HashSet::new()),
-            stagnation_detector,
             sensor_registry,
             observations: parking_lot::Mutex::new(HashMap::new()),
-            calibrated_thresholds,
-            rollout_events: None,
             context_server_health_source: None,
         }
     }
@@ -419,18 +261,6 @@ impl CyberneticsLoop {
     #[must_use = "builder methods must be chained or assigned"]
     pub fn with_event_sink(mut self, sink: Arc<dyn RegulationSink>) -> Self {
         self.event_sink = Some(sink);
-        self
-    }
-
-    /// Wire the rollout event source (event-substrate phase 6). When wired,
-    /// `verify_impact` queries it for the before/after values named by typed
-    /// rollout checks.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_rollout_event_source(mut self, source: Arc<dyn RolloutEventSource>) -> Self {
-        self.rollout_events = Some(source);
         self
     }
 
@@ -639,46 +469,6 @@ impl CyberneticsLoop {
         );
     }
 
-    /// Submit a rollout impact check for the next `verify_impact` pass.
-    ///
-    /// This is the producer side of the event-substrate phase 6 seam: a
-    /// caller that observed a metric-relevant event on a rollout (e.g. the
-    /// harness observing a pass-rate regression after a card change) asks
-    /// the loop to verify the before/after movement from the rollout event
-    /// store. An accepted check is queued and answered on the next tick —
-    /// or on a later tick while a store-read error is retried within
-    /// `MAX_ROLLOUT_READ_ATTEMPTS` — and the submitter never blocks on
-    /// assessment. A full queue returns typed backpressure without
-    /// replacing an earlier accepted check.
-    ///
-    /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
-    /// post: returns whether the check was retained for a later tick's verify_impact
-    pub async fn submit_rollout_impact_check(
-        &self,
-        rollout_id: String,
-        before_position: i64,
-        metric: String,
-    ) -> RolloutImpactSubmission {
-        let check = RolloutImpactCheck {
-            rollout_id,
-            before_position,
-            metric,
-            read_attempts: 0,
-        };
-        let mut queue = self.submitted_rollout_checks.lock().await;
-        // Bound the queue without invalidating an earlier acceptance. When the
-        // queue is full, the producer retains its event cursor and retries
-        // after the next tick frees capacity — retained read failures still
-        // count against the bound until they verify or exhaust retries.
-        if queue.len() >= MAX_SUBMITTED_ROLLOUT_CHECKS {
-            return RolloutImpactSubmission::QueueFull {
-                capacity: MAX_SUBMITTED_ROLLOUT_CHECKS,
-            };
-        }
-        queue.push(check);
-        RolloutImpactSubmission::Accepted
-    }
-
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
     ///
     /// Delegates to `RegulationLedger::record_outcome`. Called by `McpRuntime`
@@ -813,7 +603,6 @@ impl CyberneticsLoop {
         &self,
         deviations: &[crate::loops::Deviation],
         actions: &[crate::loops::RegulatoryAction],
-        force_transition: bool,
         tick_number: usize,
     ) -> LoopTelemetryDecision {
         const HEARTBEAT_INTERVAL_TICKS: usize = 360; // 10s scheduled cadence → hourly
@@ -849,13 +638,6 @@ impl CyberneticsLoop {
                     suppressed_cycles,
                 }
             }
-            Some(_) if force_transition => LoopTelemetryDecision {
-                emit: true,
-                idle_heartbeat: false,
-                steady_state_heartbeat: false,
-                condition_cleared: false,
-                suppressed_cycles: std::mem::take(&mut state.suppressed_cycles),
-            },
             Some(_) => {
                 state.suppressed_cycles = state.suppressed_cycles.saturating_add(1);
                 if tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS) {
@@ -880,10 +662,9 @@ impl CyberneticsLoop {
                 let condition_cleared = state.steady_fingerprint.take().is_some();
                 let suppressed_cycles = std::mem::take(&mut state.suppressed_cycles);
                 let idle_heartbeat = !condition_cleared
-                    && !force_transition
                     && (tick_number == 1 || tick_number.is_multiple_of(HEARTBEAT_INTERVAL_TICKS));
                 LoopTelemetryDecision {
-                    emit: condition_cleared || force_transition || idle_heartbeat,
+                    emit: condition_cleared || idle_heartbeat,
                     idle_heartbeat,
                     steady_state_heartbeat: false,
                     condition_cleared,
@@ -895,13 +676,9 @@ impl CyberneticsLoop {
 
     /// Full regulation cycle with loop-quality telemetry.
     ///
-    /// Measures elapsed time and computes rollout-impact progress after each cycle.
-    /// Computed advisories are routed for operator action; only externally
-    /// submitted checks with before/after evidence enter `verify_impact`.
+    /// Measures elapsed time and computes loop-quality metrics after each
+    /// cycle. Computed advisories are routed for operator action.
     pub async fn tick(&self) {
-        // Only one tick claims accepted checks at a time; cancellation drops
-        // this guard while unprepared checks remain in the bounded worklist.
-        let _impact_tick = self.impact_tick.lock().await;
         let start = std::time::Instant::now();
         self.tick_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -918,100 +695,39 @@ impl CyberneticsLoop {
         }
         let deviations = self.compare(&signals).await;
         let actions = self.compute(&deviations).await;
-        // Claim externally submitted checks separately from computed advice.
-        // Computed actions are routed to the operator and have no causal
-        // impact to verify until an intervention is confirmed. Rollout checks
-        // already carry an evidence-bearing before/after query contract.
-        let impact_checks = self.submitted_rollout_checks.lock().await.clone();
-        if !impact_checks.is_empty() {
-            tracing::debug!(
-                target: "reg.cybernetics",
-                count = impact_checks.len(),
-                "claimed submitted rollout impact checks for this tick"
-            );
-        }
         self.act(&actions).await;
         // §9.4's clearing leg on the log surface: a warned condition that
         // left deviation announces once and re-arms its warn latch. Runs
         // after compute/act so this tick's own entries are never cleared.
         self.report_cleared_conditions(&deviations);
 
-        // Read fallible evidence before removing accepted work. Its entries
-        // occupy their queue slots until retry/terminal/ready is decided, so
-        // concurrent producers cannot overfill the queue or evict a check.
-        let ImpactPreparation {
-            ready,
-            mut retry,
-            exhausted,
-        } = self.prepare_impact_checks(&impact_checks);
-        {
-            let mut queue = self.submitted_rollout_checks.lock().await;
-            queue.drain(..impact_checks.len());
-            retry.extend(queue.drain(..));
-            *queue = retry;
-        }
-        // A check dropped after bounded read retries is an accepted
-        // assessment lost in normal operation — escalate the loss to the
-        // reviewable board before the tick continues. No verdict is written
-        // for it, so the absent-verdict restart rescan of accepted history
-        // remains its recovery backstop.
-        self.escalate_exhausted_checks(&exhausted).await;
-        let impact_reports = self.verify_impact(&ready).await;
-
-        // Feed regulation health into Regulation for metacognition observability.
-        {
-            let accepted = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Accept)
-                .count() as u64;
-            let staged = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Stage)
-                .count() as u64;
-            let blocked = impact_reports
-                .iter()
-                .filter(|r| r.decision == ActionDecision::Block)
-                .count() as u64;
-            let ledger = self.ledger.read().await;
-            ledger.record_cycle_outcome(accepted, staged, blocked).await;
-        }
+        // Feed regulation health into Regulation for metacognition
+        // observability: the per-cycle counter behind the Loop Cycles status.
+        self.ledger.read().await.record_cycle().await;
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-        let quality = LoopMetrics::from_cycle(
-            elapsed_ms,
-            &deviations,
-            &actions,
-            &impact_reports,
-            TriggerOrigin::Scheduled,
-        );
+        let quality =
+            LoopMetrics::from_cycle(elapsed_ms, &deviations, &actions, TriggerOrigin::Scheduled);
         *self.loop_quality.write().await = quality;
 
         // Coalesce only semantically identical persistent deviation/advisory
-        // cycles. Changed values, clearing, and rollout measurements always emit.
-        // Exact repeats accumulate until
+        // cycles. Changed values and clearing always emit. Exact repeats
+        // accumulate until
         // the existing hourly tick boundary re-announces liveness and reports
         // how many records were suppressed.
         let tick_number = self.tick_count.load(std::sync::atomic::Ordering::Relaxed);
 
-        let decision = self.loop_telemetry_decision(
-            &deviations,
-            &actions,
-            !impact_reports.is_empty(),
-            tick_number,
-        );
+        let decision = self.loop_telemetry_decision(&deviations, &actions, tick_number);
         if decision.emit {
             let mut observation = serde_json::json!({
                 "delay_ms": quality.delay_ms,
                 "response_coverage": quality.response_coverage,
                 "fidelity_score": quality.fidelity_score,
-                "rollout_progress_score": quality.rollout_progress_score,
 
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "advisories_computed": actions.len(),
-
-                "rollout_impact_reports": impact_reports.len(),
 
                 "suppressed_steady_state_cycles": decision.suppressed_cycles,
             });
@@ -1041,53 +757,6 @@ impl CyberneticsLoop {
                 self.emit_tool_outcome_breakdown().await;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod submission_tests {
-    use super::{CyberneticsLoop, MAX_SUBMITTED_ROLLOUT_CHECKS, RolloutImpactSubmission};
-    use crate::runtime::RegulationLedger;
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    #[tokio::test]
-    async fn saturated_rollout_queue_refuses_without_evicting_accepted_checks() {
-        let regulation = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
-
-        for position in 0..MAX_SUBMITTED_ROLLOUT_CHECKS {
-            assert_eq!(
-                regulation
-                    .submit_rollout_impact_check(
-                        format!("accepted-{position}"),
-                        position as i64,
-                        "pass_rate".to_string(),
-                    )
-                    .await,
-                RolloutImpactSubmission::Accepted
-            );
-        }
-
-        assert_eq!(
-            regulation
-                .submit_rollout_impact_check(
-                    "refused".to_string(),
-                    MAX_SUBMITTED_ROLLOUT_CHECKS as i64,
-                    "pass_rate".to_string(),
-                )
-                .await,
-            RolloutImpactSubmission::QueueFull {
-                capacity: MAX_SUBMITTED_ROLLOUT_CHECKS,
-            }
-        );
-
-        let queue = regulation.submitted_rollout_checks.lock().await;
-        assert_eq!(queue.len(), MAX_SUBMITTED_ROLLOUT_CHECKS);
-        assert_eq!(
-            queue.first().map(|check| check.rollout_id.as_str()),
-            Some("accepted-0")
-        );
-        assert!(queue.iter().all(|check| check.rollout_id != "refused"));
     }
 }
 

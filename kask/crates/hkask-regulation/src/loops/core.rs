@@ -2,8 +2,8 @@
 //!
 //! The Loop trait uses async-trait for object safety.
 
-use super::actions::{ActionType, RegulatoryAction};
-use super::signals::{Deviation, SignalMetric};
+use super::actions::RegulatoryAction;
+use super::signals::Deviation;
 use crate::algedonic::RuntimeAlert;
 
 /// Loop identifiers for the 4-loop model.
@@ -65,83 +65,6 @@ pub enum TriggerOrigin {
     Prompted,
 }
 
-/// Result of an evidence-bearing before/after impact check.
-///
-/// Fermi pattern: the "impact gate" compares observations on opposite sides
-/// of a recorded action boundary. Advisory routing does not create a report.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ImpactReport {
-    /// The action that was verified.
-    pub action_type: ActionType,
-    /// The metric the action targeted.
-    pub metric: SignalMetric,
-    /// Metric value before the recorded action boundary.
-    pub before: f64,
-    /// Metric value after the recorded action boundary.
-    pub after: f64,
-    /// Absolute change: after − before.
-    pub delta: f64,
-    /// Did the metric move in the intended direction?
-    pub improved: bool,
-    /// Classification decision based on the impact magnitude.
-    pub decision: ActionDecision,
-}
-
-impl ImpactReport {
-    /// Construct an ImpactReport, computing `improved` from the metric semantics.
-    ///
-    /// expect: "The system closes the cybernetic feedback loop by measuring action impact"
-    /// \[P9\] Homeostatic Self-Regulation — impact verification closes the regulation cycle
-    /// pre:  metric is a valid SignalMetric; before and after are sane numeric values
-    /// post: returns ImpactReport with delta=after-before, improved computed per metric semantics
-    ///
-    /// `decision` should be computed via `RegulationRule::classify()` by the caller.
-    pub fn new(
-        action_type: ActionType,
-        metric: SignalMetric,
-        before: f64,
-        after: f64,
-        decision: ActionDecision,
-    ) -> Self {
-        let delta = after - before;
-        let improved = match metric.impact_direction() {
-            Some(true) => delta > 0.0,
-            Some(false) => delta < 0.0,
-            None => false,
-        };
-        Self {
-            action_type,
-            metric,
-            before,
-            after,
-            delta,
-            improved,
-            decision,
-        }
-    }
-}
-
-/// Three-tier decision gate for verified actions (Fermi impact-gate pattern).
-///
-/// After re-sensing the target metric post-action, classify the outcome:
-/// - **Accept** — action improved the metric or worsened within noise tolerance.
-/// - **Stage** — action was moderately ineffective; escalate as Warning for review.
-/// - **Block** — action was severely counterproductive; prevent re-use for this metric.
-///
-/// Thresholds are per-metric configurable via SetPoints. Defaults:
-/// - Stage threshold: 5% relative worsening.
-/// - Block threshold: 20% relative worsening.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ActionDecision {
-    /// Observation improved or stayed within noise tolerance; not causal proof.
-    Accept,
-    /// Action was moderately ineffective — worth reviewing. Escalate as Warning.
-    Stage,
-    /// Action was severely counterproductive — prevent re-use. Escalate as Critical.
-    Block,
-}
-
 /// Loop-quality telemetry — measures the loop's own performance.
 ///
 /// These metrics are about the loop itself, not the signals it processes.
@@ -160,8 +83,6 @@ pub struct LoopMetrics {
     /// detected — trivially matched). 0.0 = deviations detected but none matched.
     /// Computed as: matched_deviations / total_deviations.
     pub fidelity_score: f64,
-    /// Fraction of evidence-bearing rollout impact reports that improved.
-    pub rollout_progress_score: Option<f64>,
     /// What triggered this tick.
     pub trigger: TriggerOrigin,
 }
@@ -172,7 +93,6 @@ impl Default for LoopMetrics {
             delay_ms: 0,
             response_coverage: 1.0,
             fidelity_score: 1.0,
-            rollout_progress_score: None,
 
             trigger: TriggerOrigin::Scheduled,
         }
@@ -182,24 +102,20 @@ impl Default for LoopMetrics {
 impl LoopMetrics {
     /// Compute loop quality from the cycle's inputs and outputs.
     ///
-    /// expect: "Only evidence-bearing rollout checks contribute to impact progress"
-    /// \[P9\] Homeostatic Self-Regulation — loop quality enables Regulation self-observation
+    /// expect: "Loop quality is computed from the cycle's measured inputs and outputs"
     /// pre:  elapsed_ms is measured wall-clock time; deviations and actions are from
     ///       the same regulation cycle
-    /// post: returns LoopMetrics with response_coverage, fidelity_score, and
-    ///       rollout progress computed from evidence-bearing cycle data
+    /// post: returns LoopMetrics with response_coverage and fidelity_score
+    ///       computed from the cycle's deviations and actions
     ///
     /// - `elapsed_ms`: wall-clock time from sense start to act end
     /// - `deviations`: deviations detected during compare
     /// - `actions`: actions produced during compute
-    /// - `impact_reports`: results from evidence-bearing `verify_impact`
     /// - `trigger`: what triggered this tick
     pub fn from_cycle(
         elapsed_ms: u64,
         deviations: &[Deviation],
         actions: &[RegulatoryAction],
-        impact_reports: &[ImpactReport],
-
         trigger: TriggerOrigin,
     ) -> Self {
         // Response coverage. When no deviations exist, the loop is
@@ -229,18 +145,10 @@ impl LoopMetrics {
         };
         // All matches use metric_name directly.
 
-        let rollout_progress_score = if impact_reports.is_empty() {
-            None
-        } else {
-            let improved = impact_reports.iter().filter(|r| r.improved).count() as f64;
-            Some(improved / impact_reports.len() as f64)
-        };
-
         Self {
             delay_ms: elapsed_ms,
             response_coverage,
             fidelity_score,
-            rollout_progress_score,
 
             trigger,
         }
@@ -297,9 +205,11 @@ pub enum LoopModel {
 /// Does the output carry the signal? (Fermi `outcome_trust` module)
 ///
 /// Answers: when the loop produces actions, do those actions actually move
-/// the metric? This is the impact-verification layer — `Trusted` means the
-/// action improved the metric (verified via `ImpactReport`), `Untrusted` means
-/// the action worsened it, and `Unverified` means no impact report exists.
+/// the metric? This was the impact-verification layer (the rollout-impact
+/// pathway, removed 2026-10-31); `Unverified` — no impact evidence — is
+/// now the only production reading, which the metacognition status surface
+/// reports as "impact unverified". `Trusted`/`Untrusted` remain for
+/// decoding persisted LoopView composites.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutcomeTrust {

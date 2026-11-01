@@ -19,7 +19,6 @@ hkask-storage.workspace = true
 hkask-mcp-experimentation.workspace = true
 hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban" }
 hkask-trust.workspace = true
-hkask-event-store.workspace = true
 r2d2.workspace = true
 
 hkask-inference.workspace = true

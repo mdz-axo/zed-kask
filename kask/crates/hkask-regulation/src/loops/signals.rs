@@ -98,8 +98,9 @@ pub enum SignalMetric {
     /// loop senses tool FAILURES but never instrument ABSENCE — the
     /// unsensed leg of the drift feedback loop.
     NativeFirstRate,
-    /// Fraction of successful evaluations in an externally observed rollout.
-    /// This metric is supplied by `RolloutEventSource`, not a periodic sensor.
+    /// Historical rollout pass-rate records. No periodic producer since the
+    /// rollout-impact pathway retired (2026-10-31); retained for decoding
+    /// persisted signals, not as a current quality measurement.
     PassRate,
     /// Historical test-coverage records. No periodic producer: unbound trace
     /// files are not evidence about the current artifact.
@@ -180,26 +181,6 @@ impl SignalMetric {
         ]
         .into_iter()
         .find(|metric| metric.as_str() == name)
-    }
-
-    /// Whether an increase in this metric is an improvement — the impact
-    /// direction `verify_impact` compares its before/after delta against.
-    /// `None` for metrics with no verified impact path; `verify_impact`
-    /// falls back to treating any nonzero delta as a change.
-    ///
-    /// This is the per-metric direction table, colocated with the metric
-    /// it describes.
-    pub fn impact_direction(&self) -> Option<bool> {
-        match self {
-            SignalMetric::ContextServerHealth
-            | SignalMetric::ToolReliability
-            | SignalMetric::PassRate => Some(true),
-            SignalMetric::VarietyDeficit
-            | SignalMetric::OcrSilentFailures
-            | SignalMetric::ExperimentationStuckExperiments
-            | SignalMetric::NativeFirstRate => Some(false),
-            _ => None,
-        }
     }
 }
 

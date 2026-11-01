@@ -9,7 +9,7 @@
 //! ## Why this lives in hkask-regulation
 //!
 //! Sensor providers are Regulation regulation infrastructure. They live alongside
-//! `CyberneticsLoop`, `StagnationDetector`, and `SetPoints` in `hkask-regulation`,
+//! `CyberneticsLoop` and `SetPoints` in `hkask-regulation`,
 //! the crate responsible for homeostatic self-regulation.
 
 use super::loops::{LoopId, Signal, SignalMetric};

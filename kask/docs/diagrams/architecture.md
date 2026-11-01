@@ -408,96 +408,12 @@ accounting identity, not a credential.
 
 ## hKask Event Store
 
-The `hkask-event-store` crate is the append-only event log for agent
-rollouts (`model_request` and `verdict` events). Its only composition-root
-consumer — the swarm-era rollout regression monitor wired via
-`kask_bridge/src/rollout_event_bridge.rs` — was removed 2026-10-31,
-completing the D33 swarm retirement: the swarm server that wrote
-`mcp/swarm/events.db` is gone, so the store has no production writer. The
-crate and the `hkask-regulation/src/cybernetics_loop.rs` event-source
-contract remain as library surface.
-
-```mermaid
-classDiagram
-    class EventStore {
-        -driver: Arc~dyn DatabaseDriver~
-        -clock: fn() -> String
-        +from_driver(driver) Result~EventStore~
-        +from_driver_with_clock(driver, clock) Result~EventStore~
-        +driver() ~Arc~dyn DatabaseDriver~~
-        -init_schema(driver) Result~()~
-        +append(rollout, kind, payload) Result~i64~
-        +query(filter) Result~Vec~EventRecord~~
-        +compact(cutoff_rfc3339) Result~usize~
-        +cursor() Result~Option~i64~~
-    }
-    class EventRecord {
-        +position: i64
-        +rollout_id: String
-        +kind: String
-        +payload: Value
-        +created_at: String
-    }
-    class EventFilter {
-        +rollout: Option~String~
-        +kind: Option~String~
-        +after_position: Option~i64~
-        +limit: Option~usize~
-    }
-    class EventStoreError {
-        <<enumeration>>
-        Database(DbError)
-        PayloadParse(serde_json::Error)
-        EmptyRolloutId
-        EmptyKind
-        NoPosition
-    }
-    class VerdictSource {
-        <<enumeration>>
-        DeterministicEvaluator
-        Operator
-        LlmJudged
-        RegulationImpact
-        +as_str() &'static str
-        +from_str(s) Option~Self~
-
-    }
-    class RolloutKind {
-        <<enumeration>>
-        Delegation
-        Turn
-        HarnessRun
-        +as_str() &'static str
-        +from_str(s) Option~Self~
-    }
-    class DatabaseDriver {
-        <<trait>>
-        +execute_batch(sql) Result~()~
-        +execute(sql, params) Result~usize~
-        +query(sql, params) Result~Vec~Row~~
-        +query_optional(sql, params) Result~Option~Row~~
-    }
-
-    EventStore --> DatabaseDriver : backed by
-    EventStore ..> EventRecord : produces
-    EventStore ..> EventFilter : consumes
-    EventStore ..> EventStoreError : propagates
-    EventRecord ..> VerdictSource : payload carries
-    EventRecord ..> RolloutKind : payload carries
-    note for VerdictSource "Trusted for task_success: DeterministicEvaluator, Operator"
-```
-
-<!-- DIAGRAM_ALIGNMENT
-id: DIAG-ES-001
-verified_date: 2026-10-18
-verified_against: kask/crates/hkask-event-store/src/hkask_event_store.rs (EventStore interface and retention); kask/crates/hkask-event-store/src/types.rs (VerdictSource, RolloutKind, EventStoreError); kask/crates/kask_bridge/src/rollout_event_bridge.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs
-status: VERIFIED
--->
-
-`VerdictSource` trust classification: `DeterministicEvaluator` and `Operator`
-are trusted for task success; `LlmJudged` is not (the determinism constraint
-forbids an LLM judging `task_success`); `RegulationImpact` is a before/after
-measurement, not a task-success check.
+The `hkask-event-store` crate was removed 2026-10-31 with the rollout-impact
+pathway (operator ruling, completing the D33 swarm retirement): its only
+production consumer was the swarm-era rollout regression monitor wired via
+`kask_bridge/src/rollout_event_bridge.rs`, and both the monitor and the
+swarm server that wrote `mcp/swarm/events.db` were already gone. The
+`hkask-regulation` event-source contract was removed in the same pass.
 
 ## hKask Viz-Core
 

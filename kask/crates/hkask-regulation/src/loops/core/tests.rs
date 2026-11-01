@@ -1,19 +1,15 @@
-use super::super::actions::RegulatoryActionParams;
-use super::super::signals::Signal;
+use super::super::actions::{ActionType, RegulatoryActionParams};
+use super::super::signals::{Signal, SignalMetric};
 use super::*;
 
 /// Pins F1 + F2 + F3: when no deviations or measurements exist
-/// (the healthy steady-state), response coverage and fidelity are 1.0,
-/// while rollout progress remains unknown.
-/// Unknown progress is represented as `None`, not a numeric zero or one,
-/// so unmeasured and measured-stagnant cycles remain distinguishable.
+/// (the healthy steady-state), response coverage and fidelity are 1.0.
 #[test]
 fn from_cycle_healthy_reports_trivially_correct_metrics() {
     let metrics = LoopMetrics::from_cycle(
         0,
         &[], // no deviations — healthy
         &[], // no actions
-        &[], // no impact reports — unverified
         TriggerOrigin::Scheduled,
     );
     assert_eq!(
@@ -24,7 +20,6 @@ fn from_cycle_healthy_reports_trivially_correct_metrics() {
         metrics.fidelity_score, 1.0,
         "fidelity=1.0 when healthy (trivially matched)"
     );
-    assert_eq!(metrics.rollout_progress_score, None);
 }
 
 /// Response coverage counts handled deviations and remains bounded.
@@ -47,7 +42,7 @@ fn from_cycle_response_coverage_is_dispositions_over_deviations() {
         RegulatoryActionParams::reason("tool_reliability_degraded"),
         "tool_reliability".into(),
     );
-    let metrics = LoopMetrics::from_cycle(0, &deviations, &[action], &[], TriggerOrigin::Scheduled);
+    let metrics = LoopMetrics::from_cycle(0, &deviations, &[action], TriggerOrigin::Scheduled);
     assert_eq!(
         metrics.response_coverage, 0.5,
         "1 disposition / 2 deviations = 0.5"
@@ -56,44 +51,6 @@ fn from_cycle_response_coverage_is_dispositions_over_deviations() {
         metrics.fidelity_score, 0.5,
         "1 matched / 2 deviations = 0.5"
     );
-    assert_eq!(
-        metrics.rollout_progress_score, None,
-        "no impact reports remain visibly unverified"
-    );
-}
-
-/// Observed progress requires improvement, not just acceptance.
-#[test]
-fn from_cycle_progress_is_improved_over_verified() {
-    let report_accept = ImpactReport::new(
-        ActionType::Notify,
-        SignalMetric::ToolReliability,
-        0.1,
-        0.3, // improved (delta > 0 for the upward-good floor)
-        ActionDecision::Accept,
-    );
-    let report_block = ImpactReport::new(
-        ActionType::Escalate,
-        SignalMetric::VarietyDeficit,
-        0.3,
-        0.5, // worsened (delta > 0 for the downward-good metric)
-        ActionDecision::Block,
-    );
-    let metrics = LoopMetrics::from_cycle(
-        0,
-        &[],
-        &[],
-        &[report_accept, report_block],
-        TriggerOrigin::Scheduled,
-    );
-    assert_eq!(
-        metrics.rollout_progress_score,
-        Some(0.5),
-        "1 improved / 2 verified = 0.5"
-    );
-    // Response coverage and fidelity are 1.0 because no deviations.
-    assert_eq!(metrics.response_coverage, 1.0);
-    assert_eq!(metrics.fidelity_score, 1.0);
 }
 
 // ── TriggerOrigin::Prompted tests (F1) ─────────────────────────────────
@@ -115,10 +72,10 @@ fn triggered_origin_prompted_is_distinct_from_manual() {
 /// `Manual` cycles.
 #[test]
 fn prompted_triggers_tracked_separately_from_manual() {
-    let metrics_prompted = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Prompted);
+    let metrics_prompted = LoopMetrics::from_cycle(0, &[], &[], TriggerOrigin::Prompted);
     assert_eq!(metrics_prompted.trigger, TriggerOrigin::Prompted);
 
-    let metrics_manual = LoopMetrics::from_cycle(0, &[], &[], &[], TriggerOrigin::Manual);
+    let metrics_manual = LoopMetrics::from_cycle(0, &[], &[], TriggerOrigin::Manual);
     assert_eq!(metrics_manual.trigger, TriggerOrigin::Manual);
     assert_ne!(
         metrics_prompted.trigger, metrics_manual.trigger,

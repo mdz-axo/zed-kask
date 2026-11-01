@@ -216,7 +216,8 @@ recorded as evidence and moves the card to Review, never Done. The operator, or
 the Curator under a grant recorded on the card, verifies through
 `kanban_task_verify`. The seven-day post-advice observation belongs in that
 verification evidence, not in a separate queue, receipt or progress score.
-Rollout `ImpactReport`s remain a separate measured channel.
+The rollout `ImpactReport` channel was removed 2026-10-31 with the
+swarm-era event store.
 
 **§9.4 — Persistent-condition telemetry coalescing (2026-09-17)**
 

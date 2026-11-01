@@ -106,21 +106,24 @@ observed recovery. A reopen or a typed permanent failure escalates to Curation.
 This folds inference resilience into Regulation without inventing an unhandled
 central action.
 
-## Why harness-summary acknowledgment follows queue admission
+## Why the loop's per-cycle recording is count-only
 
-The bounded admission queue remains as library contract
-(`RolloutEventSource`, `RolloutImpactSubmission`): a submitted check is
-acknowledged only when the bounded queue returns `Accepted`; `QueueFull`
-preserves the accepted contiguous prefix; a query failure retains
-unaccepted summaries for retry, and the next Regulation tick drains accepted
-checks into `verify_impact`
-(`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:819`).
-Acknowledgment is admission, not a verdict. Its only production submitter —
-the swarm-era harness regression monitor over `mcp/swarm/events.db`, wired
-via `kask_bridge/src/rollout_event_bridge.rs` — was removed 2026-10-31
-(D57 retired, completing the D33 swarm retirement: the swarm server that
-wrote the store is gone). The contract is currently submitter-less; retiring
-the queue machinery itself is a separate operator ruling.
+The impact pathway (submitted rollout checks → bounded admission queue →
+evidence reads → verdict write-back) was removed 2026-10-31 by operator
+ruling, completing the D33 swarm retirement: its only production submitter
+was the swarm-era harness regression monitor over `mcp/swarm/events.db`,
+wired via `kask_bridge/src/rollout_event_bridge.rs`, and the swarm server
+that wrote that store was already gone. Removed with it:
+`RolloutEventSource`/`RolloutEventError`/`RolloutMetricObservation`,
+`submit_rollout_impact_check`, the admission queue and its `verify_impact` /
+`prepare_impact_checks` / `escalate_exhausted_checks` phases, the
+`StagnationDetector` plateau machinery, `classify_decision` /
+`insufficient_block_sample` / `block_severity`, `ImpactReport` and the
+`rollout_progress_score` telemetry field. `RegulationLedger::record_cycle`
+still bumps `total_cycles` once per tick; `RegulationHealth`'s
+accepted/staged/blocked counters are structurally zero since, so
+`acceptance_rate()` is `None` and the metacognition status reads "impact
+unverified" — now structurally, not incidentally.
 
 ## Why escalation is board-backed
 

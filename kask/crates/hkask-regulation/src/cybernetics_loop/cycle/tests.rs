@@ -1,13 +1,11 @@
 use crate::CyberneticsLoop;
-use crate::cybernetics_loop::RolloutImpactCheck;
 use crate::cybernetics_loop::test_support::CapturingSink;
 use crate::loops::{
-    ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData,
-    RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric,
+    ActionType, Deviation, DeviationDirection, LoopId, RegulationData, RegulatoryAction,
+    RegulatoryActionParams, Signal, SignalMetric,
 };
 use crate::regulation_policy::RegulationPolicy;
 use crate::runtime::RegulationLedger;
-use crate::{RolloutEventError, RolloutEventSource, RolloutMetricObservation};
 use hkask_types::WebID;
 use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
@@ -98,113 +96,6 @@ fn unbound_metrics_cannot_become_quality_observations() {
     );
 }
 
-/// A recorded `append_impact_verdict` call — exactly what the loop wrote back.
-#[derive(Debug, Clone, PartialEq)]
-struct RecordedVerdict {
-    rollout_id: String,
-    metric: String,
-    before: f64,
-    after: f64,
-    improved: bool,
-    decision: String,
-}
-
-/// A test double for `RolloutEventSource` that returns a configured
-/// `metric_observation` result and records `append_impact_verdict`
-/// calls so the test can assert exactly what the loop persisted.
-///
-/// `metric_observation` is configurable (Ok(Some) / Ok(None) / Err)
-/// to exercise the three event-substrate outcomes. The no-data and error
-/// branches must not record a verdict.
-struct MockRolloutEventSource {
-    /// `Err` holds only the failure detail; the typed
-    /// [`RolloutEventError`] is built at the trait boundary so the mock
-    /// does not force `Clone` onto the port's error type.
-    before_after: Mutex<Result<Option<(f64, f64)>, String>>, // string-error-ok
-    verdicts: Mutex<Vec<RecordedVerdict>>,
-    sample_sizes: Mutex<Option<(u64, u64)>>,
-}
-
-impl MockRolloutEventSource {
-    fn answering(before: f64, after: f64) -> Self {
-        Self {
-            before_after: Mutex::new(Ok(Some((before, after)))),
-            verdicts: Mutex::new(Vec::new()),
-            sample_sizes: Mutex::new(None),
-        }
-    }
-    fn with_sample_sizes(self, before: u64, after: u64) -> Self {
-        *self.sample_sizes.lock().expect("sample_sizes lock") = Some((before, after));
-        self
-    }
-    fn empty() -> Self {
-        Self {
-            before_after: Mutex::new(Ok(None)),
-            verdicts: Mutex::new(Vec::new()),
-            sample_sizes: Mutex::new(None),
-        }
-    }
-    fn failing(error: &str) -> Self {
-        Self {
-            before_after: Mutex::new(Err(error.to_string())),
-            verdicts: Mutex::new(Vec::new()),
-            sample_sizes: Mutex::new(None),
-        }
-    }
-    fn recorded(&self) -> Vec<RecordedVerdict> {
-        self.verdicts.lock().expect("verdicts lock").clone()
-    }
-}
-
-impl RolloutEventSource for MockRolloutEventSource {
-    fn metric_observation(
-        &self,
-        _rollout_id: &str,
-        _metric: &str,
-        _before_position: i64,
-    ) -> Result<Option<RolloutMetricObservation>, RolloutEventError> {
-        self.before_after
-            .lock()
-            .expect("before_after lock")
-            .clone()
-            .map(|values| {
-                values.map(|(before, after)| RolloutMetricObservation {
-                    before,
-                    after,
-                    sample_sizes: *self.sample_sizes.lock().expect("sample_sizes lock"),
-                })
-            })
-            .map_err(|detail| RolloutEventError::Query { detail })
-    }
-    fn append_impact_verdict(
-        &self,
-        rollout_id: &str,
-        metric: &str,
-        before: f64,
-        after: f64,
-        improved: bool,
-        decision: &str,
-    ) -> Result<(), RolloutEventError> {
-        self.verdicts
-            .lock()
-            .expect("verdicts lock")
-            .push(RecordedVerdict {
-                rollout_id: rollout_id.to_string(),
-                metric: metric.to_string(),
-                before,
-                after,
-                improved,
-                decision: decision.to_string(),
-            });
-        Ok(())
-    }
-}
-
-fn loop_with_source<S: RolloutEventSource + 'static>(source: Arc<S>) -> CyberneticsLoop {
-    let ledger = Arc::new(RwLock::new(RegulationLedger::default()));
-    CyberneticsLoop::new(ledger).with_rollout_event_source(source)
-}
-
 struct ChangingOcrHealthSource {
     reads: std::sync::atomic::AtomicUsize,
 }
@@ -282,44 +173,6 @@ impl crate::AlertEscalationSink for ConfirmingEscalationSink {
         let id = persisted.is_empty().then(|| "test-escalation".to_string());
         persisted.push(output.to_string());
         Ok(crate::AlertDeliveryOutcome::Confirmed(id))
-    }
-}
-
-struct LatchingEscalationSink {
-    pending: Mutex<bool>,
-    persisted: Mutex<Vec<String>>,
-}
-
-impl LatchingEscalationSink {
-    fn new() -> Self {
-        Self {
-            pending: Mutex::new(false),
-            persisted: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn set_pending(&self, pending: bool) {
-        *self.pending.lock().expect("pending lock") = pending;
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::AlertEscalationSink for LatchingEscalationSink {
-    async fn try_persist_alert(
-        &self,
-        output: &str,
-        _confidence: f64,
-        _error_context: &str,
-    ) -> Result<crate::AlertDeliveryOutcome, crate::AlertPersistError> {
-        self.persisted
-            .lock()
-            .expect("persisted lock")
-            .push(output.to_string());
-        if *self.pending.lock().expect("pending lock") {
-            Ok(crate::AlertDeliveryOutcome::Confirmed(None))
-        } else {
-            Ok(crate::AlertDeliveryOutcome::Attempted)
-        }
     }
 }
 
@@ -521,95 +374,6 @@ async fn repeat_uses_the_delivery_result_without_a_second_board_read() {
     );
 }
 
-fn rollout_impact_check(rollout_id: &str, metric: &str) -> RolloutImpactCheck {
-    RolloutImpactCheck {
-        rollout_id: rollout_id.to_string(),
-        before_position: 1,
-        metric: metric.to_string(),
-        read_attempts: 0,
-    }
-}
-
-async fn verify_checks(
-    regulation: &CyberneticsLoop,
-    checks: &[RolloutImpactCheck],
-) -> Vec<super::ImpactReport> {
-    let preparation = regulation.prepare_impact_checks(checks);
-    assert!(
-        preparation.retry.is_empty(),
-        "direct verification must not silently retry"
-    );
-    assert!(
-        preparation.exhausted.is_empty(),
-        "direct verification must not silently drop exhausted checks"
-    );
-    regulation.verify_impact(&preparation.ready).await
-}
-
-/// While a plateau card is open, re-detections comment on that card
-/// without replaying the span or live alert. The stagnation detector
-/// keeps counting; verification closes the card and permits a new one.
-#[tokio::test]
-async fn plateau_alert_latches_while_pending() {
-    let source = Arc::new(MockRolloutEventSource::answering(0.2, 0.2));
-    let mut regulation = loop_with_source(source.clone());
-    let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
-    let escalation = Arc::new(LatchingEscalationSink::new());
-    regulation.set_event_sink(Arc::clone(&archive) as Arc<dyn hkask_types::RegulationSink>);
-    regulation.set_alert_escalation_sink(Some(escalation.clone()));
-
-    let action = rollout_impact_check("trace", "tool_reliability");
-    // Constant before/after — every cycle is ineffective, so the
-    // stagnation detector reaches its threshold and the plateau fires.
-    *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.2)));
-    let stagnation_threshold = regulation
-        .stagnation_detector
-        .threshold_for_metric("tool_reliability");
-    for _ in 0..stagnation_threshold {
-        verify_checks(&regulation, std::slice::from_ref(&action)).await;
-    }
-    let plateau_spans = || {
-        archive
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .filter(|(path, _)| path == "reg.outcome.plateau_detected")
-            .count()
-    };
-    assert_eq!(
-        escalation.persisted.lock().expect("persisted").len(),
-        1,
-        "the first plateau detection persists one escalation"
-    );
-    assert_eq!(plateau_spans(), 1, "the first detection emits one span");
-
-    // The operator now has an open card: further detections reach
-    // its comment path, not the span or live alert.
-    escalation.set_pending(true);
-    for _ in 0..3 {
-        verify_checks(&regulation, std::slice::from_ref(&action)).await;
-    }
-    assert_eq!(
-        escalation.persisted.lock().expect("persisted").len(),
-        4,
-        "three repeats must be delivered to the same condition card"
-    );
-    assert_eq!(
-        plateau_spans(),
-        1,
-        "latched re-detections must not re-emit the plateau span"
-    );
-    assert!(
-        regulation
-            .stagnation_detector
-            .ineffective_count("tool_reliability", "Notify")
-            >= stagnation_threshold,
-        "the stagnation detector keeps counting while latched — resolving \
-         the escalation re-fires the next detection"
-    );
-}
-
 /// Experimentation-stuck escalations carry the stuck experiment ids in the
 /// board card's context — the count in the message cannot name WHICH
 /// experiments to unstick (the L25 identity impedance, repaired at the
@@ -759,277 +523,6 @@ async fn tool_reliability_alert_carries_outcome_breakdown() {
     );
 }
 
-/// expect: "Accepted constant degradation/noise accumulates stagnation; only observed progress resets it" [P9]
-#[tokio::test]
-async fn accepted_noise_does_not_erase_stagnation_or_imply_progress() {
-    use crate::loops::core::{LoopMetrics, TriggerOrigin};
-    let source = Arc::new(MockRolloutEventSource::answering(0.2, 0.2));
-    let regulation = loop_with_source(source.clone());
-    let action = rollout_impact_check("trace", "tool_reliability");
-    for (index, after) in [0.2, 0.199, 0.2, 0.2].into_iter().enumerate() {
-        *source.before_after.lock().expect("source") = Ok(Some((0.2, after)));
-        let reports = verify_checks(&regulation, std::slice::from_ref(&action)).await;
-        let report = reports.first().expect("verified");
-        assert_eq!(report.decision, ActionDecision::Accept);
-        assert!(!report.improved);
-        assert_eq!(
-            regulation
-                .stagnation_detector
-                .ineffective_count("tool_reliability", ActionType::Notify.as_str()),
-            (index + 1) as u32
-        );
-        assert_eq!(
-            LoopMetrics::from_cycle(0, &[], &[], &reports, TriggerOrigin::Scheduled)
-                .rollout_progress_score,
-            Some(0.0)
-        );
-    }
-    *source.before_after.lock().expect("source") = Ok(Some((0.2, 0.3)));
-    let reports = verify_checks(&regulation, std::slice::from_ref(&action)).await;
-    assert!(reports.first().expect("report").improved);
-    assert_eq!(
-        regulation
-            .stagnation_detector
-            .ineffective_count("tool_reliability", ActionType::Notify.as_str()),
-        0
-    );
-}
-
-/// Worsening thresholds are ratios, not raw metric units. A pass-rate
-/// decline from 0.10 to 0.07 is 30% relative worsening and must cross the
-/// default 20% block threshold even though the absolute delta is only 0.03.
-#[tokio::test]
-async fn verify_impact_classifies_relative_worsening() {
-    // n large enough that 0.10 → 0.07 clears the sample-size guard.
-    let source =
-        Arc::new(MockRolloutEventSource::answering(0.10, 0.07).with_sample_sizes(2000, 2000));
-    let escalation = Arc::new(RecordingEscalationSink::new());
-    let mut regulation = loop_with_source(source);
-    regulation.set_alert_escalation_sink(Some(escalation.clone()));
-
-    let reports = verify_checks(
-        &regulation,
-        &[rollout_impact_check("relative", "pass_rate")],
-    )
-    .await;
-
-    assert_eq!(
-        reports.first().expect("impact report").decision,
-        ActionDecision::Block
-    );
-    let messages = escalation.persisted.lock().expect("persisted lock");
-    assert_eq!(messages.len(), 1, "one block alert is persisted");
-    assert_eq!(
-        messages.first().expect("block alert"),
-        "ActionDecision::Block: impact check for pass_rate observed 30.0% relative worsening (threshold: 20.0%)",
-        "the alert reports an observation, not unsupported causation"
-    );
-}
-
-/// A pass-rate drop on too few attempts (3/3 → 1/3) is not Blocked and
-/// raises no Critical alert; it is staged for review with the
-/// insufficient-sample reason logged. Unknown sample sizes behave the same.
-#[tokio::test]
-async fn verify_impact_refuses_block_on_insufficient_sample() {
-    for source in [
-        MockRolloutEventSource::answering(1.0, 1.0 / 3.0).with_sample_sizes(3, 3),
-        MockRolloutEventSource::answering(1.0, 1.0 / 3.0),
-    ] {
-        let escalation = Arc::new(RecordingEscalationSink::new());
-        let mut regulation = loop_with_source(Arc::new(source));
-        regulation.set_alert_escalation_sink(Some(escalation.clone()));
-
-        let reports =
-            verify_checks(&regulation, &[rollout_impact_check("small", "pass_rate")]).await;
-
-        assert_eq!(
-            reports.first().expect("impact report").decision,
-            ActionDecision::Stage
-        );
-        let messages = escalation.persisted.lock().expect("persisted lock");
-        assert!(
-            messages
-                .iter()
-                .all(|m| !m.contains("ActionDecision::Block")),
-            "no block alert on an insufficient sample: {messages:?}"
-        );
-    }
-}
-
-/// S1 + happy path: a store-answered pass_rate regression writes a verdict
-/// event labeled with the REAL metric name ("pass_rate"), not a
-/// fallback default. Before the fix the write-back passed
-/// `metric.as_str()`, which fell through a `from_str_name` default
-/// (the since-deleted energy metric) → a self-describing JSON field
-/// that lied about its content.
-#[test]
-fn verify_impact_write_back_records_real_metric_name() {
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    runtime.block_on(async {
-        let source = Arc::new(MockRolloutEventSource::answering(0.8, 0.5));
-        let regulation_loop = loop_with_source(Arc::clone(&source));
-        let reports = verify_checks(
-            &regulation_loop,
-            &[rollout_impact_check("alpha", "pass_rate")],
-        )
-        .await;
-        assert_eq!(
-            reports.len(),
-            1,
-            "a store-answered check produces one report"
-        );
-        let verdicts = source.recorded();
-        assert_eq!(verdicts.len(), 1, "the impact verdict is written back once");
-        let verdict = &verdicts[0];
-        assert_eq!(verdict.rollout_id, "alpha");
-        // S1: the verdict records the real metric name, not the SignalMetric
-        // fallback. Before the fix this asserted "energy_remaining".
-        assert_eq!(verdict.metric, "pass_rate");
-        assert_eq!(verdict.before, 0.8);
-        assert_eq!(verdict.after, 0.5);
-        assert!(!verdict.improved, "a pass-rate drop is not an improvement");
-        assert!(
-            matches!(verdict.decision.as_str(), "Accept" | "Stage" | "Block"),
-            "decision is a known ActionDecision variant, got {}",
-            verdict.decision
-        );
-    });
-}
-
-/// A submitted impact check the store cannot answer must surface the
-/// missing baseline and produce neither a report nor a verdict write-back.
-#[test]
-fn verify_impact_store_no_data_skips_without_verdict() {
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    runtime.block_on(async {
-        let source = Arc::new(MockRolloutEventSource::empty());
-        let regulation_loop = loop_with_source(Arc::clone(&source));
-        let reports = verify_checks(
-            &regulation_loop,
-            &[rollout_impact_check("alpha", "pass_rate")],
-        )
-        .await;
-        assert!(reports.is_empty(), "no report when the store has no data");
-        assert!(
-            source.recorded().is_empty(),
-            "no verdict written back when the store has no data"
-        );
-    });
-}
-
-/// A store read error retains the accepted check without fabricating a verdict.
-#[test]
-fn verify_impact_store_error_retries_without_verdict() {
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    runtime.block_on(async {
-        let source = Arc::new(MockRolloutEventSource::failing("store down"));
-        let regulation_loop = loop_with_source(Arc::clone(&source));
-        let preparation =
-            regulation_loop.prepare_impact_checks(&[rollout_impact_check("alpha", "pass_rate")]);
-        let reports = regulation_loop.verify_impact(&preparation.ready).await;
-        assert_eq!(preparation.retry.len(), 1, "the accepted check is retained");
-        assert!(reports.is_empty(), "no report when the store errors");
-        assert!(
-            source.recorded().is_empty(),
-            "no verdict written back on a store error"
-        );
-    });
-}
-
-#[tokio::test]
-async fn accepted_impact_check_retries_a_failed_read_then_verifies_once() {
-    let source = Arc::new(MockRolloutEventSource::failing("store down"));
-    let regulation = loop_with_source(Arc::clone(&source));
-    assert_eq!(
-        regulation
-            .submit_rollout_impact_check("alpha".into(), 1, "pass_rate".into())
-            .await,
-        crate::RolloutImpactSubmission::Accepted,
-    );
-    regulation.tick().await;
-    assert_eq!(regulation.submitted_rollout_checks.lock().await.len(), 1);
-    *source.before_after.lock().expect("source") = Ok(Some((0.8, 0.5)));
-    regulation.tick().await;
-    assert!(regulation.submitted_rollout_checks.lock().await.is_empty());
-    assert_eq!(source.recorded().len(), 1);
-}
-
-#[tokio::test]
-async fn accepted_impact_check_exhausts_bounded_read_retries() {
-    let source = Arc::new(MockRolloutEventSource::failing("store down"));
-    let escalation = Arc::new(RecordingEscalationSink::new());
-    let mut regulation = loop_with_source(Arc::clone(&source));
-    // Wire a healthy inference source so the third tick does not also
-    // fire the unwired-model grace alert — this test's board traffic is
-    // the exhaustion escalation alone.
-    regulation.set_inference_resilience_source(Arc::new(HealthyResilienceSource));
-    regulation.set_alert_escalation_sink(Some(escalation.clone()));
-    assert_eq!(
-        regulation
-            .submit_rollout_impact_check("alpha".into(), 1, "pass_rate".into())
-            .await,
-        crate::RolloutImpactSubmission::Accepted,
-    );
-    for _ in 0..2 {
-        regulation.tick().await;
-        assert_eq!(regulation.submitted_rollout_checks.lock().await.len(), 1);
-    }
-    regulation.tick().await;
-    assert!(regulation.submitted_rollout_checks.lock().await.is_empty());
-    assert!(
-        source.recorded().is_empty(),
-        "no false verdict on exhausted reads"
-    );
-    let messages = escalation.persisted.lock().expect("persisted lock");
-    assert_eq!(
-        messages.len(),
-        1,
-        "the exhausted check escalates to the review board"
-    );
-    assert!(
-        messages[0].contains("alpha"),
-        "the escalation names the unverified rollout: {}",
-        messages[0]
-    );
-}
-
-#[tokio::test]
-async fn retained_impact_checks_count_against_the_admission_bound() {
-    let source = Arc::new(MockRolloutEventSource::failing("store down"));
-    let regulation = loop_with_source(source);
-    assert_eq!(
-        regulation
-            .submit_rollout_impact_check("first".into(), 1, "pass_rate".into())
-            .await,
-        crate::RolloutImpactSubmission::Accepted,
-    );
-    regulation.tick().await;
-    for index in 0..63 {
-        assert_eq!(
-            regulation
-                .submit_rollout_impact_check(format!("next-{index}"), 1, "pass_rate".into())
-                .await,
-            crate::RolloutImpactSubmission::Accepted,
-        );
-    }
-    assert_eq!(
-        regulation
-            .submit_rollout_impact_check("blocked".into(), 1, "pass_rate".into())
-            .await,
-        crate::RolloutImpactSubmission::QueueFull { capacity: 64 },
-    );
-    regulation.tick().await;
-    let queue = regulation.submitted_rollout_checks.lock().await;
-    assert_eq!(queue.len(), 64);
-    assert_eq!(
-        queue[0].rollout_id, "first",
-        "older accepted work is never displaced"
-    );
-}
-
-/// Pins Fix 2: every RegulationReason that has a policy rule must produce
-/// Some(action) from build_regulation_action — not None via a catch-all.
-/// Before the fix, 18 of 30 reasons fell through `_ => None`, silently
 /// dropping actions and leaving the loop open for those metrics. The
 /// match is now exhaustive (no `_ =>` arm), so the compiler enforces
 /// closure at compile time. This test verifies the behavioral side:
@@ -1038,7 +531,8 @@ async fn retained_impact_checks_count_against_the_admission_bound() {
 fn build_regulation_action_produces_action_for_all_new_reasons() {
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     runtime.block_on(async {
-        let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
         let policy = RegulationPolicy::default();
 
         // (metric, direction, value, set_point) for each newly-handled rule.
@@ -1101,7 +595,8 @@ fn build_regulation_action_produces_action_for_all_new_reasons() {
 fn compute_includes_notify_dispositions() {
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     runtime.block_on(async {
-        let regulation_loop = loop_with_source(Arc::new(MockRolloutEventSource::empty()));
+        let regulation_loop =
+            CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
         // LowConfidenceCount AboveSetPoint triggers a Notify rule. (The
         // original fixture was TripleCount; it escalates since algedonic
         // card c148d75d — see
@@ -1234,8 +729,7 @@ fn from_cycle_fidelity_no_string_fallback() {
         parameters: RegulatoryActionParams::reason("some_unrelated_low_thing"),
         metric_name: None,
     };
-    let metrics =
-        LoopMetrics::from_cycle(0, &[deviation], &[action], &[], TriggerOrigin::Scheduled);
+    let metrics = LoopMetrics::from_cycle(0, &[deviation], &[action], TriggerOrigin::Scheduled);
     assert_eq!(
         metrics.fidelity_score, 0.0,
         "action without metric_name must not match via string fallback"
@@ -2019,16 +1513,6 @@ fn idle_loop_emits_hourly_heartbeat_span() {
                     .and_then(|v| v.as_u64()),
                 Some(0)
             );
-            assert_eq!(
-                observation
-                    .get("rollout_impact_reports")
-                    .and_then(|v| v.as_u64()),
-                Some(0)
-            );
-            assert_eq!(
-                observation.get("rollout_progress_score"),
-                Some(&serde_json::Value::Null)
-            );
             assert!(observation.get("advice_review_progress_score").is_none());
             // The heartbeat carries the alert log's fill state so the
             // cap trend is visible from any session, not just Curator
@@ -2184,51 +1668,39 @@ async fn alert_reconciliation_does_not_publish_advice_review() {
     }));
 }
 
-/// expect: "Telemetry coalescing suppresses only exact steady state; changes, clearing, and measured transitions emit immediately" [P9]
+/// expect: "Telemetry coalescing suppresses only exact steady state; changes and clearing emit immediately" [P9]
 #[test]
 fn loop_telemetry_coalescer_preserves_transitions_and_reports_suppression() {
     let regulation_loop = CyberneticsLoop::new(Arc::new(RwLock::new(RegulationLedger::default())));
     let signal = Signal::new(LoopId::Cybernetics, SignalMetric::ToolReliability, 0.2, 0.8);
     let first = Deviation::from_signal(&signal).expect("deviation");
     let first_decision =
-        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 4);
+        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], 4);
     assert!(first_decision.emit);
     assert!(!first_decision.steady_state_heartbeat);
 
-    let duplicate =
-        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 5);
+    let duplicate = regulation_loop.loop_telemetry_decision(std::slice::from_ref(&first), &[], 5);
     assert!(!duplicate.emit);
 
     let mut changed_signal = signal;
     changed_signal.value = 0.3;
     let changed = Deviation::from_signal(&changed_signal).expect("changed deviation");
     let changed_decision =
-        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], false, 6);
+        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], 6);
     assert!(changed_decision.emit);
     assert_eq!(changed_decision.suppressed_cycles, 1);
 
-    let forced_measurement =
-        regulation_loop.loop_telemetry_decision(std::slice::from_ref(&changed), &[], true, 7);
-    assert!(
-        forced_measurement.emit,
-        "measured transitions are never suppressed"
-    );
-
-    let cleared = regulation_loop.loop_telemetry_decision(&[], &[], false, 8);
+    let cleared = regulation_loop.loop_telemetry_decision(&[], &[], 8);
     assert!(cleared.emit);
     assert!(cleared.condition_cleared);
-    assert!(
-        !regulation_loop
-            .loop_telemetry_decision(&[], &[], false, 9)
-            .emit
-    );
+    assert!(!regulation_loop.loop_telemetry_decision(&[], &[], 9).emit);
 
     assert!(
         regulation_loop
-            .loop_telemetry_decision(std::slice::from_ref(&first), &[], false, 10)
+            .loop_telemetry_decision(std::slice::from_ref(&first), &[], 10)
             .emit
     );
-    let steady = regulation_loop.loop_telemetry_decision(&[first], &[], false, 360);
+    let steady = regulation_loop.loop_telemetry_decision(&[first], &[], 360);
     assert!(steady.emit);
     assert!(steady.steady_state_heartbeat);
     assert_eq!(steady.suppressed_cycles, 1);

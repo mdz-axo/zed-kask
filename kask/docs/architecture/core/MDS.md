@@ -475,7 +475,6 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
 | `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs`). |
-| `hkask-event-store` | Lifecycle, Composition | Append-only event log for agent rollouts (`EventStore`, `EventRecord`, `EventFilter`, `VerdictSource`, `RolloutKind`). Data-plane substrate for agent evaluation and regulation. Wired via `kask_bridge/src/rollout_event_bridge.rs`; consumed by `hkask-regulation/src/cybernetics_loop.rs`. |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |
 | 8 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios. |
 

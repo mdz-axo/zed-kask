@@ -63,11 +63,9 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
         }
     };
     // No production sensor emits these (verified 2026-10-01: zero
-    // production `Signal::new` sites): the event-driven impact-check
-    // channel (PassRate — consumed by verify_impact, not the policy
-    // decide path) and decode-only persisted-history metrics
-    // (TestCoverage, MutationScore). The legacy Loop-6 vocabulary
-    // (EnergyRemaining, ErrorRate, ConnectorLatency,
+    // production `Signal::new` sites): decode-only persisted-history
+    // metrics (PassRate, TestCoverage, MutationScore). The legacy Loop-6
+    // vocabulary (EnergyRemaining, ErrorRate, ConnectorLatency,
     // CommunicationQueueDepth) was deleted 2026-10-01 — zero
     // production emission sites, and the string-resolution paths
     // degrade to a visible warn-and-skip for any stale submitted
@@ -89,14 +87,6 @@ fn every_signal_metric_has_a_rule_or_documented_allowlist_entry() {
              would be sensed and then silently dropped by decide()"
         );
     }
-}
-
-#[test]
-fn block_severity_reserves_critical_for_large_worsening() {
-    use crate::algedonic::AlertSeverity;
-    assert_eq!(block_severity(0.30, 0.20), AlertSeverity::Warning);
-    assert_eq!(block_severity(0.40, 0.20), AlertSeverity::Warning);
-    assert_eq!(block_severity(0.625, 0.20), AlertSeverity::Critical);
 }
 
 /// Pins the fractional-set-point fix in `extract_deficit_threshold`.

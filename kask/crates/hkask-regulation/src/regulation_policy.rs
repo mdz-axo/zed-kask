@@ -6,7 +6,7 @@
 //! to take when a specific metric deviates in a specific direction.
 
 use crate::loops::{
-    ActionDecision, ActionType, Deviation, DeviationDirection, LoopId, RegulationData, SignalMetric,
+    ActionType, Deviation, DeviationDirection, LoopId, RegulationData, SignalMetric,
 };
 
 /// Identifies why a regulation action was proposed.
@@ -506,77 +506,5 @@ fn rounded_count(value: f64) -> u64 {
     value.round() as u64
 }
 
-/// Classify an action's impact decision using Fermi's three-tier gate.
-///
-/// - `worsening`: relative adverse movement from the baseline (0.0 if improved or unchanged).
-/// - `stage_ratio`: below this → Accept (noise).
-/// - `block_ratio`: at or above this → Block (hard reject).
-/// - Between → Stage (escalate for review).
-pub(crate) fn classify_decision(
-    worsening: f64,
-    stage_ratio: f64,
-    block_ratio: f64,
-) -> ActionDecision {
-    debug_assert!(
-        stage_ratio <= block_ratio,
-        "stage_worsening_ratio ({stage_ratio}) must be <= block_worsening_ratio ({block_ratio})"
-    );
-    if worsening >= block_ratio {
-        ActionDecision::Block
-    } else if worsening < stage_ratio {
-        ActionDecision::Accept
-    } else {
-        ActionDecision::Stage
-    }
-}
-
-/// Severity of a blocked action, graded against the block threshold the way
-/// `RuntimeAlert::new` grades a deficit against its threshold: a block is at
-/// least a Warning, and Critical once the worsening exceeds twice the block
-/// threshold. Before this, every block was Critical and severity could not
-/// order the operator's attention.
-pub(crate) fn block_severity(worsening: f64, block_ratio: f64) -> crate::algedonic::AlertSeverity {
-    if worsening > 2.0 * block_ratio {
-        crate::algedonic::AlertSeverity::Critical
-    } else {
-        crate::algedonic::AlertSeverity::Warning
-    }
-}
-
-/// Minimum attempts on each side before a proportion drop may Block.
-pub(crate) const MIN_BLOCK_SAMPLE: u64 = 10;
-/// A drop must exceed this many standard errors of the difference to Block.
-pub(crate) const BLOCK_STD_ERRORS: f64 = 2.0;
-
-/// Why a proportion drop cannot support a Block verdict, or `None` when the
-/// evidence is sufficient. Uses the binomial standard error of the
-/// difference, √(p₁(1−p₁)/n₁ + p₂(1−p₂)/n₂). Unknown sample sizes are
-/// insufficient: an unverifiable sample is never treated as a large one.
-pub(crate) fn insufficient_block_sample(
-    before: f64,
-    after: f64,
-    sizes: Option<(u64, u64)>,
-) -> Option<String> {
-    let Some((n_before, n_after)) = sizes else {
-        return Some("sample sizes not recorded for this metric".to_string());
-    };
-    if n_before < MIN_BLOCK_SAMPLE || n_after < MIN_BLOCK_SAMPLE {
-        return Some(format!(
-            "n_before={n_before}, n_after={n_after}; at least {MIN_BLOCK_SAMPLE} attempts per run required"
-        ));
-    }
-    let variance = |p: f64, n: u64| p.clamp(0.0, 1.0) * (1.0 - p.clamp(0.0, 1.0)) / n as f64;
-    let std_error = (variance(before, n_before) + variance(after, n_after)).sqrt();
-    let delta = (after - before).abs();
-    if delta <= BLOCK_STD_ERRORS * std_error {
-        return Some(format!(
-            "|delta|={delta:.3} within {BLOCK_STD_ERRORS} standard errors ({std_error:.3}) at n_before={n_before}, n_after={n_after}"
-        ));
-    }
-    None
-}
-
-#[cfg(test)]
-mod sample_guard_tests;
 #[cfg(test)]
 mod tests;

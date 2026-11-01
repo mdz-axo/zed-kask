@@ -72,7 +72,7 @@ The authoritative managed registry contains the same 8 IDs at
 The composition-root inventory under `kask/crates/` is:
 
 `hkask-bridge-ontology`, `hkask-condenser`, `hkask-email`,
-`hkask-event-store`, `hkask-forecast`, `hkask-inference`, `hkask-keystore`,
+`hkask-forecast`, `hkask-inference`, `hkask-keystore`,
 `hkask-lisp`, `hkask-mcp`, `hkask-mcp-server`, `hkask-memory`,
 `hkask-regulation`,
 `hkask-steer-core`, `hkask-storage`, `hkask-tool-port`, `hkask-types`, and

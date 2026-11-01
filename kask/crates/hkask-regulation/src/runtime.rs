@@ -612,23 +612,22 @@ impl RegulationLedger {
         }
     }
 
-    /// Record a regulation cycle's impact decisions for metacognition observability.
+    /// Record that one regulation cycle ran — the per-cycle counter behind
+    /// the Loop Cycles status observable.
     ///
-    /// Called by `CyberneticsLoop::tick()` after evidence-bearing rollout
-    /// checks complete. Aggregates Accept/Stage/Block observations for
-    /// metacognition without treating advisory routing as an intervention.
+    /// The cycle's Accept/Stage/Block impact-decision counts were fed here by
+    /// the retired rollout-impact pathway (removed 2026-10-31 with the
+    /// swarm-era event store); `RegulationHealth`'s accepted/staged/blocked
+    /// counters are structurally zero since, and `acceptance_rate()` stays
+    /// `None` — which the metacognition status surface reports as "impact
+    /// unverified", now structurally rather than incidentally.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — cycle recording enables metacognitive feedback
-    /// \[P8\] Constraining: Semantic Grounding — Accept/Stage/Block counts are measured, not guessed
-    /// pre:  counts come from this tick's impact verification
-    /// post: regulation health counters updated
-    pub(crate) async fn record_cycle_outcome(&self, accepted: u64, staged: u64, blocked: u64) {
+    /// pre:  called once per completed cycle
+    /// post: regulation health cycle counter updated
+    pub(crate) async fn record_cycle(&self) {
         let mut state = self.state.write().await;
         state.regulation_health.total_cycles += 1;
-        state.regulation_health.accepted += accepted;
-        state.regulation_health.staged += staged;
-        state.regulation_health.blocked += blocked;
     }
 
     /// Get regulation health summary for metacognition.

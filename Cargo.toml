@@ -282,7 +282,6 @@ members = [
     "kask/crates/hkask-memory",
     "kask/crates/hkask-mcp",
     "kask/crates/hkask-mcp-server",
-    "kask/crates/hkask-event-store",
     "kask/crates/hkask-storage",
     "kask/crates/hkask-inference",    "kask/crates/hkask-bridge-ontology",
     "kask/crates/hkask-condenser",
@@ -986,7 +985,6 @@ serde_yaml_neo = "0.11"
 rmcp = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
-hkask-event-store = { path = "kask/crates/hkask-event-store" }
 hkask-storage = { path = "kask/crates/hkask-storage" }
 hkask-condenser = { path = "kask/crates/hkask-condenser" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }

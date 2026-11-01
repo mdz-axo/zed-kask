@@ -146,7 +146,7 @@ pub struct RegulatoryAction {
     pub action_type: ActionType,
     pub parameters: RegulatoryActionParams,
     /// The signal metric this action targets. Set by `compute()` so
-    /// `verify_impact` doesn't need to infer it from JSON key sniffing.
+    /// downstream readers don't need to infer it from JSON key sniffing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metric_name: Option<String>,
 }
@@ -175,17 +175,4 @@ pub enum ActionType {
     Escalate,
     /// Record an informational observation without intervention.
     Notify,
-}
-
-impl ActionType {
-    /// Stable string representation (not Debug — semantic identity).
-    ///
-    /// Used for stagnation keys, substitution ladders, and Regulation span metadata.
-    /// Must stay in sync with `from_str`.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ActionType::Escalate => "Escalate",
-            ActionType::Notify => "Notify",
-        }
-    }
 }

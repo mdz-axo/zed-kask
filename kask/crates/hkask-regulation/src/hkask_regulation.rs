@@ -25,10 +25,7 @@ pub(crate) mod runtime;
 pub use algedonic::{
     AlertDeliveryOutcome, AlertEmailSink, AlertEscalationSink, AlertPersistError, RuntimeAlert,
 };
-pub use cybernetics_loop::{
-    CyberneticsLoop, RolloutEventError, RolloutEventSource, RolloutImpactSubmission,
-    RolloutMetricObservation,
-};
+pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use inference_resilience::{
     InferenceCircuitState, InferenceInterventionKind, InferenceInterventionReceipt,

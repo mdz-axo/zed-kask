@@ -45,8 +45,11 @@ pub struct LedgerHealth {
 
 /// Regulation loop health — observation acceptance, not causal effectiveness.
 ///
-/// Aggregated from `ImpactReport` decisions across regulation cycles. Counts
-/// show how often observations were acceptable, not whether human advice worked.
+/// The accepted/staged/blocked counters aggregated the retired
+/// rollout-impact pathway's verdicts; with that pathway gone (2026-10-31)
+/// they are structurally zero and `acceptance_rate()` is `None` — which the
+/// metacognition status surface reports as "impact unverified". Only
+/// `total_cycles` is live (one per completed cycle).
 #[derive(Debug, Clone, Default)]
 pub struct RegulationHealth {
     /// Total regulation cycles recorded.

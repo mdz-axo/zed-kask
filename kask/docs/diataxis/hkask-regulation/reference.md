@@ -42,7 +42,7 @@ The crate root re-exports its supported cross-crate surface at
 | Cluster | Public items |
 |---|---|
 | Alerts | `AlertDeliveryOutcome`, `AlertEmailSink`, `AlertEscalationSink`, `AlertPersistError`, `RuntimeAlert` |
-| Loop | `CyberneticsLoop`, `RolloutEventError`, `RolloutEventSource`, `RolloutImpactSubmission`, `RolloutMetricObservation` |
+| Loop | `CyberneticsLoop` |
 | Loop views | `LivenessTrust`, `LoopModel`, `LoopView`, `OutcomeTrust`, `Reading`, `SenseReading`, `StageActions`, `TriggerOrigin` |
 | Call caps | `CallMeterOutcome`, `DEFAULT_RUNAWAY_CALL_CEILING` |
 | Inference resilience | `InferenceCircuitState`, `InferenceInterventionKind`, `InferenceInterventionReceipt`, `InferenceObservation`, `InferenceObservationError`, `InferencePermanentFailureKind`, `InferencePermanentFailureReceipt`, `InferenceResilienceSource`, `InferenceSnapshot` |
@@ -58,12 +58,11 @@ The crate root re-exports its supported cross-crate surface at
 classDiagram
     class CyberneticsLoop {
         +tick()
-        +submit_rollout_impact_check()
         +record_outcome()
         +charge_call_metered()
     }
     class RegulationLedger {
-        +record_cycle_outcome()
+        +record_cycle()
         +health()
         +regulation_health()
     }

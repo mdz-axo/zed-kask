@@ -104,7 +104,7 @@ pub struct CuratorStatusOutput {
     /// tell). `None` when the metacognition provider isn't wired.
     pub loop_reading: Option<String>,
     /// Total regulation cycles the ledger has recorded this process — the
-    /// loop's own liveness evidence (one `record_cycle_outcome` per
+    /// loop's own liveness evidence (one `record_cycle` per
     /// cybernetics tick). Rendered as "Loop Cycles" so the operator can
     /// see the loop turning behind an `unobserved` impact reading. `None`
     /// when the metacognition provider isn't wired.
