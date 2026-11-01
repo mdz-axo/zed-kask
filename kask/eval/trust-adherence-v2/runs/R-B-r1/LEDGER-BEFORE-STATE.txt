@@ -1,0 +1,1 @@
+{"trust_points":300,"kept":0,"violated":0,"unverified":0,"renegotiated":0}
