@@ -15,6 +15,16 @@
 //! kata-kanban's `KanbanTrustLedgerStore` over `HMemStore`) supply only
 //! their substrate calls — insert / delete / query.
 //!
+//! Trust substrate rows are exact-match ledger storage, not semantic
+//! memories: the shared embedding contract (`embed_for_semantic_recall`)
+//! is intentionally not applied — the same by-design exclusion as the
+//! curator's distillation watermark cursors (operator ruling 2026-10-31,
+//! therapy finding F005). They DO land at the 0.5 memory floor
+//! (`with_confidence` at each converter, never `HMem::new`'s 1.0
+//! default): substrate rows surface in recall, and a fresh 1.0 row
+//! outranked every calibrated lesson (therapy scan 2026-10-31, finding
+//! F001; pinned by `substrate_rows_land_at_the_memory_floor`).
+//!
 //! The proposal and anchor entities are exact-match distinct from
 //! `trust:ledger` (the stores query `WHERE entity = ?`), so the event
 //! window never sees them.
@@ -55,6 +65,8 @@ pub fn event_to_h_mem(event: &LedgerEvent, webid: &WebID) -> HMem {
         hkask_trust::wire::event_to_wire(event),
         *webid,
     )
+    // The 0.5 memory floor, not `HMem::new`'s 1.0 default — module doc.
+    .with_confidence(0.5)
 }
 
 /// Rebuild a trust event from its h_mem (the row key is the attribute;
@@ -246,6 +258,8 @@ pub fn proposal_to_h_mem(proposal: &StoredProposal, webid: &WebID) -> HMem {
         "resolution": resolution,
     });
     HMem::new(TRUST_PROPOSAL_ENTITY, &proposal.proposal_id, value, *webid)
+        // The 0.5 memory floor, not `HMem::new`'s 1.0 default — module doc.
+        .with_confidence(0.5)
 }
 
 /// Rebuild a filed proposal from its h_mem (the inverse of
@@ -404,6 +418,8 @@ pub fn anchor_to_h_mem(anchor: &StoredAnchor, webid: &WebID) -> HMem {
         "recorded_at": anchor.recorded_at.to_rfc3339(),
     });
     HMem::new(TRUST_ANCHOR_ENTITY, &anchor.anchor_id, value, *webid)
+        // The 0.5 memory floor, not `HMem::new`'s 1.0 default — module doc.
+        .with_confidence(0.5)
 }
 
 /// Rebuild a recorded anchor from its h_mem (the inverse of
@@ -656,5 +672,55 @@ mod tests {
         assert_eq!(for_task[0].revision, 2, "the current anchor reads first");
         assert_eq!(for_task[1].revision, 1, "the trail follows");
         assert!(anchors_for_task(&h_mems, "other-task").is_empty());
+    }
+
+    /// Every substrate converter lands its row at the 0.5 memory floor —
+    /// NOT the `HMem::new` 1.0 default. At 1.0 a fresh trust row outranked
+    /// every calibrated lesson in recall ranking (the confidence-floor
+    /// escape the 2026-10-31 therapy scan found live in the curator
+    /// store: 16 rows at exactly 1.0).
+    #[test]
+    fn substrate_rows_land_at_the_memory_floor() {
+        let event = LedgerEvent {
+            id: LedgerEventId::new(),
+            text: "report defects at their true severity".to_string(),
+            source: "turn-1".to_string(),
+            weight: Weight::Explicit,
+            outcome: Outcome::Kept,
+            severity: None,
+            ts: Utc::now(),
+            oracle_note: None,
+        };
+        let proposal = StoredProposal {
+            proposal_id: "aaaa1111-1111-1111-1111-111111111111".to_string(),
+            event_id: event.id.as_str().to_string(),
+            conflict: "the floor applies to every converter".to_string(),
+            options: vec![],
+            recommendation: "r".to_string(),
+            teaching_payload: "t".to_string(),
+            status: PROPOSAL_STATUS_PENDING.to_string(),
+            filed_at: Utc::now(),
+            resolution: None,
+        };
+        let anchor = StoredAnchor {
+            anchor_id: "44444444-4444-4444-4444-444444444444".to_string(),
+            task_key: "session:floor-pin".to_string(),
+            goal_understanding: "the floor holds at every insert site".to_string(),
+            terrain: "the three converters are the only insert path".to_string(),
+            map_edges: vec!["the 1.0 schema default".to_string()],
+            revision: 1,
+            recorded_at: Utc::now(),
+        };
+
+        for (label, h_mem) in [
+            ("event", event_to_h_mem(&event, &WebID::new())),
+            ("proposal", proposal_to_h_mem(&proposal, &WebID::new())),
+            ("anchor", anchor_to_h_mem(&anchor, &WebID::new())),
+        ] {
+            assert!(
+                (h_mem.confidence.value() - 0.5).abs() < 1e-9,
+                "{label} must land at the 0.5 memory floor"
+            );
+        }
     }
 }
