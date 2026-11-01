@@ -480,10 +480,9 @@ orthogonality invariant).
 
 - [Native ontologies — comprehensive inventory](native-ontologies.md) — every
   vendored vocabulary with version, license, domain and live-probed example
-  resolutions (2026-10-13).
-- [Software ontology adoption — research record](../research/software-ontology-adoption.md)
-  — the survey, licensing research and ruling decision trail behind the
-  rung-1/rung-2 pins (2026-10-13).
+  resolutions (2026-10-13). The software-ontology adoption decision trail
+  (survey, licensing research, ruling authorities) is reified in the derived
+  registry; the research record was deleted 2026-11-01 (git history retains it).
 - [Architecture diagrams](../diagrams/architecture.md) — the ontology-bridge
   architecture and domain-selection flow (consolidated 2026-08-28).
 - [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the

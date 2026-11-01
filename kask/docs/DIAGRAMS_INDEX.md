@@ -34,7 +34,7 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-ARCH-SKILL-MCP-LISP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-10-19 | VERIFIED |
 | `DIAG-ARCH-COMPACTION-001` | [`architecture/compaction-pipeline-spec.md`](./architecture/compaction-pipeline-spec.md) | 2026-10-05 | VERIFIED |
 | `DIAG-ARCH-EUREKA-001` | [`research/experimentation-reference-model.md`](./research/experimentation-reference-model.md) | 2026-10-30 | VERIFIED |
-| `DIAG-ARCH-SPEAKER-IDENT-001` | [`plans/educt-speaker-identity-plan-2026-10-27.md`](./plans/educt-speaker-identity-plan-2026-10-27.md) | 2026-10-27 | VERIFIED |
+| `DIAG-ARCH-SPEAKER-IDENT-001` | (deleted 2026-11-01 with the implemented plan; git history retains the record) | 2026-10-27 | TOMBSTONED |
 | `DIAG-ARTIFACT-001` | [`architecture/standardized-artifact-storage.md`](./architecture/standardized-artifact-storage.md) | 2026-09-28 | VERIFIED |
 | `DIAG-BRIDGE-002` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
 | `DIAG-BRIDGE-003` | [`diataxis/kask_bridge/reference.md`](./diataxis/kask_bridge/reference.md) | 2026-10-19 | VERIFIED |
@@ -82,11 +82,11 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-REG-005` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-REG-006` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-28 | VERIFIED |
 | `DIAG-REG-007` | [`diataxis/hkask-regulation/explanation.md`](./diataxis/hkask-regulation/explanation.md) | 2026-09-28 | VERIFIED |
-| `DIAG-RES-CHUNK-001` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-16 | VERIFIED |
-| `DIAG-RES-CHUNK-002` | [`research/chunking-for-rag-research.md`](./research/chunking-for-rag-research.md) | 2026-09-28 | VERIFIED |
+| `DIAG-RES-CHUNK-001` | (deleted 2026-11-01 with the research doc; git history retains the record) | 2026-09-16 | TOMBSTONED |
+| `DIAG-RES-CHUNK-002` | (deleted 2026-11-01 with the research doc; git history retains the record) | 2026-09-28 | TOMBSTONED |
 
-| `DIAG-RES-CNS-001` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
-| `DIAG-RES-CNS-002` | [`research/cybernetic-nervous-system-reference-model.md`](./research/cybernetic-nervous-system-reference-model.md) | 2026-09-30 | VERIFIED |
+| `DIAG-RES-CNS-001` | (deleted 2026-11-01 with the research doc; git history retains the record) | 2026-09-30 | TOMBSTONED |
+| `DIAG-RES-CNS-002` | (deleted 2026-11-01 with the research doc; git history retains the record) | 2026-09-30 | TOMBSTONED |
 | `DIAG-RF-003` | [`reference/mcp-servers/README.md`](./reference/mcp-servers/README.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-005` | [`reference/mcp-servers/scenarios.md`](./reference/mcp-servers/scenarios.md) | 2026-09-28 | VERIFIED |
 | `DIAG-RF-006` | [`reference/mcp-servers/media.md`](./reference/mcp-servers/media.md) | 2026-09-28 | VERIFIED |

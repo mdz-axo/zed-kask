@@ -107,10 +107,10 @@ below is retained: the admitted reference model (Pass 3) cites it.
 | L3 | GAP | `.rules` traps only |
 | L4 | PARTIAL | repair plan (plan-form: findings + execution program) + `.rules` MCP patterns; no prior-art model |
 | L5 | PARTIAL | Diataxis `hkask-inference` reference docs (internal, evidence-cited); no prior-art model |
-| L6 | PARTIAL | `kask/docs/research/chunking-for-rag-research.md`; `build-corpus-pipeline` skill lacks a `## Reference models` section |
+| L6 | PARTIAL | chunking-for-rag research (completed 2026-10-11, reified in the corpus pipeline; doc deleted 2026-11-01); `build-corpus-pipeline` skill lacks a `## Reference models` section |
 | L7 | GAP | no recorded model |
 | L8 | ANCHOR | superforecasting methodology — `## Reference model` section (Tetlock & Gardner 2015, onto_anchor derived superforecasting; the commandment map in kask/registry/templates/superforecasting/README.md Theoretical Foundation) |
-| L9 | ANCHOR | `kask/docs/research/kanban-board-reference-models.md` (the exemplar) |
+| L9 | ANCHOR | kanban-board reference models (completed 2026-09-28, reified in board-shaping tests; doc deleted 2026-11-01) |
 | L10 | PARTIAL | `kask/docs/architecture/memory-system-specification.md` (internal spec-form) |
 | L11 | GAP | no recorded model |
 | L12 | GAP | no recorded model |
@@ -342,7 +342,7 @@ reported at L6**; L7–L23 are recorded at classification-only depth
 re-adjudicated). Every row is classified — D3's coverage requirement is
 met by the per-row blocks; the signal changed depth, never coverage.
 
-Alignment gap table (the `kanban-board-reference-models.md` pattern —
+Alignment gap table (the kanban-board reference-model pattern (deleted 2026-11-01) —
 named invariants from the Phase 2 model, file:line, verdict):
 
 | Invariant | Holds where (file:line) | Verdict |
@@ -1056,7 +1056,8 @@ exactly that lag), not evidence of absence.)
 - 2026-09-30 — v0.24.1 executed the operator's checkpoint rulings ("proceed
   as proposed — confirmed"). **Reference model ADMITTED** —
   `research/cybernetic-nervous-system-reference-model.md` (status Active,
-  v1.0.0) is now the structural anchor for the layer taxonomy; the pass-2
+  v1.0.0; deleted 2026-11-01 after its structure was reified in the
+  loop-register's per-row maps — git history retains it) is now the structural anchor for the layer taxonomy; the pass-2
   anchor ledger's GAP rows gain this shared anchor alongside their
   row-specific records. **S2 landed:** the in-host tracing→log bridge
   recorded as a designed pathway in `reference/regulation-spans.md` §1
@@ -1108,9 +1109,12 @@ exactly that lag), not evidence of absence.)
   favorable end. **Deliverables:** D1 (Pass 3 instrumentation section:
   naming survey, mechanism inventory R1–R12, premise verdict, layer
   coverage), D2 (`research/cybernetic-nervous-system-reference-model.md`,
-  admission pending), D3 (23/23 per-row classifications + saturation
+  admission pending; the model was later admitted 2026-09-30 and its
+  doc deleted 2026-11-01 — git history retains it), D3 (23/23 per-row
+  classifications + saturation
   report + alignment gap table), D4
-  (`plans/cybernetic-nervous-system-alignment.md`), D5 (this entry).
+  (`plans/cybernetic-nervous-system-alignment.md`, deleted 2026-11-01
+  — git history retains it), D5 (this entry).
   **Net production lines: 0** (doc-only pass; the S3 deletion candidate is
   priced and gated on the checkpoint ruling). Calibration: the phase
   confidence 0.60 was about right; the lesson banked — an INFERRED

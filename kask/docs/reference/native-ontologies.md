@@ -24,8 +24,11 @@ under normalization (lowercase alphanumeric only,
 `kask/crates/hkask-bridge-ontology/src/published.rs:52-57,147-157`).
 
 Companions: `ontology-bridge.md` is the crate's API reference (modules, tag
-shape, the axis selector); `research/software-ontology-adoption.md` is the
-decision trail for what was adopted and why. This document is the inventory.
+shape, the axis selector); the software-ontology adoption decision trail
+(survey, licensing research, ruling authorities) was completed 2026-10-13
+and its outcomes are reified in the derived registry — the research record
+itself was deleted 2026-11-01 (git history retains it). This document is the
+inventory.
 
 Current counts: **248 pinned files across 20 source directories** — 19
 indexed vocabularies plus one non-RDF authority pin — and **94 derived

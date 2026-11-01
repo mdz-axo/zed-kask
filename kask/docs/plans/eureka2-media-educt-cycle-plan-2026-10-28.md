@@ -62,8 +62,9 @@ may be vetoed on functional grounds at any time:
   handoff export; t8 researcher selections → media EDL; t9 EDL render to
   durable reel; t10 docs. This is the layer-decomposition surface landing —
   time-indexed media layers beside the word-indexed transcript layers.
-- **educt speaker identity** (board `0e97bd22…`, plan
-  `kask/docs/plans/educt-speaker-identity-plan-2026-10-27.md` v1.1.0): 1a
+- **educt speaker identity** (board `0e97bd22…`, the plan whose
+  decisions D1–D4 were recorded 2026-10-27; the plan file was deleted
+  2026-11-01 after its phases landed — git history retains it): 1a
   review flags done; 1b gated lexical speaker post-pass and 1c section
   re-transcription in backlog, each card carrying an explicit reversal
   condition (kata discipline already in use).
@@ -252,7 +253,8 @@ prediction is frozen now, before any fixture runs.
   decisions; removed 2026-10-30, git history — the live contract is
   `.agents/skills/eureka-cycle/SKILL.md`);
   `kask/docs/plans/educt-speaker-identity-plan-2026-10-27.md` (reversal
-  conditions, Phase 1b) [tree];
+  conditions, Phase 1b) [tree; the plan file was deleted 2026-11-01,
+  git history retains it];
   `kask/docs/plans/educt-research-design-assessment-2026-10-27.md` (sibling
   assessment; removed 2026-10-30, git history).
 - Fossils: the Reduct removal (2026-10-22, two-class removal rule); the media
