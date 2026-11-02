@@ -183,6 +183,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             .kanban_task_list(Parameters(TaskListRequest {
                 board_id: board_id.to_string(),
                 status: None,
+                view: None,
             }))
             .await,
     );
@@ -239,6 +240,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             .kanban_task_list(Parameters(TaskListRequest {
                 board_id: board_id.to_string(),
                 status: Some("review".into()),
+                view: None,
             }))
             .await,
     );
@@ -273,6 +275,7 @@ async fn alert_to_real_board_repeats_recovers_and_requires_verification(
             .kanban_task_list(Parameters(TaskListRequest {
                 board_id: board_id.to_string(),
                 status: Some("in_progress".into()),
+                view: None,
             }))
             .await,
     );
