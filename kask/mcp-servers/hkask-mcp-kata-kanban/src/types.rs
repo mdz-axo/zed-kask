@@ -55,6 +55,14 @@ pub struct BoardListRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardListResponse {
     pub boards: Vec<BoardInfo>,
+    /// The per-database change counter (P1, the kanzo changes-counter
+    /// pattern): a monotonic stamp moved by every write. A poller that
+    /// remembers the last value can skip re-fetching derived state until
+    /// it moves. Defaults to 0 for pre-P1 servers — a poller comparing
+    /// against it over-fetches, which is the pre-P1 behavior, never a
+    /// missed change.
+    #[serde(default)]
+    pub changes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -182,6 +190,12 @@ pub(crate) struct TaskCreateResponse {
 pub struct TaskListRequest {
     pub board_id: String,
     pub status: Option<String>,
+    /// Response view (P2): omit (or "full") for the complete `TaskInfo`
+    /// objects — the panel's shape; "compact" returns token-frugal
+    /// one-struct summaries with Done capped and operator-reserved tasks
+    /// skipped, both disclosed by count (the kanzo agent-channel pattern).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
 }
 
 /// One indexed task row that could not be read for a listing — surfaced
@@ -203,6 +217,38 @@ pub struct TaskListResponse {
     /// degrades visibly instead of shrinking.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub undecodable_tasks: Vec<UndecodableTaskInfo>,
+    /// The compact view's task summaries (P2) — present only when the
+    /// request set `view: "compact"` (then `tasks` is empty). One struct
+    /// per task carrying the dispatch identity and state, not the full
+    /// work context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compact_tasks: Vec<CompactTaskInfo>,
+    /// Done tasks hidden by the compact view's cap ("an old board has
+    /// thousands of done tasks" — the kanzo pattern). Explicitly
+    /// disclosed: a truncated listing never reads as complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub done_not_shown: Option<usize>,
+    /// Operator-reserved tasks skipped by the compact view (P4) — the
+    /// boundary is disclosed with a count, never silent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved_not_shown: Option<usize>,
+}
+
+/// One task summary in the compact listing view (P2) — the token-frugal
+/// agent read (the kanzo one-line pattern, adapted to a JSON struct).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CompactTaskInfo {
+    pub task_id: String,
+    pub title: String,
+    pub status: String,
+    /// The assigned agent, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    /// Operator-reserved tasks are normally skipped in this view; the
+    /// marker stays for the direct read paths so a reserved task is
+    /// recognizable wherever it appears.
+    #[serde(default)]
+    pub reserved: bool,
 }
 
 /// The latest recorded activity on a task — a one-line status the kanban
@@ -241,6 +287,11 @@ pub struct TaskInfo {
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,
     pub activity: Option<TaskActivity>,
+    /// Operator-reserved marker (P4) — reserved tasks are the operator's
+    /// own work; claim tools refuse them and the compact listing skips
+    /// them with a disclosed count.
+    #[serde(default)]
+    pub reserved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -510,7 +561,7 @@ pub(crate) struct TaskUnassignResponse {
 // ── Task update ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct TaskUpdateRequest {
+pub struct TaskUpdateRequest {
     pub task_id: String,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -518,6 +569,12 @@ pub(crate) struct TaskUpdateRequest {
     pub priority: Option<String>,
     pub labels: Option<Vec<String>>,
     pub advances: Option<Vec<CriterionCitationInput>>,
+    /// Set/clear the operator-reserved marker (P4): `true` reserves the
+    /// task for the operator (claim tools refuse it; compact listings skip
+    /// it with a disclosed count); `false` releases it. Omitted keeps the
+    /// current value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reserved: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -526,6 +583,34 @@ pub(crate) struct TaskUpdateResponse {
     pub title: String,
     /// Number of goal-criterion citations on the task after the update.
     pub advances_count: usize,
+}
+
+// ── Claim next (the pull primitive, P3) ──────────────────────────────────
+
+/// Request for `kanban_task_claim_next` — pull the next claimable Ready
+/// task: one transaction assigns the caller and moves the task to
+/// In Progress, honoring the In Progress WIP limit and skipping
+/// operator-reserved tasks (the count is disclosed in the response).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ClaimNextRequest {
+    pub board_id: String,
+    /// Replay protection: a retried call with the same key returns the
+    /// originally claimed task instead of claiming a second one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+/// Response for `kanban_task_claim_next` — the claimed task plus a short
+/// plain-text outcome (the kanzo token-frugality pattern), which discloses
+/// the reserved-skip count when nothing was claimable.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub(crate) struct ClaimNextResponse {
+    pub board_id: String,
+    /// The claimed task — `None` when no claimable Ready task remains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskInfo>,
+    /// The claim outcome in plain text.
+    pub message: String,
 }
 
 // ── Board export / import (mermaid) ─────────────────────────────────────────

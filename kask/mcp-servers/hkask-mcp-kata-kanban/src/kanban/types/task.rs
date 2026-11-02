@@ -43,6 +43,14 @@ pub struct Task {
     pub priority: Option<Priority>,
     /// Labels/tags for categorization and filtering.
     pub labels: Vec<String>,
+    /// Operator-reserved marker (P4): reserved tasks are the operator's
+    /// own work. `kanban_task_claim` and `kanban_task_claim_next` refuse
+    /// them and the compact listing skips them with a visible count —
+    /// enforced at the service seam, never by instructions alone (the
+    /// kanzo `human` flag adopted structurally, per our done-gate
+    /// precedent).
+    #[serde(default)]
+    pub reserved: bool,
     /// Task comments — mini-REPL thread for in-process communication.
     pub comments: Vec<Comment>,
     /// Deliverable links — file paths or URLs pointing to work outputs.
@@ -88,6 +96,7 @@ impl Task {
             estimated_hours,
             labels,
             priority,
+            reserved: false,
             comments: Vec::new(),
             deliverables: Vec::new(),
             phase_id,

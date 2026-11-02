@@ -48,7 +48,9 @@ pub(crate) fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
         "Task" | "kanban_task_create" | "kanban_task_list" => Some(STEP),
         "Goal" | "kanban_goal_create" | "kanban_goal_list" | "kanban_goal_get" => Some(STEP),
         "kanban_goal_judge" | "GoalVerdict" => Some(STEP_VERIFICATION),
-        "Task.execution" | "Task.in_progress" | "kanban_task_spawn" => Some(STEP_EXECUTION),
+        "Task.execution" | "Task.in_progress" | "kanban_task_spawn" | "kanban_task_claim_next" => {
+            Some(STEP_EXECUTION)
+        }
         "Board.execution" => Some(PROCEDURE_EXECUTION),
         "Column" | "TaskStatus" => Some(PROCEDURE_EXECUTION_STATUS),
         "kanban_task_move" | "kanban_task_reopen" => Some(CHANGE_OF_STATUS),

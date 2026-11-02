@@ -19,9 +19,10 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 |------|-------------|
 | `kanban_task_create` | Create a new task on a kanban board; `advances` cites the goal criteria the task serves (validated against the goal, captured as documentation) |
 | `kanban_task_update` | Update editable fields on a task (title, description, criteria, priority, labels, `advances` citations); only the task owner can edit |
-| `kanban_task_list` | List tasks on a kanban board, optionally filtered by status |
+| `kanban_task_list` | List tasks on a kanban board, optionally filtered by status; `view=compact` returns token-frugal one-struct summaries with Done capped at 20 and operator-reserved tasks skipped, both disclosed by count |
 | `kanban_task_move` | Move a task to a new column (status transition); on verification-gated boards (e.g. the Algedonic review board), Done is reachable only via `kanban_task_verify` |
 | `kanban_task_assign` | Claim an unassigned task as the authenticated caller (no arbitrary-agent assignment; the caller's identity is the assignee) |
+| `kanban_task_claim_next` | Pull the next claimable task: one transaction assigns the caller and moves the oldest unassigned Ready task to In Progress, skipping operator-reserved tasks and honoring the In Progress WIP limit (replay-protected by an optional idempotency key) |
 | `kanban_task_verify` | Record verification evidence for a Review task — the user's confirmation text is the pass signal (criteria guide work but do not gate completion; only the operator's relayed confirmation moves Review to Done) |
 | `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
 

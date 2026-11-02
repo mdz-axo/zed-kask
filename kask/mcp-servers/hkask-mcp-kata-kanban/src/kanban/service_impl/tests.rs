@@ -96,7 +96,12 @@ fn assert_board_and_task_retained(env: &FaultEnv, task: &Task) -> anyhow::Result
             .len(),
         1
     );
-    assert_eq!(env.store.count()?, 3);
+    assert_eq!(
+        env.store.count()?,
+        // board + task + index rows, plus the P1 change-counter row the
+        // first board_create minted.
+        4
+    );
     Ok(())
 }
 
@@ -513,6 +518,302 @@ fn concurrent_moves_into_a_wip_one_column_admit_exactly_one() -> anyhow::Result<
     assert!(
         matches!(refused, Err(KanbanError::WipLimitExceeded { column, limit: 1, current: 1 }) if column == "Ready"),
         "the losing mover is refused by the WIP limit: {refused:?}"
+    );
+    Ok(())
+}
+
+// ── P1–P4 (kanzo-benchmark proposals: change counter, claim-next, reserved) ──
+
+/// P1: every mutation moves the change counter; reads never do. The
+/// counter is the panel's cheap-poll signal — a write that fails to move
+/// it makes a poller miss the change until the next write, so the
+/// mutation set here is the full surface the panel renders (boards,
+/// tasks, comments, moves, claims, verify, reopen, rename, delete).
+#[test]
+fn change_counter_moves_on_every_write_and_not_on_reads() -> anyhow::Result<()> {
+    // Built by hand, not via `make_service_with_board`: the fixture's
+    // board_create is itself a write, and the first assertion is that a
+    // database with no writes reads as 0.
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let agent = WebID::new();
+    assert_eq!(svc.changes_revision()?, 0, "a fresh database reads as 0");
+
+    let board = svc.board_create(owner, "Counter Board", &make_default_columns())?;
+    let after_board = svc.changes_revision()?;
+    assert!(after_board > 0, "board_create moves the counter");
+
+    let task = svc.task_create(board.id, TaskSpec::new("Counter task".into()), owner)?;
+    let after_create = svc.changes_revision()?;
+    assert!(after_create > after_board, "task_create moves the counter");
+
+    svc.board_list(&owner)?;
+    svc.task_list(board.id, TaskFilter::all())?;
+    svc.task_get(task.id)?;
+    assert_eq!(
+        svc.changes_revision()?,
+        after_create,
+        "reads (board_list, task_list, task_get) never move the counter"
+    );
+
+    svc.task_claim(task.id, agent)?;
+    svc.task_move(task.id, TaskStatus::Ready, owner)?;
+    svc.task_move(task.id, TaskStatus::InProgress, owner)?;
+    svc.task_move(task.id, TaskStatus::Review, owner)?;
+    svc.task_verify(task.id, "evidence", owner)?;
+    svc.task_reopen(task.id, owner)?;
+    svc.task_update(task.id, owner, None, None, None, None, None, None, None)?;
+    // Comment as the agent while it is still the assignee — `task_comment`
+    // requires the author to be the owner or assignee.
+    svc.task_comment(task.id, agent, "a comment")?;
+    svc.task_unassign(task.id, owner)?;
+    let after_comment = svc.changes_revision()?;
+    assert!(
+        after_comment > after_create,
+        "every task mutation (claim, move, verify, reopen, unassign, update, comment) moves the counter"
+    );
+
+    svc.board_rename(board.id, "Renamed Board")?;
+    assert!(
+        svc.changes_revision()? > after_comment,
+        "board_rename moves the counter"
+    );
+    svc.task_delete(task.id, owner)?;
+    svc.board_delete(board.id, owner)?;
+    assert!(
+        svc.changes_revision()? > after_comment,
+        "deletes move the counter"
+    );
+
+    // The counter is database-scoped, not board-scoped: it survives a
+    // board delete, and a database with no writes still reads as 0.
+    let fresh = KanbanService::new(make_store());
+    assert_eq!(fresh.changes_revision()?, 0);
+    Ok(())
+}
+
+/// P3: the pull takes the oldest claimable Ready task, skips operator-
+/// reserved candidates, moves the winner to In Progress assigned to the
+/// caller, and discloses the reserved-skip count — even on an exhausted
+/// pull, the skip is never silent.
+#[test]
+fn claim_next_pulls_oldest_ready_skips_reserved_and_discloses() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let agent = WebID::new();
+
+    let first = svc.task_create(board.id, TaskSpec::new("First".into()), owner)?;
+    let second = svc.task_create(board.id, TaskSpec::new("Second".into()), owner)?;
+    let reserved = svc.task_create(board.id, TaskSpec::new("Operator's own".into()), owner)?;
+    svc.task_move(first.id, TaskStatus::Ready, owner)?;
+    svc.task_move(second.id, TaskStatus::Ready, owner)?;
+    svc.task_update(
+        reserved.id,
+        owner,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+    )?;
+    svc.task_move(reserved.id, TaskStatus::Ready, owner)?;
+
+    let (claimed, skipped) = svc.claim_next(board.id, agent)?;
+    let claimed = claimed.expect("a claimable Ready task exists");
+    assert_eq!(
+        claimed.id, first.id,
+        "the oldest Ready task is pulled first"
+    );
+    assert_eq!(claimed.status, TaskStatus::InProgress);
+    assert_eq!(claimed.assignee, Some(agent));
+    assert_eq!(
+        skipped, 1,
+        "the reserved Ready task is skipped and disclosed"
+    );
+
+    let (next, skipped) = svc.claim_next(board.id, agent)?;
+    let next = next.expect("a second claimable task exists");
+    assert_eq!(next.id, second.id);
+    assert_eq!(skipped, 1);
+
+    let (exhausted, skipped) = svc.claim_next(board.id, agent)?;
+    assert!(exhausted.is_none(), "only the reserved task remains");
+    assert_eq!(
+        skipped, 1,
+        "the exhausted pull still discloses the reserved skip"
+    );
+
+    let untouched = svc.task_get(reserved.id)?.expect("reserved task persists");
+    assert_eq!(untouched.status, TaskStatus::Ready);
+    assert!(untouched.reserved);
+    assert!(untouched.assignee.is_none());
+    Ok(())
+}
+
+/// P3: the pull honors the In Progress WIP limit — a full column refuses
+/// with the column and limit named, not by silently claiming nothing.
+#[test]
+fn claim_next_wip_full_names_the_limit() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[2] = ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 2).with_wip_limit(1);
+    let board = svc.board_create(owner, "Claim WIP", &columns)?;
+    let first = svc.task_create(board.id, TaskSpec::new("First".into()), owner)?;
+    let second = svc.task_create(board.id, TaskSpec::new("Second".into()), owner)?;
+    svc.task_move(first.id, TaskStatus::Ready, owner)?;
+    svc.task_move(second.id, TaskStatus::Ready, owner)?;
+    svc.task_move(first.id, TaskStatus::InProgress, owner)?;
+
+    let refused = svc.claim_next(board.id, owner);
+    assert!(
+        matches!(
+            &refused,
+            Err(KanbanError::WipLimitExceeded { column, limit: 1, current: 1 })
+                if column == "In Progress"
+        ),
+        "a full In Progress column refuses the pull with the limit named: {refused:?}"
+    );
+    Ok(())
+}
+
+/// P3: concurrent pulls get different tasks — the in-transaction guards
+/// (still-Ready, still-unassigned) make the losing claimer skip to the
+/// next candidate instead of double-claiming, over the file-backed WAL
+/// pool (real multi-connection semantics — the WIP race test's
+/// arrangement; the in-memory max_size(1) driver serializes at the pool
+/// and would hide the window).
+#[test]
+fn concurrent_claim_next_calls_get_different_tasks() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("claim-race.sqlite");
+    let pool = hkask_storage::SqliteDriver::file_pool_with_schema(
+        path.to_str().expect("utf-8 temp path"),
+    )?;
+    let store =
+        HMemStore::from_driver(std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool)))?;
+    let svc = KanbanService::new(store);
+    let owner = WebID::new();
+    let board = svc.board_create(owner, "Claim Race", &make_default_columns())?;
+    let first = svc.task_create(board.id, TaskSpec::new("First".into()), owner)?;
+    let second = svc.task_create(board.id, TaskSpec::new("Second".into()), owner)?;
+    svc.task_move(first.id, TaskStatus::Ready, owner)?;
+    svc.task_move(second.id, TaskStatus::Ready, owner)?;
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let first_claimer = {
+        let svc = svc.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            svc.claim_next(board.id, owner)
+        })
+    };
+    let second_claimer = {
+        let svc = svc.clone();
+        std::thread::spawn(move || {
+            barrier.wait();
+            svc.claim_next(board.id, owner)
+        })
+    };
+    let (claimed_a, _) = first_claimer.join().expect("first claimer thread")?;
+    let (claimed_b, _) = second_claimer.join().expect("second claimer thread")?;
+
+    let claimed_ids: Vec<_> = [claimed_a, claimed_b]
+        .into_iter()
+        .flatten()
+        .map(|task| task.id)
+        .collect();
+    assert_eq!(
+        claimed_ids.len(),
+        2,
+        "both concurrent pulls claim — nothing claimable is left behind"
+    );
+    assert_ne!(
+        claimed_ids[0], claimed_ids[1],
+        "concurrent pulls never claim the same task twice"
+    );
+    for id in &claimed_ids {
+        let task = svc.task_get(*id)?.expect("claimed task persists");
+        assert_eq!(task.status, TaskStatus::InProgress);
+    }
+    Ok(())
+}
+
+/// P4: the claim boundary is structural — `task_claim` refuses an
+/// operator-reserved task, and the refusal names the boundary.
+#[test]
+fn task_claim_refuses_reserved_tasks() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let agent = WebID::new();
+    let task = svc.task_create(board.id, TaskSpec::new("Operator's own".into()), owner)?;
+    svc.task_update(
+        task.id,
+        owner,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+    )?;
+
+    let refused = svc.task_claim(task.id, agent);
+    assert!(
+        matches!(&refused, Err(KanbanError::PermissionDenied(message)) if message.contains("reserved")),
+        "the reserved refusal names the boundary: {refused:?}"
+    );
+    let task = svc.task_get(task.id)?.expect("task persists");
+    assert!(task.assignee.is_none(), "the refused claim assigns nobody");
+    Ok(())
+}
+
+/// P4: the reserved marker round-trips through `task_update`, and an
+/// omitted patch field leaves it alone.
+#[test]
+fn task_update_sets_and_clears_reserved() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Toggle".into()), owner)?;
+    let set = svc.task_update(
+        task.id,
+        owner,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(true),
+    )?;
+    assert!(set.reserved);
+    let cleared = svc.task_update(
+        task.id,
+        owner,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(false),
+    )?;
+    assert!(!cleared.reserved);
+    let untouched = svc.task_update(
+        task.id,
+        owner,
+        Some("Renamed".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
+    assert!(
+        !untouched.reserved,
+        "omitting reserved keeps the current value"
     );
     Ok(())
 }
@@ -1021,6 +1322,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                         None,
                         None,
                         None,
+                        None,
                     )
                     .map(|_| ()),
                 "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
@@ -1251,6 +1553,7 @@ fn interleaved_disjoint_edits_preserve_current_fields_and_explicit_clears() {
                 None,
                 None,
                 None,
+                None,
             )
         },
         || {
@@ -1262,6 +1565,7 @@ fn interleaved_disjoint_edits_preserve_current_fields_and_explicit_clears() {
                 None,
                 None,
                 Some(vec!["Kept label".into()]),
+                None,
                 None,
             )
             .expect("competing edit");
@@ -1329,6 +1633,7 @@ fn task_mutations_preserve_typed_missing_task_and_authorization_errors() {
                     None,
                     None,
                     None,
+                    None,
                 )
                 .map(|_| ()),
             "reopen" => svc.task_reopen(id, actor).map(|_| ()),
@@ -1377,7 +1682,7 @@ fn interleaved_deletion_returns_not_found_without_resurrecting_task_or_index() {
             || svc.task_comment(task.id, owner, "Too late"),
             || {
                 if delete_board {
-                    svc.board_delete(board.id).expect("delete board");
+                    svc.board_delete(board.id, owner).expect("delete board");
                 } else {
                     svc.task_delete(task.id, owner).expect("delete task");
                 }
@@ -1596,6 +1901,7 @@ fn task_update_replaces_and_validates_goal_citations() {
                 criterion_index: 0,
                 criterion_text: "criterion 0 is observable".into(),
             }]),
+            None,
         )
         .unwrap();
     assert_eq!(updated.advances.len(), 1);
@@ -1614,6 +1920,7 @@ fn task_update_replaces_and_validates_goal_citations() {
             criterion_index: 9,
             criterion_text: "criterion 9 is observable".into(),
         }]),
+        None,
     );
     assert!(bad.is_err());
     let reloaded = svc.task_get(task.id).unwrap().expect("task persists");
@@ -1865,15 +2172,21 @@ fn board_delete_removes_board_and_tasks() {
     service
         .task_create(board.id, TaskSpec::new("T2".into()), owner)
         .expect("second task");
-    assert_eq!(store.count().expect("row count"), 5);
+    assert_eq!(
+        store.count().expect("row count"),
+        // board + 2 tasks + 2 index rows, plus the P1 change-counter row.
+        6
+    );
 
-    let tasks_deleted = service.board_delete(board.id).expect("delete board");
+    let tasks_deleted = service.board_delete(board.id, owner).expect("delete board");
     assert_eq!(tasks_deleted, 2);
     assert!(service.board_get(board.id).expect("query board").is_none());
     assert!(service.board_list(&owner).expect("board list").is_empty());
     assert_eq!(
         store.count().expect("row count"),
-        0,
+        // The board, task and index rows are gone; the P1 change-counter
+        // row remains — database-scoped, not board-scoped.
+        1,
         "board, task and index rows must be deleted"
     );
 }
@@ -1889,7 +2202,11 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
     let task = service
         .task_create(board.id, TaskSpec::new("Task".into()), owner)
         .expect("task");
-    assert_eq!(store.count().expect("row count"), 3);
+    assert_eq!(
+        store.count().expect("row count"),
+        // board + task + index, plus the P1 change-counter row.
+        4
+    );
 
     service.task_delete(task.id, owner).expect("delete task");
     assert!(service.task_get(task.id).expect("query task").is_none());
@@ -1903,7 +2220,8 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
     assert!(service.board_get(board.id).expect("query board").is_some());
     assert_eq!(
         store.count().expect("row count"),
-        1,
+        // the board row, plus the P1 change-counter row (database-scoped).
+        2,
         "only the board row may remain"
     );
 }
@@ -1929,6 +2247,7 @@ fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> 
         None,
         None,
         None,
+        None,
     )?;
     service.task_delete(task.id, owner)?;
     assert!(service.task_get(task.id)?.is_none());
@@ -1944,7 +2263,11 @@ fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> 
             .query_by_entity(&format!("kanban:board_tasks:{}", board.id))?
             .is_empty()
     );
-    assert_eq!(store.count()?, 1);
+    assert_eq!(
+        store.count()?,
+        // the board row, plus the P1 change-counter row.
+        2
+    );
     Ok(())
 }
 
@@ -1975,7 +2298,11 @@ fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
         1
     );
     assert!(env.service.board_get(env.board.id)?.is_some());
-    assert_eq!(env.store.count()?, 3);
+    assert_eq!(
+        env.store.count()?,
+        // board + task + index, plus the P1 change-counter row.
+        4
+    );
     Ok(())
 }
 
@@ -1996,7 +2323,7 @@ fn board_delete_atomic_when_child_delete_fails() -> anyhow::Result<()> {
          BEGIN SELECT RAISE(FAIL, 'forced board child delete failure'); END;",
     )?;
 
-    assert!(env.service.board_delete(env.board.id).is_err());
+    assert!(env.service.board_delete(env.board.id, env.owner).is_err());
     assert_board_and_task_retained(&env, &task)?;
     Ok(())
 }
@@ -2016,7 +2343,7 @@ fn board_delete_rejects_invalid_root_and_retains_all_rows() -> anyhow::Result<()
             "UPDATE hmems SET ontology = {replacement} WHERE entity = 'kanban:board'"
         ))?;
 
-        assert!(env.service.board_delete(env.board.id).is_err());
+        assert!(env.service.board_delete(env.board.id, env.owner).is_err());
         assert_board_and_task_retained(&env, &task)?;
     }
     Ok(())

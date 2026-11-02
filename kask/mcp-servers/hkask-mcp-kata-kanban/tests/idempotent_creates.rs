@@ -108,6 +108,7 @@ async fn task_count(server: &KanbanServer, board_id: &str) -> usize {
         .kanban_task_list(Parameters(TaskListRequest {
             board_id: board_id.to_string(),
             status: None,
+            view: None,
         }))
         .await
         .expect("tool ok");
@@ -233,6 +234,7 @@ async fn imported_custom_columns_use_configured_statuses_and_replay_one_board() 
         .kanban_task_list(Parameters(TaskListRequest {
             board_id,
             status: None,
+            view: None,
         }))
         .await
         .expect("imported task list succeeds");
@@ -615,6 +617,7 @@ async fn task_list_exposes_description_for_edit_prefill() {
             .kanban_task_list(Parameters(TaskListRequest {
                 board_id: board_id.to_string(),
                 status: None,
+                view: None,
             }))
             .await
             .expect("list tasks"),

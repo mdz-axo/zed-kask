@@ -217,6 +217,32 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
     })
 }
 
+/// Map a domain `Task` to its wire `TaskInfo` (P4: carries `reserved`) —
+/// shared by `kanban_task_list` and `kanban_task_claim_next` so the two
+/// read paths cannot drift.
+fn task_info(t: &Task) -> TaskInfo {
+    let activity = derive_task_activity(t);
+    TaskInfo {
+        task_id: t.id.to_string(),
+        board_id: t.board_id.to_string(),
+        title: t.title.clone(),
+        description: t.description.clone(),
+        status: t.status.to_string(),
+        assignee: t.assignee.map(|a| a.to_string()),
+        criteria: t.criteria.iter().map(|c| c.description.clone()).collect(),
+        criteria_count: t.criteria.len(),
+        advances_count: t.advances.len(),
+        activity,
+        reserved: t.reserved,
+        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+    }
+}
+
+/// The compact listing view's Done cap (P2) — "an old board has thousands
+/// of done tasks" (the kanzo pattern): agent-facing compact reads keep the
+/// newest [`COMPACT_DONE_CAP`] done tasks and disclose the hidden count.
+const COMPACT_DONE_CAP: usize = 20;
+
 #[tool_router(server_handler)]
 impl KanbanServer {
     #[tool(
@@ -284,14 +310,20 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "List all kanban boards owned by the caller")]
+    #[tool(
+        description = "List all kanban boards owned by the caller, carrying the database's monotonic change counter — poll it to skip re-fetching unchanged state"
+    )]
     pub async fn kanban_board_list(
         &self,
         Parameters(BoardListRequest {}): Parameters<BoardListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_board_list", async {
-            respond(self.service.board_list(&self.webid), |boards| {
+            // P1: the cheap-poll counter rides the board list the panel
+            // already re-reads every tick for identity reconciliation.
+            let changes = self.service.changes_revision().map_err(map_kanban_error)?;
+            respond(self.service.board_list(&self.webid), move |boards| {
                 BoardListResponse {
+                    changes,
                     boards: boards
                         .into_iter()
                         .map(|b| BoardInfo {
@@ -341,7 +373,10 @@ impl KanbanServer {
                     "board {bid} is not owned by caller — cannot delete"
                 )));
             }
-            let tasks_deleted = self.service.board_delete(bid).map_err(map_kanban_error)?;
+            let tasks_deleted = self
+                .service
+                .board_delete(bid, self.webid)
+                .map_err(map_kanban_error)?;
             serde_json::to_value(BoardDeleteResponse {
                 board_id: bid.to_string(),
                 tasks_deleted,
@@ -594,7 +629,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Update editable fields on a task (title, description, criteria, priority, labels, goal-criterion citations). Only the task owner can edit."
+        description = "Update editable fields on a task (title, description, criteria, priority, labels, goal-criterion citations, operator-reserved marker). Only the task owner can edit."
     )]
     pub async fn kanban_task_update(
         &self,
@@ -606,6 +641,7 @@ impl KanbanServer {
             priority,
             labels,
             advances,
+            reserved,
         }): Parameters<TaskUpdateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_update", async {
@@ -655,6 +691,7 @@ impl KanbanServer {
                     priority_update,
                     labels,
                     advances_update,
+                    reserved,
                 ),
                 |task| TaskUpdateResponse {
                     task_id: task.id.to_string(),
@@ -666,13 +703,30 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "List tasks on a kanban board, optionally filtered by status")]
+    #[tool(
+        description = "List tasks on a kanban board, optionally filtered by status. Set view=compact for token-frugal one-struct summaries: Done capped at 20 and operator-reserved tasks skipped, both disclosed by count."
+    )]
     pub async fn kanban_task_list(
         &self,
-        Parameters(TaskListRequest { board_id, status }): Parameters<TaskListRequest>,
+        Parameters(TaskListRequest {
+            board_id,
+            status,
+            view,
+        }): Parameters<TaskListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_task_list", async {
             let bid = parse_board_id(&board_id)?;
+            // P2: closed view vocabulary — an unknown view name is a typed
+            // refusal, never a silent full listing.
+            let compact = match view.as_deref() {
+                None | Some("full") => false,
+                Some("compact") => true,
+                Some(other) => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "invalid view: {other} (expected full or compact)"
+                    )));
+                }
+            };
             let filter = match status {
                 Some(s) => match crate::TaskStatus::parse_str(&s) {
                     Some(st) => TaskFilter::by_status(st),
@@ -685,31 +739,52 @@ impl KanbanServer {
                 None => TaskFilter::all(),
             };
             respond(self.service.task_list(bid, filter), |report| {
-                TaskListResponse {
-                    tasks: report
-                        .tasks
-                        .into_iter()
-                        .map(|t| {
-                            let activity = derive_task_activity(&t);
-                            TaskInfo {
-                                task_id: t.id.to_string(),
-                                board_id: t.board_id.to_string(),
-                                title: t.title,
-                                description: t.description,
-                                status: t.status.to_string(),
-                                assignee: t.assignee.map(|a| a.to_string()),
-                                criteria: t
-                                    .criteria
-                                    .iter()
-                                    .map(|c| c.description.clone())
-                                    .collect(),
-                                criteria_count: t.criteria.len(),
-                                advances_count: t.advances.len(),
-                                activity,
-                                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                if compact {
+                    // P2/P4: the token-frugal agent view — Done capped with
+                    // the hidden count disclosed, operator-reserved tasks
+                    // skipped with their count disclosed. Undecodable rows
+                    // carry through: truncation never hides degradation.
+                    let mut compact_tasks = Vec::new();
+                    let mut done_kept = 0usize;
+                    let mut done_hidden = 0usize;
+                    let mut reserved_skipped = 0usize;
+                    for task in &report.tasks {
+                        if task.reserved {
+                            reserved_skipped += 1;
+                            continue;
+                        }
+                        if task.status == crate::TaskStatus::Done {
+                            if done_kept >= COMPACT_DONE_CAP {
+                                done_hidden += 1;
+                                continue;
                             }
-                        })
-                        .collect(),
+                            done_kept += 1;
+                        }
+                        compact_tasks.push(CompactTaskInfo {
+                            task_id: task.id.to_string(),
+                            title: task.title.clone(),
+                            status: task.status.to_string(),
+                            assignee: task.assignee.map(|a| a.to_string()),
+                            reserved: false,
+                        });
+                    }
+                    return TaskListResponse {
+                        tasks: Vec::new(),
+                        undecodable_tasks: report
+                            .undecodable
+                            .into_iter()
+                            .map(|fault| UndecodableTaskInfo {
+                                task_id: fault.task_id,
+                                reason: fault.reason,
+                            })
+                            .collect(),
+                        compact_tasks,
+                        done_not_shown: (done_hidden > 0).then_some(done_hidden),
+                        reserved_not_shown: (reserved_skipped > 0).then_some(reserved_skipped),
+                    };
+                }
+                TaskListResponse {
+                    tasks: report.tasks.iter().map(task_info).collect(),
                     undecodable_tasks: report
                         .undecodable
                         .into_iter()
@@ -718,6 +793,9 @@ impl KanbanServer {
                             reason: fault.reason,
                         })
                         .collect(),
+                    compact_tasks: Vec::new(),
+                    done_not_shown: None,
+                    reserved_not_shown: None,
                 }
             })
         })
@@ -787,6 +865,59 @@ impl KanbanServer {
                 }
             })
         })
+        .await
+    }
+
+    #[tool(
+        description = "Pull the next claimable task: assigns the caller and moves the oldest unassigned Ready task to In Progress in one transaction (skips operator-reserved tasks, honoring the In Progress WIP limit). Returns the claimed task, or a message when nothing is claimable."
+    )]
+    pub async fn kanban_task_claim_next(
+        &self,
+        Parameters(ClaimNextRequest {
+            board_id,
+            idempotency_key,
+        }): Parameters<ClaimNextRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(
+            self,
+            "kanban_task_claim_next",
+            with_idempotency(
+                &self.idempotency,
+                "kanban_task_claim_next",
+                idempotency_key.as_deref(),
+                &self.webid,
+                serde_json::json!({ "board_id": board_id }),
+                async {
+                    let bid = parse_board_id(&board_id)?;
+                    let (claimed, reserved) = self
+                        .service
+                        .claim_next(bid, self.webid)
+                        .map_err(map_kanban_error)?;
+                    let task = claimed.as_ref().map(task_info);
+                    let message = match (&claimed, reserved) {
+                        (Some(task), _) => format!(
+                            "Claimed {} \"{}\" — in_progress, assigned to you.",
+                            task.id, task.title
+                        ),
+                        (None, 0) => {
+                            format!("No claimable Ready tasks on board {board_id}.")
+                        }
+                        (None, skipped) => format!(
+                            "No claimable Ready tasks on board {board_id} \
+                             ({skipped} reserved task{} skipped — reserved tasks \
+                             are the operator's own work).",
+                            if skipped == 1 { "" } else { "s" }
+                        ),
+                    };
+                    serde_json::to_value(ClaimNextResponse {
+                        board_id,
+                        task,
+                        message,
+                    })
+                    .map_err(|e| McpToolError::internal(e.to_string()))
+                },
+            ),
+        )
         .await
     }
 
@@ -1627,7 +1758,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-// Pins the registered tool surface end-to-end: the exact count (26) plus
+// Pins the registered tool surface end-to-end: the exact count (27) plus
 // the generated TOOL_NAMES const against the live rmcp surface — a tool
 // added/removed/renamed without regenerating (or a `name =` override the
 // build script can't see) fails here instead of degrading to "tool not
@@ -1635,8 +1766,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 hkask_mcp_server::tool_surface_pin!(
     KanbanServer::tool_router(),
     "tool_router",
-    26,
-    tool_surface_is_exactly_26_registered_tools,
+    27,
+    tool_surface_is_exactly_27_registered_tools,
 );
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."

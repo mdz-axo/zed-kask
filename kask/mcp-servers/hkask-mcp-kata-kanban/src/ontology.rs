@@ -91,6 +91,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // Spawning/delegating executes a step of the parent procedure —
         // the sub-task's work is begun.
         "kanban_task_spawn" => Some(STEP_EXECUTION),
+        // Pulling work to begin it (P3): the claim assigns the caller and
+        // starts the task — the same delegation-beginning sense as spawn.
+        "kanban_task_claim_next" => Some(STEP_EXECUTION),
         // contract_propose_expect creates kanban tasks for contracts
         // missing expect annotations — a step of the contract
         // governance procedure (delegation from the curator).
@@ -135,6 +138,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_task_kata_prompt"
         | "kanban_task_kata_record"
         | "kanban_task_spawn"
+        | "kanban_task_claim_next"
         | "contract_propose_expect" => Some(DATASET),
         _ => None,
     }

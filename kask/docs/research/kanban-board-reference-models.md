@@ -2,7 +2,7 @@
 title: "Kanban Boards — Reference Models from Established Open-Source Implementations"
 audience: [architects, developers, agents]
 last_updated: 2026-11-02
-version: "1.4.1"
+version: "1.5.0"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -52,6 +52,10 @@ name-cap contract re-verified against the live tree
 pinned by the service and panel tests). The rotted link to the deleted
 chunking-for-rag-research.md pattern note was removed in the same restoration.
 
+v1.5.0 (2026-11-02): added §3.5 (Kanzo — the agent-native single-board
+reference; the adopted patterns P1–P4 and the labeled non-adoptions P5/P6
+are recorded there), the §2 method row, and the §4 board-count divergence.
+
 ## 1. Purpose and scope
 
 - Record the converged reference model (invariants R1–R8, §4) with primary-
@@ -80,6 +84,7 @@ observed on the repo landing pages the same day):
 | [plankanban/planka](https://github.com/plankanban/planka) (`master`) | 12.6k | `server/api/models/Board.js`; `client/src/components/boards/Boards/Boards.jsx`, `Boards/Item.jsx`, `AddBoardStep/AddBoardStep.jsx`; repo tree |
 | [kanbn/kan](https://github.com/kanbn/kan) (`main`) | 5.7k | `packages/db/src/schema/boards.ts`; `packages/shared/src/utils/generateSlug.ts`; `packages/api/src/schemas/board.ts`; repo tree |
 | Kanboard (docs, [docs.kanboard.org/v1/user/projects/](https://docs.kanboard.org/v1/user/projects/)) | — | user documentation page |
+| [emanuele-em/kanzo](https://github.com/emanuele-em/kanzo) (`main`) | 794 | `src/schema.sql`, `src/mcp.rs`, `src/store.rs`, `src/service.rs`, `README.md`, `.cargo/config.toml` |
 
 In-tree facts cite `path:line` at commit `4e421ce9db` (2026-09-18; the
 v1.1.0 review re-verified the load-bearing ones, including the git history of
@@ -164,6 +169,42 @@ belong to this project"), and the dashboard is the project list. One-click
 board switching from the header is third-party-corroborated
 (methodsandtools.com tool review) — treat as secondary evidence.
 
+### 3.5 Kanzo — the agent-native single-board pattern (2026-11-02)
+
+Kanzo (Rust, AGPL-3.0, v0.3.0, fetched from `main`) is the first surveyed
+implementation built agent-first: one 4.5 MB binary carrying a browser
+board, a 10-tool MCP server, and a CLI over one plain SQLite file
+(`~/kanzo/kanzo.db`).
+
+- **Corroborates R1/R2** (slug-addressed projects — validated, unique,
+  optionally linked to GitHub `owner/repo`; `store.rs`) **and R8**
+  (project delete cascades to tasks and comments — pinned by their
+  `delete_project_removes_its_tasks_and_comments`).
+- **Diverges on board count**: one board, many projects — the only
+  surveyed implementation without multiple boards. A labeled divergence:
+  in our reading, boards stay the named containers and Kanzo's projects
+  are the board-analog.
+- **No WIP limits, no done-gate**: statuses `todo/doing/review/done` (+
+  optional `backlog`); agents may move to done freely — the boundary is
+  instruction-level ("Leave done and human tasks to the user", the MCP
+  server instructions), not structural.
+- **Adopted patterns (2026-11-02, kanzo-benchmark proposals P1–P4)**: the
+  meta `changes` counter bumped by write triggers (our P1 — a
+  per-database monotonic revision surfaced on `kanban_board_list`, and
+  the panel tick re-fetches tasks only when it moves); token-frugal agent
+  reads (our P2 — `kanban_task_list view=compact`, Done capped at 20
+  with disclosed counts); the atomic `next_task` pull (our P3 —
+  `kanban_task_claim_next`, honoring WIP admission and skipping reserved
+  tasks); the `human` task flag (our P4 — the operator-reserved marker,
+  enforced structurally at our claim seams, not by instruction).
+- **Considered, labeled, not adopted (P5)**: ambient project discovery
+  from the agent working directory's git remote — our delegation design
+  passes board name+id explicitly in self-contained context, fitting the
+  per-agent WebID trust model. **Not adopted (P6)**: the bundled-SQLite
+  feature trim — our fleet uses FTS5 (`hkask-mcp-research`'s ledger DB)
+  and `vec0` virtual tables (`hkask-memory`, `hkask-storage`), so the
+  trim would remove features in active use.
+
 ## 4. The converged reference model
 
 Every surveyed implementation exhibits all of the following. These are the
@@ -188,6 +229,9 @@ the divergence is a labeled implementation decision:
   copies). R2 does not require uniqueness — see §8 decision 2.
 - **Switcher shape**: Planka uses always-visible named tabs; Kan uses a
   dropdown. Both satisfy R2–R4 — see §8 decision 1.
+- **Board count**: Wekan, Planka, Kan and Kanboard are multi-board; Kanzo
+  is single-board with projects as the containers, so R1–R8 read onto its
+  projects — a labeled divergence (§3.5).
 
 ## 5. Alignment of the kata-kanban against the reference model
 

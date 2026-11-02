@@ -13,12 +13,12 @@ use serde_json::json;
 
 use crate::KanbanPanel;
 use crate::REFRESH_INTERVAL;
-use crate::RefreshTarget;
 use crate::{
     BOARD_LIST_TOOL, KANBAN_SERVER, TASK_LIST_TOOL, classify_kanban_fetch_error,
     pending_board_to_select, refresh_target, selected_identity_from_boards,
 };
 use crate::{BoardListResponse, CommentsResponse, TaskListResponse};
+use crate::{RefreshTarget, tasks_should_refetch};
 use hkask_tool_invoker::shared_tool_invoker;
 
 impl KanbanPanel {
@@ -73,7 +73,19 @@ impl KanbanPanel {
                     this.fetching = false;
                     match parsed {
                         Some(response) => {
+                            // P1: the counter gate, computed before the
+                            // response is consumed. The boards read always
+                            // lands (identity reconciliation); the task
+                            // fetch below fires only when the change
+                            // counter moved since the last task fetch.
+                            let changed =
+                                tasks_should_refetch(this.last_seen_changes, response.changes);
+                            this.last_seen_changes = Some(response.changes);
                             this.boards = response.boards;
+                            // P1: the counter-gate flag — the auto-select
+                            // path below may fetch the task list itself;
+                            // the gate after it must not double-fetch.
+                            let mut fetched_tasks = false;
                             // If the selected board was deleted externally
                             // (via the MCP tool, not through the panel UI),
                             // the selected_board_id still points to the dead
@@ -133,6 +145,14 @@ impl KanbanPanel {
                                 this.selected_board_id = Some(first.board_id.clone());
                                 this.board_name = Some(first.name.into());
                                 this.columns = first.columns;
+                                this.fetch_tasks(cx);
+                                fetched_tasks = true;
+                            }
+                            // P1: the counter-gated task fetch — steady state
+                            // is one tool call per tick (the boards read);
+                            // the task list re-reads only when the counter
+                            // moved since the last fetch.
+                            if changed && !fetched_tasks && this.selected_board_id.is_some() {
                                 this.fetch_tasks(cx);
                             }
                         }

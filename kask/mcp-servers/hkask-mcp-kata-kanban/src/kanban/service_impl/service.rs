@@ -55,6 +55,12 @@ const BOARD_ENTITY: &str = "kanban:board";
 const TASK_ENTITY: &str = "kanban:task";
 const BOARD_TASKS_PREFIX: &str = "kanban:board_tasks:";
 
+/// The per-database change counter's h_mem coordinates (P1, the kanzo
+/// `schema.sql` pattern: one monotonic number every write moves, so a
+/// poller detects change with a single-cell read).
+const CHANGES_ENTITY: &str = "kanban:changes";
+const CHANGES_ATTRIBUTE: &str = "revision";
+
 impl KanbanService {
     /// Create a KanbanService backed by the given HMemStore.
     ///
@@ -133,6 +139,82 @@ impl KanbanService {
                 id: task_id.to_string(),
             })
         })
+    }
+
+    /// Move the per-database change counter (P1) — one monotonic number
+    /// every write moves, so a poller that remembers the last value can
+    /// skip re-fetching derived state until it moves (the kanzo
+    /// `schema.sql` changes-counter pattern, adapted to the h_mem store:
+    /// one atomic cell instead of SQL triggers). The bump runs after the
+    /// mutation it follows commits, so a failed mutation never moves the
+    /// counter; and it is a single `IMMEDIATE` update, so concurrent
+    /// server processes sharing this database cannot lose a bump to a
+    /// read-modify-write race.
+    fn bump_changes(&self, owner: WebID) {
+        let bumped: Result<Option<()>, KanbanError> = self
+            .store
+            .update_value_atomic::<(), TaskWriteError>(
+                CHANGES_ENTITY,
+                CHANGES_ATTRIBUTE,
+                |current| {
+                    let current: u64 = serde_json::from_value(current).unwrap_or(0);
+                    Ok((Some(serde_json::Value::from(current + 1)), ()))
+                },
+            )
+            .map_err(KanbanError::from);
+        match bumped {
+            Ok(Some(())) => {}
+            Ok(None) => {
+                // No counter row yet (a fresh database whose very first
+                // mutation is running): create it at 1. A concurrent
+                // creator wins the insert; the loser's retry keeps the
+                // counter monotonic either way.
+                let counter = HMem::new(
+                    CHANGES_ENTITY,
+                    CHANGES_ATTRIBUTE,
+                    serde_json::Value::from(1u64),
+                    owner,
+                );
+                if self.store.insert(&counter).is_err() {
+                    // Another process created the row first — bump it.
+                    let _ = self.store.update_value_atomic::<(), TaskWriteError>(
+                        CHANGES_ENTITY,
+                        CHANGES_ATTRIBUTE,
+                        |current| {
+                            let current: u64 = serde_json::from_value(current).unwrap_or(0);
+                            Ok((Some(serde_json::Value::from(current + 1)), ()))
+                        },
+                    );
+                }
+            }
+            Err(error) => {
+                // A counter that fails to move can only make a poller miss
+                // one change until the next write — never a wrong one. The
+                // mutation that called this has already committed; do not
+                // fail the call for the counter.
+                tracing::warn!(
+                    target: "hkask.kanban",
+                    "change counter bump failed: {error}"
+                );
+            }
+        }
+    }
+
+    /// Read the change counter (P1) — the poller's cheap single-cell read.
+    /// A missing row reads as 0: a fresh database has had no writes, and
+    /// the first write creates the row. A corrupt value resets to 0 —
+    /// monotonicity is lost only across that corruption, and pollers
+    /// over-fetch rather than miss a change.
+    pub(crate) fn changes_revision(&self) -> Result<u64, KanbanError> {
+        let h_mems = self
+            .store
+            .query_by_entity_attribute(CHANGES_ENTITY, CHANGES_ATTRIBUTE)
+            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
+        if let Some(h_mem) = h_mems.into_iter().next() {
+            Ok(serde_json::from_value(h_mem.value).unwrap_or(0))
+        } else {
+            Ok(0)
+        }
     }
 
     // ── Board operations ──────────────────────────────────────────────────
@@ -266,6 +348,8 @@ impl KanbanService {
             "REG"
         );
 
+        self.bump_changes(owner);
+
         Ok(board)
     }
 
@@ -306,6 +390,7 @@ impl KanbanService {
             owner = %owner,
             "REG"
         );
+        self.bump_changes(owner);
         Ok((board, task_count))
     }
 
@@ -427,6 +512,8 @@ impl KanbanService {
             "REG"
         );
 
+        self.bump_changes(board.owner);
+
         Ok(board)
     }
 
@@ -437,7 +524,8 @@ impl KanbanService {
     /// flag), so a concurrent rename cannot be clobbered; it is convergent,
     /// so concurrent migrations cannot disagree.
     fn board_set_done_gate(&self, board_id: BoardId) -> Result<Board, KanbanError> {
-        self.store
+        let board = self
+            .store
             .update_value_atomic::<_, TaskWriteError>(
                 BOARD_ENTITY,
                 &board_id.to_string(),
@@ -461,7 +549,9 @@ impl KanbanService {
                     entity_type: "board".to_string(),
                     id: board_id.to_string(),
                 })
-            })
+            })?;
+        self.bump_changes(board.owner);
+        Ok(board)
     }
 
     // ── Task operations ───────────────────────────────────────────────────
@@ -560,6 +650,8 @@ impl KanbanService {
             owner = %owner,
             "REG"
         );
+
+        self.bump_changes(owner);
 
         Ok(task)
     }
@@ -807,6 +899,15 @@ impl KanbanService {
                 ));
             }
 
+            // P4: operator-reserved tasks are the operator's own work —
+            // the claim boundary is structural (this refusal), not an
+            // instruction the agent might not follow.
+            if task.reserved {
+                return Err(KanbanError::PermissionDenied(
+                    "task is reserved for the operator — agents do not claim reserved tasks".into(),
+                ));
+            }
+
             // P4: Clear Boundaries — only tasks in Backlog or Ready can be claimed.
             // InProgress/Review/Done tasks are not claimable.
             if !matches!(task.status, TaskStatus::Backlog | TaskStatus::Ready) {
@@ -830,6 +931,138 @@ impl KanbanService {
             "REG"
         );
 
+        Ok(task)
+    }
+
+    /// Pull the next claimable Ready task for the actor (P3 — the
+    /// reference-model pull primitive: work moves only when downstream
+    /// capacity admits it, never by push). One transaction per attempt:
+    /// inside the write lock the candidate must still be Ready, unassigned
+    /// and not reserved, and the In Progress column's WIP limit admits the
+    /// move — the same in-transaction admission `task_move` uses, so two
+    /// concurrent claimers cannot both pass the count. Candidate selection
+    /// happens outside the lock; a candidate taken by a concurrent claimer
+    /// is skipped and the next is tried, so concurrent callers get
+    /// different tasks.
+    ///
+    /// pre:  board_id refers to an existing board; actor is authenticated
+    /// post: returns the oldest unassigned Ready task moved to In Progress
+    ///       and assigned to the actor (or `None` when no claimable task
+    ///       remains), plus the count of operator-reserved Ready tasks the
+    ///       pull skipped — disclosed, never silent.
+    pub(crate) fn claim_next(
+        &self,
+        board_id: BoardId,
+        actor: WebID,
+    ) -> Result<(Option<Task>, usize), KanbanError> {
+        let board = self.board_get(board_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: board_id.to_string(),
+            })
+        })?;
+        // The legacy Done-gate stamp `task_move` performs, kept identical
+        // so a gated board pulls under the same policy a direct move sees.
+        let board = if board.name == ALGEDONIC_BOARD_NAME && !board.done_requires_verification {
+            self.board_set_done_gate(board.id)?
+        } else {
+            board
+        };
+        let (mut tasks, faults) = self.board_tasks_with_faults(board_id)?;
+        if !faults.is_empty() {
+            // Fail closed, the WIP admission's rule: an unreadable indexed
+            // row could be a claimable task, and a pull that skips it
+            // decides work allocation on a known-lower view.
+            return Err(KanbanError::Internal(format!(
+                "board {board_id} has unreadable indexed task rows — the pull refuses to \
+                 decide on an incomplete view"
+            )));
+        }
+        let reserved_ready = tasks
+            .iter()
+            .filter(|t| t.status == TaskStatus::Ready && t.reserved && t.assignee.is_none())
+            .count();
+        // Oldest first — the head of the Ready column is the first queued.
+        tasks.retain(|t| t.status == TaskStatus::Ready && t.assignee.is_none() && !t.reserved);
+        tasks.sort_by_key(|t| t.created_at);
+        for candidate in tasks {
+            match self.claim_next_once(candidate.id, actor, &board) {
+                Ok(task) => {
+                    tracing::info!(
+                        target: "hkask.kanban",
+                        operation = "task_claimed_next",
+                        task_id = %task.id,
+                        board_id = %board_id,
+                        actor = %actor,
+                        "REG"
+                    );
+                    return Ok((Some(task), reserved_ready));
+                }
+                // Taken by a concurrent claimer, deleted, reserved since
+                // selection, or moved under us: skip to the next candidate.
+                Err(
+                    KanbanError::PermissionDenied(_)
+                    | KanbanError::InvalidTransition { .. }
+                    | KanbanError::NotFound(_),
+                ) => continue,
+                // In Progress is full, or the view is unreadable: stop and
+                // surface the error rather than grinding candidates against
+                // the same full column.
+                Err(error) => return Err(error),
+            }
+        }
+        Ok((None, reserved_ready))
+    }
+
+    /// One claim attempt under the task write lock — the in-transaction
+    /// guards `claim_next` retries around. Never call this directly: it
+    /// assumes the caller verified the board.
+    fn claim_next_once(
+        &self,
+        task_id: TaskId,
+        actor: WebID,
+        board: &Board,
+    ) -> Result<Task, KanbanError> {
+        let (task, ()) = self.mutate_task_scanning(task_id, |task, reads| {
+            if task.reserved {
+                return Err(KanbanError::PermissionDenied(
+                    "task is reserved for the operator — agents do not claim reserved tasks".into(),
+                ));
+            }
+            if task.assignee.is_some() {
+                return Err(KanbanError::PermissionDenied(
+                    "task is already assigned".into(),
+                ));
+            }
+            if task.status != TaskStatus::Ready
+                || !board.can_transition(task.status, TaskStatus::InProgress)
+            {
+                return Err(KanbanError::InvalidTransition {
+                    task: task_id,
+                    from: task.status,
+                    to: TaskStatus::InProgress,
+                });
+            }
+            // The same in-transaction WIP admission `task_move` uses: the
+            // count and the claim commit share one transaction.
+            if let Some((column, limit)) = board
+                .column_for_status(TaskStatus::InProgress)
+                .and_then(|column| column.wip_limit.map(|limit| (column.name.clone(), limit)))
+            {
+                let count =
+                    Self::count_status_in_txn(reads, task.board_id, TaskStatus::InProgress)?;
+                if count >= limit as usize {
+                    return Err(KanbanError::WipLimitExceeded {
+                        column,
+                        limit,
+                        current: count as u32,
+                    });
+                }
+            }
+            task.assignee = Some(actor);
+            task.status = TaskStatus::InProgress;
+            Ok(())
+        })?;
         Ok(task)
     }
 
@@ -944,6 +1177,7 @@ impl KanbanService {
                 id: task_id.to_string(),
             }));
         }
+        self.bump_changes(actor);
         Ok(())
     }
 
@@ -991,6 +1225,7 @@ impl KanbanService {
         priority: Option<Option<Priority>>,
         labels: Option<Vec<String>>,
         advances: Option<Vec<CriterionCitation>>,
+        reserved: Option<bool>,
     ) -> Result<Task, KanbanError> {
         // Validate cross-record citations before taking the task write lock.
         if let Some(new_advances) = &advances {
@@ -1016,6 +1251,9 @@ impl KanbanService {
             }
             if let Some(new_advances) = advances {
                 task.advances = new_advances;
+            }
+            if let Some(reserved_update) = reserved {
+                task.reserved = reserved_update;
             }
             Ok(())
         })?;
@@ -1048,10 +1286,15 @@ impl KanbanService {
 
     /// Delete a board and all its tasks.
     ///
-    /// pre:  board_id is valid
+    /// pre:  board_id is valid; actor is a valid WebID — destructive ops
+    ///       carry the actor, like `task_delete`
     /// post: board h_mem and all associated task/index h_mems are deleted from the database
     #[must_use = "result must be used"]
-    pub(crate) fn board_delete(&self, board_id: BoardId) -> Result<usize, KanbanError> {
+    pub(crate) fn board_delete(
+        &self,
+        board_id: BoardId,
+        actor: WebID,
+    ) -> Result<usize, KanbanError> {
         let board_id_text = board_id.to_string();
         let deleted = self
             .store
@@ -1073,6 +1316,7 @@ impl KanbanService {
             .into_iter()
             .filter_map(|(entity, attribute)| (entity == TASK_ENTITY).then_some(attribute))
             .collect::<std::collections::HashSet<_>>();
+        self.bump_changes(actor);
         Ok(task_ids.len())
     }
 
@@ -1104,7 +1348,8 @@ impl KanbanService {
     ) -> Result<(Task, T), KanbanError> {
         #[cfg(test)]
         self.pause_before_task_write();
-        self.store
+        let (task, result) = self
+            .store
             .update_value_atomic::<_, TaskWriteError>(
                 TASK_ENTITY,
                 &task_id.to_string(),
@@ -1129,7 +1374,12 @@ impl KanbanService {
                     entity_type: "task".to_string(),
                     id: task_id.to_string(),
                 })
-            })
+            })?;
+        // P1: every successful task mutation moves the change counter — the
+        // panel's cheap-poll signal. Bumped after the write commits, so a
+        // failed mutation never moves the counter.
+        self.bump_changes(task.owner);
+        Ok((task, result))
     }
 
     /// Transform the latest task under the existing storage write lock, with
@@ -1148,7 +1398,8 @@ impl KanbanService {
     ) -> Result<(Task, T), KanbanError> {
         #[cfg(test)]
         self.pause_before_task_write();
-        self.store
+        let (task, result) = self
+            .store
             .update_value_atomic_with_reads::<_, TaskWriteError>(
                 TASK_ENTITY,
                 &task_id.to_string(),
@@ -1173,7 +1424,11 @@ impl KanbanService {
                     entity_type: "task".to_string(),
                     id: task_id.to_string(),
                 })
-            })
+            })?;
+        // P1: every successful task mutation moves the change counter — the
+        // panel's cheap-poll signal (shared with `mutate_task`).
+        self.bump_changes(task.owner);
+        Ok((task, result))
     }
 }
 

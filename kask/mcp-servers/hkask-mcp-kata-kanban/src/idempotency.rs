@@ -24,6 +24,9 @@
 //! - `kanban_board_create` — a replay creates a second board
 //! - `kanban_task_create` — a replay creates a second task
 //! - `kanban_task_spawn` — a replay starts a second subagent
+//! - `kanban_task_claim_next` — not identity-minting, but effect-
+//!   duplicating: a replay claims a SECOND task (the pull's effect is
+//!   which task got taken)
 //! - `kanban_board_import` — a replay creates a second board aggregate
 //! - `kanban_goal_create` — a replay creates a second functional goal
 //!

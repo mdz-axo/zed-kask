@@ -94,6 +94,11 @@ pub(crate) struct EditTaskForm {
     /// The task id being edited.
     pub task_id: String,
     initial_description: Option<String>,
+    /// The operator-reserved marker's current toggle state (P4).
+    pub(crate) reserved: bool,
+    /// The reserved state when the form opened — the patch sends
+    /// `reserved` only when the toggle moved, like the description rule.
+    initial_reserved: bool,
 }
 
 impl EditTaskForm {
@@ -103,6 +108,7 @@ impl EditTaskForm {
         current_description: Option<&str>,
         current_priority: Option<&str>,
         current_labels: &[String],
+        current_reserved: bool,
         window: &mut Window,
         cx: &mut Context<KanbanPanel>,
     ) -> Self {
@@ -143,6 +149,8 @@ impl EditTaskForm {
             labels,
             task_id: task_id.to_string(),
             initial_description: current_description.map(str::to_string),
+            reserved: current_reserved,
+            initial_reserved: current_reserved,
         }
     }
 
@@ -160,12 +168,15 @@ impl EditTaskForm {
             self.initial_description.as_deref(),
             &priority,
             &labels_text,
+            self.reserved,
+            self.initial_reserved,
         )
     }
 }
 
 /// Build the edit patch: omitted fields keep their current server value.
-/// An explicitly emptied prefilled description clears it.
+/// An explicitly emptied prefilled description clears it; a moved reserved
+/// toggle sends its new value, an untouched one sends nothing (P4).
 fn task_edit_args(
     task_id: &str,
     title: &str,
@@ -173,6 +184,8 @@ fn task_edit_args(
     initial_description: Option<&str>,
     priority: &str,
     labels_text: &str,
+    reserved: bool,
+    initial_reserved: bool,
 ) -> serde_json::Value {
     let mut args = json!({ "task_id": task_id });
     if !title.trim().is_empty() {
@@ -192,6 +205,9 @@ fn task_edit_args(
             .map(str::to_string)
             .collect();
         args["labels"] = json!(labels);
+    }
+    if reserved != initial_reserved {
+        args["reserved"] = json!(reserved);
     }
     args
 }
@@ -412,6 +428,34 @@ pub(crate) fn render_edit_task_form(
                 .child(div().w_48().child(form.priority.clone()))
                 .child(div().flex_1().child(form.labels.clone())),
         )
+        .child(
+            // P4: the operator-reserved toggle — a structural boundary (the
+            // server's claim tools refuse reserved tasks; compact listings
+            // skip them), set from the panel because reserved work is the
+            // operator's own.
+            div()
+                .id("kanban-edit-task-reserved-toggle")
+                .cursor_pointer()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle_edit_task_reserved(cx);
+                }))
+                .child(
+                    Label::new(if form.reserved {
+                        "Reserved (operator-only): ON — claim tools and compact listings skip it"
+                    } else {
+                        "Reserved (operator-only): OFF"
+                    })
+                    .size(LabelSize::Small)
+                    .color(if form.reserved {
+                        Color::Warning
+                    } else {
+                        Color::Muted
+                    }),
+                ),
+        )
         .child(action_row(
             cx,
             "edit-task",
@@ -521,6 +565,15 @@ impl KanbanPanel {
             RefreshTarget::Tasks,
             cx,
         );
+    }
+
+    /// Toggle the edit form's operator-reserved marker (P4) — the form
+    /// state flips; `submit_edit_task` sends it only when it moved.
+    pub(crate) fn toggle_edit_task_reserved(&mut self, cx: &mut Context<Self>) {
+        if let Some(form) = &mut self.edit_task_form {
+            form.reserved = !form.reserved;
+        }
+        cx.notify();
     }
 
     /// Start the spawn-task flow for a specific task.
@@ -827,10 +880,44 @@ mod edit_form_contract_tests {
     /// post: an untouched description is omitted; deliberately clearing it sends an empty string
     #[test]
     fn unchanged_description_is_not_sent_but_explicit_clear_is() {
-        let kept = task_edit_args("task-1", "New title", "keep", Some("keep"), "", "");
+        let kept = task_edit_args(
+            "task-1",
+            "New title",
+            "keep",
+            Some("keep"),
+            "",
+            "",
+            false,
+            false,
+        );
         assert!(kept.get("description").is_none());
         assert_eq!(kept["title"], "New title");
-        let cleared = task_edit_args("task-1", "New title", "", Some("keep"), "", "");
+        let cleared = task_edit_args(
+            "task-1",
+            "New title",
+            "",
+            Some("keep"),
+            "",
+            "",
+            false,
+            false,
+        );
         assert_eq!(cleared["description"], "");
+    }
+
+    /// expect: "The reserved toggle sends a patch only when it moved."
+    /// [P1] Motivating: User Sovereignty — the operator's marker is
+    /// explicit, and an untouched toggle never rewrites the server state.
+    /// post: reserved is in the patch iff it differs from the initial value
+    #[test]
+    fn reserved_toggle_is_sent_only_when_moved() {
+        let untouched = task_edit_args("task-1", "T", "d", Some("d"), "", "", false, false);
+        assert!(untouched.get("reserved").is_none());
+        let turned_on = task_edit_args("task-1", "T", "d", Some("d"), "", "", true, false);
+        assert_eq!(turned_on["reserved"], true);
+        let turned_off = task_edit_args("task-1", "T", "d", Some("d"), "", "", false, true);
+        assert_eq!(turned_off["reserved"], false);
+        let stayed_on = task_edit_args("task-1", "T", "d", Some("d"), "", "", true, true);
+        assert!(stayed_on.get("reserved").is_none());
     }
 }

@@ -455,11 +455,17 @@ pub(crate) struct ColumnDef {
 }
 
 /// The `kanban_board_list` response payload (after unwrapping the `content`
-/// envelope).
+/// envelope). `changes` is the server's monotonic change counter (P1): the
+/// tick compares it against the last task fetch to decide whether the task
+/// list must re-read. A pre-P1 server omits it — the default 0 makes every
+/// comparison "changed", which is the pre-P1 always-fetch behavior, never
+/// a missed change.
 #[derive(Debug, Clone, Deserialize)]
 struct BoardListResponse {
     #[serde(default)]
     boards: Vec<BoardInfo>,
+    #[serde(default)]
+    changes: u64,
 }
 
 /// One task from `kanban_task_list`. Mirrors the server's `TaskInfo`.
@@ -477,6 +483,9 @@ struct TaskInfo {
     assignee: Option<String>,
     #[serde(default)]
     activity: Option<TaskActivityInfo>,
+    /// Operator-reserved marker (P4) — prefills the edit form's toggle.
+    #[serde(default)]
+    reserved: bool,
 }
 
 /// The activity strip on a task. Mirrors the server's `TaskActivity`.
@@ -534,6 +543,16 @@ fn panel_tab_title(board_name: Option<&str>) -> SharedString {
         Some(name) if !name.is_empty() => SharedString::from(format!("Kanban — {name}")),
         _ => "Kanban Board".into(),
     }
+}
+
+/// The counter-gated task-fetch decision (P1) — the pure form of the
+/// tick's gate so it pins without a Workspace. The task list re-fetches
+/// only when the change counter moved since the last fetch; `None` (no
+/// fetch has landed yet) always fetches, so the first read after selection
+/// loads. A backwards move (server-side reset) also fetches — the gate
+/// never trusts a cache newer than the counter says it is.
+pub(crate) fn tasks_should_refetch(last_seen: Option<u64>, changes: u64) -> bool {
+    last_seen != Some(changes)
 }
 
 /// The board-name cap the panel enforces client-side (the service boundary
@@ -595,6 +614,13 @@ pub struct KanbanPanel {
     boards: Vec<BoardInfo>,
     /// Tasks for the selected board (from `kanban_task_list`).
     tasks: Vec<TaskInfo>,
+    /// The change-counter value the current task list was read under (P1).
+    /// The tick's boards read compares the fresh counter against this: the
+    /// task list re-fetches only when the counter moved — steady-state
+    /// tick tool calls drop from two to one (the kanzo changes-counter
+    /// pattern). `None` until the first fetch, so the first read always
+    /// fetches.
+    last_seen_changes: Option<u64>,
     /// Column definitions including WIP limits. Populated from the
     /// selected board's `columns` field in the `kanban_board_list` response.
     columns: Vec<ColumnDef>,
@@ -690,6 +716,7 @@ impl KanbanPanel {
                 board_name: None,
                 boards: Vec::new(),
                 tasks: Vec::new(),
+                last_seen_changes: None,
                 columns: Vec::new(),
                 kanban_widget: None,
                 fetching: false,
@@ -1523,6 +1550,7 @@ impl Render for KanbanPanel {
                         task.description.as_deref(),
                         None,
                         &[],
+                        task.reserved,
                         window,
                         cx,
                     ));
@@ -1769,7 +1797,7 @@ mod tests {
         RefreshTarget, TASK_CREATE_TOOL, TASK_DELETE_TOOL, TASK_SPAWN_TOOL, TASK_UPDATE_TOOL,
         attach_idempotency_key, board_name_cap_error, classify_kanban_fetch_error,
         is_idempotent_tool, mutation_retry_delay, panel_tab_title, pending_board_to_select,
-        refresh_target, selected_identity_from_boards, steer_system_prompt,
+        refresh_target, selected_identity_from_boards, steer_system_prompt, tasks_should_refetch,
     };
     use hkask_tool_invoker::InvokeError;
     use std::time::Duration;
@@ -2098,6 +2126,30 @@ mod tests {
             RefreshTarget::BoardsAndTasks,
             RefreshTarget::Tasks,
             "the reconciling tick is a distinct behavior from the pre-G8 task-only tick"
+        );
+    }
+
+    /// P1: the counter-gated task fetch — the boards read lands every tick
+    /// (identity reconciliation), but the task list re-fetches only when
+    /// the change counter moved. `None` (no fetch yet) always fetches.
+    #[test]
+    fn tasks_refetch_only_when_the_change_counter_moves() {
+        assert!(
+            tasks_should_refetch(None, 0),
+            "the first read after selection always fetches"
+        );
+        assert!(
+            !tasks_should_refetch(Some(7), 7),
+            "an unchanged counter means the cached task list is still fresh"
+        );
+        assert!(
+            tasks_should_refetch(Some(7), 8),
+            "a moved counter means the task list must re-read"
+        );
+        assert!(
+            tasks_should_refetch(Some(7), 6),
+            "a counter that moved backwards (server reset) re-fetches rather \
+             than trusting a stale cache"
         );
     }
 
