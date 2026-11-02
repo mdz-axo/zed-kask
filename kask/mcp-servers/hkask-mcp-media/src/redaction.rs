@@ -1,6 +1,6 @@
 //! Redaction as a composed edit — S3 of the visual-event-tagging design
-//! (`kask/docs/research/visual-event-tagging-design.md` §6, with §3 layer
-//! contracts and §7 human enablement).
+//! (§6, with §3 layer
+//! contracts and §7 human enablement; the design doc is preserved in git history).
 //!
 //! A redaction decision is a researcher-authored layer (kind `researcher`,
 //! provenance `model: "user"` — a human act, never machine-authored) whose

@@ -1,5 +1,5 @@
-/- Deterministic-pole exemplar for
-   kask/docs/research/syntax-semantic-probabilistic-deterministic-space.md:
+/- Deterministic-pole exemplar for the syntax-semantic
+probabilistic-deterministic space (the study doc is preserved in git history):
    decidable membership for a formal language (the Dyck language of balanced
    parentheses over a two-symbol alphabet). The Bool-valued membership
    predicate is a decision procedure by construction; the theorems pin

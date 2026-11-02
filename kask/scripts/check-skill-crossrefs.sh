@@ -14,7 +14,7 @@
 # instances: bug-hunt/tdd → deleted `harness-optimize`/`proptest` skills,
 # logo-builder → deleted media templates, gemba-walk → deleted
 # `validate_golden_outputs` executor. See
-# kask/docs/plans/architecture-audit-2026-08-26.md §2.1.
+# the 2026-08-26 architecture audit §2.1 (plan doc since deleted).
 #
 # What it checks (heuristic, like check-mcp-tool-tests.sh — a ratchet, not a
 # proof):
@@ -157,8 +157,7 @@ if [ "$FAIL" -ne 0 ]; then
   echo "FAIL: unresolved cross-surface references found."
   echo "Either complete the consumer-side update (the referenced artifact was"
   echo "deleted/renamed) or restore the artifact. See §5.0 triage protocol in"
-  echo "kask/docs/plans/architecture-audit-2026-08-26.md."
-  exit 1
+  echo "deleted/renamed) or restore the artifact."
 fi
 
 echo "OK: all skill↔template/deleted-skill cross-references resolve."

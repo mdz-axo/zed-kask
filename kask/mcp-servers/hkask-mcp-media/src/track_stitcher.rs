@@ -1,5 +1,5 @@
 //! Deterministic track stitching over stored object-layer detections
-//! (S2, design `visual-event-tagging-design.md` §4 delta 3).
+//! (S2, per the visual-event-tagging design §4 delta 3; the design doc is preserved in git history).
 //!
 //! The pass emits per-chunk, per-frame detections with no temporal
 //! identity. The stitcher links same-label detections across consecutive

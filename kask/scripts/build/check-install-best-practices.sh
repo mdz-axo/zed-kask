@@ -1,7 +1,7 @@
 #!/bin/bash
 # Conformance gate: install/build best practices.
 #
-# Anchored to kask/docs/research/install-build-ci-reference-models.md —
+# Anchored to the published install/build/CI practices —
 # the published practices (Google Shell Style Guide, ShellCheck, rustup's
 # installer design, curl's documented resume behavior, the Cargo Book's CI
 # guidance) behind the operator's 2026-10-11 requirement: the installer

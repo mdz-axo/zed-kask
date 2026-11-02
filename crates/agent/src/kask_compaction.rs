@@ -2029,7 +2029,7 @@ mod tests {
     /// Stage-4 measurement for the D8 compaction-retirement project. The
     /// protocol was fixed BEFORE this instrument ran (corpus, capacities,
     /// metrics, stop conditions — recorded in
-    /// kask/docs/research/d8-compaction-retirement/stage-4-measurement.md).
+    /// the D8 stage-4 measurement protocol).
     /// Geometry leg: builds a production-shaped compaction request from each
     /// thread's real message sequence (`Message::to_request`) and reports what
     /// `plan_compaction` does at the pre-declared capacities. Fidelity leg:

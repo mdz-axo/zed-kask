@@ -377,7 +377,7 @@ compressor — a separate consumer with its own protected-tools policy,
 - `kask_compaction.rs` instrumentation (2026-10-18):
   `per_pass_byte_attribution_is_reported`. The live-thread measurement
   harness `live_thread_compaction_measurement` (test-only, `#[ignore]`d;
-  protocol: `kask/docs/research/d8-compaction-review.md`) measured the
+  protocol pre-declared in the D8 compaction review) measured the
   real corpus: 22.7% median pre-shrink reduction at the governing
   capacity, 26.7% median verbatim-identifier survival in stored summaries.
 - `kask_compaction.rs` bounded merge (2026-10-31): `merge_batches` splits
