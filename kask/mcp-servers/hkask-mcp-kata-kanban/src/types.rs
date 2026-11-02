@@ -206,7 +206,7 @@ pub struct TaskListResponse {
 }
 
 /// The latest recorded activity on a task — a one-line status the kanban
-/// widget renders on the card (R3). Derived from the task's most recent
+/// widget renders on the card. Derived from the task's most recent
 /// comment by the server; the live per-tool-call hook ingest path is a
 /// follow-up. This field is the passive-rendering seam: the data model and
 /// card strip exist now, and swapping the data source (comments → live hooks)

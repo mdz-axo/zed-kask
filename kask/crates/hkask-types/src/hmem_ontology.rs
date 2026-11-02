@@ -160,9 +160,9 @@ impl HMemOntology {
     }
 
     /// Merge a batch of model-tagging judgments onto this ontology — the
-    /// single merge rule both hMem content tagging (the bridge's turn
-    /// ingest) and the swarm's response-chunk tagging apply, so the two
-    /// cannot drift. New dimensions dedupe-append; candidate terms are
+    /// single merge rule every h_mem content-tagging writer applies (the
+    /// bridge's turn ingest is the live consumer), so writers cannot
+    /// drift. New dimensions dedupe-append; candidate terms are
     /// canonicalized through the shared resolver (models supply raw terms,
     /// never namespaces or URIs); expertise is recorded separately as
     /// metadata, never as an ontology namespace.

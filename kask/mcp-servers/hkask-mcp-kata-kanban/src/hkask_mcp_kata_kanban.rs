@@ -201,7 +201,7 @@ where
 /// reusable expert agent covers the requested skills. The card is not persisted;
 /// its declared MCP tools narrow the parent's worktree grant. An empty tool set
 /// grants no tools to the child; skill instructions do not expand that authority.
-/// Derive a one-line `TaskActivity` from a task's most recent comment (R3).
+/// Derive a one-line `TaskActivity` from a task's most recent comment.
 /// The spawn/delegation flow already appends durable comments ("Spawn
 /// executed: agent=…, tokens=…", "Spawned worktree agent for task …"), so
 /// this surfaces the latest one as the card's status strip without a new

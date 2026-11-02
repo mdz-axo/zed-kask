@@ -78,7 +78,7 @@ pub struct TaskBody {
     pub description: Option<String>,
     #[serde(default)]
     pub assignee: Option<String>,
-    /// The latest recorded activity on this task (R3) — a one-line status strip
+    /// The latest recorded activity on this task — a one-line status strip
     /// rendered on the card. Emitted by the server (derived from the most recent
     /// comment). `None` on tasks with no recorded activity.
     #[serde(default)]
@@ -134,7 +134,7 @@ pub struct VerificationBody {
     pub reason: String,
 }
 
-/// The latest recorded activity on a task (R3). Mirrors the server's
+/// The latest recorded activity on a task. Mirrors the server's
 /// `TaskActivity` shape for passive rendering as a one-line status strip on
 /// the card. See `TaskBody::activity`.
 #[derive(Debug, Clone, Deserialize)]
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn task_body_parses_activity_field() {
-        // R3 S4 sensor: the kata-kanban server emits `activity` on `TaskInfo`.
+        // S4 sensor: the kata-kanban server emits `activity` on `TaskInfo`.
         // The widget's TaskBody MUST parse it or the card status strip is
         // silently dropped (the field-drop trap).
         let body = r#"{"viz":"kanban","board_id":"b1","tasks":[

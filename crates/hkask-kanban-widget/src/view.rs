@@ -453,7 +453,7 @@ impl KanbanWidget {
                         .color(Color::Muted),
                 )
             })
-            // R3: a one-line activity status strip so the operator sees the
+            // A one-line activity status strip so the operator sees the
             // latest recorded update on the task at a glance (the largest UX
             // gap vs. cline/kanban's live hook activity). `min_w_0` +
             // `truncate` protect the text column so a long update ellipsizes

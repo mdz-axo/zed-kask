@@ -1,8 +1,8 @@
 ---
 title: "Kanban Boards — Reference Models from Established Open-Source Implementations"
 audience: [architects, developers, agents]
-last_updated: 2026-09-28
-version: "1.4.0"
+last_updated: 2026-11-02
+version: "1.4.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -39,6 +39,7 @@ corrected (G5), and the identity-surface design was consolidated. §10 records
 the full review deltas. v1.2.0 recorded completed work; v1.3.0 recorded the
 mermaid topology round-trip hardening (explicit `%% kanban column status:`
 metadata, deletion-guard surfacing) and labeled §5.2 historical; v1.4.0
+re-verified the current-state citations against the tree.
 
 v1.4.1 (2026-11-01): restored to the tree by the operator's decision after the 2026-11-01
 reference-model alignment audit found the live kanban tool descriptions
@@ -50,7 +51,6 @@ name-cap contract re-verified against the live tree
 (`KANBAN_BOARD_NAME_MAX_CHARS` at `kask/crates/hkask-types/src/kanban_wire.rs:36`,
 pinned by the service and panel tests). The rotted link to the deleted
 chunking-for-rag-research.md pattern note was removed in the same restoration.
-re-verified the current-state citations against the tree.
 
 ## 1. Purpose and scope
 
