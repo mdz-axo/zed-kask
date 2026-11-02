@@ -221,9 +221,11 @@ jobs:
           # LOCAL-only gates (check-reg-creep.sh, the commit-msg git hook,
           # the audit receipt checker), so no gate can silently go vacuous
           # without CI noticing. The unwired bookkeeping gates' selftests
-          # (2026-10-31 operator mandate) still run here: those scripts
-          # remain on disk as advisory agent tools, and a selftest is the
-          # only thing that keeps an advisory tool honest.
+          # (2026-10-31 operator mandate) still run here: the surviving
+          # scripts remain on disk as advisory agent tools, and a selftest
+          # is the only thing that keeps an advisory tool honest.
+          # (goal-traceability's pair was retired outright 2026-11-01 —
+          # see the header note; its selftest no longer exists.)
           failed=""
           for selftest in kask/scripts/check-*-selftest.sh; do
             if ! out="$(bash "$selftest" 2>&1)"; then
