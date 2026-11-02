@@ -41,8 +41,9 @@ use hkask_types::tool_response::{parse_tool_error, parse_tool_response};
 use picker::{Picker, popover_menu::PickerPopoverMenu};
 use serde::Deserialize;
 use ui::{
-    Button, CommonAnimationExt, IconName, IconSize, PopoverMenuHandle, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, prelude::*,
+    Button, CommonAnimationExt, ContextMenu, IconButton, IconName, IconSize, PopoverMenu,
+    PopoverMenuHandle, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
+    ToggleButtonSimple, Tooltip, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -1163,35 +1164,6 @@ impl KanbanPanel {
         )
     }
 
-    /// Render the refresh button.
-    fn render_refresh_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("kanban-refresh")
-            .cursor_pointer()
-            .on_click(cx.listener(|this, _, _, cx| {
-                if this.selected_board_id.is_some() {
-                    this.fetch_tasks(cx);
-                } else {
-                    this.fetch_boards(cx);
-                }
-            }))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        Icon::new(IconName::RotateCw)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new("Refresh")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-    }
-
     /// Render the error strip.
     fn render_error(&self) -> Option<impl IntoElement> {
         visible_panel_error(self.mutation_error.as_ref(), self.error.as_ref()).map(|error| {
@@ -1235,9 +1207,9 @@ impl KanbanPanel {
             .child(Label::new(message).color(Color::Muted))
     }
 
-    /// Render the toolbar: the board identity control (switcher + rename),
-    /// then the action buttons (create task, create board, delete board,
-    /// export, import, refresh).
+    /// Render the toolbar: the board identity control (the switcher, with
+    /// the secondary board actions behind its options menu), then the
+    /// primary Create task action.
     ///
     /// The board control is the reference model's navigation root
     /// (R2/R3/R4): it names the open board, opens the searchable board
@@ -1245,7 +1217,9 @@ impl KanbanPanel {
     /// label-row selector that hid itself at one board.
     fn render_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_board = self.selected_board_id.is_some();
-        let border_color = cx.theme().colors().border;
+        // Captured before the switcher render — `.render(window, cx)` holds a
+        // mutable borrow of cx until its element is consumed.
+        let panel = cx.entity().downgrade();
 
         let picker = self.ensure_board_picker(window, cx);
         let switcher_label: SharedString = if let Some(name) = &self.board_name {
@@ -1261,6 +1235,10 @@ impl KanbanPanel {
             Button::new("kanban-board-switcher", switcher_label)
                 .label_size(LabelSize::Small)
                 .color(Color::Accent)
+                // The switcher is the toolbar's only flexible column — board
+                // names cap at 128 chars, so the label truncates (UI-02,
+                // batch-9 audit) instead of pushing the fixed actions out.
+                .truncate(true)
                 .end_icon(
                     Icon::new(if picker_deployed {
                         IconName::ChevronUp
@@ -1277,144 +1255,105 @@ impl KanbanPanel {
         .with_handle(self.board_picker_handle.clone())
         .render(window, cx);
 
+        // Layout (KSA-1, batch-9 audit): the switcher is the only flexible
+        // column (`min_w_0` + `truncate`), the fixed actions are IconButton
+        // primitives, and secondary actions (rename, create board, delete
+        // board, export, import, refresh) live behind the options menu — the
+        // agent panel's render_panel_options_menu pattern — keeping the row
+        // at three primary targets inside the 5-action Hick budget at the
+        // 300px minimum dock.
+        let options_menu = PopoverMenu::new("kanban-toolbar-options-menu")
+            .trigger_with_tooltip(
+                IconButton::new("kanban-toolbar-options-menu", IconName::Ellipsis)
+                    .icon_size(IconSize::Small),
+                Tooltip::text("Board actions"),
+            )
+            .anchor(gpui::Anchor::TopRight)
+            .menu({
+                let panel = panel.clone();
+                move |window, cx| {
+                    let panel = panel.clone();
+                    // build() returns Entity<ContextMenu>; .menu wants
+                    // Option<Entity<_>> — one Some() wrapper.
+                    Some(ContextMenu::build(
+                        window,
+                        cx,
+                        move |mut menu, _window, _cx| {
+                            if has_board {
+                                menu = menu.entry("Rename Board", None, {
+                                    // An update failure means the panel is
+                                    // dropped — expected absence, nothing to do.
+                                    let panel = panel.clone();
+                                    move |_, cx| {
+                                        let _ = panel
+                                            .update(cx, |this, cx| this.start_rename_board(cx));
+                                    }
+                                });
+                                menu = menu.entry("Export Board (Mermaid)", None, {
+                                    let panel = panel.clone();
+                                    move |_, cx| {
+                                        let _ = panel.update(cx, |this, cx| this.export_board(cx));
+                                    }
+                                });
+                                menu = menu.entry("Delete Board…", None, {
+                                    let panel = panel.clone();
+                                    move |_, cx| {
+                                        let _ = panel
+                                            .update(cx, |this, cx| this.confirm_delete_board(cx));
+                                    }
+                                });
+                                menu = menu.separator();
+                            }
+                            menu = menu.entry("Create Board", None, {
+                                let panel = panel.clone();
+                                move |_, cx| {
+                                    let _ =
+                                        panel.update(cx, |this, cx| this.start_create_board(cx));
+                                }
+                            });
+                            menu = menu.entry("Import Board (Mermaid)", None, {
+                                let panel = panel.clone();
+                                move |_, cx| {
+                                    let _ = panel.update(cx, |this, cx| this.import_board(cx));
+                                }
+                            });
+                            menu = menu.separator();
+                            // The last panel use in this closure — moved in,
+                            // not cloned (clippy::redundant_clone).
+                            menu = menu.entry("Refresh", None, move |_, cx| {
+                                let _ = panel.update(cx, |this, cx| {
+                                    if this.selected_board_id.is_some() {
+                                        this.fetch_tasks(cx);
+                                    } else {
+                                        this.fetch_boards(cx);
+                                    }
+                                });
+                            });
+                            menu
+                        },
+                    ))
+                }
+            });
+
         h_flex()
             .gap_2()
             .items_center()
-            .child(board_control)
-            .when(has_board, |this| {
-                this.child(
-                    div()
-                        .id("kanban-board-rename-btn")
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .hover(move |this| this.bg(border_color))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.start_rename_board(cx);
-                        }))
-                        .tooltip(Tooltip::text("Rename board"))
-                        .child(
-                            Label::new("Rename")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-            })
+            .child(div().min_w_0().flex_1().child(board_control))
             .child(
-                div()
-                    .id("kanban-create-task-btn")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .when(has_board, |this| this.hover(|this| this.bg(border_color)))
-                    .when(!has_board, |this| this.opacity(0.5))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selected_board_id.is_some() {
-                            this.start_create_task(cx);
-                        }
-                    }))
+                IconButton::new("kanban-create-task-btn", IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(if has_board {
+                        Color::Accent
+                    } else {
+                        Color::Muted
+                    })
+                    .disabled(!has_board)
                     .tooltip(Tooltip::text("Create task"))
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::Small)
-                            .color(if has_board {
-                                Color::Accent
-                            } else {
-                                Color::Muted
-                            }),
-                    ),
+                    .on_click(move |_, _, cx| {
+                        let _ = panel.update(cx, |this, cx| this.start_create_task(cx));
+                    }),
             )
-            .child(
-                div()
-                    .id("kanban-create-board-btn")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .hover(|this| this.bg(border_color))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.start_create_board(cx);
-                    }))
-                    .tooltip(Tooltip::text("Create board"))
-                    .child(
-                        Icon::new(IconName::Plus)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-            .child(
-                div()
-                    .id("kanban-delete-board-btn")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .when(has_board, |this| this.hover(|this| this.bg(border_color)))
-                    .when(!has_board, |this| this.opacity(0.5))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selected_board_id.is_some() {
-                            this.confirm_delete_board(cx);
-                        }
-                    }))
-                    .tooltip(Tooltip::text("Delete board"))
-                    .child(
-                        Icon::new(IconName::Trash)
-                            .size(IconSize::Small)
-                            .color(if has_board {
-                                Color::Warning
-                            } else {
-                                Color::Muted
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .id("kanban-export-board-btn")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .when(has_board, |this| this.hover(|this| this.bg(border_color)))
-                    .when(!has_board, |this| this.opacity(0.5))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.selected_board_id.is_some() {
-                            this.export_board(cx);
-                        }
-                    }))
-                    .tooltip(Tooltip::text(
-                        "Export board as mermaid markdown to clipboard",
-                    ))
-                    .child(Icon::new(IconName::Download).size(IconSize::Small).color(
-                        if has_board {
-                            Color::Accent
-                        } else {
-                            Color::Muted
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .id("kanban-import-board-btn")
-                    .cursor_pointer()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .hover(|this| this.bg(border_color))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.import_board(cx);
-                    }))
-                    .tooltip(Tooltip::text(
-                        "Import board from mermaid markdown in clipboard",
-                    ))
-                    .child(
-                        Icon::new(IconName::Share)
-                            .size(IconSize::Small)
-                            .color(Color::Accent),
-                    ),
-            )
-            .child(self.render_refresh_button(cx))
+            .child(options_menu)
     }
 
     /// Render the active action form (if any).
@@ -2267,6 +2206,30 @@ mod tests {
         assert!(
             !blank.contains("`` `"),
             "the raw name never reaches the prompt: {blank}"
+        );
+    }
+
+    /// UI-01/UI-02/UI-03 (batch-9 audit): the toolbar keeps its primary actions
+    /// inside the 5-action Hick budget by placing secondary actions behind
+    /// the options menu, the board-name switcher truncates, and the fixed
+    /// actions are IconButton primitives. Source-structure pin in the
+    /// alacritty resize-log precedent style: reverting any of these re-opens
+    /// the measured overflow (+114px at the 300px minimum dock, KSA-1) and
+    /// the sub-Fitts hit areas.
+    #[test]
+    fn toolbar_overflow_discipline_is_pinned() {
+        let source = include_str!("kanban_panel.rs");
+        assert!(
+            source.contains("PopoverMenu::new(\"kanban-toolbar-options-menu\")"),
+            "secondary toolbar actions must live behind the options menu"
+        );
+        assert!(
+            source.contains(".truncate(true)"),
+            "the board-name switcher must truncate (128-char names at a 300px minimum dock)"
+        );
+        assert!(
+            source.contains("IconButton::new(\"kanban-create-task-btn\""),
+            "the primary create action must be an IconButton primitive (Fitts floor)"
         );
     }
 
