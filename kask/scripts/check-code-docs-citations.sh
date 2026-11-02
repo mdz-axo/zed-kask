@@ -73,12 +73,16 @@ while IFS="$(printf '\t')" read -r f c; do
     else
         ok=$((ok+1))
     fi
-done < <(rg -o --no-line-number --hidden \
-        'kask/docs/[A-Za-z0-9_./-]+\.md' \
-        -g '!kask/docs' -g '!.git' -g '!target' 2>/dev/null \
-        | awk -F: '{ split($0, a, ":"); print a[1] "\t" a[2] }')
+done < <(rg -o --no-line-number --no-heading --color=never --hidden \
+            'kask/docs/[A-Za-z0-9_./-]+\.md' \
+            -g '!kask/docs' -g '!.git' -g '!target' 2>/dev/null \
+            | awk -F: '{ split($0, a, ":"); sub(/^\.\//, "", a[1]); print a[1] "\t" a[2] }')
 
-echo "----"
-echo "code->docs citations: $ok resolved, $fail rotted (failures), $warn historical-record warnings"
+# The summary goes to STDERR so a caller capturing stderr (the selftest's
+# case_run) always sees the counts — an empty sweep can no longer hide
+# behind a vacuous exit 0 (observed on the CI runner, run 41399118049:
+# every case silently passed while the sweep produced no pairs).
+echo "----" >&2
+echo "code->docs citations: $ok resolved, $fail rotted (failures), $warn historical-record warnings" >&2
 if [ "$fail" -eq 0 ]; then exit 0; fi
 exit 1

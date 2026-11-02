@@ -46,8 +46,14 @@ case_run "rotted live-surface cite fails" 1
 grep -q '::error::code-docs-citation: tools/rotten.rs cites deleted kask/docs/reference/gone.md' "$CASE/out" \
     && echo "  ok: error line names the file and the deleted doc" \
     || { echo "  FAIL: error line missing or malformed" >&2; cat "$CASE/out" >&2; FAILED=1; }
+grep -q 'code->docs citations: 1 resolved, 1 rotted' "$CASE/out" \
+    && echo "  ok: summary counts the resolved and the rotted cite" \
+    || { echo "  FAIL: summary counts missing or wrong (a vacuous empty sweep can no longer pass this case)" >&2; cat "$CASE/out" >&2; FAILED=1; }
 rm "$CASE/tools/rotten.rs"
 case_run "clean tree after excision passes" 0
+grep -q 'code->docs citations: 1 resolved, 0 rotted' "$CASE/out" \
+    && echo "  ok: clean summary counts the one resolved cite" \
+    || { echo "  FAIL: clean-summary counts missing or wrong" >&2; cat "$CASE/out" >&2; FAILED=1; }
 
 # Case 3: historical-record scope warns, never fails.
 CASE="$WORK/historical"; mkdir -p "$CASE" "$CASE/kask/docs/reference"
@@ -56,16 +62,25 @@ case_run "DIVERGENCE.md historical cite is a warning" 0
 grep -q 'warn: DIVERGENCE.md cites deleted kask/docs/reference/gone.md (historical-record scope' "$CASE/out" \
     && echo "  ok: warning line emitted" \
     || { echo "  FAIL: historical warning missing" >&2; cat "$CASE/out" >&2; FAILED=1; }
+grep -q 'code->docs citations: 0 resolved, 0 rotted (failures), 1 historical-record warnings' "$CASE/out" \
+    && echo "  ok: summary counts the one historical warning" \
+    || { echo "  FAIL: historical-summary counts missing or wrong" >&2; cat "$CASE/out" >&2; FAILED=1; }
 
 # Case 4: the deliberate fixture is allowlisted.
 CASE="$WORK/fixture"; mkdir -p "$CASE/kask/scripts"
 echo "deliberate negative fixture: kask/docs/reference/this-doc-does-not-exist.md" > "$CASE/kask/scripts/check-skill-review-instruments-selftest.sh"
 case_run "allowlisted fixture ignored" 0
+grep -q 'code->docs citations:' "$CASE/out" \
+    && echo "  ok: gate ran to its summary" \
+    || { echo "  FAIL: no summary line - the gate did not run to completion" >&2; cat "$CASE/out" >&2; FAILED=1; }
 
 # Case 5: docs-internal citations are the sibling gate's scope.
 CASE="$WORK/internal"; mkdir -p "$CASE/kask/docs/plans" "$CASE/kask/docs/research"
 echo "cross-ref kask/docs/research/gone.md" > "$CASE/kask/docs/plans/a-plan.md"
 case_run "docs-internal cite skipped (sibling gate scope)" 0
+grep -q 'code->docs citations:' "$CASE/out" \
+    && echo "  ok: gate ran to its summary" \
+    || { echo "  FAIL: no summary line - the gate did not run to completion" >&2; cat "$CASE/out" >&2; FAILED=1; }
 
 echo "----"
 if [ "$FAILED" -eq 0 ]; then
