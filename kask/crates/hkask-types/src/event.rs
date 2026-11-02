@@ -96,11 +96,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.agent",
     "reg.affordance",
     "reg.gate",
-    // ── Trust ledger (retired 2026-11-01) ──
-    // reg.trust — no live emitter since the trust system's removal; the
-    // namespace stays admitted so rows persisted before the removal still
-    // decode. Same loop-connected family as reg.agent.
-    "reg.trust",
+    // ── Trust ledger removed 2026-11-01 with the trust system (9d2e336a75,
+    // 334b7b0f9e, operator ruling); the decode-back-compat admission was
+    // unregistered 2026-11-02 — zero emitters; pre-removal rows decode via
+    // the reg.inference fallback in the regulation store. ──
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
     // pain-signal span. Live via Span::from_kind, not string literals.
@@ -295,7 +294,7 @@ impl SpanCategory {
         let prefix = s.split('.').next().unwrap_or(s);
         match prefix {
             "cybernetics" | "variety" | "outcome" | "alert" | "sensor" | "agent" | "affordance"
-            | "gate" | "trust" => Self::Cybernetics,
+            | "gate" => Self::Cybernetics,
             "curation" | "curator" | "spec" => Self::Curation,
             "inference" => Self::Inference,
             "memory" | "consolidation" | "pod" | "connector" => Self::Memory,
@@ -596,7 +595,6 @@ mod tests {
             ("reg.outcome", SpanCategory::Cybernetics),
             ("reg.alert", SpanCategory::Cybernetics),
             ("reg.sensor.memory", SpanCategory::Cybernetics),
-            ("reg.trust", SpanCategory::Cybernetics),
             ("reg.curation", SpanCategory::Curation),
             ("reg.curator.directive", SpanCategory::Curation),
             ("reg.curator.metacognition", SpanCategory::Curation),
