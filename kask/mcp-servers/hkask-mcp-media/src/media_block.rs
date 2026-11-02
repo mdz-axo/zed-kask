@@ -36,7 +36,7 @@ pub fn media_block(kind: &str, src: &str) -> String {
 /// the server-authoritative record of which tool produced this artifact, with
 /// which args, under which regulation span — `None` omits the field (the widget
 /// renders without dispatch affordances).
-pub fn media_block_with_omc(
+pub(crate) fn media_block_with_omc(
     kind: &str,
     src: &str,
     omc: Option<&str>,
@@ -113,7 +113,7 @@ pub fn enrich_with_omc_and_provenance(
 /// staged publication in `persist_slim_and_enrich` (assets.rs), so `output` carries the
 /// persisted path for every kind; the audio arm additionally accepts the
 /// `audio_path` field produced by the record-and-transcribe tools.
-pub fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
+pub(crate) fn extract_src(result: &serde_json::Value, kind: &str) -> Option<String> {
     match kind {
         "audio" => result
             .get("audio_path")

@@ -47,7 +47,7 @@ pub struct OnnxVoiceEncoder {
     fingerprint: EncoderFingerprint,
 }
 
-pub fn default_model_path() -> PathBuf {
+pub(crate) fn default_model_path() -> PathBuf {
     hkask_types::agent_paths::resolve_under_data_dir(Path::new(
         "mcp/media/models/wespeaker_en_voxceleb_CAM++.onnx",
     ))

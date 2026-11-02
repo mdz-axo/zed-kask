@@ -75,21 +75,21 @@ static STRUCTURED_PASS_REJECTIONS: AtomicU64 = AtomicU64::new(0);
 /// provenance (provenance is attached by the pipeline, never claimed by
 /// the model).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ParagraphPassOutput {
+pub(crate) struct ParagraphPassOutput {
     /// Word indices after which a paragraph break occurs.
     pub breaks_after: Vec<usize>,
 }
 
 /// What the model returns for the speaker pass.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct SpeakerPassOutput {
+pub(crate) struct SpeakerPassOutput {
     /// Speaker spans over word ranges.
     pub spans: Vec<SpeakerSpan>,
 }
 
 /// What the model returns for the correction pass.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct CorrectionPassOutput {
+pub(crate) struct CorrectionPassOutput {
     /// Proposed corrections over word ranges.
     pub edits: Vec<CorrectionEdit>,
 }
@@ -98,7 +98,7 @@ pub struct CorrectionPassOutput {
 /// (the agent-as-selection-engine improvement target: a natural-language
 /// request resolved to word ranges).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct HighlightPassOutput {
+pub(crate) struct HighlightPassOutput {
     /// The passages matching the selection request.
     pub highlights: Vec<HighlightEntry>,
 }
@@ -873,7 +873,7 @@ pub async fn run_highlight_pass(
 /// The indexed-words rendering the model reads: `0:The 1:quick 2:brown`.
 /// Index legibility is the load-bearing property — the model cites these
 /// indices and the deterministic layer owns the only index→time mapping.
-pub fn indexed_words_line(words: &[TimedWord]) -> String {
+pub(crate) fn indexed_words_line(words: &[TimedWord]) -> String {
     words
         .iter()
         .enumerate()

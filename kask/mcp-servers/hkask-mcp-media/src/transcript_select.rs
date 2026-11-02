@@ -284,7 +284,7 @@ pub fn union_ranges(ranges: &[WordRange]) -> Vec<WordRange> {
 /// clips emit in list order. Input ranges are expected validated (the EDL
 /// path enforces disjointness); overlapping direct input yields overlapping
 /// clips, visible in the plan rather than silently merged.
-pub fn keep_ranges_to_clip_plan(
+pub(crate) fn keep_ranges_to_clip_plan(
     words: &[TimedWord],
     keep_ranges: &[WordRange],
 ) -> Result<Vec<(u64, u64)>, SelectionError> {

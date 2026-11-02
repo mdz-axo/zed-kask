@@ -17,7 +17,7 @@ pub const MAX_TERMINAL_RECORDS: usize = 256;
 
 /// One fail-fast capacity authority shared by direct heavy RPCs and background jobs.
 #[derive(Clone)]
-pub struct HeavyOperationAdmission {
+pub(crate) struct HeavyOperationAdmission {
     slots: Arc<Semaphore>,
 }
 
@@ -401,7 +401,7 @@ impl Drop for JobLease {
     }
 }
 
-pub fn is_terminal_status(status: &str) -> bool {
+pub(crate) fn is_terminal_status(status: &str) -> bool {
     matches!(status, "completed" | "failed" | "cancelled")
 }
 
