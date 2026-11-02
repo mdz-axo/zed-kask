@@ -12,6 +12,15 @@ recall projections are removed by an explicit one-time reset, not a runtime
 migration, archive, or compatibility subsystem. This contract does not record an
 executed reset.
 
+**Schema evolution:** a change to the stored row shape bumps schema version 3
+to a successor — the version bump, not an in-place field swap, is what retires
+a shape. Rows of a superseded version, and schema-3 rows still carrying fields
+retired by a removal ruling, are obsolete data under the Forward-only policy.
+The current field set is pinned key-for-key by test
+(`goal_row_shape_is_pinned_to_the_current_schema`), and retired names are
+pinned as visible decode failures that leave stored bytes unchanged
+(`retired_trust_and_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged`).
+
 The canonical `kanban:goal` row is keyed by the goal ID. Only schema version **3**
 is accepted. `goal_list(owner)` returns `Vec<Goal>`; the MCP list returns that
 array, including closed goals. Caller ownership is checked before decoding.

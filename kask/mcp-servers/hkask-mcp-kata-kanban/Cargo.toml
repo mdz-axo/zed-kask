@@ -48,6 +48,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # file-backed WAL pool — real multi-connection semantics the max_size(1)
 # in-memory driver cannot produce.
 tempfile.workspace = true
+# The one-time obsolete-goal reset (tests/obsolete_goal_reset.rs) resolves the
+# production DB passphrase through the canonical env → keychain chain.
+hkask-keystore.workspace = true
 
 
 [lints]

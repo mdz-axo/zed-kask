@@ -7748,6 +7748,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-inference",
+ "hkask-keystore",
  "hkask-mcp-server",
  "hkask-storage",
  "hkask-types",
@@ -7886,7 +7887,6 @@ dependencies = [
 name = "hkask-mcp-server"
 version = "0.40.2"
 dependencies = [
- "chrono",
  "hkask-inference",
  "hkask-keystore",
  "hkask-memory",
@@ -7979,7 +7979,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "hkask-memory",
  "hkask-storage",
  "hkask-types",
  "parking_lot",
