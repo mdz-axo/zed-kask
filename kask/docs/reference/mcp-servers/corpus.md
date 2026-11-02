@@ -379,6 +379,24 @@ canonical rebuild from retained sources and verified obsolete-artifact deletion,
 without backups or a second Brooks corpus. Those are operator data operations,
 not automatic behavior of a docs update.
 
+The trust-removal revision (2026-11-01, run `4d4ff2a2…`, registry
+commit `775d7cdd03`) re-labels the three kask-authored trust sources as
+historical in place: the expectation-ledger/trust-state/C_trust
+mechanism prose moves to past tense with the removal date, the
+conceptual bodies unchanged, 67→72 fine rows for the three sources, and
+the post-ship probe returns zero live-pattern passages through the
+federated path.
+
+The kanban-restore revision (same day, run `92d7e24b…`, registry commit
+`e39c6b4d2c`) publishes the restored
+`kask/docs/research/kanban-board-reference-models.md` (v1.4.1, restored
+to the tree at commit `11a4d290a5`) to the corpus: 397 accepted sources,
+273,098 fine passages (+156 rows for the new source), and the live
+probe retrieves the restored model through the federated path.
+
+The goal-model revision (2026-11-01, commit `eb81939687`) publishes the
+goal-system reference models; the registry reads run `227789ac…` with
+273,220 fine passages.
 ## Canonical QA records
 
 `PreparedQaPrompt` requires exactly `prompt_id`, protocol
