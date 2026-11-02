@@ -1,14 +1,19 @@
-//! The media panel's viewing pane — five tabs over real state.
+//! The media panel's viewing pane — task modes over real state (T1,
+//! media-panel-redesign plan).
 //!
-//! - **Media**: the selected asset rendered large via the D18 viz block
-//!   renderer (the same widget the conversation renders inline).
+//! - **Workspace**: the selected asset in one screen — the player and
+//!   derivative-edit toolbar (marks, trim, concat — serving audio and
+//!   video through one position source) as the primary area, with a
+//!   toggleable inspector pane whose pane-internal tabs render the
+//!   selected asset's record, tags, lineage, faces, transcript links,
+//!   researcher annotations, and reel provenance (via
+//!   `gallery_asset_detail`, `educt_list_transcripts`,
+//!   `gallery_annotation_list`).
 //! - **Library**: the gallery's actual assets (via `gallery_list_assets`)
 //!   merged with assets surfaced by the conversation's tool results, with
 //!   delete (two-step confirm) affordances. Each fetched page reconciles
 //!   the list — assets deleted from the gallery drop out of it.
 //! - **Queue**: research jobs (via `job_list`) with cancel affordances.
-//! - **Detail**: the selected asset's inspector data (via
-//!   `gallery_asset_detail`) — record, tags, lineage.
 //! - **Transcript**: the synced recordings — the recording-first browser
 //!   (per-recording transcription status, the Transcribe affordance), and
 //!   the synced-recording workspace (follow-along viewport tracking,
@@ -67,6 +72,12 @@ const WORKSPACE_LIST_TAIL_ITEMS: usize = 3;
 /// last render review) — the events sibling of the words tail.
 const WORKSPACE_EVENTS_TAIL_ITEMS: usize = 1;
 
+/// The inspector pane's share of the workspace body's height (T1): the
+/// player is the primary area and keeps the larger share; the pane scrolls
+/// internally, so its seven tabs stay usable in every dock shape (a fixed
+/// height would starve the player in short docks).
+const INSPECTOR_PANE_FRACTION: f32 = 0.38;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum RequestOwner {
     GalleryPage(usize),
@@ -80,9 +91,9 @@ enum RequestOwner {
     VisualEvents(String),
 }
 
-/// A strict-parsed `educt_list_transcripts` row — the fields the Detail
-/// and Recordings views render; a missing or malformed field rejects the
-/// whole listing.
+/// A strict-parsed `educt_list_transcripts` row — the fields the workspace
+/// inspector's Transcripts tab and the Recordings browser render; a missing
+/// or malformed field rejects the whole listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TranscriptSummaryRow {
     id: String,
@@ -330,9 +341,9 @@ struct RedactionRenderSummary {
     applied: Vec<PaneAppliedRedaction>,
 }
 
-/// A researcher tag/note row for the Detail tab's annotation surface
+/// A researcher tag/note row for the workspace inspector's Annotations tab
 /// (strict-parsed from `gallery_annotation_list` — the direct-manipulation
-/// CRUD section, 2026-10-27).
+/// CRUD surface, 2026-10-27).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct PaneAnnotation {
     annotation_id: String,
@@ -341,8 +352,8 @@ struct PaneAnnotation {
     created_at: String,
 }
 
-/// The Detail tab's open annotation editor: a new tag/note or an existing
-/// row's value being replaced. Mirrors the transcript label editor's
+/// The workspace inspector's open annotation editor: a new tag/note or an
+/// existing row's value being replaced. Mirrors the transcript label editor's
 /// modal pattern — Enter confirms, Escape cancels.
 #[derive(Clone, Debug)]
 struct AnnotationEdit {
@@ -524,13 +535,77 @@ pub struct MediaAsset {
     pub gallery_asset_id: Option<String>,
 }
 
+/// The panel's task modes (T1, media-panel-redesign plan): primary
+/// navigation mirrors user tasks, never server subsystems. `Workspace`
+/// is the one-asset mode — the player, the edit toolbar, and the
+/// toggleable inspector pane in one screen; the Detail tab it absorbed
+/// is its supporting pane. Library/Queue/Transcript remain top-level
+/// until phases B and C fold them into the activity layer and the
+/// Library.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewerTab {
-    Media,
+    Workspace,
     Library,
     Queue,
-    Detail,
     Transcript,
+}
+
+/// The workspace inspector's pane-internal tabs (T1): the seven Detail
+/// sections as alternate views of the same selected object — the
+/// legitimate tab use (HIG "Tab views": closely related areas of
+/// content). These are not navigation destinations; the pane toggles as
+/// a whole and every tab renders the same selected asset.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum InspectorTab {
+    #[default]
+    Record,
+    Tags,
+    Lineage,
+    Faces,
+    Transcripts,
+    Annotations,
+    Reel,
+}
+
+impl InspectorTab {
+    /// The tab set every pane consumer iterates — one source for the
+    /// seven sections so render and tests cannot drift.
+    const ALL: [Self; 7] = [
+        Self::Record,
+        Self::Tags,
+        Self::Lineage,
+        Self::Faces,
+        Self::Transcripts,
+        Self::Annotations,
+        Self::Reel,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Record => "Record",
+            Self::Tags => "Tags",
+            Self::Lineage => "Lineage",
+            Self::Faces => "Faces",
+            Self::Transcripts => "Transcripts",
+            Self::Annotations => "Annotations",
+            Self::Reel => "Reel",
+        }
+    }
+
+    /// The full element id the tab chip renders under — a `&'static str`
+    /// so layout tests can address it through `debug_bounds` (which keys on
+    /// static ids).
+    fn element_id(self) -> &'static str {
+        match self {
+            Self::Record => "media-inspector-tab-record",
+            Self::Tags => "media-inspector-tab-tags",
+            Self::Lineage => "media-inspector-tab-lineage",
+            Self::Faces => "media-inspector-tab-faces",
+            Self::Transcripts => "media-inspector-tab-transcripts",
+            Self::Annotations => "media-inspector-tab-annotations",
+            Self::Reel => "media-inspector-tab-reel",
+        }
+    }
 }
 
 /// The shared two-click delete confirmation (media-refactor plan R4): the
@@ -581,7 +656,7 @@ pub struct MediaViewer {
     /// `refresh` can re-ingest tool-result display hints without the panel
     /// forwarding the entity again.
     thread: Option<gpui::WeakEntity<acp_thread::AcpThread>>,
-    /// The media widget for the currently-selected asset on the Media tab.
+    /// The media widget for the currently-selected asset in the workspace.
     /// Owned directly (not via the strong viz cache) so the edit toolbar can
     /// reach its playback clock and trim marks. A changed selection resolves
     /// through the stable-Asset weak registry before replacing the entity.
@@ -614,21 +689,29 @@ pub struct MediaViewer {
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
     detail: Option<Value>,
     detail_request: RequestLifecycle,
-    /// Transcript summaries for the selected asset's Detail view (from
+    /// Transcript summaries for the selected asset's inspector pane (from
     /// `educt_list_transcripts`). `None` until the request completes;
-    /// `Some(vec![])` means loaded-and-none — the section renders only for
-    /// non-empty lists.
+    /// `Some(vec![])` means loaded-and-none — the Transcripts tab renders
+    /// its empty copy for that.
     detail_transcripts: Option<Vec<TranscriptSummaryRow>>,
     detail_transcripts_request: RequestLifecycle,
     /// Researcher tags/notes for the selected asset (from
-    /// `gallery_annotation_list`) — the Detail tab's direct annotation
-    /// CRUD surface (2026-10-27).
+    /// `gallery_annotation_list`) — the inspector's Annotations tab
+    /// direct-manipulation CRUD surface (2026-10-27).
     detail_annotations: Option<Vec<PaneAnnotation>>,
     detail_annotations_request: RequestLifecycle,
-    /// The Detail tab's open annotation editor and its input's focus
+    /// The inspector's open annotation editor and its input's focus
     /// handle (lazily created on open, like the transcript label editor's).
     annotation_edit: Option<AnnotationEdit>,
     annotation_input_focus: Option<gpui::FocusHandle>,
+    /// The workspace's inspector pane (T1): whether the supporting pane
+    /// renders under the player. Toggling never clears the selection, the
+    /// retained player, or loaded inspector data — the pane only changes
+    /// what renders.
+    inspector_open: bool,
+    /// The inspector pane's active pane-internal tab (T1) — one of the
+    /// seven Detail sections.
+    inspector_tab: InspectorTab,
     /// The open transcript workspace (from `educt_get_transcript`) — `None`
     /// until the request completes; `Some` renders the Transcript tab. The
     /// state persists across tab switches so returning to an open
@@ -730,7 +813,7 @@ impl MediaViewer {
         Self {
             assets: Vec::new(),
             selected: None,
-            active_tab: ViewerTab::Media,
+            active_tab: ViewerTab::Workspace,
             thread: None,
             media_widget: None,
             media_widget_body: None,
@@ -756,6 +839,8 @@ impl MediaViewer {
             detail_annotations_request: RequestLifecycle::new(),
             annotation_edit: None,
             annotation_input_focus: None,
+            inspector_open: true,
+            inspector_tab: InspectorTab::default(),
             transcript: None,
             transcript_request: RequestLifecycle::new(),
             current_word: None,
@@ -816,6 +901,48 @@ impl MediaViewer {
         self.detail_annotations = None;
         self.detail_annotations_request.invalidate();
         self.annotation_edit = None;
+        if self.inspector_should_load() {
+            self.load_inspector(cx);
+        }
+    }
+
+    /// Toggle the workspace's inspector pane (T1): the supporting pane hides
+    /// or returns without touching the selection, the retained player, or
+    /// any loaded inspector data. Reopening refreshes the reads for the
+    /// same object.
+    fn toggle_inspector(&mut self, cx: &mut Context<Self>) {
+        self.inspector_open = !self.inspector_open;
+        cx.notify();
+        if self.inspector_should_load() {
+            self.load_inspector(cx);
+        }
+    }
+
+    /// Whether the inspector's reads should fire now (T1): the workspace is
+    /// the active mode, the pane is visible, and the selection is an
+    /// indexed asset. Surfaced (unindexed) assets produce no reads — their
+    /// inspector renders the honest not-indexed copy instead, and the
+    /// status line stays quiet for the routine case.
+    fn inspector_should_load(&self) -> bool {
+        self.active_tab == ViewerTab::Workspace
+            && self.inspector_open
+            && self
+                .selected
+                .and_then(|ix| self.assets.get(ix))
+                .and_then(|asset| asset.gallery_asset_id.as_deref())
+                .is_some()
+    }
+
+    /// Fire the inspector's reads for the selected asset (T1): the detail
+    /// object, its transcript links, and its researcher annotations — the
+    /// same trio the Detail tab loaded on activation, now a pane of the
+    /// workspace. Each read is keyed to the selected asset's stable id and
+    /// guarded by its own request lifecycle, so a slow response in one
+    /// cannot blank another.
+    fn load_inspector(&mut self, cx: &mut Context<Self>) {
+        self.load_detail(cx);
+        self.load_detail_transcripts(cx);
+        self.load_detail_annotations(cx);
     }
 
     fn stop_queue_polling(&mut self) {
@@ -823,7 +950,7 @@ impl MediaViewer {
     }
 
     fn activate_tab(&mut self, tab: ViewerTab, cx: &mut Context<Self>) {
-        if self.active_tab == ViewerTab::Media && tab != ViewerTab::Media {
+        if self.active_tab == ViewerTab::Workspace && tab != ViewerTab::Workspace {
             self.suspend_media_widget(cx);
         }
         if self.active_tab == ViewerTab::Transcript && tab != ViewerTab::Transcript {
@@ -837,26 +964,20 @@ impl MediaViewer {
             self.stop_queue_polling();
             self.jobs_request.invalidate();
         }
-        if self.active_tab == ViewerTab::Detail && tab != ViewerTab::Detail {
-            self.detail_request.invalidate();
-            self.detail_transcripts = None;
-            self.detail_transcripts_request.invalidate();
-            self.detail_annotations = None;
-            self.detail_annotations_request.invalidate();
-            self.annotation_edit = None;
-        }
+        // Leaving the workspace keeps the inspector's loaded data (the
+        // transcript workspace's persistence rule, T1): it belongs to the
+        // selected asset, not to the mode, and a re-entry refreshes it.
         self.active_tab = tab;
         self.confirm_delete.disarm();
         self.confirm_delete_transcript.disarm();
         match tab {
             ViewerTab::Library => self.load_gallery(cx),
             ViewerTab::Queue => self.load_jobs(cx),
-            ViewerTab::Detail => {
-                self.load_detail(cx);
-                self.load_detail_transcripts(cx);
-                self.load_detail_annotations(cx);
+            ViewerTab::Workspace => {
+                if self.inspector_should_load() {
+                    self.load_inspector(cx);
+                }
             }
-            ViewerTab::Media => {}
             ViewerTab::Transcript => {
                 if self.transcript.is_some() {
                     self.start_transcript_follow(cx);
@@ -1129,7 +1250,7 @@ impl MediaViewer {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         hkask_viz_core::clear_widget_cache();
         match self.active_tab {
-            ViewerTab::Media => {
+            ViewerTab::Workspace => {
                 // Re-ingest the thread's tool-result display hints. The
                 // assets list is rebuilt from scratch so entries removed
                 // from the thread disappear too.
@@ -1147,11 +1268,6 @@ impl MediaViewer {
             }
             ViewerTab::Library => self.reload_gallery(cx),
             ViewerTab::Queue => self.load_jobs(cx),
-            ViewerTab::Detail => {
-                self.load_detail(cx);
-                self.load_detail_transcripts(cx);
-                self.load_detail_annotations(cx);
-            }
             ViewerTab::Transcript => {
                 if let Some(transcript) = self.transcript.as_ref() {
                     let transcript_id = transcript.transcript_id.clone();
@@ -1306,6 +1422,10 @@ impl MediaViewer {
             self.detail_transcripts_request.invalidate();
             self.detail_annotations = None;
             self.detail_annotations_request.invalidate();
+            // The inspector keeps its Idle copy after a listing repair
+            // moves the selection (the pane's reads follow the user's
+            // actions — entry, selection change, toggle — not the
+            // background listing merge; reopening the pane reloads).
         }
     }
 
@@ -1563,7 +1683,8 @@ impl MediaViewer {
         cx.notify();
     }
 
-    /// Load the selected asset's transcript summaries for the Detail view via
+    /// Load the selected asset's transcript summaries for the inspector's
+    /// Transcripts tab via
     /// `educt_list_transcripts`. A read beside `load_detail`, not chained to
     /// it: both are keyed by the same stable asset id and protected by their
     /// own request lifecycles, so a slow transcripts response cannot blank a
@@ -1647,7 +1768,7 @@ impl MediaViewer {
     }
 
     /// Load the selected asset's researcher tags/notes via
-    /// `gallery_annotation_list` — the Detail tab's annotation surface
+    /// `gallery_annotation_list` — the inspector's Annotations tab
     /// (2026-10-27). A read beside `load_detail`, keyed by the same stable
     /// asset id and protected by its own request lifecycle; guard failures
     /// stay silent (load_detail surfaces the no-selection and
@@ -1918,7 +2039,7 @@ impl MediaViewer {
         }
     }
 
-    /// The Detail tab's annotation editor row — the label editor's input,
+    /// The inspector's annotation editor row — the label editor's input,
     /// parameterized for a tag/note value. An associated fn so the caller
     /// can hold the detail state's immutable borrow.
     fn render_annotation_editor(
@@ -1936,7 +2057,7 @@ impl MediaViewer {
         let before: String = typed.chars().take(cursor).collect();
         let after: String = typed.chars().skip(cursor).collect();
         let mut input = div()
-            .id("media-detail-annotation-input")
+            .id("media-inspector-annotation-input")
             .track_focus(focus)
             .flex()
             .items_center()
@@ -1979,7 +2100,7 @@ impl MediaViewer {
                 )
                 .child(
                     div()
-                        .id("media-detail-annotation-caret")
+                        .id("media-inspector-annotation-caret")
                         .w(px(1.))
                         .h(px(12.))
                         .bg(cx.theme().colors().text),
@@ -1991,7 +2112,7 @@ impl MediaViewer {
                 );
         }
         div()
-            .id("media-detail-annotation-editor")
+            .id("media-inspector-annotation-editor")
             .min_w_0()
             .flex()
             .flex_wrap()
@@ -2005,7 +2126,7 @@ impl MediaViewer {
             .child(input)
             .child(
                 div()
-                    .id("media-detail-annotation-confirm")
+                    .id("media-inspector-annotation-confirm")
                     .cursor_pointer()
                     .hover(|el| el.bg(cx.theme().colors().element_hover))
                     .child(
@@ -2019,7 +2140,7 @@ impl MediaViewer {
             )
             .child(
                 div()
-                    .id("media-detail-annotation-cancel")
+                    .id("media-inspector-annotation-cancel")
                     .cursor_pointer()
                     .hover(|el| el.bg(cx.theme().colors().element_hover))
                     .child(
@@ -2036,7 +2157,7 @@ impl MediaViewer {
 
     /// Open a transcript in the workspace tab: clear prior state, switch to
     /// the Transcript tab, and dispatch `educt_get_transcript` for the id —
-    /// the Detail tab's entry point (S3a).
+    /// the inspector's Transcripts tab entry point (S3a).
     fn open_transcript(&mut self, transcript_id: String, cx: &mut Context<Self>) {
         self.transcript = None;
         self.transcript_request.invalidate();
@@ -3997,7 +4118,7 @@ impl MediaViewer {
 
     fn presented_status(&self) -> Option<(SharedString, ui::Color)> {
         let resource = match self.active_tab {
-            ViewerTab::Media => resource_status(
+            ViewerTab::Workspace => resource_status(
                 "Edit",
                 &self.edit_request.state,
                 !self.assets.is_empty(),
@@ -4013,12 +4134,6 @@ impl MediaViewer {
                 "Queue",
                 &self.jobs_request.state,
                 self.jobs_total.is_some(),
-                None,
-            ),
-            ViewerTab::Detail => resource_status(
-                "Detail",
-                &self.detail_request.state,
-                self.detail.is_some(),
                 None,
             ),
             ViewerTab::Transcript => resource_status(
@@ -4089,7 +4204,11 @@ impl MediaViewer {
             }))
     }
 
-    fn render_media(
+    /// The asset workspace (T1): the player, the edit toolbar, and the
+    /// toggleable inspector pane in one screen — the primary area is the
+    /// player; the inspector is its supporting pane. Serves audio and
+    /// video through one position source (fc4f469dc5 — no per-kind split).
+    fn render_workspace(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4141,18 +4260,24 @@ impl MediaViewer {
         // src label here used to inflate the whole pane past the dock
         // (min_w_0 + truncate breaks that propagation; overflow_hidden is
         // the clip of last resort at extreme narrowness).
+        //
+        // The current selection's highlight (HIG "Split views": each pane
+        // that leads to the object persistently highlights it): the same
+        // element_active treatment the Library row carries, so the selected
+        // object reads identically in both panes.
         let header = h_flex()
             .gap_2()
             .px_3()
             .py_2()
             .min_w_0()
             .overflow_hidden()
+            .bg(cx.theme().colors().element_active)
             .border_b_1()
             .border_color(cx.theme().colors().border_variant)
             .child(
                 Label::new(asset.src.clone())
                     .size(LabelSize::Small)
-                    .color(ui::Color::Muted)
+                    .color(ui::Color::Default)
                     .flex_1()
                     .truncate(),
             )
@@ -4161,13 +4286,38 @@ impl MediaViewer {
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Hint)
                     .truncate(),
+            )
+            // The inspector toggle (T1): the supporting pane is part of
+            // the workspace, not a navigation destination — one click
+            // hides or returns it without touching the player or selection.
+            .child(
+                div()
+                    .id("media-workspace-inspector-toggle")
+                    .flex_shrink_0()
+                    .px_2()
+                    .h_5()
+                    .flex()
+                    .items_center()
+                    .rounded_sm()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .cursor_pointer()
+                    .child(
+                        Label::new(if self.inspector_open {
+                            "Hide inspector"
+                        } else {
+                            "Inspector"
+                        })
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_inspector(cx))),
             );
 
         // ── Edit toolbar: trim marks + concatenation queue ───────────────
         // Width discipline: the pane is a flex item whose min-content is
         // this row's content width, and seven buttons + two readout labels
         // ≈ 800px — wider than any dock pane. The row wraps (the same
-        // overflow policy as the Detail tab's kv rows) so every action
+        // overflow policy as the inspector's kv rows) so every action
         // stays reachable at ~320px panes; min_w_0 keeps the row's
         // min-content from inflating the pane; the readout labels truncate.
         let (position_label, marks_label, trim_ready) = widget.read(cx).edit_state_labels();
@@ -4269,11 +4419,12 @@ impl MediaViewer {
                 )
             });
 
-        // No scroll wrapper on the Media tab: a scroll container gives
-        // its children indefinite height, and the video widget's
-        // aspect-fit sizing needs a definite height derived from the
-        // pane (min_h_0 lets flex_1 shrink below content size).
-        // Library/Queue/Detail scroll; the player fills.
+        // No scroll wrapper on the workspace's player area: a scroll
+        // container gives its children indefinite height, and the video
+        // widget's aspect-fit sizing needs a definite height derived from
+        // the pane (min_h_0 lets flex_1 shrink below content size).
+        // Library/Queue scroll and the inspector scrolls internally; the
+        // player fills.
         let content = div()
             .id("media-viewer-content")
             .flex_1()
@@ -4290,11 +4441,12 @@ impl MediaViewer {
             .flex_1()
             .min_h_0()
             .child(Self::tab_purpose(
-                "Playback and derivative edits — marks and trims serve audio and video; results land as new assets.",
+                "Playback and derivative edits beside the asset's inspector — marks and trims serve audio and video; results land as new assets.",
             ))
             .child(header)
             .child(toolbar)
             .child(content)
+            .when(self.inspector_open, |el| el.child(self.render_inspector(cx)))
             .into_any_element()
     }
 
@@ -4382,7 +4534,7 @@ impl MediaViewer {
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_selection(Some(ix), cx);
-                                this.activate_tab(ViewerTab::Media, cx);
+                                this.activate_tab(ViewerTab::Workspace, cx);
                             })),
                     )
                     .child(
@@ -4612,127 +4764,202 @@ impl MediaViewer {
             .into_any_element()
     }
 
-    fn render_detail(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The workspace's inspector pane (T1): the seven Detail sections as
+    /// pane-internal tabs — alternate views of the same selected object
+    /// (HIG "Tab views": closely related areas of content). A supporting
+    /// pane, not a destination: it renders under the player, toggles
+    /// without touching the selection or the player, and every tab
+    /// renders the same selected asset.
+    fn render_inspector(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let tabs = h_flex()
+            .id("media-inspector-tabs")
+            .gap_1()
+            .px_2()
+            .py_1()
+            .flex_wrap()
+            .min_w_0()
+            .overflow_hidden()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .children(InspectorTab::ALL.map(|tab| self.inspector_tab_button(tab, cx)));
         let Some(detail) = self.detail.as_ref() else {
+            // The pane-level data states (the old Detail tab's empty view):
+            // the inspector's reads follow the selection, so every tab
+            // shares one loading/failed/idle state. An unindexed selection
+            // states its own condition instead of pointing elsewhere.
+            let unindexed_selection = self
+                .selected
+                .and_then(|ix| self.assets.get(ix))
+                .is_some_and(|asset| asset.gallery_asset_id.is_none());
             let (title, hint) = match &self.detail_request.state {
-                ResourceState::Loading => ("Loading Detail", "Fetching asset metadata…"),
-                ResourceState::Failed(error) => ("Detail unavailable", error.as_str()),
-                ResourceState::Ready => ("Detail ready — empty", "The asset returned no detail."),
+                ResourceState::Loading => (
+                    "Loading inspector",
+                    "Fetching the selected asset's metadata…",
+                ),
+                ResourceState::Failed(error) => ("Inspector unavailable", error.as_str()),
+                ResourceState::Ready => {
+                    ("Inspector ready — empty", "The asset returned no detail.")
+                }
+                ResourceState::Idle if unindexed_selection => (
+                    "No inspector data",
+                    "The selected asset is not in the gallery index — run gallery_refresh to index it.",
+                ),
                 ResourceState::Idle => (
-                    "No detail",
-                    "Select an indexed gallery asset, then open Detail.",
+                    "No inspector data",
+                    "Select an indexed gallery asset in the Library — the inspector follows the selection.",
                 ),
             };
-            return self.render_empty(title, hint).into_any_element();
+            return v_flex()
+                .id("media-inspector")
+                .h(gpui::relative(INSPECTOR_PANE_FRACTION))
+                .min_h_0()
+                .flex_shrink_0()
+                .debug_selector(|| "media-inspector".into())
+                .child(tabs)
+                .child(self.render_empty(title, hint).into_any_element())
+                .into_any_element();
         };
-        let mut sections = v_flex().gap_2().p_3();
-        sections = sections.child(Self::tab_purpose(
-            "The selected asset's inspector — record, lineage, tags, linked transcripts, reel provenance.",
-        ));
-        if let Some(image) = detail.get("image").and_then(|i| i.as_object()) {
-            sections = sections.child(Self::section_label("Record"));
-            for (key, value) in image {
-                if let Some(text) = scalar_text(value) {
-                    sections = sections.child(Self::kv_row(key, &text, cx));
+        v_flex()
+            .id("media-inspector")
+            .h(gpui::relative(INSPECTOR_PANE_FRACTION))
+            .min_h_0()
+            .flex_shrink_0()
+            .debug_selector(|| "media-inspector".into())
+            .child(tabs)
+            .child(
+                v_flex()
+                    .id("media-inspector-section")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(self.render_inspector_section(detail, cx)),
+            )
+            .into_any_element()
+    }
+
+    /// One pane-internal inspector tab chip (T1) — the tab bar's tab
+    /// button at pane scale: the active tab carries the selected
+    /// treatment; the row wraps so all seven stay reachable in a narrow
+    /// dock.
+    fn inspector_tab_button(
+        &self,
+        tab: InspectorTab,
+        cx: &Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let active = self.inspector_tab == tab;
+        div()
+            .id(tab.element_id())
+            .debug_selector(move || tab.element_id().to_string())
+            .px_2()
+            .h_6()
+            .min_w_0()
+            .overflow_hidden()
+            .rounded_sm()
+            .map(|el| {
+                if active {
+                    el.bg(cx.theme().colors().element_active)
+                } else {
+                    el.hover(|el| el.bg(cx.theme().colors().element_hover))
                 }
-            }
-        }
-        if let Some(tags) = detail.get("tags").and_then(|t| t.as_array()) {
-            sections = sections.child(Self::section_label("Tags"));
-            for tag in tags {
-                let tag_type = tag.get("tag_type").and_then(|t| t.as_str()).unwrap_or("?");
-                let value = tag.get("value").and_then(|v| v.as_str()).unwrap_or("?");
-                sections = sections.child(Self::kv_row(tag_type, value, cx));
-            }
-        }
-        if let Some(lineage) = detail.get("lineage") {
-            if !lineage.is_null() {
-                sections = sections.child(Self::section_label("Lineage"));
-                if let Some(map) = lineage.as_object() {
-                    for (key, value) in map {
+            })
+            .cursor_pointer()
+            .flex()
+            .items_center()
+            .child(
+                Label::new(tab.label())
+                    .size(LabelSize::Small)
+                    .truncate()
+                    .color(if active {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.inspector_tab = tab;
+                cx.notify();
+            }))
+    }
+
+    /// The active inspector tab's body (T1) — the old Detail sections, one
+    /// per pane-internal tab, with honest absence copy where a section's
+    /// data is missing (the stacked view could hide an empty section; a
+    /// tab must always render something).
+    fn render_inspector_section(&self, detail: &Value, cx: &mut Context<Self>) -> gpui::AnyElement {
+        match self.inspector_tab {
+            InspectorTab::Record => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(image) = detail.get("image").and_then(|i| i.as_object()) {
+                    for (key, value) in image {
                         if let Some(text) = scalar_text(value) {
-                            sections = sections.child(Self::kv_row(key, &text, cx));
+                            body = body.child(Self::kv_row(key, &text, cx));
                         }
                     }
-                }
-            }
-        }
-        if let Some(faces) = detail.get("faces").and_then(|f| f.as_array()) {
-            if !faces.is_empty() {
-                sections = sections.child(Self::section_label("Faces"));
-                sections = sections.child(Self::kv_row("count", &faces.len().to_string(), cx));
-            }
-        }
-        if let Some(transcripts) = &self.detail_transcripts
-            && !transcripts.is_empty()
-        {
-            sections = sections.child(Self::section_label("Transcripts"));
-            for transcript in transcripts {
-                let timings = if transcript.has_word_timings {
-                    "word timings"
                 } else {
-                    "no word timings"
-                };
-                let transcript_id = transcript.id.clone();
-                let mut row = div()
-                    .id(SharedString::from(format!(
-                        "media-detail-open-{}",
-                        transcript.id
-                    )))
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(transcript.id.clone()))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Muted),
-                    )
-                    .child(
-                        Label::new(SharedString::from(format!(
-                            "{} words, {timings}",
-                            transcript.words_count
-                        )))
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Default),
-                    );
-                if let Some(note) = transcript_alignment_note(&transcript.alignment) {
-                    row = row.child(
-                        Label::new(SharedString::from(note))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Error),
-                    );
+                    body = body.child(Self::inspector_absent("No record in the asset detail."));
                 }
-                sections = sections.child(row.on_click(cx.listener(move |this, _, _, cx| {
-                    this.open_transcript(transcript_id.clone(), cx);
-                })));
+                body.into_any_element()
             }
-        }
-        if let ResourceState::Failed(error) = &self.detail_transcripts_request.state {
-            sections = sections.child(Self::section_label("Transcripts"));
-            sections = sections.child(Self::kv_row("unavailable", error, cx));
-        }
-        // The annotation surface (2026-10-27): researcher tags/notes with
-        // direct create/replace/delete — the same direct-manipulation
-        // rationale as the transcript highlights, on the inspector's home
-        // surface. The whole section needs an indexed asset.
-        if let Some(asset_id) = self
-            .selected
-            .and_then(|ix| self.assets.get(ix))
-            .and_then(|asset| asset.gallery_asset_id.clone())
-        {
-            sections = sections.child(Self::section_label("Researcher tags & notes"));
-            if let Some(edit) = self.annotation_edit.clone()
-                && let Some(focus) = self.annotation_input_focus.clone()
-            {
-                sections = sections.child(Self::render_annotation_editor(&edit, &focus, cx));
-            } else {
-                for kind in ["tag", "note"] {
-                    sections = sections.child(
-                        div()
+            InspectorTab::Tags => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(tags) = detail.get("tags").and_then(|t| t.as_array()) {
+                    for tag in tags {
+                        let tag_type = tag.get("tag_type").and_then(|t| t.as_str()).unwrap_or("?");
+                        let value = tag.get("value").and_then(|v| v.as_str()).unwrap_or("?");
+                        body = body.child(Self::kv_row(tag_type, value, cx));
+                    }
+                } else {
+                    body = body.child(Self::inspector_absent("No tags."));
+                }
+                body.into_any_element()
+            }
+            InspectorTab::Lineage => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(map) = detail
+                    .get("lineage")
+                    .filter(|lineage| !lineage.is_null())
+                    .and_then(|lineage| lineage.as_object())
+                {
+                    for (key, value) in map {
+                        if let Some(text) = scalar_text(value) {
+                            body = body.child(Self::kv_row(key, &text, cx));
+                        }
+                    }
+                } else {
+                    body = body.child(Self::inspector_absent("No lineage."));
+                }
+                body.into_any_element()
+            }
+            InspectorTab::Faces => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(faces) = detail.get("faces").and_then(|f| f.as_array())
+                    && !faces.is_empty()
+                {
+                    body = body.child(Self::kv_row("count", &faces.len().to_string(), cx));
+                } else {
+                    body = body.child(Self::inspector_absent("No faces."));
+                }
+                body.into_any_element()
+            }
+            InspectorTab::Transcripts => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(transcripts) = &self.detail_transcripts {
+                    if transcripts.is_empty() {
+                        body = body.child(Self::inspector_absent(
+                            "No transcripts yet — transcribe the recording and one appears here.",
+                        ));
+                    }
+                    for transcript in transcripts {
+                        let timings = if transcript.has_word_timings {
+                            "word timings"
+                        } else {
+                            "no word timings"
+                        };
+                        let transcript_id = transcript.id.clone();
+                        let mut row = div()
                             .id(SharedString::from(format!(
-                                "media-detail-annotation-add-{kind}"
+                                "media-inspector-open-{}",
+                                transcript.id
                             )))
                             .cursor_pointer()
                             .flex()
@@ -4740,121 +4967,205 @@ impl MediaViewer {
                             .gap_2()
                             .hover(|el| el.bg(cx.theme().colors().element_hover))
                             .child(
-                                Label::new(SharedString::from(format!("add {kind}")))
+                                Label::new(SharedString::from(transcript.id.clone()))
                                     .size(LabelSize::XSmall)
                                     .color(ui::Color::Muted),
                             )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_annotation_editor(
-                                    AnnotationEdit {
-                                        kind,
-                                        annotation_id: None,
-                                        buffer: LabelBuffer::default(),
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    );
-                }
-            }
-            if let Some(annotations) = &self.detail_annotations {
-                for annotation in annotations {
-                    let annotation_id = annotation.annotation_id.clone();
-                    let row_label = format!("{}: {}", annotation.kind, annotation.value);
-                    let edit_annotation_id = annotation.annotation_id.clone();
-                    let edit_value = annotation.value.clone();
-                    let kind_static: &'static str = if annotation.kind == "note" {
-                        "note"
-                    } else {
-                        "tag"
-                    };
-                    let delete_asset_id = asset_id.clone();
-                    sections = sections.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "media-detail-annotation-{annotation_id}"
-                            )))
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
                             .child(
-                                Label::new(SharedString::from(row_label))
+                                Label::new(SharedString::from(format!(
+                                    "{} words, {timings}",
+                                    transcript.words_count
+                                )))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                            );
+                        if let Some(note) = transcript_alignment_note(&transcript.alignment) {
+                            row = row.child(
+                                Label::new(SharedString::from(note))
                                     .size(LabelSize::XSmall)
-                                    .color(ui::Color::Default),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "media-detail-annotation-edit-{annotation_id}"
-                                    )))
-                                    .cursor_pointer()
-                                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        Label::new(SharedString::from("edit"))
-                                            .size(LabelSize::XSmall)
-                                            .color(ui::Color::Default),
-                                    )
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_annotation_editor(
-                                            AnnotationEdit {
-                                                kind: kind_static,
-                                                annotation_id: Some(edit_annotation_id.clone()),
-                                                buffer: LabelBuffer::from_str(&edit_value),
-                                            },
-                                            window,
-                                            cx,
-                                        );
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!(
-                                        "media-detail-annotation-delete-{annotation_id}"
-                                    )))
-                                    .cursor_pointer()
-                                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                                    .child(
-                                        Label::new(SharedString::from("delete"))
-                                            .size(LabelSize::XSmall)
-                                            .color(ui::Color::Error),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.dispatch_annotation_edit(
-                                            "gallery_annotation_delete",
-                                            annotation_delete_params(
-                                                &delete_asset_id,
-                                                &annotation_id,
-                                            ),
-                                            "deleted",
-                                            cx,
-                                        );
-                                    })),
-                            ),
-                    );
+                                    .color(ui::Color::Error),
+                            );
+                        }
+                        body = body.child(row.on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_transcript(transcript_id.clone(), cx);
+                        })));
+                    }
                 }
+                // A failed reload keeps the last-good rows visible and
+                // states the failure beside them (the request-lifecycle
+                // contract: failures surface, never silence); an in-flight
+                // first load shows its own copy.
+                if let ResourceState::Failed(error) = &self.detail_transcripts_request.state {
+                    body = body.child(Self::inspector_absent(&format!(
+                        "Transcripts unavailable: {error}"
+                    )));
+                }
+                if self.detail_transcripts.is_none()
+                    && self.detail_transcripts_request.state == ResourceState::Loading
+                {
+                    body = body.child(Self::inspector_absent("Loading transcripts…"));
+                }
+                body.into_any_element()
+            }
+            InspectorTab::Annotations => {
+                let mut body = v_flex().gap_2().p_3();
+                // The annotation surface (2026-10-27): researcher tags/notes
+                // with direct create/replace/delete — the same
+                // direct-manipulation rationale as the transcript
+                // highlights, on the inspector's home surface. The whole
+                // tab needs an indexed asset.
+                let Some(asset_id) = self
+                    .selected
+                    .and_then(|ix| self.assets.get(ix))
+                    .and_then(|asset| asset.gallery_asset_id.clone())
+                else {
+                    return body
+                        .child(Self::inspector_absent(
+                            "Annotations need an indexed asset — surface this asset through the gallery first.",
+                        ))
+                        .into_any_element();
+                };
+                if let Some(edit) = self.annotation_edit.clone()
+                    && let Some(focus) = self.annotation_input_focus.clone()
+                {
+                    body = body.child(Self::render_annotation_editor(&edit, &focus, cx));
+                } else {
+                    for kind in ["tag", "note"] {
+                        body = body.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "media-inspector-annotation-add-{kind}"
+                                )))
+                                .cursor_pointer()
+                                .flex()
+                                .flex_wrap()
+                                .gap_2()
+                                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    Label::new(SharedString::from(format!("add {kind}")))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Muted),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_annotation_editor(
+                                        AnnotationEdit {
+                                            kind,
+                                            annotation_id: None,
+                                            buffer: LabelBuffer::default(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        );
+                    }
+                }
+                if let Some(annotations) = &self.detail_annotations {
+                    for annotation in annotations {
+                        let annotation_id = annotation.annotation_id.clone();
+                        let row_label = format!("{}: {}", annotation.kind, annotation.value);
+                        let edit_annotation_id = annotation.annotation_id.clone();
+                        let edit_value = annotation.value.clone();
+                        let kind_static: &'static str = if annotation.kind == "note" {
+                            "note"
+                        } else {
+                            "tag"
+                        };
+                        let delete_asset_id = asset_id.clone();
+                        body = body.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "media-inspector-annotation-{annotation_id}"
+                                )))
+                                .flex()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(
+                                    Label::new(SharedString::from(row_label))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Default),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "media-inspector-annotation-edit-{annotation_id}"
+                                        )))
+                                        .cursor_pointer()
+                                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                        .child(
+                                            Label::new(SharedString::from("edit"))
+                                                .size(LabelSize::XSmall)
+                                                .color(ui::Color::Default),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.open_annotation_editor(
+                                                AnnotationEdit {
+                                                    kind: kind_static,
+                                                    annotation_id: Some(edit_annotation_id.clone()),
+                                                    buffer: LabelBuffer::from_str(&edit_value),
+                                                },
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "media-inspector-annotation-delete-{annotation_id}"
+                                        )))
+                                        .cursor_pointer()
+                                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                        .child(
+                                            Label::new(SharedString::from("delete"))
+                                                .size(LabelSize::XSmall)
+                                                .color(ui::Color::Error),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.dispatch_annotation_edit(
+                                                "gallery_annotation_delete",
+                                                annotation_delete_params(
+                                                    &delete_asset_id,
+                                                    &annotation_id,
+                                                ),
+                                                "deleted",
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        );
+                    }
+                }
+                if let ResourceState::Failed(error) = &self.detail_annotations_request.state {
+                    body = body.child(Self::inspector_absent(&format!(
+                        "Annotations unavailable: {error}"
+                    )));
+                }
+                if self.detail_annotations.is_none()
+                    && self.detail_annotations_request.state == ResourceState::Loading
+                {
+                    body = body.child(Self::inspector_absent("Loading annotations…"));
+                }
+                body.into_any_element()
+            }
+            InspectorTab::Reel => {
+                let mut body = v_flex().gap_2().p_3();
+                if let Some(provenance) = parse_reel_provenance(detail) {
+                    body = body.child(Self::kv_row("rendered from transcript", &provenance, cx));
+                } else {
+                    body = body.child(Self::inspector_absent(
+                        "No reel provenance — the asset was not rendered from a transcript.",
+                    ));
+                }
+                body.into_any_element()
             }
         }
-        if let ResourceState::Failed(error) = &self.detail_annotations_request.state {
-            sections = sections.child(Self::section_label("Tags & notes"));
-            sections = sections.child(Self::kv_row("unavailable", error, cx));
-        }
-        if let Some(provenance) = parse_reel_provenance(detail) {
-            sections = sections.child(Self::section_label("Reel provenance"));
-            sections = sections.child(Self::kv_row("rendered from transcript", &provenance, cx));
-        }
-        v_flex()
-            .id("media-viewer-detail")
-            .flex_1()
-            .overflow_y_scroll()
-            .child(sections)
-            .into_any_element()
     }
 
     /// The Transcript workspace (S3a): the open transcript's working view
     /// rendered as paragraph blocks with speaker labels and a layers
     /// strip, beside the recording's shared player (S3b: the same
-    /// viz-core-registry widget the Media tab and inline renders use — one
+    /// viz-core-registry widget the workspace player and inline renders use — one
     /// player per media identity, rebound on tab activation, suspended on
     /// leave; D1). Alignment degradations surface as visible status notes,
     /// The gallery recording a workspace transcript belongs to (R3): the
@@ -4869,7 +5180,7 @@ impl MediaViewer {
 
     /// The workspace's media body (R3): the RECORDING's asset body when the
     /// transcript links to a live gallery recording — the same body the
-    /// Media tab renders, so a video-keyed transcript plays the video. An
+    /// workspace player renders, so a video-keyed transcript plays the video. An
     /// unlinked transcript (its recording left the gallery index) falls
     /// to its stored media_path — the transcript and its durable exports
     /// stay reachable.
@@ -6414,6 +6725,17 @@ impl MediaViewer {
             .mt_1()
     }
 
+    /// Honest absence copy for one inspector tab (T1): a pane-internal tab
+    /// always renders something — the stacked Detail view could hide an
+    /// empty section, a tab cannot.
+    fn inspector_absent(text: &str) -> Div {
+        div().px_3().child(
+            Label::new(SharedString::from(text.to_string()))
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Hint),
+        )
+    }
+
     /// One line of tab purpose copy — the orientation contract (2026-10-27):
     /// every tab states what it is for before it shows content.
     fn tab_purpose(text: &str) -> Div {
@@ -6824,7 +7146,7 @@ fn transcript_alignment_note(alignment: &str) -> Option<&'static str> {
     }
 }
 
-/// The reel-provenance line for the Detail view, from the detail payload's
+/// The reel-provenance line for the inspector's Reel tab, from the detail payload's
 /// `transcript_render` record: the source transcript this asset was rendered
 /// from, with its creation time. Absent or null (most assets are not reels)
 /// renders nothing; a malformed record renders nothing rather than breaking
@@ -7866,9 +8188,10 @@ fn build_pane_blocks(state: &TranscriptPaneState) -> Vec<PaneBlock> {
 
 /// The media block body for a transcript's media path — the same
 /// display-hint shape the viz-core registry keys shared widgets by, so
-/// the workspace player is the SAME instance the Media tab and inline
-/// renders use (D1: one player per media identity). Audio containers take
-/// the audio player; everything else is a video source.
+/// the transcript workspace's player is the SAME instance the asset
+/// workspace's player and inline renders use (D1: one player per media
+/// identity). Audio containers take the audio player; everything else is
+/// a video source.
 fn transcript_media_body(media_path: &str) -> String {
     let extension = media_path
         .rsplit('.')
@@ -7942,8 +8265,9 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         .to_string();
     // The recording this transcript is stored against, when it has one
     // (R3): the workspace keys its media to the RECORDING — the same
-    // asset the Media tab renders — and falls to the transcript's stored
-    // media_path only when the recording left the gallery index.
+    // asset the asset workspace's player renders — and falls to the
+    // transcript's stored media_path only when the recording left the
+    // gallery index.
     let gallery_asset_id = summary
         .get("gallery_asset_id")
         .and_then(Value::as_str)
@@ -8351,10 +8675,9 @@ impl Render for MediaViewer {
                     .overflow_hidden()
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(self.tab_button(ViewerTab::Media, "Media".into(), cx))
+                    .child(self.tab_button(ViewerTab::Workspace, "Workspace".into(), cx))
                     .child(self.tab_button(ViewerTab::Library, library_label, cx))
                     .child(self.tab_button(ViewerTab::Queue, queue_label, cx))
-                    .child(self.tab_button(ViewerTab::Detail, "Detail".into(), cx))
                     .child(self.tab_button(ViewerTab::Transcript, "Transcript".into(), cx))
                     // Force-refresh: rebuild cached widgets + reload the
                     // active tab. Right-aligned so it stays put as tab labels
@@ -8382,10 +8705,9 @@ impl Render for MediaViewer {
                     }),
             )
             .child(match self.active_tab {
-                ViewerTab::Media => self.render_media(_window, cx).into_any_element(),
+                ViewerTab::Workspace => self.render_workspace(_window, cx).into_any_element(),
                 ViewerTab::Library => self.render_library(cx).into_any_element(),
                 ViewerTab::Queue => self.render_queue(cx).into_any_element(),
-                ViewerTab::Detail => self.render_detail(cx).into_any_element(),
                 ViewerTab::Transcript => self.render_transcript(_window, cx).into_any_element(),
             })
     }
@@ -8530,10 +8852,14 @@ mod tests {
     }
 
     /// dcterms:identifier: `MediaViewer::activate_tab`
-    /// expect: Leaving the Media tab suspends the shared player before the hidden tab renders.
+    /// expect: Leaving the workspace suspends the shared player before the hidden mode renders.
     /// [P1] Motivating: Panel navigation cannot leave ghost audio or playback polling behind.
     #[gpui::test]
-    fn leaving_media_tab_suspends_retained_player(cx: &mut gpui::TestAppContext) {
+    fn leaving_workspace_suspends_retained_player(cx: &mut gpui::TestAppContext) {
+        // The lock: entering Library dispatches `gallery_list_assets`, and
+        // an unlocked dispatch can land in a concurrent lock-holder's
+        // scripted invoker (the cross-talk the lock exists to prevent).
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let widget = cx.new(|cx| {
             hkask_media_widget::MediaWidget::new(
                 hkask_media_widget::MediaRef::new(
@@ -8547,16 +8873,148 @@ mod tests {
         viewer.update(cx, |viewer, _cx| {
             viewer.media_widget = Some(widget.clone());
             viewer.media_widget_body = Some("asset-body".to_string());
-            viewer.active_tab = ViewerTab::Media;
+            viewer.active_tab = ViewerTab::Workspace;
         });
 
-        viewer.update(cx, |viewer, cx| viewer.activate_tab(ViewerTab::Detail, cx));
+        viewer.update(cx, |viewer, cx| viewer.activate_tab(ViewerTab::Library, cx));
 
         assert!(widget.read_with(cx, |widget, _cx| widget.is_suspended()));
         assert_eq!(
             viewer.read_with(cx, |viewer, _cx| viewer.active_tab),
-            ViewerTab::Detail
+            ViewerTab::Library
         );
+    }
+
+    /// dcterms:identifier: `MediaViewer::toggle_inspector`
+    /// expect: Toggling the inspector pane never clears the selection, the
+    /// retained player, or its body, and never suspends the player — the
+    /// pane only changes what renders (T1 criterion 2).
+    /// [P1] Motivating: the workspace keeps the object being worked on.
+    #[gpui::test]
+    fn inspector_toggle_preserves_selection_and_player(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| {
+            hkask_media_widget::MediaWidget::new(
+                hkask_media_widget::MediaRef::new(
+                    "/definitely/missing.png".into(),
+                    hkask_media_widget::MediaKind::Image,
+                ),
+                cx,
+            )
+        });
+        let viewer = cx.new(|_| {
+            let mut viewer = MediaViewer::new();
+            // A surfaced (unindexed) asset: the toggle pin must not dispatch —
+            // this test installs no invoker and holds no lock, so any
+            // inspector read would cross-wire into the process-global
+            // invoker of whichever lock-holding test is running.
+            viewer.assets = vec![surfaced_asset("/a.png")];
+            viewer.selected = Some(0);
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer
+        });
+        viewer.update(cx, |viewer, _cx| {
+            viewer.media_widget = Some(widget.clone());
+            viewer.media_widget_body = Some("asset-0-body".to_string());
+        });
+
+        viewer.update(cx, |viewer, cx| viewer.toggle_inspector(cx));
+        viewer.read_with(cx, |viewer, _cx| {
+            assert!(!viewer.inspector_open, "the first toggle closes the pane");
+            assert_eq!(viewer.selected, Some(0));
+            assert!(viewer.media_widget.is_some(), "the player is retained");
+            assert_eq!(viewer.media_widget_body.as_deref(), Some("asset-0-body"));
+        });
+
+        viewer.update(cx, |viewer, cx| viewer.toggle_inspector(cx));
+        viewer.read_with(cx, |viewer, _cx| {
+            assert!(viewer.inspector_open, "the second toggle reopens the pane");
+            assert_eq!(viewer.selected, Some(0));
+            assert!(viewer.media_widget.is_some());
+            assert_eq!(viewer.media_widget_body.as_deref(), Some("asset-0-body"));
+        });
+        assert!(
+            !widget.read_with(cx, |widget, _cx| widget.is_suspended()),
+            "the pane toggle never suspends the player"
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::load_inspector`
+    /// expect: The inspector's reads (detail, transcript links, annotations)
+    /// fire on workspace entry with the pane visible and on a selection change
+    /// under the open pane, never with the pane closed or from another mode —
+    /// the old Detail-tab activation contract, now the pane's.
+    /// [P1] Motivating: the inspector follows the selection without a
+    /// separate destination to visit.
+    #[gpui::test]
+    fn inspector_loads_follow_selection_and_pane_visibility(cx: &mut gpui::TestAppContext) {
+        let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (calls, _restore) = install_scripted_invoker(vec![
+            r#"{"content":{"image":{"src":"/a.png"},"tags":[]}}"#.to_string(),
+            r#"{"content":[]}"#.to_string(),
+            r#"{"content":[]}"#.to_string(),
+        ]);
+        let viewer = cx.new(|_| {
+            let mut viewer = MediaViewer::new();
+            viewer.assets = vec![indexed_asset("/a.png", 0)];
+            viewer.active_tab = ViewerTab::Library;
+            viewer
+        });
+        // Selecting from the Library loads nothing while the Library is the
+        // active mode; entering the workspace with the pane open fires the
+        // inspector's three reads for the selected asset.
+        viewer.update(cx, |viewer, cx| {
+            viewer.set_selection(Some(0), cx);
+        });
+        assert_eq!(
+            calls.lock().expect("calls lock").len(),
+            0,
+            "no inspector reads from the Library mode"
+        );
+        viewer.update(cx, |viewer, cx| {
+            viewer.activate_tab(ViewerTab::Workspace, cx);
+        });
+        let recorded = calls.lock().expect("calls lock").clone();
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|(tool, _)| tool.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "gallery_asset_detail",
+                "educt_list_transcripts",
+                "gallery_annotation_list"
+            ],
+            "the workspace entry fires the inspector's trio"
+        );
+        assert_eq!(recorded[0].1, serde_json::json!({ "image_id": "asset-0" }));
+
+        // A selection change under the closed pane loads nothing; reopening
+        // the pane loads the reads for the NEW selection.
+        viewer.update(cx, |viewer, cx| viewer.toggle_inspector(cx));
+        viewer.update(cx, |viewer, _cx| {
+            viewer.assets.push(indexed_asset("/b.png", 1));
+        });
+        viewer.update(cx, |viewer, cx| viewer.set_selection(Some(1), cx));
+        assert_eq!(
+            calls.lock().expect("calls lock").len(),
+            3,
+            "a closed pane loads nothing on selection change"
+        );
+        viewer.update(cx, |viewer, cx| viewer.toggle_inspector(cx));
+        let reopened = calls.lock().expect("calls lock").clone();
+        assert_eq!(
+            reopened[3..]
+                .iter()
+                .map(|(tool, _)| tool.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "gallery_asset_detail",
+                "educt_list_transcripts",
+                "gallery_annotation_list"
+            ],
+            "reopening the pane refreshes the reads for the new selection"
+        );
+        assert_eq!(reopened[3].1, serde_json::json!({ "image_id": "asset-1" }));
     }
 
     /// expect: [P7] MediaViewer::ingest_tool_result makes new artifacts visible
@@ -9299,7 +9757,7 @@ mod tests {
             );
             assert!(viewer.queue_poll_task.is_some());
             let stale_epoch = viewer.jobs_request.epoch;
-            viewer.activate_tab(ViewerTab::Media, cx);
+            viewer.activate_tab(ViewerTab::Workspace, cx);
             assert!(
                 viewer.queue_poll_task.is_none(),
                 "leaving Queue cancels timer"
@@ -10376,7 +10834,7 @@ mod tests {
         let mut viewer = MediaViewer::new();
         // A video-keyed transcript: the gallery recording is the identity,
         // so the workspace renders the RECORDING's asset body — the video
-        // plays, the same body the Media tab renders.
+        // plays, the same body the asset workspace's player renders.
         viewer.assets = vec![MediaAsset {
             body: r#"{"kind":"video","src":"/talk.mp4"}"#.into(),
             src: "/talk.mp4".into(),
@@ -12505,6 +12963,13 @@ mod viewer_layout_tests {
         });
         assert_eq!(asset_count, 1, "fixture asset must merge");
 
+        // This pin is the PLAYER's chain: the video area must track window
+        // height with the inspector pane closed — the open pane is a
+        // legitimate height share (the fraction contract), not a squash.
+        // The fixture asset is surfaced (unindexed), so the toggle
+        // dispatches nothing.
+        viewer.update(cx, |viewer, cx| viewer.toggle_inspector(cx));
+
         struct Host {
             viewer: Entity<MediaViewer>,
         }
@@ -12723,15 +13188,15 @@ mod viewer_layout_tests {
 
     /// THE horizontal-fit invariant — the one the scaling test above does
     /// not encode. No part of the viewer — media content, header, toolbar,
-    /// or tab bar — may exceed the pane's available width at any pane
-    /// width, with the video's natural width (640px) larger than the pane.
-    /// Historically the pane div lacked `min_w_0`, so the viewer's
-    /// min-content width (untruncated header src + seven inline toolbar
-    /// buttons ≈ 685px) inflated the pane and the video rendered clipped
-    /// at the dock edge, unviewable. This test pins the fix in the current
-    /// production embedding (top/bottom split): the pane is a flex-column
-    /// child and still carries `min_w_0`. The final iteration resizes back
-    /// — the no-thrash probe.
+    /// inspector pane, or tab bar — may exceed the pane's available width
+    /// at any pane width, with the video's natural width (640px) larger
+    /// than the pane. Historically the pane div lacked `min_w_0`, so the
+    /// viewer's min-content width (untruncated header src + seven inline
+    /// toolbar buttons ≈ 685px) inflated the pane and the video rendered
+    /// clipped at the dock edge, unviewable. This test pins the fix in the
+    /// current production embedding (top/bottom split): the pane is a
+    /// flex-column child and still carries `min_w_0`. The final iteration
+    /// resizes back — the no-thrash probe.
     #[gpui::test]
     fn viewer_content_fits_narrow_pane(cx: &mut TestAppContext) {
         if !std::path::Path::new(FIXTURE).exists() {
@@ -13251,6 +13716,21 @@ mod viewer_layout_tests {
              width, got {:?} — the pane inflated to its content's min-width",
             video_bounds.size.width
         );
+        // The inspector pane (T1): the pane and all seven of its
+        // pane-internal tabs render inside the same dock — the tab row
+        // wraps instead of inflating the pane's min-content.
+        let inspector_bounds = cx
+            .debug_bounds("media-inspector")
+            .expect("inspector laid out with debug bounds");
+        assert!(
+            inspector_bounds.right() <= dock_width + px(1.),
+            "the inspector must fit inside the {dock_width:?} dock: right {:?}",
+            inspector_bounds.right()
+        );
+        for tab in InspectorTab::ALL {
+            cx.debug_bounds(tab.element_id())
+                .unwrap_or_else(|| panic!("inspector tab {:?} laid out", tab));
+        }
     }
 
     /// The events surface (S5) renders inside the same narrow-dock
