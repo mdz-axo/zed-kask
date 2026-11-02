@@ -111,6 +111,7 @@ After a complete, input-valid TB-2 quality result, before write-plan (protocol e
 2. `refinement_directives` are explicitly routed back to decompose (mechanical and documented).
 3. Carry `prior_gate_weighted_total` forward so you can detect a stable-but-unconverged plan. Each iteration narrows the gap.
 4. On convergence (`gate_weighted_total <= 0.15` and `gate_pass` true), proceed to write-plan with `gate_result`.
+5. Cap the loop at three refinement rounds. When the plan is still stable-but-unconverged after three rounds, stop and deliver the plan through write-plan with the remaining `refinement_directives` recorded as residual gaps on the plan — no further loops.
 
 ## Registry Templates
 

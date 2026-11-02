@@ -126,8 +126,10 @@ Correlation requires ≥5 pairs; below that report `Undetermined` (matches the s
    `statistical_reasoning`, `best_practices` and `n` rationales. Positive =
    overconfident, negative = underconfident. **Domain note:** this bias is
    marker-domain [-2, 2] and skill-authored (the paper defines no such
-   measure); the consumer (`hkask_forecast::apply_calibration_adjustment`)
-   expects probability-domain. Until a validated conversion exists, the
+   measure); the hkask-forecast isotonic/log-odds recalibration path (`isotonic_fit`
+   over (probability, outcome) pairs, `log_odds` for log-odds-space
+   interpolation) operates in probability-domain. Until a validated
+   conversion exists, the
    superforecasting stage-6 departure applies the DIRECTION (positive →
    widen, negative → sharpen) with the magnitude as a qualitative guide —
    never as a direct probability adjustment.

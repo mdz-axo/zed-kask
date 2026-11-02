@@ -18,6 +18,7 @@ Requirements engineering supplies spec recovery and traceability; PMI program-ma
 
 - **Initial:** the user's requirement as stated in their instructions and relevant specifications, with the current tree state known — working tree, affected callers, other streams' in-flight files.
 - **Target:** the requirement implemented and verified through the real capability — machine checks green or their failures honestly reported, obsolete paths removed in the same change, and the functional outcome handed back with evidence; uncommitted work is named as uncommitted and judgment stays with the human.
+- **Check:** pass is every machine check named for the change running green; a red check is reported with its command and output rather than assumed away.
 
 ## D/P labelling
 
@@ -43,7 +44,7 @@ Run the existing capability through the task it is meant to perform. A hand-comp
 
 For Rust tests, use `bash kask/scripts/cargo-test-nonzero.sh <cargo test args>` so a zero-match filter fails. Run `./script/clippy` for the affected scope. API removals also require checking downstream compilation (`cargo check -p zed` where applicable). Format only touched files. Sweep removed identifiers, obsolete instructions and stale comments across the repository; respect other streams' ownership when reporting remaining consumers.
 
-Compiler success establishes compilation; test success establishes the assertions exercised. Neither establishes an untested functional claim. Preserve command/output evidence, report failures and limitations, and never turn an unrun check into a pass. No rendered checklist, self-authored score or empty findings list substitutes for these observations.
+Compiler success establishes compilation; test success establishes the assertions exercised. Neither establishes an untested functional claim. Preserve command/output evidence, report failures and limitations, and never turn an unrun check into a pass. No rendered checklist, self-authored score or empty findings list substitutes for these observations. Verification is bounded at two rounds — no new evidence at round two is a stop, not a retry.
 
 ## Report and hand back judgment
 

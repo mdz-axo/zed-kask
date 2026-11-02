@@ -38,7 +38,7 @@ Tetlock & Gardner, *Superforecasting: The Art and Science of Prediction* (2015) 
 
 ## D/P labelling
 
-Every stage heading below carries its label. **D**: the nine `lisp_eval` forms
+Every stage heading below carries its label. **D**: the eight `lisp_eval` forms
 (the stage-0 triage gate `SF-1`, the stage-2 rate check and anchor check, the stage-4 posterior, the stage-5
 weighted average, the stage-5/stage-6 compensation-masking and defensible-range gate `SF-2`, the
 quality-gate weighted totals and pass rule `SF-3`, the market-prior gate); the
@@ -309,7 +309,7 @@ probability (alignment invariant) — before re-invoking superforecasting.
 Render `superforecasting/stage_0_triage` twice — once with a representative
 goldilocks-zone question carrying resolution criteria and a deadline (pass),
 once with the deadline omitted (the triage must refuse to proceed rather
-than invent one). Run the nine pinned `lisp_eval` forms with representative
+than invent one). Run the eight pinned `lisp_eval` forms with representative
 envs: `SF-1` passes only when `triage_zone` is `"goldilocks"`, `scenario_triage_class` is `"well_specified"` or `"goldilocks"`, and `resolution_criteria`/`resolution_deadline` are non-empty; the stage-2 rate check returns `invalid` on a zero sample and the
 computed rate otherwise; the anchor check bounds `p` to [0, 1]; the stage-4
 posterior form updates a prior; the stage-5 raw-model form derives composites,

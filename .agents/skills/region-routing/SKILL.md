@@ -12,8 +12,7 @@ audience: platform
   decomposition), the available oracles (agent tools, MCP tools, the
   operator, the curator), and the region model — SD (syntactic x
   deterministic), SP (syntactic x probabilistic), Sem-D (semantic x
-  deterministic), Sem-P (semantic x probabilistic) — grounded in Morris (1938) / Carnap (1942) semiotics (`onto_anchor` → `derived:semiotics`) and Turing (1936/1937 `doi:10.1112/plms/s2-42.1.230`; 1939 `doi:10.1112/plms/s2-45.1.161` → `derived:deterministic_computation` / `derived:verification_oracle`), as defined in
-  `kask/docs/research/syntax-semantic-probabilistic-deterministic-space.md`.
+  deterministic), Sem-P (semantic x probabilistic) — grounded in Morris (1938) / Carnap (1942) semiotics (`onto_anchor` → `derived:semiotics`) and Turing (1936/1937 `doi:10.1112/plms/s2-42.1.230`; 1939 `doi:10.1112/plms/s2-45.1.161` → `derived:deterministic_computation` / `derived:verification_oracle`).
 - **Target condition:** a consumed routing plan in which every step carries a
   region, at least one named tool, a named deterministic gate for every
   generating step (SP, Sem-P), and a human/curator role assignment; the

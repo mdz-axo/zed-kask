@@ -15,7 +15,7 @@ Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → de
 
 - **Initial condition:** the board's columns as read by `kanban_task_list`, the `curator_status` `loop_reading` field, and the `reg.skill` window — or an explicit visibility gap where a read failed.
 - **Target condition:** every card in Review carries the observation that settles it, every open alert names its next action, and every proposal card has an operator verdict recorded on the card.
-- **D/P labelling:** board reads, column moves, `kanban_task_verify` receipts, and the Step 7 (`ALG-1`) and Step 10 (`ALG-2`) `lisp_eval` closure gates are D (the kanban tools and deterministic counters are the oracle); severity triage, the fix decision and the skill verdict are P — the operator's, never this session's. The one bounded loop: steps 1–10 run once per review; a card whose settling observation is missing re-enters at step 3 for that card only, and the review ends when the target condition holds or the remaining gaps are named on their cards.
+- **D/P labelling:** board reads, column moves, `kanban_task_verify` receipts, and the Step 2 (`ALG-1a`) SENSE-health gate, Step 7 (`ALG-1`) and Step 10 (`ALG-2`) `lisp_eval` closure gates are D (the kanban tools and deterministic counters are the oracle); severity triage, the fix decision and the skill verdict are P — the operator's, never this session's. The one bounded loop: steps 1–10 run once per review; a card whose settling observation is missing re-enters at step 3 for that card only, and the review ends when the target condition holds or the remaining gaps are named on their cards.
 
 ## SENSE — Read the worklist
 
@@ -53,8 +53,8 @@ Receipt executed live (2026-10-01, batch-14 audit), read-only:
   never as an empty backlog.
 
 The skill's oracle is the kanban tool receipts themselves (board reads,
-column moves, `kanban_task_verify`) plus the `ALG-1` and `ALG-2`
-`lisp_eval` closure gates (`{"cards_moved_to_done": 3, "cards_verified_with_receipt": 3, "ungranted_curator_verifications": 0, "self_recovery_marked_done_without_verify": 0}` → `true`; `{"board_read_failed": 0, "review_cards_missing_observation": 0, "open_alerts_missing_next_action": 0, "decided_proposals_missing_verdict_record": 0}` → `true`); the review never mutates the board merely to produce a receipt.
+column moves, `kanban_task_verify`) plus the `ALG-1a`, `ALG-1` and `ALG-2`
+`lisp_eval` closure gates (`{"board_read_ok": true, "loop_reading": "turning", "missed_hourly_heartbeats": 0}` → `true`; `{"cards_moved_to_done": 3, "cards_verified_with_receipt": 3, "ungranted_curator_verifications": 0, "self_recovery_marked_done_without_verify": 0}` → `true`; `{"board_read_failed": 0, "review_cards_missing_observation": 0, "open_alerts_missing_next_action": 0, "decided_proposals_missing_verdict_record": 0}` → `true`); the review never mutates the board merely to produce a receipt.
 
 ## Registry Templates
 

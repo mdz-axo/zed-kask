@@ -302,7 +302,6 @@ The skill's forms are executed at use time, never anchored in code.
   reason; every MCDA score traces to a finding.
 - `lisp_eval` tool gates are authoritative between phases; condition branches
   reference real step-N result keys, not LLM self-assessment.
-- `ledger.span_namespace` is `reg.skill.kask-seam-audit` (CI-enforced).
 
 ## Example invocation
 

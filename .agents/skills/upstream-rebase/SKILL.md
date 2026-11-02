@@ -401,11 +401,14 @@ trail for what changed.
 
 ### Branch & PR strategy
 
-**Convention (observed twice):** upstream syncs land directly on `main` as
+**Convention (merge, not rebase):** upstream syncs land directly on `main` as
 merge commits with the message `Merge upstream/main <sha> into zed-kask` —
-the 2026-09-24 sync and the 2026-10-12 merge (`8e32d2a127`) both landed this
-way. Do not create a per-sync branch or PR unless the operator asks for
-reviewability.
+`DIVERGENCE.md`'s "Upstream-sync runbook" grounds the practice; cite only
+merge commits reachable in current history (`git log --merges`). The
+2026-10-12 instance is orphaned by the 2026-10-27 upstream history rewrite
+documented in this skill's "Upstream history rewrite" section — no
+pre-rewrite merge hash is reachable, so never cite one as evidence. Do not
+create a per-sync branch or PR unless the operator asks for reviewability.
 
 ### Verification gate ordering (merge-level, before pushing the PR)
 
@@ -443,8 +446,10 @@ A resolved but uncommitted merge exists only in the index and worktree;
    recoverable. A new merge is not a restoration.
 
 - **Mid-merge, uncommitted:** `git merge --abort` only after `git rev-parse refs/recovery/<date>/…` shows the snapshot exists.
-- **Merge committed, not pushed:** `git reset --hard <pre-merge-sha>` (find via
-  `git reflog`, the `HEAD@{1}` before the merge).
+- **Merge committed, not pushed:** `git revert -m 1 <merge-sha>` — the same
+  forward-restore used for `main` below. `git reset --hard` is prohibited in
+  this shared tree: it has no pathspec form and sweeps every concurrent
+  stream's in-flight work.
 - **Mapped re-application in progress, merge already committed:** `git checkout
   -- <file>` discards one file's in-progress re-application; `git restore
   --source upstream/main -- <file>` restarts from clean upstream.

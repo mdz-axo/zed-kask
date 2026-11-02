@@ -29,9 +29,11 @@ hardening; fixes flow through separately authorized work.
 - **OWASP Code Review Guide v2** — review methodology, inherited from
   `code-review`.
 - **Ontology disclosure**: "security review" and "defense in depth" anchor
-  coarsely on the 5W1H core rung (operator ruling required to improve them);
-  the models above are skill-declared reference models, not ladder-anchored
-  terms. **Never cite a CWE identifier** — the local corpus does not ship the
+  on the derived rung (`derived:security_review` per the OWASP Code Review
+  Guide v2; `derived:defense_in_depth` per the NIST CSRC glossary — operator
+  ruling 2026-10-24, card 8f69c30d); the models above are skill-declared
+  reference models, not ladder-anchored terms. **Never cite a CWE
+  identifier** — the local corpus does not ship the
   MITRE CWE enumeration, so any CWE citation is fabricated.
 
 ## Priority-surface catalog
@@ -41,7 +43,7 @@ map-surface phase walks the rows that intersect the target):
 
 | ID | Surface | OWASP LLM 2025 | ATLAS | Current defense state (evidence) |
 |----|---------|---------------|-------|----------------------------------|
-| S1 | Indirect prompt injection — untrusted content (fetched pages, RSS/synthetic feeds, transcripts, memory recall, tool outputs) flowing into agent context | LLM01:2025 | AML.T0051 (indirect) | No deterministic mediation: tool results stored verbatim (`crates/agent/src/agent.rs:3466`); content scanning deleted as inert (RR-0001/RR-0030) |
+| S1 | Indirect prompt injection — untrusted content (fetched pages, RSS/synthetic feeds, transcripts, memory recall, tool outputs) flowing into agent context | LLM01:2025 | AML.T0051 (indirect) | No deterministic mediation: tool results stored verbatim (`crates/agent/src/agent.rs:3864`); content scanning deleted as inert (2026-10-24 run 2db097380d2005d8) |
 | S2 | Credential resolution and keychain boundary | LLM02, LLM06 | — | Live: two-tier resolution with `permission_denied` contract (`kask/crates/hkask-mcp-server/src/server/credentials.rs:76`, `kask/crates/hkask-keystore/src/keychain.rs:425`) |
 | S3 | Arbitrary-JSON MCP tool inputs | LLM01, LLM06 | AML.T0051 | Live: `AnyJsonValue` contract, schema validation, closed vocabularies, typed `McpToolError` boundary |
 | S4 | Path containment and traversal (file tools, template rendering, server path params) | LLM06 | — | Live: `tool_permissions` canonicalize + symlink-escape detection (`crates/agent/src/tools/tool_permissions.rs`); `render_template` canonicalize+starts_with; symlink alias rejection |
@@ -70,7 +72,7 @@ Live:
 Recorded absences — never report these as present or as missing machinery;
 they are de-advertised with reasons:
 
-- **Information-flow control** — deleted as inert (RR-0053; both gate inputs
+- **Information-flow control** — deleted as inert (2026-10-24 run 2db097380d2005d8, card 8f69c30d; both gate inputs
   were constants). Evolution path if the indirect-injection threat
   materializes: FIDES-style variable-mediated IFC (Costa, Köpf et al.,
   arXiv:2505.23643) — tool results enter variables carrying security labels,
