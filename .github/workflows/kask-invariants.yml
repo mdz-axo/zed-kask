@@ -73,6 +73,10 @@
 # - check-no-mod-rs.sh and check-no-smol-timer.sh: the fork layout stays
 #   mod.rs-free and the GPUI-side surface stays free of smol timers
 #   (both .rules conventions, machine-enforced).
+# - check-http-client-derive.sh: http_client self-declares serde's derive
+#   feature (D99) — without it, http_client's #[derive(Deserialize)]
+#   depends on cross-crate feature unification and standalone cargo scopes
+#   (-p http_client, -p bedrock) fail to compile (the D80 class).
 # - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
 #   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
 #   base) beyond duplication-ratchet-baseline.txt — the simplification
@@ -202,6 +206,8 @@ jobs:
         run: |
           bash kask/scripts/check-unsafe-forbid.sh
           bash kask/scripts/check-version-sync.sh
+      - name: http_client manifest — serde derive self-declared (D99)
+        run: bash kask/scripts/check-http-client-derive.sh
       - name: Fork layout — no mod.rs; GPUI-side timers — no smol::Timer
         run: |
           bash kask/scripts/check-no-mod-rs.sh
