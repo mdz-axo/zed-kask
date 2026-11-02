@@ -457,6 +457,7 @@ impl MediaServer {
             + Self::jobs_router()
             + Self::educt_router()
             + Self::layers_router()
+            + Self::layers_search_router()
             + Self::voice_router()
             + Self::youtube_router()
     }
