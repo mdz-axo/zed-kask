@@ -69,12 +69,13 @@ const ACTIVITY_DRAWER_FRACTION: f32 = 0.3;
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The workspace list's fixed header items before the surface body:
-/// back row, player, mode chips (the surface toggle plus the select and
-/// follow toggles), the surface's status note, and the section label — the
-/// whole workspace scrolls as one piece, exactly as it did before
-/// virtualization (a pinned header taller than a tight pane would starve
-/// the reading area).
-const WORKSPACE_HEADER_ITEMS: usize = 5;
+/// player, mode chips (the surface toggle plus the select and follow
+/// toggles), the surface's status note, and the section label — the whole
+/// workspace scrolls as one piece, exactly as it did before virtualization
+/// (a pinned header taller than a tight pane would starve the reading area).
+/// The close affordance and recording name live in the sub-surface's header
+/// row above the list (T3), not as list items.
+const WORKSPACE_HEADER_ITEMS: usize = 4;
 
 /// The workspace list's fixed tail items after the transcript blocks:
 /// highlights, cuts, and reel actions — always present as items, so the
@@ -108,8 +109,8 @@ enum RequestOwner {
 }
 
 /// A strict-parsed `educt_list_transcripts` row — the fields the workspace
-/// inspector's Transcripts tab and the Recordings browser render; a missing
-/// or malformed field rejects the whole listing.
+/// inspector's Transcripts tab and the Library's recordings section render;
+/// a missing or malformed field rejects the whole listing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct TranscriptSummaryRow {
     id: String,
@@ -379,8 +380,9 @@ struct AnnotationEdit {
     buffer: LabelBuffer,
 }
 
-/// The strict-parsed `educt_get_transcript` payload the Transcript tab
-/// renders (S3a): working words + alignment, the latest paragraph layer's
+/// The strict-parsed `educt_get_transcript` payload the workspace's
+/// transcript sub-surface renders (S3a): working words + alignment, the
+/// latest paragraph layer's
 /// breaks, the latest speaker layer's spans, and the layer summary strip —
 /// all from the single dispatch (D2). `words` is `None` on text-only views
 /// (Unaligned/Untimed) — those render `working_text` with a visible status
@@ -551,20 +553,22 @@ pub struct MediaAsset {
     pub gallery_asset_id: Option<String>,
 }
 
-/// The panel's task modes (T1/T2, media-panel-redesign plan): primary
-/// navigation mirrors user tasks, never server subsystems. `Workspace`
-/// is the one-asset mode — the player, the edit toolbar, and the
-/// toggleable inspector pane in one screen; the Detail tab it absorbed
-/// is its supporting pane. Library/Transcript remain top-level until
-/// phase C folds the recordings browser into the Library. The Queue tab
-/// it replaced is the activity layer (T2): ambient status (badges, the
-/// toolbar Activity toggle) plus an on-demand drawer — never a
-/// navigation destination.
+/// The panel's task modes (T1/T2/T3, media-panel-redesign plan): primary
+/// navigation mirrors user tasks, never server subsystems. `Workspace` is
+/// the one-asset mode — the player, the edit toolbar, and the toggleable
+/// inspector pane in one screen; an open transcript renders as its
+/// sub-surface (T3), bound to the linked recording's player. `Library` is
+/// the browse mode — every indexed asset as rows, with the recordings'
+/// transcription state and their stored transcripts nested beneath them
+/// (T3). The Queue tab the activity layer replaced (T2) and the Transcript
+/// tab these surfaces absorbed (T3) are gone: process state is ambient
+/// (badges, the toolbar Activity toggle, an on-demand drawer) and
+/// transcripts live on the surfaces that use them — never a navigation
+/// destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewerTab {
     Workspace,
     Library,
-    Transcript,
 }
 
 /// The workspace inspector's pane-internal tabs (T1): the seven Detail
@@ -704,8 +708,9 @@ pub struct MediaViewer {
     /// Activity count, and the poll condition read this set.
     live_jobs: Vec<JobRecord>,
     /// The non-terminal transcribe job ids the last observation saw
-    /// (R5) — when one lands, the recordings browser reloads its listing
-    /// once so the finished transcript appears under its recording.
+    /// (R5) — when one lands while the Library is showing, its recordings
+    /// section reloads the listing once so the finished transcript
+    /// appears under its recording.
     transcribing_ids: HashSet<String>,
     jobs_total: Option<usize>,
     jobs_limit: usize,
@@ -749,9 +754,9 @@ pub struct MediaViewer {
     /// seven Detail sections.
     inspector_tab: InspectorTab,
     /// The open transcript workspace (from `educt_get_transcript`) — `None`
-    /// until the request completes; `Some` renders the Transcript tab. The
-    /// state persists across tab switches so returning to an open
-    /// transcript does not refetch.
+    /// until the request completes; `Some` renders the workspace's
+    /// transcript sub-surface (T3). The state persists across mode
+    /// switches so returning to an open transcript does not refetch.
     transcript: Option<TranscriptPaneState>,
     transcript_request: RequestLifecycle,
     /// The follow-along mark (S3c): the global working-word index containing
@@ -780,9 +785,11 @@ pub struct MediaViewer {
     /// Follow reveals not yet absorbed by a tick — programmatic scrolls
     /// the tick must not misread as manual scrolling.
     follow_reveals_in_flight: u32,
-    /// The recordings listing for the Transcript tab's idle state (from
-    /// `educt_list_transcripts` unfiltered) — the browse surface the tab
-    /// opens with when no workspace transcript is loaded.
+    /// The stored-transcript listing (from `educt_list_transcripts`
+    /// unfiltered) — the Library's recordings section renders the
+    /// recordings' transcription state and their transcript rows from
+    /// it (T3; operator report 2026-10-26: the section must list what's
+    /// available, not dead-end).
     transcript_listing: Option<Vec<TranscriptSummaryRow>>,
     transcript_listing_request: RequestLifecycle,
     /// S4 part-2: when on, word clicks build highlight ranges instead of
@@ -831,7 +838,7 @@ pub struct MediaViewer {
     /// Two-step delete confirmation for Library rows: the armed asset row
     /// index (the one shared confirm-arm pattern — see `ConfirmArm`).
     confirm_delete: ConfirmArm<usize>,
-    /// Two-step delete confirmation for the Transcript tab's recordings:
+    /// Two-step delete confirmation for the Library's transcript rows:
     /// the armed transcript id (the same confirm-arm pattern).
     confirm_delete_transcript: ConfirmArm<String>,
     /// Visible status line (errors from tool dispatch, notices).
@@ -992,9 +999,11 @@ impl MediaViewer {
 
     fn activate_tab(&mut self, tab: ViewerTab, cx: &mut Context<Self>) {
         if self.active_tab == ViewerTab::Workspace && tab != ViewerTab::Workspace {
-            self.suspend_media_widget(cx);
-        }
-        if self.active_tab == ViewerTab::Transcript && tab != ViewerTab::Transcript {
+            // Leaving the workspace tears down the transcript sub-surface's
+            // interaction state (T3, the old Transcript-leave rule): the
+            // shared player suspends, the follow task cancels, and a pending
+            // selection abandons — the transcript state itself persists, so
+            // re-entry resumes it without a refetch.
             self.suspend_media_widget(cx);
             self.transcript_follow_task.take();
             self.current_word = None;
@@ -1011,17 +1020,19 @@ impl MediaViewer {
         self.confirm_delete.disarm();
         self.confirm_delete_transcript.disarm();
         match tab {
-            ViewerTab::Library => self.load_gallery(cx),
-            ViewerTab::Workspace => {
-                if self.inspector_should_load() {
-                    self.load_inspector(cx);
-                }
+            ViewerTab::Library => {
+                self.load_gallery(cx);
+                // The recordings section (T3): the Library's entry loads the
+                // stored-transcript listing beside the gallery page — the
+                // section's transcription states and transcript rows read it.
+                self.load_transcript_listing(cx);
             }
-            ViewerTab::Transcript => {
+            ViewerTab::Workspace => {
                 if self.transcript.is_some() {
                     self.start_transcript_follow(cx);
-                } else {
-                    self.load_transcript_listing(cx);
+                }
+                if self.inspector_should_load() {
+                    self.load_inspector(cx);
                 }
             }
         }
@@ -1298,37 +1309,44 @@ impl MediaViewer {
 
     /// Force-refresh the view pane: drop strongly cached non-media viz widgets,
     /// suspend/release the selected media widget when refreshing Media, and
-    /// reload the active tab's data from its source.
+    /// reload the active mode's data from its source.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         hkask_viz_core::clear_widget_cache();
         match self.active_tab {
             ViewerTab::Workspace => {
-                // Re-ingest the thread's tool-result display hints. The
-                // assets list is rebuilt from scratch so entries removed
-                // from the thread disappear too.
-                let thread = self.thread.clone();
-                if let Some(thread) = thread
-                    && let Some(thread) = thread.upgrade()
-                {
-                    self.assets.clear();
-                    self.set_selection(None, cx);
-                    self.ingest_thread(thread, cx);
-                } else {
-                    self.status =
-                        Some("No conversation thread to re-ingest — open a thread first.".into());
-                }
-            }
-            ViewerTab::Library => self.reload_gallery(cx),
-            ViewerTab::Transcript => {
                 if let Some(transcript) = self.transcript.as_ref() {
+                    // A refresh over the open transcript sub-surface (T3)
+                    // reloads the reading surface — the old Transcript
+                    // refresh, same behavior in its new home. The thread
+                    // re-ingest below rebuilds the surfaced assets and would
+                    // drop the recording linkage mid-read; the inspector
+                    // keeps its loaded data (the persistence rule).
                     let transcript_id = transcript.transcript_id.clone();
                     self.load_transcript_with(transcript_id, cx);
                     if self.transcript_surface == TranscriptSurface::Events {
                         self.load_visual_events(cx);
                     }
                 } else {
-                    self.load_transcript_listing(cx);
+                    // Re-ingest the thread's tool-result display hints. The
+                    // assets list is rebuilt from scratch so entries removed
+                    // from the thread disappear too.
+                    let thread = self.thread.clone();
+                    if let Some(thread) = thread
+                        && let Some(thread) = thread.upgrade()
+                    {
+                        self.assets.clear();
+                        self.set_selection(None, cx);
+                        self.ingest_thread(thread, cx);
+                    } else {
+                        self.status = Some(
+                            "No conversation thread to re-ingest — open a thread first.".into(),
+                        );
+                    }
                 }
+            }
+            ViewerTab::Library => {
+                self.reload_gallery(cx);
+                self.load_transcript_listing(cx);
             }
         }
         // The activity drawer refreshes with the visible surface when it
@@ -1764,10 +1782,11 @@ impl MediaViewer {
     /// this tick — reconcile the R5 transcribe tracking against it, then
     /// arm or stop the 1 Hz poll by the observed-anywhere condition.
     fn settle_activity_tick(&mut self, cx: &mut Context<Self>) {
-        // A transcribe job that landed while the recordings browser is
-        // showing reloads the listing once so the finished transcript
-        // appears under its recording (R5). Deep transcribe jobs count
-        // too — the probes observe them.
+        // A transcribe job that landed while the Library is showing reloads
+        // the stored-transcript listing once so the finished transcript
+        // appears under its recording in the recordings section (R5 — the
+        // section is the recordings browser's new home, T3). Deep transcribe
+        // jobs count too — the probes observe them.
         let still_transcribing = self
             .live_jobs
             .iter()
@@ -1779,7 +1798,7 @@ impl MediaViewer {
             .iter()
             .any(|id| !still_transcribing.contains(id));
         self.transcribing_ids = still_transcribing;
-        if landed && self.active_tab == ViewerTab::Transcript && self.transcript.is_none() {
+        if landed && self.active_tab == ViewerTab::Library {
             self.load_transcript_listing(cx);
         }
         if self.should_poll_jobs() {
@@ -2355,9 +2374,13 @@ impl MediaViewer {
             .into_any_element()
     }
 
-    /// Open a transcript in the workspace tab: clear prior state, switch to
-    /// the Transcript tab, and dispatch `educt_get_transcript` for the id —
-    /// the inspector's Transcripts tab entry point (S3a).
+    /// Open a transcript in the workspace's sub-surface (T3, S3a): clear
+    /// prior state, select the linked recording so the workspace stays with
+    /// the asset (the ruling — header, edit toolbar, and inspector pane all
+    /// serve the recording the transcript belongs to), switch to the
+    /// Workspace mode, and dispatch `educt_get_transcript` for the id — the
+    /// entry point of the Library's transcript rows and the inspector's
+    /// Transcripts tab.
     fn open_transcript(&mut self, transcript_id: String, cx: &mut Context<Self>) {
         self.transcript = None;
         self.transcript_request.invalidate();
@@ -2382,14 +2405,50 @@ impl MediaViewer {
         self.transcript_list_count = 0;
         self.follow_reveals_in_flight = 0;
         self.follow_viewport = true;
-        self.activate_tab(ViewerTab::Transcript, cx);
+        // The reading surface is the sub-surface's primary area (T3): the
+        // inspector pane yields its screen share on open — the header's
+        // toggle restores it in one click, serving the same recording
+        // (its reads re-fire on reopen). With the pane open in a narrow
+        // dock, purpose + header + pane + the pinned 140px player row
+        // starve the reading list below usability (the S3d starvation the
+        // header-items design exists to avoid).
+        self.inspector_open = false;
+        // R3 selection coherence (T3): when the Library's listing links the
+        // transcript to a recording on the current page, select that
+        // recording so the workspace chrome serves the transcript's own
+        // asset. An unlinked transcript (or one whose recording is on
+        // another page) keeps the current selection — the sub-surface
+        // degrades to its own header copy, never hides.
+        let recording_index = self
+            .transcript_listing
+            .as_ref()
+            .and_then(|listing| {
+                listing
+                    .iter()
+                    .find(|row| row.id == transcript_id)
+                    .and_then(|row| row.gallery_asset_id.clone())
+            })
+            .and_then(|asset_id| {
+                self.assets
+                    .iter()
+                    .position(|asset| asset.gallery_asset_id.as_deref() == Some(asset_id.as_str()))
+            });
+        if let Some(ix) = recording_index
+            && self.selected != Some(ix)
+        {
+            self.set_selection(Some(ix), cx);
+        }
+        self.activate_tab(ViewerTab::Workspace, cx);
         self.load_transcript_with(transcript_id, cx);
     }
 
-    /// Close the open workspace back to the recordings browser (S6): the
-    /// transcript state clears, the follow task cancels, and the listing
-    /// reloads — the browser stays reachable for the viewer's lifetime
-    /// (2026-10-26 review: it previously disappeared after the first open).
+    /// Close the transcript sub-surface back to the plain asset workspace
+    /// (S6, T3): the transcript state clears, the follow task cancels, and
+    /// the operator returns to the selected recording's plain workspace —
+    /// the same mode, the surface they left. The recordings browser is the
+    /// Library's recordings section now, reachable by its mode at any time,
+    /// so the 2026-10-26 reachability concern (the browser disappearing
+    /// after the first open) is structural: a mode can never be unreachable.
     /// The shared player stays bound in the registry; reopening any
     /// workspace rebinds through the same path.
     fn close_transcript_workspace(&mut self, cx: &mut Context<Self>) {
@@ -2406,8 +2465,7 @@ impl MediaViewer {
         self.event_selection_span = None;
         self.redaction_target = None;
         self.redaction_render = None;
-        self.status = Some("Back to the recordings browser.".into());
-        self.load_transcript_listing(cx);
+        self.status = Some("Back to the asset workspace.".into());
         cx.notify();
     }
 
@@ -3044,10 +3102,10 @@ impl MediaViewer {
         cx.notify();
     }
 
-    /// Load the recordings listing for the Transcript tab's idle state via
-    /// `educt_list_transcripts` — the browse surface the tab opens with
-    /// (operator report 2026-10-26: the tab must list what's available,
-    /// not dead-end).
+    /// Load the stored-transcript listing via `educt_list_transcripts` — the
+    /// Library's recordings section reads it (T3): transcription states and
+    /// nested transcript rows (operator report 2026-10-26: the section must
+    /// list what's available, not dead-end).
     /// Delete one stored recording through `educt_delete_transcript` — the
     /// CRUD delete the recordings listing owed the reference model
     /// (recordings are project-scoped assets the operator manages, not
@@ -4091,9 +4149,10 @@ impl MediaViewer {
 
     /// Follow-along (S3c): poll the bound player's transport position on a
     /// GPUI-native timer and mark the word containing it, while the
-    /// workspace is visible and a transcript is open. Self-cancels when
-    /// the tab leaves or the workspace closes; the handle drop cancels the
-    /// spawned future (the same lifecycle as the queue poll).
+    /// transcript sub-surface is visible (Workspace mode with a transcript
+    /// open). Self-cancels when the mode leaves or the workspace closes;
+    /// the handle drop cancels the spawned future (the same lifecycle as the
+    /// queue poll).
     fn start_transcript_follow(&mut self, cx: &mut Context<Self>) {
         if self.transcript_follow_task.is_some() {
             return;
@@ -4103,7 +4162,7 @@ impl MediaViewer {
             loop {
                 cx.background_executor().timer(FOLLOW_POLL_INTERVAL).await;
                 let keep_going = match entity.update(cx, |viewer, cx| {
-                    if viewer.active_tab != ViewerTab::Transcript || viewer.transcript.is_none() {
+                    if viewer.active_tab != ViewerTab::Workspace || viewer.transcript.is_none() {
                         viewer.transcript_follow_task = None;
                         viewer.current_word = None;
                         cx.notify();
@@ -4318,34 +4377,34 @@ impl MediaViewer {
 
     fn presented_status(&self) -> Option<(SharedString, ui::Color)> {
         let resource = match self.active_tab {
+            // The workspace carries both request lifecycles its surfaces own
+            // (T3): the edit lifecycle (trim/concat — and the transcript
+            // sub-surface's compose/highlight edits share it), then the
+            // transcript load behind the open sub-surface. S5's
+            // progress-visible contract: while an edit is in flight, the
+            // progress surfaces — previously it rendered nowhere
+            // (2026-10-26 review). Failures fall through to the specific
+            // status line below.
             ViewerTab::Workspace => resource_status(
                 "Edit",
                 &self.edit_request.state,
                 !self.assets.is_empty(),
                 self.edit_progress.as_deref(),
-            ),
+            )
+            .or_else(|| {
+                resource_status(
+                    "Transcript",
+                    &self.transcript_request.state,
+                    self.transcript.is_some(),
+                    None,
+                )
+            }),
             ViewerTab::Library => resource_status(
                 "Library",
                 &self.gallery_request.state,
                 self.gallery_total.is_some(),
                 None,
             ),
-            ViewerTab::Transcript => resource_status(
-                "Transcript",
-                &self.transcript_request.state,
-                self.transcript.is_some(),
-                None,
-            )
-            .or_else(|| {
-                // S5's progress-visible contract: while an edit is in flight
-                // on this tab (compose/render, highlight create), the edit
-                // progress surfaces — previously it rendered nowhere
-                // (2026-10-26 review). Failures clear edit_progress and
-                // fall through to the specific status line below.
-                self.edit_progress
-                    .clone()
-                    .map(|progress| (progress.into(), ui::Color::Muted))
-            }),
         };
         resource
             // The activity layer (T2): with the drawer closed, a failed job
@@ -4414,11 +4473,20 @@ impl MediaViewer {
     /// toggleable inspector pane in one screen — the primary area is the
     /// player; the inspector is its supporting pane. Serves audio and
     /// video through one position source (fc4f469dc5 — no per-kind split).
+    /// An open transcript renders as the workspace's sub-surface (T3): the
+    /// reading list replaces the plain player area while the header, edit
+    /// toolbar, and inspector pane stay the recording's — the ruling: you
+    /// select an asset and stay with it.
     fn render_workspace(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        if self.transcript.is_some() {
+            return self
+                .render_transcript_workspace(window, cx)
+                .into_any_element();
+        }
         let Some(ix) = self.selected.filter(|ix| *ix < self.assets.len()) else {
             return self
                 .render_empty(
@@ -4493,44 +4561,62 @@ impl MediaViewer {
                     .color(ui::Color::Hint)
                     .truncate(),
             )
-            // The inspector toggle (T1): the supporting pane is part of
-            // the workspace, not a navigation destination — one click
-            // hides or returns it without touching the player or selection.
-            .child(
-                div()
-                    .id("media-workspace-inspector-toggle")
-                    .flex_shrink_0()
-                    .px_2()
-                    .h_5()
-                    .flex()
-                    .items_center()
-                    .rounded_sm()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .cursor_pointer()
-                    .child(
-                        Label::new(if self.inspector_open {
-                            "Hide inspector"
-                        } else {
-                            "Inspector"
-                        })
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Muted),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_inspector(cx))),
-            );
+            .child(self.workspace_inspector_toggle(cx));
 
         // ── Edit toolbar: trim marks + concatenation queue ───────────────
-        // Width discipline: the pane is a flex item whose min-content is
-        // this row's content width, and seven buttons + two readout labels
-        // ≈ 800px — wider than any dock pane. The row wraps (the same
-        // overflow policy as the inspector's kv rows) so every action
-        // stays reachable at ~320px panes; min_w_0 keeps the row's
-        // min-content from inflating the pane; the readout labels truncate.
+        let toolbar = self.render_edit_toolbar(&widget, &asset, cx);
+
+        // No scroll wrapper on the workspace's player area: a scroll
+        // container gives its children indefinite height, and the video
+        // widget's aspect-fit sizing needs a definite height derived from
+        // the pane (min_h_0 lets flex_1 shrink below content size).
+        // Library/the activity drawer scroll and the inspector scrolls
+        // internally; the player fills.
+        let content = div()
+            .id("media-viewer-content")
+            .flex_1()
+            .min_h_0()
+            .p_3()
+            .child(widget);
+
+        // flex_1 + min_h_0, NOT size_full: this root is a flex-column child
+        // of the viewer (main axis = vertical), where h_full means 100% of
+        // the PARENT height — tab bar + 100% overflows the pane by the tab
+        // bar's height (the "player larger than the window" bug). flex_1
+        // takes the REMAINING height; min_h_0 lets it shrink below content.
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(Self::tab_purpose(
+                "Playback and derivative edits beside the asset's inspector — marks and trims serve audio and video; results land as new assets.",
+            ))
+            .child(header)
+            .child(toolbar)
+            .child(content)
+            .when(self.inspector_open, |el| el.child(self.render_inspector(cx)))
+            .into_any_element()
+    }
+
+    /// The edit toolbar (trim marks + concatenation queue) — shared by the
+    /// plain workspace and the transcript sub-surface (T3): both bind the
+    /// same shared player, so the toolbar serves the recording either way.
+    /// Width discipline: the pane is a flex item whose min-content is this
+    /// row's content width, and seven buttons + two readout labels ≈ 800px —
+    /// wider than any dock pane. The row wraps (the same overflow policy as
+    /// the inspector's kv rows) so every action stays reachable at ~320px
+    /// panes; min_w_0 keeps the row's min-content from inflating the pane;
+    /// the readout labels truncate.
+    fn render_edit_toolbar(
+        &self,
+        widget: &Entity<hkask_media_widget::MediaWidget>,
+        asset: &MediaAsset,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let (position_label, marks_label, trim_ready) = widget.read(cx).edit_state_labels();
         let edit_active = self.edit_request.state == ResourceState::Loading;
         let concat_count = self.concat_queue.len();
         let queued_current = self.concat_queue.contains(&asset.src);
-        let toolbar = h_flex()
+        h_flex()
             .gap_2()
             .px_3()
             .py_1()
@@ -4623,39 +4709,46 @@ impl MediaViewer {
                             cx.notify();
                         })),
                 )
-            });
-
-        // No scroll wrapper on the workspace's player area: a scroll
-        // container gives its children indefinite height, and the video
-        // widget's aspect-fit sizing needs a definite height derived from
-        // the pane (min_h_0 lets flex_1 shrink below content size).
-        // Library/the activity drawer scroll and the inspector scrolls
-        // internally; the player fills.
-        let content = div()
-            .id("media-viewer-content")
-            .flex_1()
-            .min_h_0()
-            .p_3()
-            .child(widget);
-
-        // flex_1 + min_h_0, NOT size_full: this root is a flex-column child
-        // of the viewer (main axis = vertical), where h_full means 100% of
-        // the PARENT height — tab bar + 100% overflows the pane by the tab
-        // bar's height (the "player larger than the window" bug). flex_1
-        // takes the REMAINING height; min_h_0 lets it shrink below content.
-        v_flex()
-            .flex_1()
-            .min_h_0()
-            .child(Self::tab_purpose(
-                "Playback and derivative edits beside the asset's inspector — marks and trims serve audio and video; results land as new assets.",
-            ))
-            .child(header)
-            .child(toolbar)
-            .child(content)
-            .when(self.inspector_open, |el| el.child(self.render_inspector(cx)))
-            .into_any_element()
+            })
     }
 
+    /// The workspace's inspector toggle chip (T1): the supporting pane is
+    /// part of the workspace, not a navigation destination — one click
+    /// hides or returns it without touching the player or selection.
+    /// Shared by the plain workspace header and the transcript
+    /// sub-surface's header (T3), so the pane stays reachable in both.
+    fn workspace_inspector_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        div()
+            .id("media-workspace-inspector-toggle")
+            .flex_shrink_0()
+            .px_2()
+            .h_5()
+            .flex()
+            .items_center()
+            .rounded_sm()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .cursor_pointer()
+            .child(
+                Label::new(if self.inspector_open {
+                    "Hide inspector"
+                } else {
+                    "Inspector"
+                })
+                .size(LabelSize::XSmall)
+                .color(ui::Color::Muted),
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_inspector(cx)))
+    }
+
+    /// The Library (T3): the browse mode — every indexed asset as rows,
+    /// and the recordings browser's new home: a gallery video/audio asset
+    /// carries its transcription state with the Transcribe affordance on
+    /// its row (R5) and its stored transcripts nested beneath it (open,
+    /// delete — durable exports are preserved by the server on deletion).
+    /// Unlinked transcripts — their recordings left the gallery index —
+    /// trail in their own section with honest degradation copy, reachable,
+    /// never silently hidden (operator report 2026-10-26: the section must
+    /// list what's available, not dead-end).
     fn render_library(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         if self.gallery_total.is_none() {
             match &self.gallery_request.state {
@@ -4683,6 +4776,20 @@ impl MediaViewer {
             .gallery_offset
             .saturating_add(self.gallery_limit)
             .min(total_as_usize);
+        // The stored transcripts whose recordings left the gallery index —
+        // rendered in their own section below the rows, never hidden.
+        let unlinked_rows: Vec<usize> = self
+            .transcript_listing
+            .as_ref()
+            .map(|listing| {
+                listing
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.gallery_asset_id.is_none())
+                    .map(|(row_index, _)| row_index)
+                    .collect()
+            })
+            .unwrap_or_default();
         let rows = self
             .assets
             .iter()
@@ -4700,13 +4807,48 @@ impl MediaViewer {
                 } else {
                     IconName::File
                 };
-                div()
-                    .id(SharedString::from(format!("media-library-row-{ix}")))
+                // The recording's transcription state (R2/R5, T3): with
+                // the listing loaded, the full status — a live transcribe
+                // job (the observed-anywhere live set), a stored linked
+                // transcript, or Not transcribed. Without the listing,
+                // only a live job is knowable — the recordings status
+                // line above the rows explains the rest; a not-yet-loaded
+                // listing must not render a dishonest Not-transcribed.
+                let recording_id = if asset.kind == "image" {
+                    None
+                } else {
+                    asset.gallery_asset_id.as_deref()
+                };
+                let transcription = match recording_id {
+                    Some(_) => match self.transcript_listing.as_ref() {
+                        Some(_) => Some(self.recording_transcription_status(asset)),
+                        None => self
+                            .live_jobs
+                            .iter()
+                            .any(|job| {
+                                job.op == "transcribe"
+                                    && job.source.as_deref() == Some(asset.src.as_str())
+                            })
+                            .then_some(RecordingTranscriptionStatus::Transcribing),
+                    },
+                    None => None,
+                };
+                let transcript_row_indices: Vec<usize> =
+                    match (recording_id, self.transcript_listing.as_ref()) {
+                        (Some(id), Some(listing)) => listing
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, row)| row.gallery_asset_id.as_deref() == Some(id))
+                            .map(|(row_index, _)| row_index)
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                let line = h_flex()
                     .h_8()
-                    .px_2()
                     .gap_2()
                     .flex()
                     .items_center()
+                    .min_w_0()
                     .rounded_sm()
                     .map(|el| {
                         if selected {
@@ -4756,43 +4898,125 @@ impl MediaViewer {
                                         ),
                                 )
                             })
+                            // The recording's transcription state (T3) —
+                            // the status the old recordings browser carried,
+                            // now beside the recording's own Library row.
+                            .when_some(transcription, |el, status| {
+                                el.child(
+                                    Label::new(match status {
+                                        RecordingTranscriptionStatus::Transcribing => {
+                                            "Transcribing…"
+                                        }
+                                        RecordingTranscriptionStatus::Transcribed => "Transcribed",
+                                        RecordingTranscriptionStatus::NotTranscribed => {
+                                            "Not transcribed"
+                                        }
+                                    })
+                                    .size(LabelSize::XSmall)
+                                    .color(match status {
+                                        RecordingTranscriptionStatus::Transcribing => {
+                                            ui::Color::Hint
+                                        }
+                                        RecordingTranscriptionStatus::Transcribed => {
+                                            ui::Color::Muted
+                                        }
+                                        RecordingTranscriptionStatus::NotTranscribed => {
+                                            ui::Color::Error
+                                        }
+                                    })
+                                    .flex_shrink_0(),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_selection(Some(ix), cx);
                                 this.activate_tab(ViewerTab::Workspace, cx);
                             })),
-                    )
-                    .child(
-                        // Curate affordance: two-step delete (index entry only).
+                    );
+                // The Transcribe affordance (R5, operator ruling 2026-10-28):
+                // a not-transcribed recording can be taken to its
+                // transcript without a chat turn — a sibling of the select
+                // area, so opening and transcribing never fire together.
+                let line = match transcription {
+                    Some(RecordingTranscriptionStatus::NotTranscribed) => {
+                        let recording_id = recording_id.unwrap_or_default().to_string();
+                        let source = asset.src.clone();
+                        line.child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "media-recording-transcribe-{ix}"
+                                )))
+                                .debug_selector(|| "media-recording-transcribe".into())
+                                .cursor_pointer()
+                                .px_2()
+                                .h_5()
+                                .flex()
+                                .items_center()
+                                .flex_shrink_0()
+                                .rounded_sm()
+                                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    Label::new("Transcribe")
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Default),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.transcribe_recording(
+                                        recording_id.clone(),
+                                        source.clone(),
+                                        cx,
+                                    );
+                                })),
+                        )
+                    }
+                    _ => line,
+                };
+                let line = line.child(
+                    // Curate affordance: two-step delete (index entry only).
+                    div()
+                        .id(SharedString::from(format!("media-library-delete-{ix}")))
+                        .px_2()
+                        .h_5()
+                        .flex()
+                        .items_center()
+                        .flex_shrink_0()
+                        .rounded_sm()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .cursor_pointer()
+                        .child(
+                            Label::new(if confirming {
+                                "Confirm remove?"
+                            } else {
+                                "Remove"
+                            })
+                            .size(LabelSize::XSmall)
+                            .color(if confirming {
+                                ui::Color::Error
+                            } else {
+                                ui::Color::Muted
+                            }),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.confirm_delete.confirm(&ix) {
+                                this.delete_asset(ix, cx);
+                            } else {
+                                cx.notify();
+                            }
+                        })),
+                );
+                div()
+                    .id(SharedString::from(format!("media-library-row-{ix}")))
+                    .px_2()
+                    .flex()
+                    .flex_col()
+                    .min_w_0()
+                    .child(line)
+                    // The recording's stored transcripts, nested beneath
+                    // its row (the old recordings browser's arrangement).
+                    .children(transcript_row_indices.iter().map(|row_index| {
                         div()
-                            .id(SharedString::from(format!("media-library-delete-{ix}")))
-                            .px_2()
-                            .h_5()
-                            .flex()
-                            .items_center()
-                            .rounded_sm()
-                            .hover(|el| el.bg(cx.theme().colors().element_hover))
-                            .cursor_pointer()
-                            .child(
-                                Label::new(if confirming {
-                                    "Confirm remove?"
-                                } else {
-                                    "Remove"
-                                })
-                                .size(LabelSize::XSmall)
-                                .color(if confirming {
-                                    ui::Color::Error
-                                } else {
-                                    ui::Color::Muted
-                                }),
-                            )
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.confirm_delete.confirm(&ix) {
-                                    this.delete_asset(ix, cx);
-                                } else {
-                                    cx.notify();
-                                }
-                            })),
-                    )
+                            .pl_4()
+                            .child(self.render_transcript_row(*row_index, cx))
+                    }))
             })
             .collect::<Vec<_>>();
         let first = if total == 0 {
@@ -4824,7 +5048,29 @@ impl MediaViewer {
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Muted),
             );
-        let content = if rows.is_empty() {
+        // The recordings section's status line (T3): when the listing is
+        // not loaded, the rows render without transcription states — this
+        // line names why (D5, never silence), always visible above the
+        // content, never scrolled out of view.
+        let recordings_note = match self.transcript_listing.as_ref() {
+            Some(_) => None,
+            None => match &self.transcript_listing_request.state {
+                ResourceState::Loading => Some((
+                    "Loading the recordings' transcripts…".to_string(),
+                    ui::Color::Muted,
+                )),
+                ResourceState::Failed(error) => Some((
+                    format!("Transcripts unavailable: {error}"),
+                    ui::Color::Error,
+                )),
+                ResourceState::Idle | ResourceState::Ready => Some((
+                    "Recordings' transcripts not loaded — reload the Library to list them."
+                        .to_string(),
+                    ui::Color::Muted,
+                )),
+            },
+        };
+        let content = if rows.is_empty() && unlinked_rows.is_empty() {
             self.render_empty(
                 "Library empty",
                 "This page has no indexed assets and the conversation has surfaced none.",
@@ -4838,6 +5084,24 @@ impl MediaViewer {
                 .gap_0p5()
                 .p_2()
                 .children(rows)
+                .when(!unlinked_rows.is_empty(), |el| {
+                    el.child(Self::section_label("Unlinked transcripts"))
+                        .child(
+                            Label::new(SharedString::from(
+                                "Their recordings left the gallery index — the transcripts, \
+                                 their durable exports, and the stored media path remain \
+                                 openable here.",
+                            ))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Hint),
+                        )
+                        .children(
+                            unlinked_rows
+                                .iter()
+                                .map(|row_index| self.render_transcript_row(*row_index, cx))
+                                .collect::<Vec<_>>(),
+                        )
+                })
                 .into_any_element()
         };
         v_flex()
@@ -4845,9 +5109,19 @@ impl MediaViewer {
             .flex_1()
             .min_h_0()
             .child(Self::tab_purpose(
-                "Every indexed asset — browse and select; delete removes the listing, never the file on disk.",
+                "Every indexed asset — browse and select; recordings carry their transcription state and their transcripts beneath them. Delete removes the listing, never the file on disk.",
             ))
             .child(pagination)
+            .when_some(recordings_note, |el, (note, color)| {
+                el.child(
+                    div().px_3().py_1().child(
+                        Label::new(SharedString::from(note))
+                            .size(LabelSize::XSmall)
+                            .color(color)
+                            .truncate(),
+                    ),
+                )
+            })
             .child(content)
             .into_any_element()
     }
@@ -5449,12 +5723,6 @@ impl MediaViewer {
         }
     }
 
-    /// The Transcript workspace (S3a): the open transcript's working view
-    /// rendered as paragraph blocks with speaker labels and a layers
-    /// strip, beside the recording's shared player (S3b: the same
-    /// viz-core-registry widget the workspace player and inline renders use — one
-    /// player per media identity, rebound on tab activation, suspended on
-    /// leave; D1). Alignment degradations surface as visible status notes,
     /// The gallery recording a workspace transcript belongs to (R3): the
     /// linked asset from the panel's current gallery page. Recordings on
     /// unlisted pages fall to the unlinked path — the honest degradation.
@@ -5478,18 +5746,41 @@ impl MediaViewer {
         }
     }
 
-    /// never silence (D5); click-to-seek and follow-along land with the
-    /// S3b hit-testing element.
-    fn render_transcript(
+    /// The transcript sub-surface of the asset workspace (T3, S3a): the
+    /// open transcript's working view rendered as paragraph blocks with
+    /// speaker labels and a layers strip, INSIDE the workspace — the
+    /// reading list replaces the plain player area while the header, the
+    /// edit toolbar, and the inspector pane stay the recording's (the
+    /// ruling: you select an asset and stay with it). The player inside
+    /// the list's header rows is the recording's shared player (S3b: the
+    /// same viz-core-registry widget the workspace and inline renders use
+    /// — one player per media identity, rebound through the R3 body,
+    /// suspended on leave; D1). Alignment degradations surface as visible
+    /// status notes, never silence (D5); click-to-seek and follow-along
+    /// land with the S3b hit-testing element. An unlinked transcript
+    /// renders here too — reachable, with its own degradation copy,
+    /// never silently hidden.
+    fn render_transcript_workspace(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let Some(state) = self.transcript.as_ref() else {
-            return self.render_transcript_browser(cx);
+            // The caller (render_workspace) opens the sub-surface only
+            // with a transcript loaded; keep the function total anyway.
+            return div().into_any_element();
         };
-        // The workspace media body is the RECORDING's (R3).
+        // The workspace media body is the RECORDING's (R3) — the header's
+        // name and hint derive from the same linkage, all read before the
+        // widget binding mutates the viewer.
         let body = self.workspace_media_body(state);
+        let recording = self.recording_asset(state).cloned();
+        let recording_name = match recording.as_ref() {
+            Some(asset) => recording_display_name(&asset.src),
+            None => recording_display_name(&state.media_path),
+        };
+        let tool_label = recording.as_ref().map(|asset| asset.tool.to_string());
+        let unlinked = recording.is_none();
         if self.media_widget_body.as_deref() != Some(body.as_str()) {
             match hkask_viz_core::shared_media_widget(&body, window, cx) {
                 Some(widget) => {
@@ -5504,6 +5795,85 @@ impl MediaViewer {
                 }
             }
         }
+        let widget = self.media_widget.clone();
+        // The sub-surface's header: the close affordance returns to the
+        // plain asset workspace; the recording's name flows from the
+        // gallery asset (R3) and falls to the stored media_path when
+        // unlinked — the hint names what the player follows. The inspector
+        // toggle keeps the pane reachable while reading (T3).
+        let close = div()
+            .id("media-transcript-close")
+            .debug_selector(|| "media-transcript-close".into())
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from("← Close transcript"))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.close_transcript_workspace(cx);
+            }));
+        let header = h_flex()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .min_w_0()
+            .overflow_hidden()
+            .bg(cx.theme().colors().element_active)
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(close)
+            .child(
+                Label::new(SharedString::from(recording_name))
+                    .size(LabelSize::Small)
+                    .color(ui::Color::Default)
+                    .flex_1()
+                    .truncate(),
+            )
+            .when(unlinked, |el| {
+                el.child(
+                    Label::new(SharedString::from(
+                        "unlinked recording — the player follows the stored media path",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Hint)
+                    .truncate(),
+                )
+            })
+            .when_some(tool_label, |el, tool| {
+                el.child(
+                    Label::new(SharedString::from(tool))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Hint)
+                        .truncate(),
+                )
+            })
+            .child(self.workspace_inspector_toggle(cx));
+        // The edit toolbar serves the same shared player while the
+        // recording is the workspace's selected asset (open_transcript
+        // selects it, T3); an unlinked transcript has no gallery asset for
+        // the trim/concat actions — honest absence, not a dead toolbar.
+        let recording_selected = recording.as_ref().is_some_and(|asset| {
+            self.selected
+                .and_then(|ix| self.assets.get(ix))
+                .is_some_and(|selected| selected.gallery_asset_id == asset.gallery_asset_id)
+        });
+        let toolbar = match (recording_selected, recording.as_ref()) {
+            (true, Some(asset)) => Some(
+                self.render_edit_toolbar(
+                    widget
+                        .as_ref()
+                        .expect("the sub-surface binds the recording's player"),
+                    asset,
+                    cx,
+                ),
+            ),
+            _ => None,
+        };
         // The label input's focus handle, created on first need (pure tests
         // construct the viewer without a GPUI context).
         let label_input_focus = self
@@ -5517,7 +5887,7 @@ impl MediaViewer {
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
-        // The whole workspace content (header rows, surface body rows,
+        // The whole sub-surface content (header rows, surface body rows,
         // annotation sections) renders as ONE virtualized list (S3d):
         // everything scrolls together exactly as the workspace always
         // did. On the word surface, timed blocks are interactive text —
@@ -5560,7 +5930,7 @@ impl MediaViewer {
             .flex_1()
             .min_h_0()
             .p_3();
-        let mut workspace = v_flex().id("media-viewer-transcript").flex_1().min_w_0();
+        let mut workspace = v_flex().id("media-viewer-transcript").flex_1().min_h_0();
         if let Some(edit) = pending_editor {
             workspace = workspace.child(v_flex().px_3().pt_3().child(Self::render_label_editor(
                 &edit,
@@ -5568,7 +5938,19 @@ impl MediaViewer {
                 cx,
             )));
         }
-        workspace.child(workspace_list).into_any_element()
+        workspace = workspace.child(workspace_list);
+        let inspector = self.inspector_open.then(|| self.render_inspector(cx));
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(Self::tab_purpose(
+                "The recording's transcript in its asset workspace — select text to highlight and cut, compose the reel; the player stays bound to the recording.",
+            ))
+            .child(header)
+            .when_some(toolbar, |el, toolbar| el.child(toolbar))
+            .child(workspace)
+            .when_some(inspector, |el, pane| el.child(pane))
+            .into_any_element()
     }
 
     /// One workspace list item (S3d): a fixed header row, one body row of
@@ -5621,49 +6003,14 @@ impl MediaViewer {
     }
 
     /// The fixed header rows at the top of the workspace list (S3d): the
-    /// back row, the player, the mode chips, the alignment note, and the
-    /// Transcript label with the review note — the same rows the
-    /// workspace always showed, scrolling with the content.
+    /// player, the mode chips, the alignment note, and the Transcript
+    /// label with the review note — scrolling with the content (T3: the
+    /// close affordance and recording name live in the sub-surface's
+    /// header row above the list, always visible, never virtualized
+    /// away).
     fn render_workspace_header_item(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let row = match ix {
             0 => {
-                let Some(state) = self.transcript.as_ref() else {
-                    return div().into_any_element();
-                };
-                // The recording's display name flows from the gallery asset
-                // (R3); an unlinked transcript falls to its stored media_path.
-                let recording_name = match self.recording_asset(state) {
-                    Some(asset) => recording_display_name(&asset.src),
-                    None => recording_display_name(&state.media_path),
-                };
-                let back = div()
-                    .id("media-transcript-back-to-recordings")
-                    .debug_selector(|| "media-transcript-back-to-recordings".into())
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from("← Recordings"))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Muted),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.close_transcript_workspace(cx);
-                    }));
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(back)
-                    .child(
-                        Label::new(SharedString::from(recording_name))
-                            .size(LabelSize::Small)
-                            .color(ui::Color::Default),
-                    )
-                    .into_any_element()
-            }
-            1 => {
                 match self.media_widget.clone() {
                 Some(widget) => div()
                     .h(px(140.))
@@ -5682,7 +6029,7 @@ impl MediaViewer {
                 .into_any_element(),
                 }
             }
-            2 => {
+            1 => {
                 let selection_mode = self.selection_mode;
                 let following = self.follow_viewport;
                 let surface = self.transcript_surface;
@@ -5816,7 +6163,7 @@ impl MediaViewer {
                 }
                 chips.into_any_element()
             }
-            3 => {
+            2 => {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
@@ -6684,150 +7031,11 @@ impl MediaViewer {
         section.into_any_element()
     }
 
-    /// The Transcript tab's idle state: the synced recordings — the
-    /// recording-first browser. Every gallery recording (video/audio)
-    /// renders with its per-recording transcription status, its stored
-    /// transcripts beneath it, and — when not yet transcribed — the
-    /// Transcribe affordance that closes the recording→transcript→reel
-    /// loop entirely in the panel. Unlinked transcripts (their recording
-    /// left the gallery index) trail in their own section with the same
-    /// open + delete affordances, keeping the transcript and its durable
-    /// exports reachable (operator report 2026-10-26: the tab's empty
-    /// state must list what's available, not dead-end).
-    fn render_transcript_browser(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        if let ResourceState::Failed(error) = &self.transcript_request.state {
-            return self
-                .render_empty("Transcript unavailable", error.as_str())
-                .into_any_element();
-        }
-        let Some(listing) = self.transcript_listing.as_ref() else {
-            let (title, hint) = match &self.transcript_listing_request.state {
-                ResourceState::Loading => ("Loading recordings", "Fetching stored transcripts…"),
-                ResourceState::Failed(error) => ("Transcripts unavailable", error.as_str()),
-                _ => (
-                    "No transcripts",
-                    "Transcribe a recording to begin — it will appear here.",
-                ),
-            };
-            return self.render_empty(title, hint).into_any_element();
-        };
-        // The recordings themselves are the primary surface (R2): a
-        // recording renders its Transcribe affordance even before any
-        // transcript exists (the Not-transcribed state is the operator's
-        // entry to R5's affordance). The "no transcripts" empty state
-        // only applies when there are no gallery recordings to show.
-        if listing.is_empty() && self.assets.is_empty() {
-            return self
-                .render_empty(
-                    "No transcripts",
-                    "Transcribe a recording to begin — it will appear here.",
-                )
-                .into_any_element();
-        }
-        let mut sections = v_flex().gap_2().p_3();
-        sections = sections.child(Self::tab_purpose(
-            "Choose a recording to read, select text, and create a reel.",
-        ));
-        sections = sections.child(Self::section_label("Recordings"));
-        for (asset_index, asset) in self.assets.iter().enumerate() {
-            let Some(recording_id) = asset.gallery_asset_id.as_deref() else {
-                // Conversation-surfaced assets (no gallery id) are not
-                // recordings; the gallery index is the recordings source.
-                continue;
-            };
-            let status = self.recording_transcription_status(asset);
-            let row = div()
-                .id(SharedString::from(format!(
-                    "media-recording-row-{asset_index}"
-                )))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .py_1()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    Label::new(SharedString::from(recording_display_name(&asset.src)))
-                        .size(LabelSize::Small)
-                        .color(ui::Color::Default),
-                )
-                .child(
-                    Label::new(SharedString::from(match status {
-                        RecordingTranscriptionStatus::Transcribing => "Transcribing…".to_string(),
-                        RecordingTranscriptionStatus::Transcribed => "Transcribed".to_string(),
-                        RecordingTranscriptionStatus::NotTranscribed => {
-                            "Not transcribed".to_string()
-                        }
-                    }))
-                    .size(LabelSize::XSmall)
-                    .color(match status {
-                        RecordingTranscriptionStatus::Transcribing => ui::Color::Hint,
-                        RecordingTranscriptionStatus::Transcribed => ui::Color::Muted,
-                        RecordingTranscriptionStatus::NotTranscribed => ui::Color::Error,
-                    }),
-                );
-            sections = sections.child(row);
-            // The Transcribe affordance (R5, operator ruling 2026-10-28):
-            // a not-transcribed recording can be taken to its transcript
-            // without a chat turn.
-            if status == RecordingTranscriptionStatus::NotTranscribed {
-                let recording_id = recording_id.to_string();
-                let source = asset.src.clone();
-                sections = sections.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "media-recording-transcribe-{asset_index}"
-                        )))
-                        .debug_selector(|| "media-recording-transcribe".into())
-                        .cursor_pointer()
-                        .px_2()
-                        .py_1()
-                        .flex_none()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from("Transcribe"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Default),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.transcribe_recording(recording_id.clone(), source.clone(), cx);
-                        })),
-                );
-            }
-            // The stored transcripts of this recording, beneath it.
-            for (row_index, row) in listing.iter().enumerate() {
-                if row.gallery_asset_id.as_deref() == Some(recording_id) {
-                    sections = sections.child(self.render_transcript_row(row_index, cx));
-                }
-            }
-        }
-        // Unlinked transcripts — stored transcripts that belong to no live
-        // recording (their recording was deleted from the gallery index;
-        // the server preserves the transcript and its durable exports).
-        let unlinked: Vec<usize> = listing
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| row.gallery_asset_id.is_none())
-            .map(|(row_index, _)| row_index)
-            .collect();
-        if !unlinked.is_empty() {
-            sections = sections.child(Self::section_label("Unlinked transcripts"));
-            for row_index in unlinked {
-                sections = sections.child(self.render_transcript_row(row_index, cx));
-            }
-        }
-        v_flex()
-            .id("media-viewer-transcript-browser")
-            .flex_1()
-            .min_w_0()
-            .overflow_y_scroll()
-            .child(sections)
-            .into_any_element()
-    }
-
-    /// One stored-transcript row (S3a): the recording's name and metadata;
-    /// a click opens the workspace. The Delete affordance is a SIBLING of
-    /// the clickable open area (the Library row pattern), so opening and
+    /// One stored-transcript row (S3a, T3): the recording's name and
+    /// metadata; a click opens the workspace's transcript sub-surface.
+    /// Rendered nested beneath its recording's Library row, and in the
+    /// unlinked section below the rows. The Delete affordance is a SIBLING
+    /// of the clickable open area (the Library row pattern), so opening and
     /// deleting can never fire together. Two clicks: Delete arms the
     /// confirmation, Confirm delete dispatches the server's
     /// `educt_delete_transcript` (durable exports and rendered reels are
@@ -9007,7 +9215,6 @@ impl Render for MediaViewer {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Workspace, "Workspace".into(), cx))
                     .child(self.tab_button(ViewerTab::Library, library_label, cx))
-                    .child(self.tab_button(ViewerTab::Transcript, "Transcript".into(), cx))
                     // Force-refresh: rebuild cached widgets + reload the
                     // active tab. Right-aligned so it stays put as tab labels
                     // change width. flex_shrink_0 keeps the icon whole when
@@ -9072,7 +9279,6 @@ impl Render for MediaViewer {
             .child(match self.active_tab {
                 ViewerTab::Workspace => self.render_workspace(_window, cx).into_any_element(),
                 ViewerTab::Library => self.render_library(cx).into_any_element(),
-                ViewerTab::Transcript => self.render_transcript(_window, cx).into_any_element(),
             })
             // The on-demand activity drawer (T2): a bounded strip over any
             // mode — job status is ambient, never a navigation destination.
@@ -10177,7 +10383,7 @@ mod tests {
                 viewer.queue_poll_task.is_some(),
                 "leaving a mode does not cancel the timer"
             );
-            viewer.activate_tab(ViewerTab::Transcript, cx);
+            viewer.activate_tab(ViewerTab::Library, cx);
             assert!(
                 viewer.queue_poll_task.is_some(),
                 "entering a mode does not cancel the timer"
@@ -10344,9 +10550,13 @@ mod tests {
         ]);
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
-            // No jobs surface is visible: Library mode, drawer closed —
-            // the observation must be ambient, not visited.
-            viewer.active_tab = ViewerTab::Library;
+            // No jobs surface is visible: the Workspace mode with no open
+            // transcript, drawer closed — the observation must be ambient,
+            // not visited. (The Library is the recordings section's home
+            // since T3 — a transcribe landing THERE would also reload the
+            // stored-transcript listing, a dispatch this test's scripted
+            // queue does not carry; the workspace shows no such surface.)
+            viewer.active_tab = ViewerTab::Workspace;
             viewer.load_jobs(cx);
         });
         cx.run_until_parked();
@@ -10433,7 +10643,11 @@ mod tests {
     }
 
     /// dcterms:identifier: `MediaViewer::settle_activity_tick`
-    /// expect: A transcribe job landing anywhere in the store reloads the recordings listing exactly once while its browser is showing (R5 continuity through the T2 poll restructure) — and not while it is not.
+    /// expect: A transcribe job landing anywhere in the store reloads the
+    /// stored-transcript listing exactly once while the Library — the
+    /// recordings browser's home since T3 — is showing, so the finished
+    /// transcript appears under its recording (R5 continuity through the
+    /// T2 poll restructure) — and not while another mode is showing.
     /// [P7] Motivating: the finished transcript appears under its recording.
     #[gpui::test]
     fn transcribe_landing_reloads_the_recordings_listing(cx: &mut gpui::TestAppContext) {
@@ -10456,8 +10670,9 @@ mod tests {
                 history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
                 restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
             };
-            // Landing away from the recordings browser does not reload it.
-            viewer.active_tab = ViewerTab::Library;
+            // Landing away from the Library (the Workspace mode is showing)
+            // does not reload the recordings section's listing.
+            viewer.active_tab = ViewerTab::Workspace;
             let epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
@@ -10486,12 +10701,13 @@ mod tests {
             assert_eq!(
                 viewer.transcript_listing_request.state,
                 ResourceState::Idle,
-                "no reload away from the recordings browser"
+                "no reload while the Workspace mode is showing"
             );
 
-            // Landing while the recordings browser is showing reloads it
-            // once — the finished transcript appears under its recording.
-            viewer.active_tab = ViewerTab::Transcript;
+            // Landing while the Library is showing reloads its recordings
+            // section once — the finished transcript appears under its
+            // recording (R5).
+            viewer.active_tab = ViewerTab::Library;
             let epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
@@ -11058,23 +11274,28 @@ mod tests {
     }
 
     /// dcterms:identifier: `MediaViewer::presented_status`
-    /// expect: While an edit is in flight on the Transcript tab, the edit
-    /// progress surfaces (S5's progress-visible contract); outside an
-    /// edit, the specific status message falls through as before
-    /// (2026-10-26 review: compose progress previously rendered nowhere).
+    /// expect: While an edit is in flight on the workspace (the transcript
+    /// sub-surface's compose/highlight edits share the edit lifecycle), the
+    /// edit progress surfaces (S5's progress-visible contract); once the
+    /// edit completes, the specific status message falls through as
+    /// before (2026-10-26 review: compose progress previously rendered
+    /// nowhere).
     #[gpui::test]
-    fn transcript_tab_surfaces_edit_progress(cx: &mut gpui::TestAppContext) {
+    fn workspace_surfaces_edit_progress(cx: &mut gpui::TestAppContext) {
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
-            viewer.active_tab = ViewerTab::Transcript;
+            viewer.active_tab = ViewerTab::Workspace;
             viewer.edit_request.state = ResourceState::Loading;
             viewer.edit_progress = Some("composing reel from pane highlights…".into());
             let status = viewer.presented_status().map(|(text, _)| text.to_string());
             assert_eq!(
                 status.as_deref(),
                 Some("composing reel from pane highlights…"),
-                "the compose progress is visible on the Transcript tab"
+                "the compose progress is visible on the workspace"
             );
+            // The edit completes: the lifecycle returns to Ready and the
+            // completion message is the specific status that shows.
+            viewer.edit_request.state = ResourceState::Ready;
             viewer.edit_progress = None;
             viewer.status = Some("Highlight created — the transcript reloads with it.".into());
             let status = viewer.presented_status().map(|(text, _)| text.to_string());
@@ -11126,15 +11347,17 @@ mod tests {
 
     /// dcterms:identifier: `MediaViewer::close_transcript_workspace`
     /// expect: Closing clears the workspace and pending interaction state
-    /// and reloads the recordings listing — the browser stays reachable
-    /// (2026-10-26 review: it was unreachable after the first open). The
-    /// listing load surfaces its own unavailability when no invoker is
-    /// wired — the degradation is visible, never silent. The invoker lock
-    /// is required: this test asserts the unwired-invoker refusal, and a
-    /// parallel installer test's mock in the process global would answer
-    /// the listing dispatch instead (observed flaky 2026-10-26).
+    /// and returns to the plain asset workspace — the same mode (T3: the
+    /// recordings browser is the Library's section now, reachable by its
+    /// mode at any time, so the 2026-10-26 reachability concern is
+    /// structural). Library entry reloads the recordings section's listing
+    /// — the browser's data is one mode away, never unreachable; the
+    /// unwired-invoker refusal surfaces because the entry dispatch is
+    /// visible (D5). The invoker lock is required: a parallel installer
+    /// test's mock in the process global would answer the dispatch
+    /// instead (observed flaky 2026-10-26).
     #[gpui::test]
-    fn close_workspace_returns_to_the_recordings_browser(cx: &mut gpui::TestAppContext) {
+    fn closing_the_transcript_returns_to_the_asset_workspace(cx: &mut gpui::TestAppContext) {
         let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
@@ -11148,18 +11371,29 @@ mod tests {
                 },
                 buffer: LabelBuffer::default(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            viewer.active_tab = ViewerTab::Workspace;
             viewer.close_transcript_workspace(cx);
             assert!(viewer.transcript.is_none(), "the workspace closed");
             assert!(viewer.selection_anchor.is_none());
             assert!(viewer.highlight_edit.is_none());
             assert!(viewer.transcript_follow_task.is_none());
+            assert_eq!(
+                viewer.active_tab,
+                ViewerTab::Workspace,
+                "closing stays with the asset's plain workspace"
+            );
+            // The recordings browser is the Library's section: entering the
+            // mode reloads the stored-transcript listing — the entry
+            // dispatch surfaces its own unavailability when no invoker is
+            // wired, proving the section's data path is live, never
+            // dead-ended by the close.
+            viewer.activate_tab(ViewerTab::Library, cx);
             assert!(
                 matches!(
                     viewer.transcript_listing_request.state,
                     ResourceState::Failed(_)
                 ),
-                "the listing reload surfaced its unavailability: {:?}",
+                "the Library entry dispatched the recordings listing load: {:?}",
                 viewer.transcript_listing_request.state
             );
         });
@@ -13928,7 +14162,11 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3): open_transcript selects the
+            // Workspace and yields the inspector's share to the reading
+            // surface.
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             cx.notify();
         });
 
@@ -13938,6 +14176,19 @@ mod viewer_layout_tests {
         cx.simulate_resize(size(px(480.), px(600.)));
         cx.run_until_parked();
 
+        // The sub-surface's chrome (purpose line + header row, T3) sits
+        // above the list, so the 140px pinned player row and the header
+        // rows fill the first frame — scroll the paragraph into view
+        // before measuring. The wrap contract is width-containment at the
+        // definite pane width, verifiable at any scroll offset.
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
         let bounds = cx
             .debug_bounds("media-transcript-paragraph")
             .expect("paragraph block laid out");
@@ -13974,7 +14225,9 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3).
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             viewer.highlight_edit = Some(HighlightEdit {
                 kind: HighlightEditKind::Create {
                     start_word: 0,
@@ -14091,7 +14344,9 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3).
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             viewer.media_widget = Some(widget);
             viewer.media_widget_body = Some(transcript_media_body(media_path));
             cx.notify();
@@ -14103,28 +14358,35 @@ mod viewer_layout_tests {
         cx.simulate_resize(size(px(480.), px(320.)));
         cx.run_until_parked();
 
-        // Back rides at the top of the workspace list — reachable without
-        // scrolling even on the tightest pane (the harness halves the
-        // window, so the viewer area here is ~160px).
-        let back = cx
-            .debug_bounds("media-transcript-back-to-recordings")
-            .expect("Back remains laid out during media failure");
+        // The close affordance rides in the sub-surface's header row above
+        // the list — always visible, never virtualized away, reachable
+        // without scrolling even on the tightest pane (the harness halves
+        // the window, so the viewer area here is ~160px).
+        let close = cx
+            .debug_bounds("media-transcript-close")
+            .expect("Close remains laid out during media failure");
         assert!(
-            back.bottom() <= px(320.),
-            "Back remains reachable during media failure: {back:?}"
+            close.bottom() <= px(320.),
+            "Close remains reachable during media failure: {close:?}"
         );
-        // The failed 140px player leaves the mode chips and the paragraph
-        // below the tight fold; the reachability contract under
-        // virtualization is that scrolling renders them — no dead end.
-        viewer.update(cx, |viewer, cx| {
-            viewer.transcript_list.scroll_to(ListOffset {
-                item_ix: 2,
-                offset_in_item: px(0.),
+        // The 140px pinned player row fills the first frame; the mode
+        // chips and the paragraph sit below the tight fold. The
+        // reachability contract under virtualization is that scrolling
+        // renders each — no dead end — asserted at each one's own scroll
+        // position: the ~56px list viewport at this window size cannot
+        // hold the chips, the label rows, and the paragraph in one frame.
+        for (item_ix, selector) in [
+            (1, "media-transcript-select-mode"),
+            (WORKSPACE_HEADER_ITEMS, "media-transcript-paragraph"),
+        ] {
+            viewer.update(cx, |viewer, cx| {
+                viewer.transcript_list.scroll_to(ListOffset {
+                    item_ix,
+                    offset_in_item: px(0.),
+                });
+                cx.notify();
             });
-            cx.notify();
-        });
-        cx.run_until_parked();
-        for selector in ["media-transcript-select-mode", "media-transcript-paragraph"] {
+            cx.run_until_parked();
             let bounds = cx.debug_bounds(selector).unwrap_or_else(|| {
                 panic!("{selector} renders when scrolled to during media failure")
             });
@@ -14169,7 +14431,9 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3).
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             cx.notify();
         });
 
@@ -14236,7 +14500,9 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
             });
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3).
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             cx.notify();
         });
 
@@ -14361,10 +14627,10 @@ mod viewer_layout_tests {
         );
     }
 
-    /// The Transcribe affordance (R5) renders on a not-transcribed
-    /// recording and dispatches the async transcribe job against the
-    /// recording's source; the unwired-invoker degradation surfaces a
-    /// status (tests run without a shared tool invoker).
+    /// The Transcribe affordance (R5, T3) renders on a not-transcribed
+    /// recording's Library row and dispatches the async transcribe job
+    /// against the recording's source; the unwired-invoker degradation
+    /// surfaces a status (tests run without a shared tool invoker).
     #[gpui::test]
     fn transcribe_affordance_renders_and_degrades_honestly(cx: &mut TestAppContext) {
         init_layout_test_globals(cx);
@@ -14378,8 +14644,9 @@ mod viewer_layout_tests {
                 gallery_index: Some(0),
                 gallery_asset_id: Some("asset-later".into()),
             }];
+            viewer.gallery_total = Some(1);
             viewer.transcript_listing = Some(vec![]);
-            viewer.active_tab = ViewerTab::Transcript;
+            viewer.active_tab = ViewerTab::Library;
             cx.notify();
         });
 
@@ -14390,11 +14657,15 @@ mod viewer_layout_tests {
         cx.run_until_parked();
 
         // The Transcribe affordance renders on the not-transcribed
-        // recording; the operator can take the recording to its
-        // transcript without a chat turn.
+        // recording's Library row; the operator can take the recording to
+        // its transcript without a chat turn.
         assert!(
             cx.debug_bounds("media-recording-transcribe").is_some(),
-            "the Transcribe affordance must render on the recording"
+            "the Transcribe affordance must render on the recording's Library row"
+        );
+        assert!(
+            cx.debug_bounds("media-transcript-delete").is_none(),
+            "no transcript rows render for a not-transcribed recording"
         );
 
         // The dispatch surfaces a status even on the unwired degradation
@@ -14415,12 +14686,13 @@ mod viewer_layout_tests {
         });
     }
 
-    /// The recordings browser's two-click delete: the Delete affordance
-    /// renders per row, arming swaps it for Confirm delete, and the
+    /// The Library's transcript rows' two-click delete (T3): the Delete
+    /// affordance renders per row — nested under its recording, or in the
+    /// unlinked section — arming swaps it for Confirm delete, and the
     /// dispatch closes the edit lifecycle through the unwired-invoker
     /// degradation path (tests run without a shared tool invoker).
     #[gpui::test]
-    fn transcript_browser_delete_confirms_and_closes_the_edit(cx: &mut TestAppContext) {
+    fn library_transcript_rows_delete_confirms_and_closes_the_edit(cx: &mut TestAppContext) {
         init_layout_test_globals(cx);
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
@@ -14433,7 +14705,8 @@ mod viewer_layout_tests {
                 alignment: "original".into(),
                 gallery_asset_id: None,
             }]);
-            viewer.active_tab = ViewerTab::Transcript;
+            viewer.gallery_total = Some(0);
+            viewer.active_tab = ViewerTab::Library;
             cx.notify();
         });
 
@@ -14444,10 +14717,12 @@ mod viewer_layout_tests {
         cx.run_until_parked();
 
         // The Delete affordance is laid out on the row, alongside the open
-        // affordance — the operator can always remove a recording.
+        // affordance — the operator can always remove a stored transcript;
+        // the row renders in the unlinked section below the (empty) asset
+        // rows, reachable, never hidden.
         assert!(
             cx.debug_bounds("media-transcript-delete").is_some(),
-            "the Delete affordance must render on the recordings row"
+            "the Delete affordance must render on the Library's transcript row"
         );
 
         // Arming the confirmation swaps the affordance.
@@ -14742,7 +15017,9 @@ mod viewer_layout_tests {
                 note: None,
             });
             viewer.transcript_surface = TranscriptSurface::Events;
-            viewer.active_tab = ViewerTab::Transcript;
+            // The open path's post-state (T3).
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
             viewer
         });
 
@@ -14753,17 +15030,33 @@ mod viewer_layout_tests {
         cx.run_until_parked();
 
         // The list paints items only within its viewport (virtualized):
-        // the header (toggle chips) and the first event rows are what the
-        // first frame guarantees in view.
-        for selector in ["media-transcript-surface-events", "media-event-row-0"] {
-            let bounds = cx
-                .debug_bounds(selector)
-                .unwrap_or_else(|| panic!("{selector} must lay out"));
-            assert!(
-                bounds.right() <= px(480.),
-                "{selector} fits the dock: {bounds:?}"
-            );
-        }
+        // the toggle chips are what the first frame guarantees in view
+        // (T3: the sub-surface's purpose line and header row sit above the
+        // list, so the pinned 140px player row and the chips fill the
+        // first frame); the event rows render when scrolled to — the
+        // reachability contract under virtualization.
+        let bounds = cx
+            .debug_bounds("media-transcript-surface-events")
+            .expect("the surface toggle chip must lay out");
+        assert!(
+            bounds.right() <= px(480.),
+            "the surface toggle chip fits the dock: {bounds:?}"
+        );
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(gpui::ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS,
+                offset_in_item: px(0.),
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds("media-event-row-0")
+            .expect("the first event row must lay out when scrolled to");
+        assert!(
+            bounds.right() <= px(480.),
+            "the first event row fits the dock: {bounds:?}"
+        );
 
         // Scrolling the virtualized list to the tail brings the authoring
         // section into view — the section renders as a real laid-out row,
@@ -14844,7 +15137,9 @@ mod viewer_layout_tests {
         });
         viewer.visual_events = Some(state);
         viewer.transcript_surface = TranscriptSurface::Events;
-        viewer.active_tab = ViewerTab::Transcript;
+        // The open path's post-state (T3).
+        viewer.active_tab = ViewerTab::Workspace;
+        viewer.inspector_open = false;
         viewer
     }
 
