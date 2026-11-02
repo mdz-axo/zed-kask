@@ -111,7 +111,7 @@ pub struct HealthSnapshot {
 
 /// Escalation alert emitted when a threshold is breached.
 #[derive(Debug, Clone)]
-pub struct EscalationAlert {
+pub(crate) struct EscalationAlert {
     pub trigger: EscalationTrigger,
     pub severity: EscalationSeverity,
     pub value: f64,
@@ -121,7 +121,7 @@ pub struct EscalationAlert {
 
 /// What triggered an escalation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EscalationTrigger {
+pub(crate) enum EscalationTrigger {
     VarietyDeficit,
     CriticalAlerts,
     LowAcceptance,
