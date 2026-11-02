@@ -1,8 +1,8 @@
 ---
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
-last_updated: 2026-10-27
-version: "2.3.0"
+last_updated: 2026-11-02
+version: "2.3.1"
 status: "Active"
 domain: "Media"
 mds_categories: [domain, composition, lifecycle]
@@ -22,6 +22,21 @@ workbench. All server calls route through the governed tool invoker to the
 `media` server; gallery pages are sized at 100 rows with a one-second queue
 poll (`GALLERY_PAGE_LIMIT`/`QUEUE_POLL_INTERVAL`, media_viewer.rs:38-40) and
 the transcript recordings list at the server's 500 cap.
+
+## Navigation principle (pinned 2026-11-02)
+
+**Primary navigation mirrors user tasks, never server subsystems.**
+Top-level modes are the user's tasks — browse the library; work on one
+asset — not the server's tool families. Job status is ambient (badges on
+affected assets, progress, an on-demand activity drawer), because a job
+is process state the user checks, not a destination. The inspector is a
+supporting pane of the asset workspace, because it is meaningful only in
+relation to the selected object (Android canonical layouts, "supporting
+pane"; Apple HIG, "Split views"). Tabs are reserved for alternate views
+of one object, never for different content sets. The five-tab model
+documented below is the pre-redesign surface: the operator-ruled
+redesign (kask/docs/plans/media-panel-redesign-plan-2026-11-02.md)
+replaces it in phases, and this reference realigns with each phase.
 
 ## Research-curation scope
 
