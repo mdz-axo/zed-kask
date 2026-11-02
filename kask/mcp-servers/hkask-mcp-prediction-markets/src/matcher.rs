@@ -72,7 +72,7 @@ pub fn token_overlap(a: &str, b: &str) -> f64 {
 /// End-of-year is wrong: "the January 2028 meeting" means Jan 2028, and a
 /// Dec-31 pivot would put it ~340 days from the market's actual deadline for
 /// the *same* event. Mid-year minimizes worst-case error for coarse queries.
-pub fn extract_deadline(query: &str) -> Option<chrono::NaiveDate> {
+pub(crate) fn extract_deadline(query: &str) -> Option<chrono::NaiveDate> {
     // ISO date token, e.g. 2027-04-28.
     for token in query.split(|c: char| !c.is_alphanumeric() && c != '-') {
         if let Ok(date) = chrono::NaiveDate::parse_from_str(token, "%Y-%m-%d") {

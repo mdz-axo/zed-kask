@@ -50,7 +50,7 @@ pub enum MarketEvent {
 /// Parse one WS text frame into a MarketEvent. Unparsable frames and
 /// heartbeats (`{}`) return None — never an error (a stream must not die
 /// on a heartbeat or an unknown new event type).
-pub fn parse_frame(frame: &str) -> Option<MarketEvent> {
+pub(crate) fn parse_frame(frame: &str) -> Option<MarketEvent> {
     let trimmed = frame.trim();
     if trimmed.is_empty() || trimmed == "{}" {
         return None;
@@ -59,7 +59,7 @@ pub fn parse_frame(frame: &str) -> Option<MarketEvent> {
 }
 
 /// The subscription request sent on connect.
-pub fn subscription_frame(asset_ids: &[String]) -> String {
+pub(crate) fn subscription_frame(asset_ids: &[String]) -> String {
     serde_json::json!({
         "assets_ids": asset_ids,
         "type": "market"
@@ -73,7 +73,7 @@ pub fn subscription_frame(asset_ids: &[String]) -> String {
 /// testable against a mock stream (mcp-tool-review PM-08 follow-up: the
 /// stop signal was enforced live but unpinned — a mock-stream regression
 /// test now pins that the loop stops exactly at the handler's bound).
-pub async fn drive_market_events<S, F, Fut>(
+pub(crate) async fn drive_market_events<S, F, Fut>(
     mut read: S,
     mut on_event: F,
 ) -> Result<(), McpToolError>

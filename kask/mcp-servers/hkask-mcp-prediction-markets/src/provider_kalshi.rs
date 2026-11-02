@@ -185,7 +185,7 @@ pub struct KalshiEvent {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
-pub struct KalshiEventsResponse {
+pub(crate) struct KalshiEventsResponse {
     pub cursor: String,
     pub events: Vec<KalshiEvent>,
 }

@@ -296,7 +296,7 @@ const DAYS_PER_YEAR: f64 = 365.25;
 /// Fractional years between an RFC3339 deadline and a reference instant.
 /// Deadline in the past → negative. Unparsable deadline → None (the
 /// unparsable-deadline warning is emitted once, at assembly time).
-pub fn years_between(deadline: &str, reference: &chrono::DateTime<chrono::Utc>) -> Option<f64> {
+pub(crate) fn years_between(deadline: &str, reference: &chrono::DateTime<chrono::Utc>) -> Option<f64> {
     let parsed = chrono::DateTime::parse_from_rfc3339(deadline).ok()?;
     Some(
         (parsed.with_timezone(&chrono::Utc) - *reference).num_seconds() as f64

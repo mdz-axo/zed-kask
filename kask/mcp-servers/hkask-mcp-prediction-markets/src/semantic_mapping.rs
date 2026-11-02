@@ -24,7 +24,7 @@ use crate::economic_object::BaseEconomicObject;
 ///
 /// Returns `None` when the record doesn't map to any base economic object —
 /// never a fabricated classification.
-pub fn classify_base_object_from_catalog(
+pub(crate) fn classify_base_object_from_catalog(
     source: &str,
     event_ticker_or_id: &str,
     question_or_title: &str,
