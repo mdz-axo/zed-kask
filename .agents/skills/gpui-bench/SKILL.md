@@ -283,7 +283,7 @@ cx.bench_renderer(view, |view, _window, cx| {
 });
 ```
 
-Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured. For deadline-driven workloads, `bench_renderer_session` (`crates/gpui/src/app/bench_context.rs:840`) provides a timeout-bounded renderer session with deadline checks between polls and frames — currently without callers outside its own module; inspect it before choosing an API.
+Do not benchmark a detached entity and call the result rendering performance. Do not call `run_until_idle` inside a measured loop merely to make the fixture pass: production does not drain all asynchronous work before every frame, and doing so erases the scheduling behavior being measured. For deadline-driven workloads, `bench_renderer_session` (`crates/gpui/src/app/bench_context.rs:864`) provides a timeout-bounded renderer session with deadline checks between polls and frames — currently without callers outside its own module; inspect it before choosing an API.
 
 ## Headless rendering and frame data
 

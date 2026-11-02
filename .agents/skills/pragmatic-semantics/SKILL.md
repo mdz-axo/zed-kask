@@ -11,7 +11,7 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 
 ## Reference models
 
-Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality Theory's strict-domination ranking (Prince & Smolensky, 1993) for conflict resolution; epistemic modality (Palmer, *Mood and Modality*, 1986) for declarative / probabilistic / subjunctive. Entropy-matched computation (P8.4): Shannon (1948) and Jaynes (1957) for conditional entropy; Turing (1936, 1939) for deterministic computation and oracles; amortized inference (Gershman & Goodman 2014; Hu et al. 2024) for learned computation; Tetlock & Gardner (2015) and Brier (1950) for calibrated forecasts — the five derived-registry rulings.
+Hume's is–ought distinction (*A Treatise of Human Nature*, 1739); Optimality Theory's strict-domination ranking (Prince & Smolensky, 1993) for conflict resolution; epistemic modality (Palmer, *Mood and Modality*, 1986) for declarative / probabilistic / subjunctive. Entropy-matched computation (P8.4): Shannon (1948) and Jaynes (1957) for conditional entropy; Turing (1936, 1939) for deterministic computation and oracles; Tetlock & Gardner (2015) and Brier (1950) for calibrated forecasts — the four derived-registry rulings (entropy, deterministic computation, verification oracle, calibrated forecast; rulings 2026-09-27, state as of 2026-11-01). Amortized inference (Gershman & Goodman 2014; Hu et al. 2024) for learned computation resolves coarsely on the 5W1H core rung with no derived entry — ruling pending (state as of 2026-11-01).
 
 ## D/P labelling
 

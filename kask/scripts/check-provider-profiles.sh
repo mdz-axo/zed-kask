@@ -5,7 +5,7 @@
 # semantic reading — data terms, status posture, severity. This gate owns the
 # structural contract:
 #   1. Every tree-adopted vendor has a profile. The adopted set is DERIVED at
-#      run time from five tree anchors — inference descriptor ids
+#      run time from four tree anchors — inference descriptor ids
 #      (INFERENCE_PROVIDERS), media provider structs,
 #      research provider modules, and DATA_SERVICES credential keys — never
 #      from a hardcoded list, which would silently miss every addition

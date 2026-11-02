@@ -51,7 +51,7 @@ The bridge crate is the single source of truth for ontology vocabulary
 compiled from SHA-256-pinned sources; named constants are only a consumer
 selection. Current coverage includes SUMO, schema.org, DCMI/BIBO/CiTO,
 PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo, OMC, ML-Schema, RDF/RDFS,
-W3C RDF Data Cube (`qb:`)), not Provisional. The Cube source is pinned as `sources/rdf-data-cube/cube.ttl`
+W3C RDF Data Cube (`qb:`), not Provisional. The Cube source is pinned as `sources/rdf-data-cube/cube.ttl`
 with its PDDL 1.0 license. Former local `sdmx:` class-name aliases and five unlicensed `dlp:` constants
 are removed, not silently translated into published IDs. Never invent a
 publisher definition where the source supplies none. No
@@ -61,7 +61,7 @@ Anchoring is a **scope-broadening walk, never a single pick** — the fallback
 ladder (P8.3, `axis.rs` and the bridge root docs):
 
 1. **Domain supplement** — exact terms in pinned sources (RDF Data Cube,
-   RDF Data Cube, OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo,
+   OMC, PKO/P-Plan/PROV, SEPIO, GOLEM/CIDOC-CRM/LRMoo,
    ML-Schema, RDF/RDFS). A statistical provider hint does not prove its
    outputs are RDF cubes; unmatched SDMX Information Model names do not resolve here.
    Never force a term into an ontology that has no place for it.
@@ -99,7 +99,7 @@ ruling (recorded in the derived registry) improves it.
 - **Per-tool output anchors**: MCP servers that tag their results attach a
   bridge concept to the tool output's `ontology` field — e.g. the scenarios
   server's `ontology_anchor`
-  (`kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`).
+  (`kask/mcp-servers/hkask-mcp-scenarios/src/ontology.rs`).
   Coverage is per server, not fleet-wide; an untagged tool output is not an
   anchor — resolve its terms with `onto_anchor`.
 - **Per-term anchors**: corpus chunk tagging and hMem content tagging are

@@ -12,7 +12,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 ## Reference models
 
-Belton & Stewart, *Multiple Criteria Decision Analysis: An Integrated Approach* (2002) — weighted-sum value model and sensitivity analysis; Keeney & Raiffa, *Decisions with Multiple Objectives* (1976) — swing weighting. `onto_anchor` → derived `multi_criteria_decision_analysis` (operator ruling 2026-09-25).
+Belton & Stewart, *Multiple Criteria Decision Analysis: An Integrated Approach* (2002) — weighted-sum value model and sensitivity analysis; Keeney & Raiffa, *Decisions with Multiple Objectives* (1976) — swing weighting. `onto_anchor` → `multi_criteria_decision_analysis` resolves at tier `domain_supplement` (`cso:multi-criteria_decision_analysis`, CSO 3.5), with the derived entry (Belton & Stewart 2002; Keeney & Raiffa 1976, operator ruling 2026-09-25) in `alternatives` — state as of 2026-11-01.
 
 **D/P labelling.** Criteria, classification, weights and raw scores are P (judgment; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, compensation-masking threshold detection (`MCDA-2`), perturbation and robustness class are D (`lisp_eval`, helpers below).
 

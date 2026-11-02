@@ -24,12 +24,12 @@ Per-tool anchors live in the **anchor registry** — every tool's anchor is a pu
 
 ### Anchor registry (state as of 2026-10-14 — re-verify at run start)
 
-Ruled (verify with `onto_anchor` → tier `derived`):
+Ruled (verify with `onto_anchor` → tier `derived`, or a `domain_supplement` primary with the derived entry in `alternatives` — see step 3):
 
 - `scenario planning` — Schwartz, The Art of the Long View (1991) + Chermack (2011); ruling 2026-09-25
 - `superforecasting` — Tetlock & Gardner (2015); ruling 2026-09-25
 - `Brier score` — Brier (1950); ruling 2026-09-18
-- `Bayesian network` — Pearl, Probabilistic Reasoning in Intelligent Systems (1988); ruling 2026-10-02
+- `Bayesian network` — Pearl, Probabilistic Reasoning in Intelligent Systems (1988); ruling 2026-10-02 — resolves at tier `domain_supplement` (`cso:bayesian_network`, CSO 3.5) with the derived Pearl (1988) entry in `alternatives` (state as of 2026-11-01)
 - `discounted cash flow` — Damodaran, Investment Valuation (2012); origin Williams (1938); ruling 2026-10-02
 - `arbitrage` — Hull, Options, Futures and Other Derivatives; law of one price / no-arbitrage; ruling 2026-10-02
 
@@ -60,7 +60,7 @@ Utility tools (`scenario_status` and the `*_status` / `ping` family) have no pub
 
 1. Load the operator rulings in force: sweep order, ask-first, divergence goal, key priority (anchor tools to reference models; audit and improve functionality and quality).
 2. Batch EVERY unclear anchor, fidelity label, utility class, divergence scope, and mapping question into ONE decision request, presented before the checks that rely on them run. When the operator is unavailable: proceed on the stated recommendation and flag every default in the artifact. Checks depending on already-ruled anchors run first; gated work is marked `pending-rulings` — the run never deadlocks on pending rulings.
-3. Verify registry state: `onto_anchor` each ruled term (expect tier `derived`) and each pending term (a coarse tier confirms it is pending).
+3. Verify registry state: `onto_anchor` each ruled term and each pending term. Three outcomes: tier `derived` — the ruling is confirmed; a coarse (core-rung) tier — the term is pending; a `domain_supplement` primary with the derived entry in `alternatives` — ruled-confirmed, not pending (the `Bayesian network` row is the current instance). State as of 2026-11-01.
 
 ### Phase B — Inventory [D; oracle: grep walk + `list_mcp_tools` + `lisp_eval`]
 

@@ -22,8 +22,8 @@ the in-context style-transfer family (e.g. Reif et al., "A Recipe for
 Arbitrary Text Style Transfer with Large Language Models", ACL 2022).
 The validation is embedding-space stylometry: cosine distance between the
 composed prose's embedding and the author's corpus centroid (generation call
-`hkask-mcp-corpus/src/compose.rs:502`; centroid validation `compose.rs:507-531`;
-`cosine_distance` at `helpers.rs:339`), gated by the
+`hkask-mcp-corpus/src/compose.rs:453`; centroid validation `compose.rs:487-493`;
+`cosine_distance` at `helpers.rs:369`), gated by the
 config's `centroid_distance_max`. This is the tool's own instrument, not a
 published authorship-attribution method — it is not Burrows's Delta (2002)
 nor the feature-based stylometry surveyed by Stamatatos (2009), and no

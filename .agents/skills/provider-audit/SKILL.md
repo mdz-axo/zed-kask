@@ -14,7 +14,7 @@ Two-directional provider contract audit over kask-adopted vendors — inbound (d
 - **Magna Carta P1–P4** (`kask/docs/architecture/core/magna-carta.md`) and **values V1–V8** (`kask/docs/architecture/core/magnifica-humanitas.md`) — the inbound check set's source of authority.
 - **`DIVERGENCE.md`** — seam accounting for any zed-side integration surface a finding touches.
 - **Audit as verification discipline:** assertion-orientation with an evidence hierarchy (the `grounding-verify` skill's ISA-style reference set) — every check names its assertion and cites dated evidence; a check that was not performed is `unverified`, never passed.
-- **`onto_anchor`:** "audit" resolves coarsely on the 5w1h core rung — derived-registry ruling pending; carried as a research finding until the ruling lands, never assigned a private definition.
+- **`onto_anchor`:** "audit" resolves at tier `domain_supplement` (`dpv:Audit`, W3C DPV 2.3) — state as of 2026-11-01; anchored on the published definition, never a private one.
 
 ## D/P labelling (P8.4)
 
@@ -56,7 +56,7 @@ Fix the trigger (adoption | drift | scheduled | announcement | retirement) and t
 
 ### Step 2 — Enumerate (D)
 
-1. Run `bash kask/scripts/check-provider-profiles.sh` via `terminal`. It derives the adopted set from five tree anchors — inference descriptor ids (`INFERENCE_PROVIDERS`), media provider structs, training host ids, research provider modules, and `DATA_SERVICES` credential keys — and pins the structural contract: a profile per adopted vendor, required keys present, id/status consistency, no zombie retirements, no active orphans.
+1. Run `bash kask/scripts/check-provider-profiles.sh` via `terminal`. It derives the adopted set from four tree anchors — inference descriptor ids (`INFERENCE_PROVIDERS`), media provider structs, research provider modules, and `DATA_SERVICES` credential keys — and pins the structural contract: a profile per adopted vendor, required keys present, id/status consistency, no zombie retirements, no active orphans.
 2. Run deterministic `lisp_eval` gate `PA-1` over the script's exit code, the enumerated profiles, and any unmapped crates:
    - form: `(and (= check_script_exit_code 0) (> (length profiles_enumerated) 0) (= (length unmapped_crates) 0))`
    - env: `{ "check_script_exit_code": <0|nonzero>, "profiles_enumerated": <list of profile ids>, "unmapped_crates": <list of unmapped crates> }`

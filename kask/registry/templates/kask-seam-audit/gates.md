@@ -1,7 +1,8 @@
 # kask-seam-audit gates (pinned lisp_eval forms)
 
 Each form was tested on passing and failing cases on 2026-09-26; `KSA-1` and
-`KSA-2` were retested on passing and failing cases on 2026-10-16. Pass the named
+`KSA-2` were retested on passing and failing cases on 2026-10-16; `KSA-4` was
+tested on passing and failing cases on 2026-11-01. Pass the named
 template outputs as env bindings; each section names its own pass condition (a
 returned `true`, a count of 0, or a `true` field in the returned object).
 
@@ -99,4 +100,18 @@ Compute `findings_per_track`, `findings_per_severity`, and `defense_layer_covera
 
 ```
 (begin (define count-sev (lambda (fs s) (if (is_null fs) 0 (+ (if (string= (assoc "severity" (car fs)) s) 1 0) (count-sev (cdr fs) s))))) (let ((all (append sec_findings (append arch_findings ui_findings)))) (list (list (length sec_findings) (length arch_findings) (length ui_findings)) (list (count-sev all "critical") (count-sev all "high") (count-sev all "medium") (count-sev all "low") (count-sev all "info")) (list (- total_layers (length missing_layers)) (length missing_layers)))))
+```
+
+## KSA-4 — layout-review probe-list aggregates (all-probes fold and failing-gates set-difference)
+
+Fold `layout-review`'s probe aggregates deterministically instead of asking the
+model to compute them. Bind `probes` to `layout-review`'s own output array, each
+entry carrying its per-gate `gate_results` (each `{gate_name, passed}`) and its
+`overall_passed` judgment. Returns `[all_probes_passed, failing_gates]`:
+`all_probes_passed` is the fold over every probe's `overall_passed`, and
+`failing_gates` is the deduplicated set of gate names whose `passed` is false
+across every probe's `gate_results`. The model emits neither.
+
+```
+(begin (define all-passed (lambda (ps) (if (is_null ps) t (and (assoc "overall_passed" (car ps)) (all-passed (cdr ps)))))) (define failed-in (lambda (grs) (if (is_null grs) (list) (if (assoc "passed" (car grs)) (failed-in (cdr grs)) (cons (assoc "gate_name" (car grs)) (failed-in (cdr grs))))))) (define failed-gates (lambda (ps) (if (is_null ps) (list) (append (failed-in (assoc "gate_results" (car ps))) (failed-gates (cdr ps)))))) (define dedup (lambda (xs) (if (is_null xs) (list) (cons (car xs) (dedup (remove-if-member (car xs) (cdr xs))))))) (define remove-if-member (lambda (x xs) (if (is_null xs) (list) (if (string= x (car xs)) (remove-if-member x (cdr xs)) (cons (car xs) (remove-if-member x (cdr xs))))))) (list (all-passed probes) (dedup (failed-gates probes))))
 ```
