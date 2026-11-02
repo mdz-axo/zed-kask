@@ -7973,6 +7973,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-panel-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "hkask-regulation"
 version = "0.40.2"
 dependencies = [
@@ -9332,10 +9341,10 @@ dependencies = [
  "gpui_util",
  "hkask-kanban-widget",
  "hkask-mcp-kata-kanban",
+ "hkask-panel-ui",
  "hkask-steer",
  "hkask-tool-invoker",
  "hkask-types",
- "marketplace_ui_common",
  "picker",
  "project",
  "serde",
@@ -10573,19 +10582,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "marketplace_ui_common"
-version = "0.1.0"
-dependencies = [
- "editor",
- "gpui",
- "settings",
- "smallvec",
- "theme_settings",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "markup5ever"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10717,12 +10713,12 @@ dependencies = [
  "gpui",
  "hkask-mcp-media",
  "hkask-media-widget",
+ "hkask-panel-ui",
  "hkask-steer",
  "hkask-tool-invoker",
  "hkask-types",
  "hkask-viz-core",
  "log",
- "marketplace_ui_common",
  "project",
  "remote_connection",
  "serde_json",

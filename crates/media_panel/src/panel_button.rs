@@ -1,10 +1,10 @@
 //! Status bar button that toggles the Media panel.
 //!
-//! A `marketplace_ui_common::PanelToggleButton` configured with the Media
+//! A `hkask_panel_ui::PanelToggleButton` configured with the Media
 //! panel's id, icon, labels, and `Toggle` action. Mirrors
 //! `kanban_panel::panel_button`.
 
-use marketplace_ui_common::PanelToggleButton;
+use hkask_panel_ui::PanelToggleButton;
 use ui::IconName;
 
 use crate::Toggle;

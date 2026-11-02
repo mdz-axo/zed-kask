@@ -1,10 +1,10 @@
 //! Status bar button that toggles the Kanban Board panel.
 //!
-//! A `marketplace_ui_common::PanelToggleButton` configured with the Kanban
+//! A `hkask_panel_ui::PanelToggleButton` configured with the Kanban
 //! Board button's id, icon, labels, and `Toggle` action. Mirrors
 //! `kanban_panel::panel_button`'s upstream pattern (shared `StatusItemView`).
 
-use marketplace_ui_common::PanelToggleButton;
+use hkask_panel_ui::PanelToggleButton;
 use ui::IconName;
 
 use crate::Toggle;

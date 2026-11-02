@@ -50,7 +50,7 @@ members = [
     "crates/deepseek",
     "crates/dev_container",
     "crates/kanban_panel",
-    "crates/marketplace_ui_common",
+    "crates/hkask-panel-ui",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
@@ -377,7 +377,7 @@ derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 
 kanban_panel = { path = "crates/kanban_panel" }
-marketplace_ui_common = { path = "crates/marketplace_ui_common" }
+hkask_panel_ui = { path = "crates/hkask-panel-ui", package = "hkask-panel-ui" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
@@ -1264,9 +1264,15 @@ inherits = "release"
 lto = false
 codegen-units = 16
 
+# zed-kask: D46 — the --fast route's full DWARF splits into .dwo sidecars
+# under the target tree (split-debuginfo = "unpacked"): the linked binary
+# stays ~0.4 GB instead of ~7 GB, and debugger workflows resolve through the
+# sidecars. Upstream carries this profile without the split. Pinned by
+# kask/scripts/build/check-build-profile.sh.
 [profile.release-fast]
 inherits = "release"
 debug = "full"
+split-debuginfo = "unpacked"
 lto = false
 codegen-units = 16
 
