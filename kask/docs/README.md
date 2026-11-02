@@ -101,7 +101,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Internal links target retained documents — this pass swept every row and reference orphaned by the 2026-10-30 stale-docs deletion, its own six deletions, and the 2026-11-01 twelve-file deletion (implemented plans, point-in-time pilots, superseded reference-model studies whose subjects are now reified in the surviving code and docs).
 - [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-30).
 - [x] Edited citations use full repository-relative paths; this pass re-anchored the 12 `@sym` citations rotted by `crates/agent/src/thread.rs` line drift (the 2026-10-30 compaction commits) in `skills-and-composition.md` and `lisp-eval-dialect.md` via `kask/scripts/resolve-citation-anchor.sh`, and the citation, anchor, drift and link gates re-ran green over the committed tree.
-- [x] Document count is 72 in the working tree (measured 2026-11-01: 71 Markdown plus the live YAML), under the fewer-than-85 cap and at the 75-file working target — condensation direction, advisory since the 2026-10-31 unwiring.
+- [x] Document count is 68 in the working tree (measured 2026-11-02: 67 Markdown plus the live YAML), under the fewer-than-85 cap and at the 75-file working target — condensation direction, advisory since the 2026-10-31 unwiring.
 
 ## See also
 
