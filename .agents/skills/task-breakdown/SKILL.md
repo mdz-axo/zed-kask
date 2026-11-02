@@ -92,7 +92,7 @@ Decomposition, dependency mapping, base criterion scores (`base_gate_scores`) an
      "phases": <from DECOMPOSE>, "checkpoints": <from DECOMPOSE> }
    ```
    Pass `open_questions` unchanged from PLAN; do not reconstruct or answer them from `context_summary`. The field is required even when empty. Stop on an input error, correct the context and render again before writing either document.
-2. Create the run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/` (via `terminal`; built-in file tools cannot write under `~/Documents/zk-data`). Plans are skill artifacts, never repository files.
+2. Create the run directory `~/Documents/zk-data/skills/task-breakdown/{date}-{run}/` (via `terminal`; built-in file tools cannot write under `~/Documents/zk-data`), where `{run}` is a readable subject slug naming the decomposed work (e.g. `agent-panel-decomposition`), never a UUID, hash or random run id — the standardized-artifact-storage Readable names rule, as `skill-maintenance` enforces. Plans are skill artifacts, never repository files.
 3. Write `plan.md` there with: overview, architecture decisions, phased task list with checkpoints, risks table, and the supplied open questions unchanged (or explicitly none for `[]`).
 4. Include a Refinement History section in `plan.md` (PDCA loop visibility): when `refinement_directives` were applied across PDCA iterations, document what criterion scored above threshold, what was wrong, and what fix was applied. Omit the section if no refinement was needed.
 5. Write `todo.md` there as a flat checklist grouped by phase with checkboxes for each task and its acceptance criteria — scannable, not verbose.

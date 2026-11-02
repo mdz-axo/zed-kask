@@ -120,6 +120,7 @@ Status classification (`exists`/`grounded`/`complete`) is P — model-proposed a
 | `meta-establish-target.j2` | Declare the target metacognitive state — what sufficient meta-knowledge looks like for this goal. Produces target_artifacts and target_procedure for gap computation. |
 | `meta-predict.j2` | Predict a task-specific calibration and gap reduction, with an optional declared forecast; closure and assessment remain separate. |
 | `meta-experiment.j2` | Apply the predicted calibration — Falstaffian perspective rotation, ellipsis analysis, or strategy adjustment. Re-measure the current condition after the experiment. Produces new current_artifacts and current_procedure. |
+| `falstaffian-rotation.j2` | Canonical definition of the Falstaffian perspective rotation — the five shapes and their selection decision tree. The experiment step applies the rotation inline (no render needed); render for an explicit frame audit over a set of framing assertions. |
 | `inquiry-engine.j2` | Inquiry experiment: branching, revising chain of thought that emits deep-dive delegation requests (routed via `MC-1` to canonical skills) and skill-match queries. |
 | `ellipsis-analysis.j2` | Apply Bloom's five-step method to detect gaps in context, classify them as ellipsis (deliberate) or leak (unintentional), and find what is not inferno (Calvino: the exceptional, supported element worth preserving). Used by the experiment step for ellipsis perspective. |
 
@@ -167,6 +168,15 @@ Copyable `render_template` context blocks (variable names from each template's `
   "perspectives": ["falstaffian", "ellipsis"],
   "context_text": "<about 2000 characters of context for the ellipsis analysis>",
   "prev_experiment": { "<previous experiment field>": "<result value>" }
+}
+```
+
+`metacognition/falstaffian-rotation`:
+```json
+{
+  "subject": "<the subject the framing assertions are about>",
+  "framing_assertions": ["<a framing assertion made by a narrative or an assessment>"],
+  "assessor_context": "<who wrote the assertions and from what vantage; null when absent>"
 }
 ```
 

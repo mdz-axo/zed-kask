@@ -208,7 +208,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - **Reset to floor**: if confidence is clearly wrong, `memory_update` to 0.5 (the floor).
 
    **For reification candidates** — propose:
-   - **Create skill**: if the pattern is a repeatable process that could guide future action, propose a skill: a `.agents/skills/<name>/SKILL.md` in the user's project with the lesson as proactive contextualized guidance, shown to the user as a draft before it is written.
+   - **Create skill**: if the pattern is a repeatable process that could guide future action, propose a skill: a `.agents/skills/<name>/SKILL.md` in the user's project with the lesson as proactive contextualized guidance, shown to the user as a draft before it is written; the approved draft is routed through `create-skill`'s Phase 4 validation path rather than written-and-forgotten (see Phase 5).
    - **Create template**: if the pattern is a prompt structure or output format that could guide future generation, propose creating a .j2 template.
    - **Create rule**: if the pattern is a simple constraint or guideline (e.g., "always check X before Y"), propose adding it to the project `.rules` file or the agent's system prompt.
    - **Purge source memories**: after reification, the source episodic memories are no longer needed — propose `memory_resolve_contradiction` with strategy "forget" to purge them (cognitive load shedding).
@@ -270,7 +270,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `kanban_task_create` on the Algedonic review board for "escalate_to_board" and "record_practice_gap" strategies.
 
    **Reification proposals (the learning step):**
-   - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries.
+   - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries — then, for a reified SKILL.md/.j2 pair, route the created artifact through `create-skill`'s Phase 4 validation path (mechanical prescreen and contract checks, the `skill-maintenance` S1–S14 read, and one functional trial) before the reification is reported done: a lesson-born skill clears the same validation bar as any newly created skill. `.rules` entries are project files outside that path.
 
    **Post-reification hygiene (forgetting — runs after reification, not part of learning):**
    - **Purge**: `memory_resolve_contradiction` with strategy "forget" for each source h_mem.

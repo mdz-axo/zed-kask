@@ -68,7 +68,7 @@ Structured data extraction from unstructured text. Identifies entities, extracts
    - Counts only schema-declared fields that are present and non-null in `extracted_data`; keys outside the schema and null values are not coverage, so `coverage_ratio` can never exceed 1.0.
    - env: `{ "schema_fields": <list of target_schema field names>, "extracted_data": <extracted_data object> }`
 
-**D/P labelling.** Entity identification, typing, relation extraction, confidence, field inference, and map-to-schema's type coercion and conflict resolution are P, critiqued by `SE-1` and by the operator; `SE-1` (substring check), `SE-2` (entity/relation counts and `orphan_entities`), `SE-3` (`field_coverage`), and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007, IJCAI), ACE2005 standoff annotation, CoNLL-2012 coreference.
+**D/P labelling.** Entity identification, typing, relation extraction, confidence, field inference, and map-to-schema's type coercion and conflict resolution are P, critiqued by `SE-1` and by the operator; `SE-1` (substring check), `SE-2` (entity/relation counts and `orphan_entities`), `SE-3` (`field_coverage`), and the Convergence gate are D. Reference models: OpenIE (Banko et al. 2007, IJCAI) — anchored: `onto_anchor` → derived `open_information_extraction` (operator ruling 2026-10-14; verified 2026-11-02); ACE2005 standoff annotation and CoNLL-2012 coreference — unanchored, house rules: `onto_anchor` falls through to the coarse 5W1H core for ACE2005, CoNLL-2012, TACRED and DocRED (checked 2026-11-02; ruling path open), so their type inventories are named external conventions, not ontology-resolved terms.
 
 ### Convergence
 

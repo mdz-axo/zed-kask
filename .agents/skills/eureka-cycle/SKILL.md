@@ -184,7 +184,7 @@ itself; it routes to the owners and carries the cycle's memory.
     Render `eureka-cycle/eureka-study-report` with the copyable context below:
     per-candidate sections reference the delegated lifecycle's own report output,
     plus the cross-candidate outcomes table, the EUR-2 Brier readback, and
-    evaluator-hardening candidates (filed via `evolve_mcp_tool_schema` when
+    evaluator-hardening candidates (filed via `curator_directive` `evolve_mcp_tool_schema` when
     gaming was detected — as the search strengthens, the evaluator must
     strengthen too). Lessons from the cycle land in memory through the memory
     architecture's automatic thread distillation — this loop proposes no memory

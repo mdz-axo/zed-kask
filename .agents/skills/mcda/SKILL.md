@@ -49,7 +49,7 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 
 ## When NOT to Use
 
-- Decisions with fixed methodology weights — when the weights are fixed by firm methodology (e.g. GORILLA's 25/30/25/20), a `lisp_eval` scoring call is the honest instrument; MCDA adds ceremony (the essentialist Surface gate rejection).
+- Decisions with fixed methodology weights — when the weights are fixed by firm methodology (e.g. `skill-discovery`'s fixed 0.50 / 0.25 / 0.25 route fit-score weights), a `lisp_eval` scoring call is the honest instrument; MCDA adds ceremony (the essentialist Surface gate rejection).
 - Single-criterion decisions — with one criterion there is nothing to weight, mask, or perturb; just decide.
 - No enumerable criteria — without criteria to classify and weight, the method has no input; elicit requirements first.
 

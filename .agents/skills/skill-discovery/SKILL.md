@@ -25,9 +25,12 @@ Match tasks to the installed skill catalog and acquire NEW skills when nothing f
 
 The fit score is a **heuristic ranking** in the form of a fixed-weight
 weighted-sum value model (Belton & Stewart, *Multiple Criteria Decision
-Analysis*, 2002 — the same model `mcda` cites), applied WITHOUT the
-sensitivity analysis that model prescribes: nothing here tests whether
-the 0.50 / 0.25 / 0.25 split changes any ranking. The weights (inherited
+Analysis*, 2002 — the same model `mcda` cites; anchored: `onto_anchor` →
+`multi_criteria_decision_analysis`, tier `domain_supplement`
+(`cso:multi-criteria_decision_analysis`, CSO 3.5; derived entry Belton &
+Stewart 2002, operator ruling 2026-09-25; verified 2026-11-02)), applied
+WITHOUT the sensitivity analysis that model prescribes: nothing here tests
+whether the 0.50 / 0.25 / 0.25 split changes any ranking. The weights (inherited
 from skill-router before the 2026-09-24 fold), the +0.20 epistemic boost
 and the 24-of-32 installable threshold (rulings 2026-09-26), and the 0.30
 floor and the 0.8 / 0.4 coverage bands (the band boundary fixed 2026-09-25)

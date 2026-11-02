@@ -10,7 +10,7 @@ Use for work that changes code, configuration, scripts or documentation, includi
 
 ## Authority and reference models
 
-The user is the product manager and principal investigator: they hold the question, functional decisions, judgment and veto. The agent owns technical implementation and trade-offs. See `kask/docs/architecture/core/co-research-environment.md` and the Division of Responsibilities.
+The user is the product manager and principal investigator: they hold the question, functional decisions, judgment and veto. The agent owns technical implementation and trade-offs. See `kask/docs/architecture/core/co-research-environment.md` and the Division of Responsibilities. The intake counterpart is the `product-manager` skill: a request that arrives underspecified is structured through product-manager's intake contract (requirement, spec provenance, 2–4 observable criteria, binding constraints and standing rules, gated by `PMB-1`) before this skill's fit-and-implement loop consumes it.
 
 Requirements engineering supplies spec recovery and traceability; PMI program-management practice supplies dependency and shared-work coordination; the Scrum Guide 2020 Definition of Done supplies the requirement for usable, checked work. These are operating disciplines, not scores computed from an agent's own lists.
 

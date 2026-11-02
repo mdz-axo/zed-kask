@@ -399,7 +399,7 @@ Run `dsymutil` on the exact executable printed by Cargo:
 dsymutil target/release-fast/deps/<target>-<hash>
 ```
 
-Prefer the `zed-bench` Instruments template, which combines Time Profiler data, CPU counters, and hang or microhang tables. Fall back to `Time Profiler` if it is unavailable:
+No custom `.tracetemplate` is checked into this repo, so the default is the built-in `Time Profiler` template; if the operator has defined a local custom template combining Time Profiler data, CPU counters, and hang or microhang tables, prefer it, falling back to `Time Profiler` if it is unavailable:
 
 Traces are user-facing artifacts: keep them under the skill's artifacts route,
 `~/Documents/zk-data/skills/gpui-bench/{date}-{run}/`, not `/tmp`.
@@ -409,7 +409,7 @@ OUT=~/Documents/zk-data/skills/gpui-bench/<date>-<run>
 mkdir -p "$OUT"
 rm -rf "$OUT/<name>.trace"
 xctrace record \
-  --template "zed-bench" \
+  --template "Time Profiler" \
   --output "$OUT/<name>.trace" \
   --launch -- target/release-fast/deps/<target>-<hash> \
   --bench <workload-filter> --profile-time 10

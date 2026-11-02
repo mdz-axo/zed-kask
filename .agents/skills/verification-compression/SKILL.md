@@ -37,7 +37,9 @@ historical tombstones: an existing test is not automatically a requirement.
 - **Improvement loop:** Rother's Toyota Improvement Kata supplies direction,
   current condition, target condition, and one-change experiments.
 - Ontology: SEPIO grounds evidence and provenance (`provenance_tier` is a
-  signal-key field; `downgraded_provenance` a preservation-gate field).
+  signal-key field; `downgraded_provenance` a preservation-gate field) —
+  anchored: `onto_anchor` → derived `scientific_evidence_ontology` (operator
+  ruling 2026-09-28; Brush, Shefchek and Haendel, ICBO 2016; verified 2026-11-02).
 
 ## D/P labelling
 
@@ -261,9 +263,12 @@ verification code.
    observed inventory and candidate, publish two graph JSON artifacts: the
    before graph and a candidate graph. Write this run's graphs, proof, logs
    and `manifest.json` under the artifacts route
-   `~/Documents/zk-data/skills/verification-compression/{date}-{run}/`
-   (via `terminal`; the built-in file tools are project-confined), never
-   under `/tmp` or the project tree. Each uses the current schema:
+   `~/Documents/zk-data/skills/verification-compression/{date}-{run}/`,
+   where `{run}` is a readable subject slug naming the workflow under
+   compression — never a UUID, hash or random run id (the
+   standardized-artifact-storage Readable names rule, as `skill-maintenance`
+   enforces) — via `terminal` (the built-in file tools are project-confined),
+   never under `/tmp` or the project tree. Each uses the current schema:
    `schema_version:1`, `required` (all distinct baseline signal keys),
    `before` and `after` (artifact_id + full five-field signal), and
    `removed_mappings` (removed_artifact + retained_artifact + same signal).
