@@ -11,7 +11,7 @@ with full citations is `kask/docs/research/goal-reference-models.md` (research
 run 6eb1d124a8cb38c4; candidate adjudication: research run 97cbe8789bda3545).
 Declaration — goal-setting theory (Locke & Latham 2002): criteria are specific,
 observable functional conditions. Expectation protection — the goal is a
-contract (André et al. 2023; Hadfield-Menell & Hadfield 2018), baselined per
+contract (Hadfield-Menell & Hadfield 2018), baselined per
 ISO/IEC/IEEE 29148: the specification is frozen under a digest, verified by
 independent methods, changed only through a successor record. Operating
 routine — PDCA (Shewhart/Deming) and the Toyota Improvement Kata + Coaching

@@ -2,7 +2,7 @@
 title: "Goal Systems — Reference Models from Goal-Setting, Alignment, and Kata Literature"
 audience: [architects, developers, agents]
 last_updated: 2026-11-02
-version: "1.0.0"
+version: "1.0.1"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust]
@@ -51,11 +51,9 @@ evidence set: 6 domains, 10 independent clusters, sensitivity stable).
    + evidence manifest + observed artifacts only; never worker claims, human
    labels, forecast or scores.
 
-4. **Protected expectations** — André et al. (2023), arXiv:2305.19152
-   (behavioral programming: reward designs as legal contracts);
-   Hadfield-Menell & Hadfield (2018) (Incomplete Contracting and AI
-   Alignment); the expectation-interest framework (Fuller & Perdue 1936–37;
-   Cornell Wex). The goal is a contract: the frozen specification is the
+4. **Protected expectations** — Hadfield-Menell & Hadfield (2018)
+   (Incomplete Contracting and AI Alignment); the expectation-interest
+   framework (Fuller & Perdue 1936–37; Cornell Wex). The goal is a contract: the frozen specification is the
    contract identity, the human's as-if-performed position is the protected
    expectation, and changed requirements declare a successor — never a silent
    edit. → `spec_digest` validation on closure, immutable criteria, the
@@ -133,9 +131,6 @@ Problems in AI Safety. https://arxiv.org/abs/1606.06565
 
 Gao, Schulman, Hilton et al. (2022). Scaling Laws for Reward Model
 Overoptimization. https://arxiv.org/abs/2210.10760
-
-André, Strouse et al. (2023). Behavioral Programming: A Broader, More
-Powerful Take on RL. https://arxiv.org/abs/2305.19152
 
 Manheim & Garrabrant (2018). Categorizing Variants of Goodhart's Law.
 https://arxiv.org/abs/1803.04585
