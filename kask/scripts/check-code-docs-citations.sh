@@ -73,9 +73,14 @@ while IFS="$(printf '\t')" read -r f c; do
     else
         ok=$((ok+1))
     fi
+# The explicit `.` path is load-bearing: with no path argument rg reads
+# STDIN whenever stdin is not a tty (a pipe), so on a CI runner — whose
+# step stdin is a pipe — the sweep silently matched the empty stdin and
+# exited 0 with zero pairs (reproduced locally with `: | selftest`, run
+# 41402093105). An explicit path never reads stdin.
 done < <(rg -o --no-line-number --no-heading --color=never --hidden \
             'kask/docs/[A-Za-z0-9_./-]+\.md' \
-            -g '!kask/docs' -g '!.git' -g '!target' 2>/dev/null \
+            -g '!kask/docs' -g '!.git' -g '!target' . 2>/dev/null \
             | awk -F: '{ split($0, a, ":"); sub(/^\.\//, "", a[1]); print a[1] "\t" a[2] }')
 
 # The summary goes to STDERR so a caller capturing stderr (the selftest's
