@@ -156,8 +156,8 @@ if [ "$FAIL" -ne 0 ]; then
   echo ""
   echo "FAIL: unresolved cross-surface references found."
   echo "Either complete the consumer-side update (the referenced artifact was"
-  echo "deleted/renamed) or restore the artifact. See §5.0 triage protocol in"
   echo "deleted/renamed) or restore the artifact."
+  exit 1
 fi
 
 echo "OK: all skill↔template/deleted-skill cross-references resolve."
