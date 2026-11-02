@@ -303,7 +303,9 @@ build_hkask() {
 # Strip policy: release builds strip (binary size); --fast (release-fast)
 # keeps the full debug symbols the profile builds — its documented purpose
 # is debugger workflows, and stripping at install would silently break
-# that promise.
+# that promise. (The profile splits its DWARF into .dwo sidecars under the
+# target tree — split-debuginfo = "unpacked" — so the linked --fast binary
+# itself stays small; the sidecars carry the symbols.)
 install_binaries() {
     local workspace_root="$HKASK_SOURCE_DIR"
     local zed_profile_dir strip_binaries

@@ -17,6 +17,13 @@
 # profile, or install.sh reverting to one `--release` invocation)
 # reintroduces the burn silently. This check fails CI first.
 #
+# The --fast binary-size defect (2026-11-02): release-fast's debug = "full"
+# embedded full DWARF in the linked binary, so every --fast install shipped
+# a ~7 GB executable (6.4 GB of it .debug_* sections) — the installer
+# deliberately does not strip the debugger-workflow profile.
+# split-debuginfo = "unpacked" keeps the profile's full debug info in .dwo
+# sidecars under the target tree; the linked binary lands ~0.4 GB.
+#
 # Usage: bash kask/scripts/build/check-build-profile.sh  (from repo root)
 # Exit codes: 0 = seam intact, 1 = drift detected
 
@@ -83,6 +90,14 @@ grep -q 'target/release-fast' "$INSTALL_SH" \
 if grep -qE 'HKASK_BUILD_TYPE="debug"|target/debug' "$INSTALL_SH"; then
     fail "install.sh must not offer a dev-profile build route (the removed --debug footgun)"
 fi
+
+# 3c. The --fast profile must split its full DWARF into .dwo sidecars (D46,
+# 2026-11-02): with debug = "full" embedded, each --fast link produces a
+# ~7 GB binary that the installer (by policy) ships unstripped. The split
+# keeps the linked binary ~0.4 GB while the target tree keeps the symbols
+# for debugger workflows.
+grep -A5 '^\[profile\.release-fast\]' "$CARGO_TOML" | grep -q 'split-debuginfo = "unpacked"' \
+    || fail "[profile.release-fast] must set split-debuginfo = \"unpacked\" (D46) — embedded full DWARF links a ~7 GB installed binary"
 
 # 4. The self-observing trace is wired (the observability half of D46).
 grep -q 'build-monitor.sh' "$INSTALL_SH" \
@@ -178,4 +193,4 @@ if [ "$rc" -ne 42 ]; then
     fail "clippy wrapper must propagate Cargo's failure status (D52): rc=$rc"
 fi
 
-echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace"
+echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace, --fast DWARF split"
