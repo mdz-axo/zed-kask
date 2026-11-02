@@ -238,8 +238,7 @@ fine rows preserved verbatim), taking the shipped bundle from 1.29 GiB
 to 465,879,450 bytes (0.43 GiB) — 66% on top of the dedupe's 47%. The
 recall cost is gated on the calibration harness's own replicate spread
 (`run-retrieval-replicates.sh`: both recall@5 deltas equal their noise
-floors, both int8 medians inside the float32 arms' observed ranges; the
-trust-reference-model subset 15/15 in every replicate of both arms; one
+floors, both int8 medians inside the float32 arms' observed ranges; one
 secondary metric, correct_source_mrr, shifted 0.004 beyond its spread —
 disclosed). Conversion is explicit (`convert-vec0-int8`), never an open-time
 migration: a read-write open of a sealed database rewrites its header page
@@ -378,14 +377,6 @@ do not force the prior 27,518/55,036 counts. The build skill specifies a single
 canonical rebuild from retained sources and verified obsolete-artifact deletion,
 without backups or a second Brooks corpus. Those are operator data operations,
 not automatic behavior of a docs update.
-
-The trust-removal revision (2026-11-01, run `4d4ff2a2…`, registry
-commit `775d7cdd03`) re-labels the three kask-authored trust sources as
-historical in place: the expectation-ledger/trust-state/C_trust
-mechanism prose moves to past tense with the removal date, the
-conceptual bodies unchanged, 67→72 fine rows for the three sources, and
-the post-ship probe returns zero live-pattern passages through the
-federated path.
 
 The kanban-restore revision (same day, run `92d7e24b…`, registry commit
 `e39c6b4d2c`) publishes the restored

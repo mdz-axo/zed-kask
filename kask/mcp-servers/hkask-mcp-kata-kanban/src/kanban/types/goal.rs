@@ -7,9 +7,9 @@ use schemars::JsonSchema;
 /// (never an in-place field swap), updates the key-for-key shape pin in
 /// tests/goal_lifecycle.rs, and retires the previous shape's rows under the
 /// Forward-only reset policy (GOAL_INTERFACE.md "Schema evolution"). The
-/// 2026-11-01 removal of `verdicts`/`trust_clause`/`trust_events` without a
-/// bump made every stored schema-3 row undecodable — the outage that made
-/// this discipline load-bearing.
+/// 2026-11-01 removal of retired schema-3 fields without a bump made every
+/// stored schema-3 row undecodable — the outage that made this discipline
+/// load-bearing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Goal {

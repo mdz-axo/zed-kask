@@ -17,10 +17,9 @@ the human-authority verification ledger over immutable requirements
 drainer, and the agent-side native ActionChoice surface
 `crates/agent/src/tools/goal_tools.rs`) — drawn from the goal-setting,
 AI-alignment, and kata/kanban literature, following the kanban-board
-precedent. It exists because the goal system took two schema shocks (the
-trust-system addition and its removal, 2026-10-27..2026-11-01) and the
-2026-11-02 recomposition must anchor on published models rather than
-re-invent. Research run `6eb1d124a8cb38c4` (2026-11-02) supplies the
+precedent. It exists because the goal system took two schema shocks
+(2026-10-27..2026-11-01) and the 2026-11-02 recomposition must anchor on
+published models rather than re-invent. Research run `6eb1d124a8cb38c4` (2026-11-02) supplies the
 citations; the anchor selection was stress-tested through grill-me,
 essentialist, improv, hypothesis-framer and diagnose passes (10-artifact
 evidence set: 6 domains, 10 independent clusters, sensitivity stable).
@@ -74,18 +73,6 @@ evidence set: 6 domains, 10 independent clusters, sensitivity stable).
    outcome (Brier-scored against a matched baseline; unknown is unscored;
    no probability is synthesized for an ordinary goal).
 
-## The anti-model
-
-The trust system (2026-10-27..2026-10-31) priced worker compliance on goals
-via an agent-operated ledger (`trust_clause`, `trust_events`,
-`trust_summary`). It failed exactly as the reward-hacking literature
-predicts: a self-reported proxy under optimization pressure is a Goodhart
-channel. The operator ruling of 2026-10-31/2026-11-01 deleted it — the goal
-verdicts included — and the 2026-11-02 recomposition does not resurrect it.
-Where the trust clause tried to protect expectations with agent accounting,
-the structural protections (anchors 2–4) already do: consent, frozen
-specification, independent assessment, human-only closure.
-
 ## The schema-evolution contract (2026-11-02)
 
 A change to the stored row shape bumps `schema_version` — never an in-place
@@ -94,11 +81,11 @@ field swap. The current field set is pinned key-for-key by test
 as visible decode failures that leave stored bytes unchanged. Obsolete rows
 (superseded versions, or retired-field shapes) are removed by an explicit
 operator-ruled one-time reset under the Forward-only policy — never by
-runtime compatibility. The 2026-11-01 removal of `verdicts` /
-`trust_clause` / `trust_events` without a bump made every stored schema-3
-row undecodable (the outage that made this discipline load-bearing); the
-executed reset of 2026-11-02 removed the ten obsolete rows and their recall
-projections (`GOAL_INTERFACE.md` records it).
+runtime compatibility. The 2026-11-01 removal of retired schema-3 fields
+without a bump made every stored schema-3 row undecodable (the outage that
+made this discipline load-bearing); the executed reset of 2026-11-02 removed
+the ten obsolete rows and their recall projections (`GOAL_INTERFACE.md`
+records it).
 
 ## Boundaries
 

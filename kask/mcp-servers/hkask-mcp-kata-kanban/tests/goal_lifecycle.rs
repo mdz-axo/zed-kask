@@ -711,9 +711,9 @@ fn declaration_and_worker_progress_preserve_exact_criterion_obligations() {
 /// The versioning discipline (GOAL_INTERFACE.md "Schema evolution"): the
 /// stored row shape is pinned key-for-key. A field-set change must bump
 /// `schema_version`, update this pin, and retire the old shape's rows under
-/// the Forward-only reset policy — never swap fields in place (the 2026-11-01
-/// removal of `verdicts`/`trust_clause`/`trust_events` without a bump made
-/// every stored schema-3 row undecodable).
+/// Forward-only reset policy — never swap fields in place (the 2026-11-01
+/// removal of retired schema-3 fields without a bump made every stored
+/// schema-3 row undecodable).
 #[test]
 fn goal_row_shape_is_pinned_to_the_current_schema() {
     let f = Fixture::new();
@@ -757,38 +757,37 @@ fn goal_row_shape_is_pinned_to_the_current_schema() {
     );
 }
 
-/// The 2026-11-01 operator ruling retired `verdicts` and the trust-schema
-/// fields from schema 3. Rows still carrying a retired name are obsolete
-/// under the Forward-only policy: decode fails visibly and the failed read
-/// never rewrites stored bytes.
+/// The 2026-11-01 operator ruling retired the schema-3 fields no longer
+/// in the current shape (including `verdicts`). Rows still carrying a
+/// retired name are obsolete under the Forward-only policy: decode fails
+/// visibly and the failed read never rewrites stored bytes.
 #[test]
-fn retired_trust_and_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged() {
-    for field in ["verdicts", "trust_clause", "trust_events"] {
-        let f = Fixture::new();
-        let goal = f
-            .service
-            .goal_create(declaration(), f.owner)
-            .expect("current goal");
-        let mut value = serde_json::to_value(&goal).expect("goal JSON");
-        value[field] = serde_json::json!([]);
-        let key = format!("retired-{field}");
-        let store = f.store();
-        store
-            .insert(&HMem::new("kanban:goal", &key, value.clone(), f.owner))
-            .expect("retired-field fixture");
-        let listed = f
-            .service
-            .goal_list(&f.owner)
-            .expect_err("retired field fails visibly");
-        assert!(
-            listed.to_string().contains("goal decode"),
-            "{field}: {listed}"
-        );
-        let rows = store.query_by_entity("kanban:goal").expect("goal rows");
-        let row = rows
-            .iter()
-            .find(|row| row.attribute == key)
-            .expect("fixture row survives the failed read");
-        assert_eq!(row.value, value, "{field}: stored bytes changed");
-    }
+fn retired_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged() {
+    let field = "verdicts";
+    let f = Fixture::new();
+    let goal = f
+        .service
+        .goal_create(declaration(), f.owner)
+        .expect("current goal");
+    let mut value = serde_json::to_value(&goal).expect("goal JSON");
+    value[field] = serde_json::json!([]);
+    let key = format!("retired-{field}");
+    let store = f.store();
+    store
+        .insert(&HMem::new("kanban:goal", &key, value.clone(), f.owner))
+        .expect("retired-field fixture");
+    let listed = f
+        .service
+        .goal_list(&f.owner)
+        .expect_err("retired field fails visibly");
+    assert!(
+        listed.to_string().contains("goal decode"),
+        "{field}: {listed}"
+    );
+    let rows = store.query_by_entity("kanban:goal").expect("goal rows");
+    let row = rows
+        .iter()
+        .find(|row| row.attribute == key)
+        .expect("fixture row survives the failed read");
+    assert_eq!(row.value, value, "{field}: stored bytes changed");
 }

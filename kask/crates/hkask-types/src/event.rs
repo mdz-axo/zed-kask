@@ -96,10 +96,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.agent",
     "reg.affordance",
     "reg.gate",
-    // ── Trust ledger removed 2026-11-01 with the trust system (9d2e336a75,
-    // 334b7b0f9e, operator ruling); the decode-back-compat admission was
-    // unregistered 2026-11-02 — zero emitters; pre-removal rows decode via
-    // the reg.inference fallback in the regulation store. ──
     // Variety (algedonic alerts): the SpanKind::VarietyAlgedonicAlert path
     // constructs ("reg.variety", "algedonic_alert") — the regulation loop's
     // pain-signal span. Live via Span::from_kind, not string literals.

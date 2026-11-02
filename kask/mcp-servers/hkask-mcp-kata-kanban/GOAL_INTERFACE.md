@@ -31,8 +31,8 @@ recall projections are removed by an explicit one-time reset, not a runtime
 migration, archive, or compatibility subsystem.
 
 **Executed reset — 2026-11-02 (operator ruling, disposition B):** ten stored
-schema-3 goal rows (written under the pre-removal shape that still carried
-`verdicts` and the trust-schema fields; census 10 obsolete / 0 current) and all
+schema-3 goal rows (written under the pre-removal schema-3 shape; census 10
+obsolete / 0 current) and all
 ten `curator:goal:` recall projections were removed by the env-gated one-time
 reset (`tests/obsolete_goal_reset.rs`). The activation goal
 3e024639-c477-4d65-8006-25c845f7801f (human closure accomplished_achieved
@@ -48,7 +48,7 @@ retired by a removal ruling, are obsolete data under the Forward-only policy.
 The current field set is pinned key-for-key by test
 (`goal_row_shape_is_pinned_to_the_current_schema`), and retired names are
 pinned as visible decode failures that leave stored bytes unchanged
-(`retired_trust_and_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged`).
+(`retired_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged`).
 
 The canonical `kanban:goal` row is keyed by the goal ID. Only schema version **3**
 is accepted. `goal_list(owner)` returns `Vec<Goal>`; the MCP list returns that
