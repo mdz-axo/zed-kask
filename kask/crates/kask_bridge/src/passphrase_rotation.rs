@@ -75,7 +75,7 @@ pub struct PendingRotationState {
 
 /// What `apply_db_rotation` did, for honest startup logging.
 #[derive(Debug)]
-pub struct RotationSummary {
+pub(crate) struct RotationSummary {
     pub rotated: Vec<PathBuf>,
     pub already_new: Vec<PathBuf>,
     pub missing: Vec<PathBuf>,
@@ -83,7 +83,7 @@ pub struct RotationSummary {
 }
 
 /// Absolute path of the pending-rotation record.
-pub fn pending_rotation_path() -> PathBuf {
+pub(crate) fn pending_rotation_path() -> PathBuf {
     hkask_types::agent_paths::resolve_under_data_dir(Path::new(PENDING_ROTATION_RELATIVE_PATH))
 }
 
@@ -209,7 +209,7 @@ pub fn run_pending_db_passphrase_rotation() -> Result<bool, PassphraseRotationEr
 /// Classify and rotate the confirmed databases from `old_passphrase` to
 /// `new_passphrase`. Pure core of the startup runner — explicit keys and
 /// paths keep it testable against disposable databases.
-pub fn apply_db_rotation(
+pub(crate) fn apply_db_rotation(
     old_passphrase: &str,
     new_passphrase: &str,
     paths: &[PathBuf],

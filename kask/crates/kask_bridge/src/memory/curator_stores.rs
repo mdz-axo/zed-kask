@@ -106,7 +106,7 @@ fn persist_skill_span(
 /// Load the durable operator-feedback history in chronological order.
 /// Malformed paths are surfaced and excluded rather than converted into a
 /// fabricated skill identity.
-pub fn load_operator_feedback(
+pub(crate) fn load_operator_feedback(
     archive: &hkask_storage::RegulationArchive,
 ) -> Result<Vec<(String, serde_json::Value)>, InfrastructureError> {
     let mut feedback = Vec::new();
