@@ -46,9 +46,10 @@ use crate::research::{
     PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
     RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
     SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
-    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool,
-    cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab, parse_closed_vocab,
-    parse_closed_vocab_const, provider_profile, score_evidence_set, validated_fetch_client,
+    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebError, WebSearchPort,
+    build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab,
+    parse_closed_vocab, parse_closed_vocab_const, provider_profile, score_evidence_set,
+    validated_fetch_client,
 };
 
 // ── Constants ──
@@ -1666,9 +1667,34 @@ impl ResearchServer {
                     // preprint and the published version of the same work)
                     // stay consumer-verifiable via the surfaced list.
                     let mut candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
-                        McpToolError::failed_precondition(format!(
-                            "Crossref bibliographic search failed: {e}"
-                        ))
+                        // The kind is load-bearing for the reliability ledger:
+                        // a Crossref 429 burst (observed 2026-11-02: parallel
+                        // run-scoped resolve_paper calls all Crossref-429'd,
+                        // the outcome breakdown carried `failed_precondition`
+                        // and the sensor degraded to 0.75 on transient
+                        // throttling) must surface as external rate limiting,
+                        // not as a tool defect. The honest kind per variant:
+                        // 429 → `rate_limited` (still degrades — the tool
+                        // genuinely failed for the caller — but the breakdown
+                        // names the remedy: back off, don't diagnose the
+                        // tool); transport failure → `unavailable` (the
+                        // config-gap class the ledger's not-tool-fault policy
+                        // already excludes from the success-rate math).
+                        match e {
+                            WebError::RateLimited(detail) => {
+                                McpToolError::rate_limited(format!(
+                                    "Crossref bibliographic search rate limited: {detail}"
+                                ))
+                            }
+                            WebError::ProviderUnavailable(detail) => {
+                                McpToolError::unavailable(format!(
+                                    "Crossref bibliographic search unavailable: {detail}"
+                                ))
+                            }
+                            other => McpToolError::failed_precondition(format!(
+                                "Crossref bibliographic search failed: {other}"
+                            )),
+                        }
                     })?;
                     candidates.sort_by_key(|c| {
                         !crate::research::providers::title_matches_exactly(&title, &c.title)

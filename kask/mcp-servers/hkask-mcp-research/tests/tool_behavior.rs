@@ -503,6 +503,51 @@ defaults_pool! {
     }
 }
 
+/// Stub whose `resolve_title` errors with `WebError::RateLimited` —
+/// the 2026-11-02 incident class: a Crossref 429 burst (5 parallel
+/// run-scoped resolve_paper title calls, all bypassing the cache)
+/// classified as `failed_precondition`, reading "tool defect" in the
+/// reliability breakdown instead of "externally throttled." The fix
+/// (this change): a `RateLimited` WebError surfaces as `McpErrorKind::RateLimited`.
+struct RateLimitedTitlePool;
+
+defaults_pool! {
+    RateLimitedTitlePool, "stub-rate-limited-title",
+    resolve_title: {
+        Err(WebError::RateLimited(
+            "Crossref rate limited: 429 Too Many Requests".to_string(),
+        ))
+    }
+}
+
+/// Stub whose `resolve_title` errors with `WebError::ProviderUnavailable` —
+/// pins the honest `Unavailable` classification: a Crossref transport
+/// failure is a config-gap (the ledger's `is_not_tool_fault_kind` set),
+/// never a tool defect.
+struct UnavailableTitlePool;
+
+defaults_pool! {
+    UnavailableTitlePool, "stub-unavailable-title",
+    resolve_title: {
+        Err(WebError::ProviderUnavailable(
+            "Crossref request failed: connection refused".to_string(),
+        ))
+    }
+}
+
+/// Stub whose `resolve_title` errors with `WebError::ProviderError` — a
+/// genuine protocol failure that stays a tool fault (`FailedPrecondition`).
+struct ProviderErrorTitlePool;
+
+defaults_pool! {
+    ProviderErrorTitlePool, "stub-provider-error-title",
+    resolve_title: {
+        Err(WebError::ProviderError(
+            "Crossref error 500: internal server error".to_string(),
+        ))
+    }
+}
+
 /// Generate the `InferencePort` impl for a test stub. `generate` is the
 /// surface these tests never exercise — one structured `Connection` error
 /// carrying the stub's own message, single-sourced here. `rerank` (and
@@ -2923,6 +2968,74 @@ async fn resolve_paper_title_mode_rejects_both_and_neither_with_typed_errors() {
     assert!(
         error.message.contains("either query"),
         "rejection names the contract: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn resolve_paper_title_mode_classifies_crossref_429_as_rate_limited() {
+    // The 2026-11-02 incident: 5 parallel run-scoped resolve_paper
+    // title calls, all Crossref-429'd (bypassing the response cache),
+    // each classified `failed_precondition` — the reliability breakdown
+    // read "tool defect" instead of "externally throttled," and the
+    // sensor degraded to 0.75 on transient throttling. The fix: a
+    // Crossref 429 surfaces as `RateLimited` — still degrades (the tool
+    // genuinely failed for the caller) but the breakdown names the
+    // remedy: back off, don't diagnose the tool.
+    let server = make_server_with_pool(Arc::new(RateLimitedTitlePool));
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: Some("A Rate Limited Search".to_string()),
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::RateLimited);
+    assert!(
+        error.message.contains("Crossref rate limited"),
+        "names the external throttle: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn resolve_paper_title_mode_classifies_transport_failure_as_unavailable() {
+    // A Crossref transport failure (connection refused, timeout) is a
+    // transient external failure — the config-gap class the ledger
+    // excludes from the success-rate math, never a tool defect.
+    let server = make_server_with_pool(Arc::new(UnavailableTitlePool));
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: Some("An Unavailable Search".to_string()),
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::Unavailable);
+    assert!(
+        error.message.contains("Crossref request failed"),
+        "names the transport failure: {}",
+        error.message
+    );
+}
+
+#[tokio::test]
+async fn resolve_paper_title_mode_classifies_provider_error_as_failed_precondition() {
+    // A genuine Crossref protocol failure (HTTP 500) stays a tool
+    // fault: the tool is broken, the caller should retry later or
+    // diagnose, not back off.
+    let server = make_server_with_pool(Arc::new(ProviderErrorTitlePool));
+    let error = err(server
+        .resolve_paper(Parameters(ResolvePaperRequest {
+            query: None,
+            title: Some("A Provider Error Search".to_string()),
+            run_id: None,
+        }))
+        .await);
+    assert_error_kind(&error, McpErrorKind::FailedPrecondition);
+    assert!(
+        error.message.contains("Crossref error 500"),
+        "names the protocol failure: {}",
         error.message
     );
 }
