@@ -132,7 +132,7 @@ pub(crate) trait WebSearchProvider: Send + Sync {
 /// validation. This is async because it resolves the hostname via DNS to
 /// defeat hostname-based SSRF bypasses (CWE-918/441) — a non-literal hostname
 /// resolving to a private/loopback IP is rejected here.
-pub async fn validate_provider_url(url: &str) -> Result<(), WebError> {
+pub(crate) async fn validate_provider_url(url: &str) -> Result<(), WebError> {
     validate_tool_url_with_dns(url)
         .await
         .map_err(|e| WebError::BadArgs(e.message))
