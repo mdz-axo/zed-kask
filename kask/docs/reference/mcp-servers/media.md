@@ -171,19 +171,24 @@ per-item causes. It owns and removes its scratch batch on every terminal
 path, removes failed durable copies, and aggregates failures rather than
 emitting one warning per frame.
 
-The media panel uses latest-request ownership for Library, Queue, and Detail.
+The media panel uses latest-request ownership for its Library mode, the
+workspace's inspector, and the activity layer's job resources.
 Mutation-driven and manual Library reloads supersede older same-page reads.
 Direct trim/concat edits are serialized and conflicting controls stay disabled
 until the admitted operation completes or fails. Both success and failure
 callbacks are epoch-gated; a malformed or failed refresh preserves the
 atomically committed last-good snapshot. Library pagination is user-reachable.
 Loading, ready/empty, degraded, and failed states are distinct, and progress
-does not use error styling. Queue polling is
-single-flight and uses a GPUI-native timer only while the Queue tab is active
-and a nonterminal job exists; it stops on hide, terminal completion, or error.
-Job responses use one strict typed payload containing `jobs`, `total`, `limit`,
-`has_more`, `history_scope`, and `restart_behavior`; process-local restart loss
-plus bounded terminal-record retention are disclosed. Legacy arrays and
+does not use error styling. Job polling is single-flight and uses a
+GPUI-native timer while any nonterminal job is observed — on any mode, since
+the activity layer is ambient, never a place the operator visits. The
+newest-first page cannot see a live job hidden behind newer completions, so
+when the page reports `has_more`, three status-filtered probes (one per
+nonterminal status, each filtered server-side before the sort and limit)
+observe the complete live set past the page limit. The process-local
+restart-loss and bounded-history disclosure renders in the activity drawer's
+footer. Job responses use one strict typed payload containing `jobs`, `total`,
+`limit`, `has_more`, `history_scope`, and `restart_behavior`. Legacy arrays and
 incomplete objects are rejected.
 
 The media widget validates untrusted block locators before loading: local paths
@@ -664,61 +669,66 @@ Three tests pin the mapping: `omc_mapping_covers_all_registered_tools` (every re
 - **YouTube discovery and acquisition:** `youtube_search` (SerpApi metadata and ranking) → select URL → `video_fetch` (yt-dlp binary retrieval) → `video_clip` / `video_add_caption` / `video_to_gif`; `video_extract_frames` turns keyframes back into searchable assets
 - **Async research processing:** `job_submit` (`transcribe`, `audio_trim`, `audio_concat`, `video_clip`, or `video_concat`) → `job_status` → `job_cancel` if needed; process-local history is not durable transcript storage.
 
-## Media panel — transcript surface (2026-10-26)
+## Media panel — transcript surface (2026-10-26; realigned 2026-11-02)
 
 The zed-side media panel consumes this server's educt tool surface as a
 direct-manipulation workspace — no agent turn in the loop
-(`crates/media_panel/src/media_viewer.rs`).
+(`crates/media_panel/src/media_viewer.rs`). Transcripts live on the surfaces
+that use them — the Library mode's recordings section and the asset
+workspace's transcript sub-surface — never a standalone destination.
 
-- **Browse**: the Transcript tab's idle state lists every stored recording
+- **Browse**: the Library's recordings section lists every stored recording's
+  transcripts nested beneath the recording's row
   (`educt_list_transcripts` at the server's 500 cap; media path + words +
   timings + the five-state alignment per row, lifecycle-protected at
-  `load_transcript_listing`, media_viewer.rs:1900) — hand-annotatable rows
+  `load_transcript_listing`, media_viewer.rs:3199) — hand-annotatable rows
   (original/aligned) carry no extra flag; gated rows say so before the
   click (`transcript_alignment_note`: "re-anchored — read view (annotation
   gated)", "unaligned — needs a realignment layer"; untimed rows carry the
   no-timings text). The alignment is the same working-transcript
-  computation the workspace gate uses, so the browser never disagrees
-  with the opened view. Click opens the workspace, and an in-workspace
-  `← all recordings` affordance returns to the browser
-  (`close_transcript_workspace`, :1709). Each row also offers a two-click
+  computation the workspace gate uses, so the rows never disagree
+  with the opened view. Click opens the workspace's transcript sub-surface,
+  and the header's close affordance returns to the mode
+  (`close_transcript_workspace`, :2454). Each row also offers a two-click
   delete — Delete arms, Confirm delete dispatches `educt_delete_transcript`
-  (`delete_transcript_recording`, :1815; the listing reloads with the row
+  (`delete_transcript_recording`, :3114; the listing reloads with the row
   gone, and the server preserves durable exports and rendered reels
-  detached from the removed record). Per-asset transcripts remain
-  visible in Detail's section alongside reel provenance, carrying the same
-  alignment note.
+  detached from the removed record). Unlinked transcripts — recordings
+  that left the gallery index — trail in their own Library section with
+  honest degradation copy. Per-asset transcripts remain
+  visible in the inspector pane's Transcripts tab alongside reel
+  provenance, carrying the same alignment note.
 - **Workspace**: one strict-parsed `educt_get_transcript` dispatch
-  (`parse_transcript_payload`, media_viewer.rs:5616) drives everything:
-  paragraph blocks (`build_pane_blocks`, :5505), speaker labels, the layers
+  (`parse_transcript_payload`, media_viewer.rs:8758) drives everything:
+  paragraph blocks (`build_pane_blocks`, :8646), speaker labels, the layers
   strip, highlight overlays, and strike line-through marks. The bound player is the same shared widget
-  the Media tab and inline renders use (one player per media identity);
-  clicking a word seeks to its start (`seek_workspace_transcript`, :2824);
+  the workspace and inline renders use (one player per media identity);
+  clicking a word seeks to its start (`seek_workspace_transcript`, :4142);
   follow-along marks the word containing playback at 4 Hz, polling only
-  while playing (`current_word_index`, :5496, over `MediaWidget::transport_position_secs`
+  while playing (`current_word_index`, :8611, over `MediaWidget::transport_position_secs`
   + `is_transport_playing` — the cross-media position and playing sources).
   A reload keeps the last-good workspace visible; only an explicit open or
   the back affordance clears it. A failed media load never dead-ends the
   workspace: Back renders above the player, the error shows as a
   dismissible status line, and range selection stays reachable (pinned by
   `transcript_media_failure_keeps_navigation_and_curation_reachable`,
-  media_viewer.rs:9361).
+  media_viewer.rs:14313).
 - **Annotate**: an explicit Select-range mode turns word clicks into a
-  two-click range (`handle_word_selection`, :1982) that opens a label
-  editor (`open_label_editor`, :2561; `render_label_editor`, :2675) —
+  two-click range (`handle_word_selection`, :3281) that opens a label
+  editor (`open_label_editor`, :3860; `render_label_editor`, :3990) — a
   a focused input over the range; Enter confirms, Escape cancels, an
   empty create confirm keeps the default label `research-highlight`
-  (`confirm_label_edit`, :2587, single-flight: an in-flight edit refuses
+  (`confirm_label_edit`, :3892, single-flight: an in-flight edit refuses
   visibly and keeps the typed buffer), and clipboard text pastes
   (control characters dropped). Create dispatches
-  `educt_annotation_create` (`create_workspace_highlight`, :2069);
+  `educt_annotation_create` (`create_workspace_highlight`, :3368);
   researcher-authored rows (layer-provenance identified — the pane's
   detection mirrors the server's researcher-annotation list guard
   exactly (the mutate guards additionally require exactly one entry), so
   the legacy gather layers and compose EDLs never render as annotations) also offer
   rename via `educt_annotation_update` with the typed label over the
-  unchanged range and note (`rename_workspace_highlight`, :2473) and delete
-  via `educt_annotation_delete` (`delete_workspace_annotation`, :2387 —
+  unchanged range and note (`rename_workspace_highlight`, :3772) and delete
+  via `educt_annotation_delete` (`delete_workspace_annotation`, :3686 —
   kind-dispatched: highlight or strike).
   Every completion reloads the workspace so overlays, rows, and label
   colors reflect it (`apply_workspace_annotation_result` names its subject
@@ -726,10 +736,10 @@ direct-manipulation workspace — no agent turn in the loop
 - **Strike (2026-10-27)**: the same selection can cut instead of label — the
   editor's create arm offers a strike affordance dispatching
   `educt_annotation_create` with kind strike (blank label/note: an
-  unannotated single-Cut EDL; `strike_selected_range`, :2148 →
-  `create_workspace_strike`, :2169). Struck words render line-through
+  unannotated single-Cut EDL; `strike_selected_range`, :3447 →
+  `create_workspace_strike`, :3468). Struck words render line-through
   (index-identical views only; overlapping marks compose field-wise via
-  `resolved_highlight_runs`, :5252 — a struck word inside a highlight keeps
+  `resolved_highlight_runs`, :7942 — a struck word inside a highlight keeps
   both the background and the line-through), a Strikes list offers
   click-to-seek rows and unstrike, and the pane parses strikes under the
   server's strike identity only (user + researcher_annotation + exactly
@@ -737,7 +747,7 @@ direct-manipulation workspace — no agent turn in the loop
   never render as strikes.
 - **Reel editing + generation (2026-10-27)**: the pane offers three compose
   modes, each building the reel EDL directly from its annotations
-  (`compose_reel_params`, :5431) — assemble from the toggled-in
+  (`compose_reel_params`, :8546) — assemble from the toggled-in
   researcher-authored highlights (union-merged so overlapping selections
   stay disjoint), reduce by cutting every strike out of the whole
   transcript, and mixed (keeps minus strikes). Membership keys on provenance
@@ -746,14 +756,14 @@ direct-manipulation workspace — no agent turn in the loop
   wrapper, so reduce shows on a strikes-only transcript; Mixed with nothing
   toggled in refuses with its empty status rather than silently composing
   the reduce reel. Each chains `educt_store_layer` → `educt_render_edl`
-  (`compose_workspace_reel`, :2285); the compose provenance carries the
+  (`compose_workspace_reel`, :3584); the compose provenance carries the
   pane_reel_compose template — never researcher_annotation — so a composed
   single-cut EDL never re-parses as a researcher strike. The rendered reel
   lands as a playable gallery asset through the display-hint ingestion; the
-  per-mode compose progress surfaces on the tab's status line.
+  per-mode compose progress surfaces on the sub-surface's status line.
 - **Alignment gating (D5)**: text overlays and hand highlights exist only on
   index-identical views (original/aligned) — the pure five-state gate with
-  visible reasons is `highlight_range_gate`, :5181; re-anchored views list
+  visible reasons is `highlight_range_gate`, :7871; re-anchored views list
   ranges with a visible note — the panel never re-implements the server's
   projection (the server-side `reanchored_index_map` is the named v2 path).
 

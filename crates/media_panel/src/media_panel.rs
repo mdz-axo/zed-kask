@@ -1,10 +1,14 @@
 //! Media Panel — a Steer-only surface for the `hkask-mcp-media` MCP server.
 //!
 //! A cross-domain curator conversation supports ingesting, organizing,
-//! annotating, and extracting existing research evidence. The viewer exposes
-//! Media, Library, Queue, and Detail tabs; chat drives the server tools.
-//! The prompt highlights the server's generated `TOOL_NAMES` without hiding
-//! other MCP tools. Source-linked media results render inline (the D18 seam).
+//! annotating, and extracting existing research evidence. The viewer offers
+//! two task modes — Library (indexed assets, recordings with their
+//! transcripts) and the Asset workspace (the selected asset's player and
+//! edit toolbar beside a toggleable inspector pane) — plus an ambient
+//! activity layer: per-asset job badges and an on-demand drawer; chat drives
+//! the server tools. The prompt highlights the server's generated
+//! `TOOL_NAMES` without hiding other MCP tools. Source-linked media results
+//! render inline (the D18 seam).
 
 pub mod media_viewer;
 pub mod panel_button;
@@ -96,7 +100,8 @@ pub struct MediaPanel {
     project: Entity<project::Project>,
     fs: std::sync::Arc<dyn fs::Fs>,
     workspace_handle: WeakEntity<Workspace>,
-    /// The tabbed viewing pane (Media / Library).
+    /// The viewing pane — the Library and Workspace modes plus the
+    /// ambient activity drawer.
     viewer: Entity<MediaViewer>,
     /// The observed conversation thread + the observation subscription.
     /// Wired lazily in `render` once the Steer conversation exists.
@@ -272,8 +277,12 @@ fn steer_system_prompt() -> SharedString {
          follow returned continuation offsets and retain source/timing citations. \
          A lexical match is not semantic retrieval or verified evidence. Use face identification \
          only when explicitly selected by the operator. Do not synthesize \
-         research evidence. Media results render inline; the Library, Queue, and \
-         Detail tabs expose indexed assets, research jobs, and provenance."
+         research evidence. Media results render inline; the viewer's two \
+         surfaces are the Library mode (indexed assets, recordings with their \
+         transcripts) and the Asset workspace (the selected asset's player and \
+         edit toolbar beside a toggleable inspector pane), and job state reaches \
+         the operator as ambient activity — badges on affected assets and an \
+         on-demand drawer, never a navigation destination."
     );
     prompt.into()
 }

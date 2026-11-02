@@ -3,7 +3,7 @@ title: "Media panel navigation redesign — plan (two task modes + activity laye
 audience: [developers extending the media panel, operators]
 last_updated: 2026-11-02
 version: "1.0.0"
-status: "Active — operator-ruled 2026-11-02; phases start on the operator's go"
+status: "In execution — operator-ruled 2026-11-02; A–C landed (19ce009a62 asset workspace, 1644a9e20f activity layer, 5006241eba transcript relocation); D (docs, steer text, and removal accounting) in flight"
 domain: "Media panel / UI navigation"
 mds_categories: [domain, composition, lifecycle]
 ---
