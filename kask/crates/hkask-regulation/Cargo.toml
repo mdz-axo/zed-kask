@@ -10,7 +10,6 @@ path = "src/hkask_regulation.rs"
 
 [dependencies]
 hkask-types.workspace = true
-hkask-memory.workspace = true
 hkask-storage.workspace = true
 
 serde.workspace = true
