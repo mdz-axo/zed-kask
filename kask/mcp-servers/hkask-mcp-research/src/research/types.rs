@@ -303,8 +303,10 @@ pub struct FindSimilarRequest {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExtractRequest {
     pub url: String,
-    /// Accepted values: `markdown` or `json`. PDF bytes are not text extraction;
-    /// an unsupported PDF must surface as an error, not successful Markdown.
+    /// Accepted values: `markdown` or `json`. PDF URLs extract their text
+    /// layer locally (pdf-extract); a scanned PDF with no text layer
+    /// surfaces an error naming the corpus OCR route — never successful
+    /// Markdown, and raw PDF bytes are never returned as content.
     pub format: Option<String>,
     pub json_prompt: Option<String>,
     /// Optional JSON Schema describing the structured output to extract.
@@ -625,6 +627,16 @@ pub struct ProviderFailureRecord {
     pub error: String,
 }
 
+/// A provider excluded from a compound fan-out by its circuit breaker —
+/// distinct from a failure: no request was made. `reason` names the state
+/// (the failure run and the remaining cooldown) so the caller and the
+/// Regulation log see why a configured provider is absent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderSkipRecord {
+    pub kind: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct CompoundSearchResult {
     pub query: String,
@@ -635,6 +647,9 @@ pub struct CompoundSearchResult {
     pub providers_queried: Vec<ProviderInfo>,
     pub providers_succeeded: Vec<String>,
     pub providers_failed: Vec<ProviderFailureRecord>,
+    /// Providers excluded from the fan-out by their circuit breaker — a
+    /// skip, not a failure (no request was made to them).
+    pub providers_skipped: Vec<ProviderSkipRecord>,
     pub total_before_dedup: usize,
     pub duplicates_removed: usize,
 }
@@ -750,6 +765,12 @@ pub(crate) struct SearchOutput {
     /// Providers that were queried but failed, so callers can distinguish a
     /// genuine zero-result search from one where every provider errored.
     pub providers_failed: Vec<ProviderFailureRecord>,
+    /// Providers excluded from the fan-out by their circuit breaker (3+
+    /// consecutive failures). Distinct from `providers_failed`: no request
+    /// was made to a skipped provider, and a skip does not make the response
+    /// uncacheable the way a provider failure does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers_skipped: Vec<ProviderSkipRecord>,
     /// Returned provider hits removed because their parsed URL host violated
     /// the caller's include/exclude domain filter. A zero-result filtered
     /// search is not proof that no relevant primary disclosure exists.
@@ -822,6 +843,7 @@ pub(crate) struct SearchMetadata {
     pub providers_queried: Vec<ProviderInfo>,
     pub providers_succeeded: Vec<String>,
     pub providers_failed: Vec<ProviderFailureRecord>,
+    pub providers_skipped: Vec<ProviderSkipRecord>,
     pub total_before_dedup: usize,
     pub duplicates_removed: usize,
     pub top_rrf_scores: Vec<f64>,
@@ -834,6 +856,7 @@ impl From<&CompoundSearchResult> for SearchMetadata {
             providers_queried: c.providers_queried.clone(),
             providers_succeeded: c.providers_succeeded.clone(),
             providers_failed: c.providers_failed.clone(),
+            providers_skipped: c.providers_skipped.clone(),
             total_before_dedup: c.total_before_dedup,
             duplicates_removed: c.duplicates_removed,
             top_rrf_scores: c.results.iter().take(5).map(|r| r.rrf_score).collect(),

@@ -153,6 +153,40 @@ impl RawFetchProvider {
         })
     }
 }
+
+/// Extract a PDF's text layer via the crate's shared `extract_pdf_text`
+/// (the same `pdf-extract` path the synthetic-feed `pdf_ocr` extractor
+/// uses). This replaces the former refusal "RawFetch cannot extract PDF
+/// content; use a PDF extraction provider" — that message advertised a PDF
+/// extraction provider that did not exist; this is it (2026-11-01: a Locke
+/// & Latham PDF produced a 153-char scraper shell and a typed refusal from
+/// this leg — the chain had no working PDF route at all).
+fn extract_pdf_content(
+    final_url: &reqwest::Url,
+    bytes: &[u8],
+) -> Result<ExtractedContent, WebError> {
+    match crate::research::synthetic::extract_pdf_text(bytes) {
+        Ok((text, true)) => Ok(ExtractedContent {
+            url: final_url.to_string(),
+            content: text,
+            format: "markdown".to_string(),
+            metadata: None,
+        }),
+        // No text layer: a scanned PDF. OCR lives in the corpus server
+        // (`corpus_ocr`) — name the route instead of returning an empty
+        // "success" (the empty-success defect class this server forbids).
+        Ok((_, false)) => Err(WebError::ProviderUnavailable(
+            "PDF has no text layer (scanned images) — download the file and run it \
+             through the corpus server's corpus_ocr pipeline, which handles \
+             scanned PDFs"
+                .to_string(),
+        )),
+        Err(e) => Err(WebError::ProviderError(format!(
+            "PDF text extraction failed: {e}"
+        ))),
+    }
+}
+
 #[async_trait]
 impl WebExtractProvider for RawFetchProvider {
     fn kind(&self) -> &str {
@@ -194,9 +228,11 @@ impl WebExtractProvider for RawFetchProvider {
                     .is_some_and(|mime| mime.eq_ignore_ascii_case("application/pdf"))
             });
         if status.is_success() && pdf_content_type {
-            return Err(WebError::ProviderError(
-                "RawFetch cannot extract PDF content; use a PDF extraction provider".to_string(),
-            ));
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|e| WebError::ProviderError(format!("RawFetch read error: {e}")))?;
+            return extract_pdf_content(&final_url, &bytes);
         }
         let body = resp
             .text()
@@ -209,9 +245,12 @@ impl WebExtractProvider for RawFetchProvider {
             )));
         }
         if body.starts_with("%PDF-") {
-            return Err(WebError::ProviderError(
-                "RawFetch cannot extract PDF content; use a PDF extraction provider".to_string(),
-            ));
+            // Magic fallback: the origin served PDF bytes without the
+            // application/pdf content type. `body` went through lossy text
+            // decode, so binary streams may be mangled — extraction can then
+            // fail honestly rather than return a shell, and the chain falls
+            // through to the next provider.
+            return extract_pdf_content(&final_url, body.as_bytes());
         }
         Ok(ExtractedContent {
             url: final_url.to_string(),
@@ -357,23 +396,105 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 0);
     }
 
-    /// expect: "A PDF is never returned as a successful Markdown extraction."
+    /// Build a minimal, structurally valid single-page PDF whose content
+    /// stream is `content_stream` — enough for pdf-extract's text-layer
+    /// extraction (correct xref offsets computed at build time).
+    fn minimal_pdf(content_stream: &str) -> Vec<u8> {
+        let objects: Vec<String> = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+                .to_string(),
+            format!(
+                "<< /Length {} >>\nstream\n{content_stream}endstream",
+                content_stream.len()
+            ),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets: Vec<usize> = Vec::with_capacity(objects.len());
+        for (idx, obj) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{obj}\nendobj\n", idx + 1).as_bytes());
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in &offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
+
+    fn pdf_response(pdf: &[u8]) -> Arc<Vec<u8>> {
+        let mut response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            pdf.len()
+        )
+        .into_bytes();
+        response.extend_from_slice(pdf);
+        Arc::new(response)
+    }
+
+    /// expect: "A PDF's text layer is extracted and returned as Markdown —
+    /// never raw PDF bytes, and never the former typed refusal." (Replaces
+    /// the 2026-10 refusal pin: RawFetch IS the PDF extraction provider the
+    /// old message advertised — the local leg of the extract chain.)
     #[tokio::test]
-    async fn raw_fetch_rejects_pdf_by_content_type_or_magic() {
-        let (url, _) = http_fixture(Arc::new(b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello".to_vec())).await;
+    async fn raw_fetch_extracts_pdf_text_layer() {
+        let pdf = minimal_pdf("BT /F1 12 Tf 72 720 Td (Hello Extracted World) Tj ET\n");
+        let (url, _) = http_fixture(pdf_response(&pdf)).await;
+        let provider = RawFetchProvider::new().expect("provider");
+        let extracted = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect("PDF text layer extracts");
+        assert!(
+            extracted.content.contains("Hello Extracted World"),
+            "content: {}",
+            extracted.content
+        );
+        assert!(!extracted.content.starts_with("%PDF-"));
+    }
+
+    /// expect: "A scanned PDF (no text layer) surfaces the corpus OCR route,
+    /// not an empty success" — the empty-success defect class this server
+    /// forbids.
+    #[tokio::test]
+    async fn raw_fetch_pdf_without_text_layer_names_the_ocr_route() {
+        let pdf = minimal_pdf("BT /F1 12 Tf 72 720 Td ET\n");
+        let (url, _) = http_fixture(pdf_response(&pdf)).await;
         let provider = RawFetchProvider::new().expect("provider");
         let error = provider
             .extract(&url, &extract_options())
             .await
-            .expect_err("PDF unsupported");
-        assert!(error.to_string().contains("cannot extract PDF content"));
+            .expect_err("no text layer must not be a bare success");
+        let message = error.to_string();
+        assert!(
+            message.contains("corpus_ocr"),
+            "names the OCR route: {message}"
+        );
+        assert!(message.contains("no text layer"), "{message}");
+    }
 
+    /// expect: "An unparseable PDF surfaces a typed extraction error, not a
+    /// hang, a shell, or raw bytes."
+    #[tokio::test]
+    async fn raw_fetch_pdf_parse_failure_surfaces_typed_error() {
         let (url, _) = http_fixture(content_response("%PDF-1.6\nbinary data")).await;
+        let provider = RawFetchProvider::new().expect("provider");
         let error = provider
             .extract(&url, &extract_options())
             .await
-            .expect_err("PDF magic unsupported");
-        assert!(error.to_string().contains("cannot extract PDF content"));
+            .expect_err("garbage PDF must error");
+        assert!(error.to_string().contains("PDF text extraction failed"));
     }
 
     /// expect: "A redirect must not carry my fetch into loopback services." [P4]

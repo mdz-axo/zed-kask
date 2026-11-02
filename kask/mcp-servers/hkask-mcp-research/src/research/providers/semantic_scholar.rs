@@ -1,6 +1,7 @@
 use super::{ProviderSearchOutput, WebError, WebSearchProvider};
 use crate::research::types::*;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// Semantic Scholar academic paper search provider.
 ///
@@ -9,17 +10,33 @@ use async_trait::async_trait;
 /// with abstracts, authors, year, citation count, and external IDs (DOI, ArXiv).
 pub(crate) struct SemanticScholarProvider {
     client: reqwest::Client,
+    /// Optional API key (`x-api-key` header). The keyless free tier shares a
+    /// ~1 req/s global pool; a free key from
+    /// https://www.semanticscholar.org/product/api lifts the limit. The
+    /// provider stays registered either way — keyless is a supported mode.
+    api_key: Option<String>,
+    pacer: super::ProviderPacer,
 }
 
 impl SemanticScholarProvider {
-    pub fn new() -> Result<Self, WebError> {
+    pub fn new(api_key: Option<String>) -> Result<Self, WebError> {
         Ok(Self {
             client: super::provider_http_client()?,
+            api_key,
+            pacer: super::ProviderPacer::new(Duration::from_secs(
+                SEMANTIC_SCHOLAR_MIN_REQUEST_INTERVAL_SECS,
+            )),
         })
     }
 }
 
 const SEMANTIC_SCHOLAR_API_BASE: &str = "https://api.semanticscholar.org/graph/v1";
+
+/// The free tier's published floor ("rate-limited to ~1 request/second"),
+/// enforced outbound so parallel fan-out cannot violate it (observed
+/// 2026-11-01: nine concurrent fusion calls, ~9 concurrent requests here,
+/// all 429ing).
+const SEMANTIC_SCHOLAR_MIN_REQUEST_INTERVAL_SECS: u64 = 1;
 #[async_trait]
 impl WebSearchProvider for SemanticScholarProvider {
     fn kind(&self) -> &str {
@@ -30,6 +47,16 @@ impl WebSearchProvider for SemanticScholarProvider {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+        // Outbound pacing (2026-11-01): parallel tool calls each fan out to
+        // every provider, so concurrent fusion calls make concurrent requests
+        // here; the pacer serializes them at the provider's own floor. The
+        // max wait matches this provider's compound budget — a queued
+        // request that cannot start within the budget is refused honestly
+        // instead of surfacing as an opaque timeout after burning it.
+        self.pacer
+            .wait_turn(Duration::from_secs(COMPOUND_PROVIDER_TIMEOUT_SECS))
+            .await?;
+
         // Build query params: search by keyword, request paper details
         let params: Vec<(&str, String)> = vec![
             ("query", query.query.clone()),
@@ -51,17 +78,16 @@ impl WebSearchProvider for SemanticScholarProvider {
         let (status, body) = {
             let mut attempt: u32 = 0;
             loop {
-                let resp = self
+                let mut request = self
                     .client
                     .get(format!("{SEMANTIC_SCHOLAR_API_BASE}/paper/search"))
-                    .query(&params)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        WebError::ProviderUnavailable(format!(
-                            "Semantic Scholar request failed: {e}"
-                        ))
-                    })?;
+                    .query(&params);
+                if let Some(ref key) = self.api_key {
+                    request = request.header("x-api-key", key);
+                }
+                let resp = request.send().await.map_err(|e| {
+                    WebError::ProviderUnavailable(format!("Semantic Scholar request failed: {e}"))
+                })?;
                 let status = resp.status();
                 let body = resp.text().await.map_err(|e| {
                     WebError::ProviderUnavailable(format!("Semantic Scholar body read failed: {e}"))
@@ -184,15 +210,16 @@ impl WebSearchProvider for SemanticScholarProvider {
 
     async fn health(&self) -> Result<(), WebError> {
         // Quick liveness check with a minimal query
-        let resp = self
+        let mut request = self
             .client
             .get(format!("{SEMANTIC_SCHOLAR_API_BASE}/paper/search"))
-            .query(&[("query", "test"), ("limit", "1")])
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!("Semantic Scholar health check failed: {e}"))
-            })?;
+            .query(&[("query", "test"), ("limit", "1")]);
+        if let Some(ref key) = self.api_key {
+            request = request.header("x-api-key", key);
+        }
+        let resp = request.send().await.map_err(|e| {
+            WebError::ProviderUnavailable(format!("Semantic Scholar health check failed: {e}"))
+        })?;
         if resp.status().is_success() || resp.status().as_u16() == 429 {
             Ok(())
         } else {

@@ -211,6 +211,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_BRAVE_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
+            // Optional — the Semantic Scholar provider is registered
+            // keyless (free tier); the free key lifts the shared
+            // ~1 req/s limit (read via ctx.credentials.get in
+            // build_provider_pool).
+            "HKASK_SEMANTIC_SCHOLAR_API_KEY",
             // DB encryption passphrase — read by resolve_db_passphrase() for
             // the research SQLite DB. Without this, RSS and research-run
             // tools are silently unavailable under governed launch.
@@ -1219,8 +1224,9 @@ mod tests {
     #[test]
     fn research_allowlist_matches_actual_reads() {
         let s = server_by_id("research");
-        // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL.
-        // HKASK_DB_PASSPHRASE is read for the RSS store.
+        // ctx.credentials.get sites: EXA, TAVILY, BRAVE, SERPAPI, FIRECRAWL,
+        // and the optional SEMANTIC_SCHOLAR key. HKASK_DB_PASSPHRASE is read
+        // for the RSS store.
         let creds = s.credentials;
         for key in [
             "HKASK_EXA_API_KEY",
@@ -1228,6 +1234,7 @@ mod tests {
             "HKASK_BRAVE_API_KEY",
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
+            "HKASK_SEMANTIC_SCHOLAR_API_KEY",
         ] {
             assert!(
                 creds.contains(&key),

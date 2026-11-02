@@ -214,6 +214,18 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://firecrawl.dev/",
         shows_in_ui: true,
     },
+    // Semantic Scholar — optional key. The research server registers the
+    // provider keyless (the free tier shares a ~1 req/s global pool — the
+    // 2026-11-01 rate-limit storm); the free key from
+    // https://www.semanticscholar.org/product/api lifts the limit.
+    // Always-on row (enabled when present, mirroring `serpapi`).
+    DataServiceDescriptor {
+        env_var: "HKASK_SEMANTIC_SCHOLAR_API_KEY",
+        credential_key: "semantic_scholar",
+        label: "Semantic Scholar (paper search; optional rate-limit lift)",
+        dashboard_url: "https://www.semanticscholar.org/product/api",
+        shows_in_ui: true,
+    },
     // DB passphrase — supplied to the DB-backed MCP servers through
     // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
     // Not shown in the Data Services UI (no toggle; managed via the

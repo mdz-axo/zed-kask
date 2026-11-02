@@ -230,6 +230,10 @@ impl ResearchServer {
          quick (best-scored single keyword provider, live-performance-aware — \
          a provider that keeps failing drops out), web (all, RRF fusion), \
          news (news-capable), deep (all + 2x results + content extraction). \
+         Fusion skips providers whose circuit breaker is open (3+ consecutive \
+         failures) — skipped providers appear in providers_skipped (not \
+         providers_failed; no request was made to a skipped provider, and the \
+         breaker's cooldown is 60s). \
          The google_scholar and google_books engines need operator-qualified \
          queries for exact-title lookups (e.g. intitle:\"The Logic of Scientific \
          Discovery\") — plain titles return generic web noise; their results do \
@@ -463,6 +467,7 @@ impl ResearchServer {
                 providers_queried = ?metadata.providers_queried,
                 providers_succeeded = ?metadata.providers_succeeded,
                 providers_failed = ?metadata.providers_failed,
+                providers_skipped = ?metadata.providers_skipped,
                 total_before_dedup = metadata.total_before_dedup,
                 duplicates_removed = metadata.duplicates_removed,
                 top_rrf_scores = ?metadata.top_rrf_scores,
@@ -481,6 +486,7 @@ impl ResearchServer {
                 related_questions: compound.related_questions.clone(),
                 count: compound.results.len(),
                 providers_failed: compound.providers_failed.clone(),
+                providers_skipped: compound.providers_skipped.clone(),
                 domain_filter_removed,
                 selected_provider,
                 provider_recommendations,
@@ -731,6 +737,20 @@ impl ResearchServer {
             let content_chars = extracted.content.trim().chars().count();
             let degraded = content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
             let note = degraded.then(|| {
+                // A degraded PDF URL: the chain returned a page shell, not
+                // PDF text (the local extractor errored and a scraper leg
+                // returned chrome — observed 2026-11-01: a 153-char shell
+                // for a Locke & Latham PDF). Name the PDF route, not the
+                // generic JS-shell guess.
+                if crate::research::providers::url_looks_like_pdf(&extracted.url) {
+                    return format!(
+                        "extraction captured only {content_chars} chars — the URL is a \
+                         PDF and the extract chain returned a page shell, not PDF text; \
+                         retry, or download the file (e.g. via terminal curl) and run it \
+                         through the corpus server's corpus_convert pipeline, which \
+                         handles PDFs (with OCR)"
+                    );
+                }
                 // P2 (2026-10-01): when the fetch metadata carries a
                 // non-2xx status, name it — a thin 404 body is a gone or
                 // moved URL, not a JS shell (observed: a 404 origin
@@ -2246,6 +2266,10 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
         opt("HKASK_TAVILY_API_KEY", "Tavily API key"),
         opt("HKASK_SERPAPI_API_KEY", "SerpAPI key"),
         opt("HKASK_EXA_API_KEY", "Exa API key"),
+        opt(
+            "HKASK_SEMANTIC_SCHOLAR_API_KEY",
+            "Semantic Scholar API key (optional — the provider runs keyless on the free tier's shared ~1 req/s limit; the free key from semanticscholar.org/product/api lifts it)",
+        ),
         opt(
             "HKASK_DB_PASSPHRASE",
             "SQLCipher passphrase for the research DB — RSS and research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",

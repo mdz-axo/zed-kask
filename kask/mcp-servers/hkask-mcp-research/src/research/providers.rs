@@ -112,6 +112,15 @@ pub(crate) trait WebSearchProvider: Send + Sync {
     fn explicit_only(&self) -> bool {
         false
     }
+    /// The compound-fusion timeout budget for this provider, in seconds.
+    /// Defaults to the pool-wide `COMPOUND_PROVIDER_TIMEOUT_SECS`; a provider
+    /// with known stall behavior under throttling overrides it to fail faster
+    /// (arXiv slow-walks abusive clients — observed 2026-11-01: a 15.8s
+    /// response carrying a 429, and 20s stalls that only hit the flat
+    /// budget).
+    fn compound_timeout_secs(&self) -> u64 {
+        COMPOUND_PROVIDER_TIMEOUT_SECS
+    }
     async fn search(&self, query: &SearchQuery) -> Result<ProviderSearchOutput, WebError>;
     async fn health(&self) -> Result<(), WebError>;
 }
@@ -139,6 +148,73 @@ pub async fn validate_provider_url(url: &str) -> Result<(), WebError> {
 pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError> {
     hkask_mcp_server::server::validate_tool_url_permissive(url)
         .map_err(|e| WebError::BadArgs(e.message))
+}
+
+/// Whether a URL's path names a PDF document — the extract chain's cue to
+/// prefer the local deterministic extractor over third-party scrapers
+/// (see `extract_chain_order`).
+pub(crate) fn url_looks_like_pdf(url: &str) -> bool {
+    url.split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase()
+        .ends_with(".pdf")
+}
+
+/// Outbound request pacer: enforces a provider's own published minimum
+/// interval between OUR requests, across every call path (compound fan-out,
+/// single-provider, intent-routed). Per-call 429 backoff cannot fix a
+/// cross-call storm: parallel tool calls each fan out to every provider, so
+/// N concurrent fusion calls make N concurrent requests to the same API
+/// (observed 2026-11-01: nine web_search calls in 17 seconds — ~9
+/// concurrent requests against Semantic Scholar's ~1 req/s free tier).
+/// The pacer serializes request initiations at the provider's own floor.
+pub(crate) struct ProviderPacer {
+    min_interval: Duration,
+    last: tokio::sync::Mutex<Option<std::time::Instant>>,
+}
+
+impl ProviderPacer {
+    pub(crate) fn new(min_interval: Duration) -> Self {
+        Self {
+            min_interval,
+            last: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Wait for this request's turn. Concurrent callers queue on the lock;
+    /// the wait is computed against the previous request's actual
+    /// initiation, so a burst spaces out at exactly one request per
+    /// `min_interval`. `max_wait` bounds the queue wait: when the required
+    /// wait exceeds it the request is refused with `RateLimited` naming the
+    /// backlog — an honest refusal to violate the provider's limit (the
+    /// request is NOT sent) rather than sleeping past the caller's whole
+    /// budget and surfacing as an opaque timeout.
+    pub(crate) async fn wait_turn(&self, max_wait: Duration) -> Result<(), WebError> {
+        let mut last = self.last.lock().await;
+        let now = std::time::Instant::now();
+        if let Some(prev) = *last {
+            // checked_add: an Instant + Duration overflow would panic; the
+            // saturating fallback only skips the wait, which is safe.
+            let earliest = prev.checked_add(self.min_interval).unwrap_or(now);
+            if earliest > now {
+                let wait = earliest - now;
+                if wait > max_wait {
+                    return Err(WebError::RateLimited(format!(
+                        "outbound pacer: this request would wait {}s behind \
+                         queued requests honoring the provider's {}s minimum \
+                         interval — beyond the {}s budget; request not sent",
+                        wait.as_secs().max(1),
+                        self.min_interval.as_secs(),
+                        max_wait.as_secs(),
+                    )));
+                }
+                tokio::time::sleep(wait).await;
+            }
+        }
+        *last = Some(std::time::Instant::now());
+        Ok(())
+    }
 }
 
 /// Whether a provider KIND name is recognized, and what gates it.
@@ -269,6 +345,24 @@ pub(crate) trait WebBrowseProvider: Send + Sync {
     async fn health(&self) -> Result<(), WebError>;
 }
 
+/// The extract chain order for a URL. PDF URLs get the local deterministic
+/// extractor (RawFetch + pdf-extract) FIRST: the chain is first-Ok-wins, and
+/// a third-party scraper's thin page-shell would win before the local leg
+/// ever ran (observed 2026-11-01: firecrawl returned a 153-char shell for a
+/// Locke & Latham PDF and starved the local extraction route). Everything
+/// else keeps registration order. Stable sort — scrapers keep their order
+/// behind the local leg.
+fn extract_chain_order<'a>(
+    providers: &'a [Box<dyn WebExtractProvider>],
+    url: &str,
+) -> Vec<&'a dyn WebExtractProvider> {
+    let mut ordered: Vec<&dyn WebExtractProvider> = providers.iter().map(|p| p.as_ref()).collect();
+    if url_looks_like_pdf(url) {
+        ordered.sort_by_key(|p| if p.kind() == "rawfetch" { 0 } else { 1 });
+    }
+    ordered
+}
+
 pub(crate) struct ProviderPool {
     pub(crate) search_providers: Vec<Box<dyn WebSearchProvider>>,
     pub(crate) extract_providers: Vec<Box<dyn WebExtractProvider>>,
@@ -288,6 +382,10 @@ pub(crate) struct ProviderPool {
     /// penalties on top of the static `ProviderProfile` table.
     pub(crate) performance:
         std::sync::Mutex<crate::research::performance::ProviderPerformanceAggregator>,
+    /// Cross-call provider circuit breaker. Updated at the same span sites
+    /// as `performance`; consulted by `search_compound` to skip providers
+    /// that keep failing (see `breaker.rs` for the incident and scope).
+    pub(crate) breakers: std::sync::Mutex<crate::research::breaker::ProviderBreakerRegistry>,
 }
 
 /// Try each provider sequentially, returning first Ok or last Err.
@@ -316,6 +414,7 @@ macro_rules! try_fallback {
 /// the rationale part), so the skip is never silent.
 fn record_provider_span(
     performance: &std::sync::Mutex<crate::research::performance::ProviderPerformanceAggregator>,
+    breakers: &std::sync::Mutex<crate::research::breaker::ProviderBreakerRegistry>,
     kind: &str,
     latency_ms: u64,
     result: &Result<ProviderSearchOutput, WebError>,
@@ -348,6 +447,14 @@ fn record_provider_span(
             },
         );
     }
+    // The breaker's cross-call memory, fed at the same choke point as the
+    // aggregator: a success resets the provider's failure run, a failure
+    // extends it (opening the breaker at BREAKER_FAILURE_THRESHOLD).
+    // Best-effort like the aggregator above — a poisoned lock skips the
+    // update and fusion keeps querying the provider.
+    if let Ok(mut registry) = breakers.lock() {
+        registry.note_outcome(kind, result.is_ok());
+    }
 }
 
 impl ProviderPool {
@@ -372,6 +479,9 @@ impl ProviderPool {
             crossref,
             performance: std::sync::Mutex::new(
                 crate::research::performance::ProviderPerformanceAggregator::new(),
+            ),
+            breakers: std::sync::Mutex::new(
+                crate::research::breaker::ProviderBreakerRegistry::new(),
             ),
         }
     }
@@ -421,7 +531,7 @@ impl ProviderPool {
         let start = std::time::Instant::now();
         let result = provider.search(query).await;
         let latency_ms = start.elapsed().as_millis() as u64;
-        record_provider_span(&self.performance, kind, latency_ms, &result);
+        record_provider_span(&self.performance, &self.breakers, kind, latency_ms, &result);
         let providers_queried = vec![ProviderInfo {
             kind: kind.to_string(),
             capabilities: provider.capabilities(),
@@ -461,6 +571,7 @@ impl ProviderPool {
                     providers_queried,
                     providers_succeeded: vec![kind.to_string()],
                     providers_failed: Vec::new(),
+                    providers_skipped: Vec::new(),
                     total_before_dedup: total,
                     duplicates_removed: 0,
                 })
@@ -477,6 +588,7 @@ impl ProviderPool {
                     kind: kind.to_string(),
                     error: e.to_string(),
                 }],
+                providers_skipped: Vec::new(),
                 total_before_dedup: 0,
                 duplicates_removed: 0,
             }),
@@ -554,6 +666,38 @@ impl ProviderPool {
                 .collect(),
         };
 
+        // Circuit breaker (2026-11-01): fusion skips providers whose breaker
+        // is open — the cross-call memory of a persistently failing provider
+        // (S2 429'd on every fusion call for 2+ minutes with nothing
+        // remembering between calls). A skip is NOT a failure: no request
+        // was made, it is surfaced as its own metadata record, and it does
+        // not block response caching the way a provider failure does.
+        let open_reasons: HashMap<String, String> = match self.breakers.lock() {
+            Ok(registry) => filtered
+                .iter()
+                .filter_map(|p| {
+                    registry
+                        .check(p.kind())
+                        .map(|reason| (p.kind().to_string(), reason))
+                })
+                .collect(),
+            Err(_) => HashMap::new(),
+        };
+        let mut skipped: Vec<ProviderSkipRecord> = Vec::new();
+        let filtered: Vec<&dyn WebSearchProvider> = filtered
+            .into_iter()
+            .filter(|p| match open_reasons.get(p.kind()) {
+                Some(reason) => {
+                    skipped.push(ProviderSkipRecord {
+                        kind: p.kind().to_string(),
+                        reason: reason.clone(),
+                    });
+                    false
+                }
+                None => true,
+            })
+            .collect();
+
         let providers_queried: Vec<ProviderInfo> = filtered
             .iter()
             .map(|p| ProviderInfo {
@@ -569,11 +713,13 @@ impl ProviderPool {
                 // provider future can record its outcome. The borrow is valid
                 // for the duration of `search_compound` (which holds `&self`).
                 let performance = &self.performance;
+                let breakers = &self.breakers;
                 async move {
                     let kind = p.kind().to_string();
+                    let timeout_secs = p.compound_timeout_secs();
                     let start = std::time::Instant::now();
                     let result = match tokio::time::timeout(
-                        Duration::from_secs(COMPOUND_PROVIDER_TIMEOUT_SECS),
+                        Duration::from_secs(timeout_secs),
                         p.search(query),
                     )
                     .await
@@ -582,16 +728,16 @@ impl ProviderPool {
                         Err(_) => {
                             tracing::warn!(
                                 provider = %kind,
-                                timeout_secs = COMPOUND_PROVIDER_TIMEOUT_SECS,
+                                timeout_secs,
                                 "Compound search provider timed out"
                             );
                             Err(WebError::ProviderUnavailable(format!(
-                                "Provider timed out after {COMPOUND_PROVIDER_TIMEOUT_SECS}s"
+                                "Provider timed out after {timeout_secs}s"
                             )))
                         }
                     };
                     let latency_ms = start.elapsed().as_millis() as u64;
-                    record_provider_span(performance, &kind, latency_ms, &result);
+                    record_provider_span(performance, breakers, &kind, latency_ms, &result);
                     (kind, result)
                 }
             })
@@ -728,6 +874,7 @@ impl ProviderPool {
             providers_queried,
             providers_succeeded: succeeded,
             providers_failed: failed,
+            providers_skipped: skipped,
             total_before_dedup,
             duplicates_removed,
         }
@@ -757,7 +904,8 @@ impl ProviderPool {
         // layer (validate_tool_url_with_dns) is the outer gate; this is the
         // inner gate before any provider fetches the URL.
         validate_provider_url(url).await?;
-        try_fallback!(&self.extract_providers, extract, url, opts)
+        let ordered = extract_chain_order(&self.extract_providers, url);
+        try_fallback!(&ordered, extract, url, opts)
     }
 
     pub async fn browse_with_fallback(
@@ -1159,6 +1307,8 @@ impl WebSearchPort for ProviderPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     /// Stub provider for testing the quick pick and pool-surface pins.
     /// Returns a fixed kind and keyword capability — enough for the scorer
@@ -1263,6 +1413,209 @@ mod tests {
             freshness: None,
         };
         (pool, query)
+    }
+
+    /// An always-fail provider that counts its calls — the breaker pins.
+    struct FailingCountingProvider {
+        kind: &'static str,
+        calls: Arc<AtomicU32>,
+    }
+
+    #[async_trait]
+    impl WebSearchProvider for FailingCountingProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        fn capabilities(&self) -> Vec<SearchCapability> {
+            vec![SearchCapability::Keyword]
+        }
+        async fn search(&self, _query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(WebError::RateLimited("test throttle".to_string()))
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// expect: "Fusion skips a provider whose breaker opened (3 consecutive
+    /// failures) — the skip is surfaced as providers_skipped with the
+    /// reason, NOT as providers_failed, and the provider is not queried
+    /// again until the cooldown expires." (The 2026-11-01 incident: S2
+    /// 429'd on every fusion call for 2+ minutes with nothing in the
+    /// server remembering between calls.)
+    #[tokio::test]
+    async fn compound_skips_breaker_open_providers() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let pool = ProviderPool::new(
+            vec![Box::new(FailingCountingProvider {
+                kind: "flaky",
+                calls: calls.clone(),
+            })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (_, query) = brave_pool_and_query();
+        // Three failing fusion calls open the breaker (threshold 3).
+        for _ in 0..crate::research::breaker::BREAKER_FAILURE_THRESHOLD {
+            let result = pool.search_compound(&query, SearchStrategy::Web).await;
+            assert!(
+                result.providers_failed.iter().any(|f| f.kind == "flaky"),
+                "below the threshold the provider is queried and fails visibly"
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        // The fourth fusion skips: not queried, surfaced as skipped — a
+        // skip is not a failure, so providers_failed stays empty.
+        let result = pool.search_compound(&query, SearchStrategy::Web).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "a breaker-open provider must not be queried again"
+        );
+        assert!(
+            result.providers_failed.is_empty(),
+            "a skip is not a failure"
+        );
+        assert_eq!(result.providers_skipped.len(), 1);
+        assert_eq!(result.providers_skipped[0].kind, "flaky");
+        assert!(
+            result.providers_skipped[0]
+                .reason
+                .contains("circuit breaker open"),
+            "reason names the state: {}",
+            result.providers_skipped[0].reason
+        );
+        assert!(!result.providers_queried.iter().any(|p| p.kind == "flaky"));
+    }
+
+    /// expect: "An explicit provider call probes despite an open breaker —
+    /// the breaker governs automatic fan-out only; a deliberate
+    /// `provider=` pick is the caller's own choice." The probe's outcome
+    /// still feeds the breaker.
+    #[tokio::test]
+    async fn explicit_provider_calls_probe_despite_open_breaker() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let pool = ProviderPool::new(
+            vec![Box::new(FailingCountingProvider {
+                kind: "flaky",
+                calls: calls.clone(),
+            })],
+            Vec::new(),
+            Vec::new(),
+            None,
+            None,
+            None,
+        );
+        let (_, query) = brave_pool_and_query();
+        for _ in 0..crate::research::breaker::BREAKER_FAILURE_THRESHOLD {
+            pool.search_compound(&query, SearchStrategy::Web).await;
+        }
+        let result = pool
+            .search_single_provider("flaky", &query)
+            .await
+            .expect("explicit call probes and returns the failure record");
+        assert_eq!(calls.load(Ordering::SeqCst), 4, "the probe made a request");
+        assert!(
+            !result.providers_failed.is_empty(),
+            "the probe's failure is surfaced"
+        );
+    }
+
+    /// expect: "The pacer spaces request initiations at the provider's own
+    /// minimum interval" — the 2026-11-01 storm fix.
+    #[tokio::test]
+    async fn pacer_spaces_request_initiations() {
+        let pacer = ProviderPacer::new(Duration::from_millis(120));
+        let start = std::time::Instant::now();
+        pacer
+            .wait_turn(Duration::from_secs(5))
+            .await
+            .expect("first turn");
+        pacer
+            .wait_turn(Duration::from_secs(5))
+            .await
+            .expect("second turn");
+        assert!(
+            start.elapsed() >= Duration::from_millis(100),
+            "the second call must wait out the interval: {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// expect: "A queued request whose wait would exceed the budget is
+    /// refused fast with RateLimited naming the backlog — the request is
+    /// NOT sent, and no opaque timeout burns the budget."
+    #[tokio::test]
+    async fn pacer_refuses_when_backlog_exceeds_budget() {
+        let pacer = ProviderPacer::new(Duration::from_secs(30));
+        pacer
+            .wait_turn(Duration::from_secs(1))
+            .await
+            .expect("first turn");
+        let start = std::time::Instant::now();
+        let error = pacer
+            .wait_turn(Duration::from_secs(1))
+            .await
+            .expect_err("backlog beyond budget must refuse");
+        assert!(matches!(error, WebError::RateLimited(_)));
+        let message = error.to_string();
+        assert!(message.contains("request not sent"), "{message}");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "the refusal must be fast"
+        );
+    }
+
+    /// expect: "arXiv fails faster than the pool-wide flat budget — its
+    /// slow-walk stalls (observed 2026-11-01) must not dominate fusion
+    /// latency for the full 20s."
+    #[test]
+    fn arxiv_compound_budget_is_tighter_than_the_pool_default() {
+        let arxiv = ArxivProvider::new().expect("arxiv provider");
+        assert_eq!(arxiv.compound_timeout_secs(), 10);
+        let stub = StubProvider { kind: "brave" };
+        assert_eq!(stub.compound_timeout_secs(), COMPOUND_PROVIDER_TIMEOUT_SECS);
+    }
+
+    /// expect: "PDF URL detection keys on the path suffix, case-insensitive,
+    /// ignoring query strings and fragments."
+    #[test]
+    fn url_looks_like_pdf_matches_path_not_query() {
+        assert!(url_looks_like_pdf("https://example.com/paper.pdf"));
+        assert!(url_looks_like_pdf("https://example.com/PAPER.PDF?x=1"));
+        assert!(url_looks_like_pdf("https://example.com/a.pdf#page=2"));
+        assert!(!url_looks_like_pdf("https://example.com/paper.pdfx"));
+        assert!(!url_looks_like_pdf("https://example.com/paper.html"));
+        assert!(!url_looks_like_pdf(
+            "https://example.com/pdf?file=report.pdf"
+        ));
+    }
+
+    /// expect: "A PDF URL reorders the extract chain local-first — the
+    /// first-Ok-wins chain must not let a scraper's page shell starve the
+    /// local extractor (observed 2026-11-01: firecrawl returned a
+    /// 153-char shell for a Locke & Latham PDF)."
+    #[test]
+    fn pdf_urls_reorder_the_extract_chain_local_first() {
+        let providers: Vec<Box<dyn WebExtractProvider>> = vec![
+            Box::new(StubExtractProvider { kind: "firecrawl" }),
+            Box::new(StubExtractProvider { kind: "rawfetch" }),
+        ];
+        let pdf_order = extract_chain_order(&providers, "https://example.com/paper.pdf");
+        assert_eq!(pdf_order[0].kind(), "rawfetch");
+        assert_eq!(pdf_order[1].kind(), "firecrawl");
+        let html_order = extract_chain_order(&providers, "https://example.com/page.html");
+        assert_eq!(
+            html_order[0].kind(),
+            "firecrawl",
+            "non-PDF URLs keep registration order"
+        );
+        let pdf_order = extract_chain_order(&providers, "https://example.com/paper.PDF?x=1");
+        assert_eq!(pdf_order[0].kind(), "rawfetch", "case-insensitive .pdf");
     }
 
     /// R-03 pin (mcp-tool-review): health entries carry the pool surface

@@ -1,6 +1,7 @@
 use super::{ProviderSearchOutput, WebError, WebSearchProvider};
 use crate::research::types::*;
 use async_trait::async_trait;
+use std::time::Duration;
 
 /// arXiv preprint search provider.
 ///
@@ -9,17 +10,31 @@ use async_trait::async_trait;
 /// and published dates into SearchResult structs.
 pub(crate) struct ArxivProvider {
     client: reqwest::Client,
+    pacer: super::ProviderPacer,
 }
 
 impl ArxivProvider {
     pub fn new() -> Result<Self, WebError> {
         Ok(Self {
             client: super::provider_http_client()?,
+            pacer: super::ProviderPacer::new(Duration::from_secs(ARXIV_MIN_REQUEST_INTERVAL_SECS)),
         })
     }
 }
 
 const ARXIV_API_BASE: &str = "https://export.arxiv.org/api/query";
+
+/// arXiv's published client guidance: one request every 3 seconds. They
+/// enforce it with fast 429s AND slow-walking (observed 2026-11-01: a
+/// 15.8s response carrying a 429, and 20s stalls); the pacer keeps our
+/// side of the contract so parallel fan-out cannot trigger the enforcement.
+const ARXIV_MIN_REQUEST_INTERVAL_SECS: u64 = 3;
+
+/// arXiv's compound-fusion budget: its healthy p50 is sub-second, and under
+/// throttling it slow-walks — a 10s budget fails a stalled leg twice as
+/// fast as the pool-wide 20s (observed 2026-11-01: arXiv stalls dominated
+/// fusion latency, three of eight calls completing at exactly 20s).
+const ARXIV_COMPOUND_TIMEOUT_SECS: u64 = 10;
 #[async_trait]
 impl WebSearchProvider for ArxivProvider {
     fn kind(&self) -> &str {
@@ -28,8 +43,20 @@ impl WebSearchProvider for ArxivProvider {
     fn capabilities(&self) -> Vec<SearchCapability> {
         vec![SearchCapability::Keyword, SearchCapability::Semantic]
     }
+    /// arXiv overrides the flat pool budget: see `ARXIV_COMPOUND_TIMEOUT_SECS`.
+    fn compound_timeout_secs(&self) -> u64 {
+        ARXIV_COMPOUND_TIMEOUT_SECS
+    }
 
     async fn search(&self, query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+        // Outbound pacing at arXiv's own published floor; a queued request
+        // that cannot start within this provider's compound budget is
+        // refused honestly (RateLimited, request not sent) instead of
+        // surfacing as an opaque timeout after burning the whole budget.
+        self.pacer
+            .wait_turn(Duration::from_secs(ARXIV_COMPOUND_TIMEOUT_SECS))
+            .await?;
+
         // arXiv API uses a Lucene-like search syntax. We pass the raw query
         // and let the user formulate author/title searches (e.g. 'au:dunning').
         let params: Vec<(&str, String)> = vec![

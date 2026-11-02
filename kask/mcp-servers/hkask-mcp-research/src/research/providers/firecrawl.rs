@@ -155,7 +155,12 @@ impl WebExtractProvider for FirecrawlProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl extract failed: {e}")))?;
+            .map_err(|e| {
+                WebError::ProviderUnavailable(format!(
+                    "Firecrawl extract failed: {}",
+                    reqwest_error_detail(&e)
+                ))
+            })?;
 
         let status = resp.status();
         let body = resp.text().await.map_err(|e| {
@@ -226,7 +231,12 @@ impl WebBrowseProvider for FirecrawlProvider {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|e| WebError::ProviderUnavailable(format!("Firecrawl browse failed: {e}")))?;
+            .map_err(|e| {
+                WebError::ProviderUnavailable(format!(
+                    "Firecrawl browse failed: {}",
+                    reqwest_error_detail(&e)
+                ))
+            })?;
 
         let status = resp.status();
         let body = resp.text().await.map_err(|e| {

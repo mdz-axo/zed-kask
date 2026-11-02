@@ -36,8 +36,8 @@ use hkask_mcp_research::research::types::{
     CiteSourcesRequest, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
     ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
     GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
-    ProviderRecommendation, RankedResult, RateLimiter, ResolvePaperRequest, SearchQuery,
-    SearchRequest, SearchStrategy, WebError,
+    ProviderRecommendation, ProviderSkipRecord, RankedResult, RateLimiter, ResolvePaperRequest,
+    SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferenceError;
@@ -264,6 +264,135 @@ stub_web_search_port! {
     health: { Vec::new() },
     kinds: { Vec::new() },
     score(self, _query, _intent): { Vec::new() }
+}
+
+/// Stub whose fusion result carries one breaker skip record — pins that a
+/// skipped provider reaches the caller as its own metadata (skipped is NOT
+/// failed: no request was made; the agent sees why a configured provider
+/// is absent).
+struct SkipRecordingPool;
+
+stub_web_search_port! {
+    SkipRecordingPool, "stub-skip-recording",
+    search(self, _query, _strategy, _provider): {
+        Ok(CompoundSearchResult {
+            query: _query.query.clone(),
+            strategy: "web".to_string(),
+            results: Vec::new(),
+            providers_queried: vec![ProviderInfo {
+                kind: "brave".to_string(),
+                capabilities: Vec::new(),
+            }],
+            providers_succeeded: vec!["brave".to_string()],
+            providers_failed: Vec::new(),
+            providers_skipped: vec![ProviderSkipRecord {
+                kind: "semantic_scholar".to_string(),
+                reason: "circuit breaker open: 3 consecutive failures, 45s cooldown remaining"
+                    .to_string(),
+            }],
+            answer_box: None,
+            related_questions: Vec::new(),
+            total_before_dedup: 0,
+            duplicates_removed: 0,
+        })
+    },
+    find_similar: { no_provider!("not configured") },
+    extract: { no_provider!("not configured") },
+    browse: { no_provider!("not configured") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
+}
+
+/// expect: "A breaker skip record reaches the caller as
+/// `providers_skipped[{kind, reason}]` — distinct from `providers_failed`",
+/// so the agent can distinguish a provider that errored from one the
+/// server deliberately did not query.
+#[tokio::test]
+async fn web_search_surfaces_provider_skips() {
+    let server = make_server_with_pool(Arc::new(SkipRecordingPool));
+    let request = SearchRequest {
+        query: "skip metadata".to_string(),
+        num_results: Some(5),
+        include_domains: None,
+        exclude_domains: None,
+        freshness: None,
+        strategy: Some("web".to_string()),
+        intent: None,
+        provider: None,
+        run_id: None,
+    };
+    let json = parse(&ok(server.web_search(Parameters(request)).await));
+    let skips = json["providers_skipped"]
+        .as_array()
+        .expect("providers_skipped array");
+    assert!(!skips.is_empty(), "skip records must reach the caller");
+    assert_eq!(skips[0]["kind"].as_str(), Some("semantic_scholar"));
+    assert!(
+        skips[0]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("circuit breaker open"),
+        "reason names the breaker state"
+    );
+    assert!(
+        json["providers_failed"]
+            .as_array()
+            .expect("failed array")
+            .is_empty(),
+        "a skip is not a failure"
+    );
+}
+
+/// Stub whose extraction returns a thin page shell for a PDF URL — pins
+/// the PDF-specific degradation note (the JS-shell guess is wrong for a
+/// PDF; the note names the corpus convert route — observed 2026-11-01:
+/// a 153-char shell for a Locke & Latham PDF).
+struct PdfShellPool;
+
+stub_web_search_port! {
+    PdfShellPool, "stub-pdf-shell",
+    search(self, _query, _strategy, _provider): {
+        no_provider!("No search provider configured.")
+    },
+    find_similar: {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    },
+    extract: {
+        Ok(ExtractedContent {
+            url: "https://example.com/papers/locke-latham.pdf".to_string(),
+            content: "[nav shell]".to_string(),
+            format: "markdown".to_string(),
+            metadata: Some(serde_json::json!({"statusCode": 200})),
+        })
+    },
+    browse: { no_provider!("No browse provider configured.") },
+    health: { Vec::new() },
+    kinds: { Vec::new() },
+    score(self, _query, _intent): { Vec::new() }
+}
+
+/// expect: "A degraded PDF extraction names the PDF diagnosis and the
+/// corpus_convert route, not the generic JS-shell cause list."
+#[tokio::test]
+async fn web_extract_degraded_pdf_names_the_corpus_route() {
+    let server = make_server_with_pool(Arc::new(PdfShellPool));
+    let request = ExtractRequest {
+        url: "https://example.com/papers/locke-latham.pdf".to_string(),
+        format: None,
+        json_prompt: None,
+        json_schema: None,
+        main_content_only: None,
+        wait_for_ms: None,
+        run_id: None,
+    };
+    let json = parse(&ok(server.web_extract(Parameters(request)).await));
+    let note = json["note"].as_str().unwrap_or_default();
+    assert!(note.contains("PDF"), "names the PDF diagnosis: {note}");
+    assert!(
+        note.contains("corpus_convert"),
+        "names the corpus route: {note}"
+    );
 }
 
 /// Stub whose extraction returns a thin body with a non-2xx fetch status —
@@ -1369,6 +1498,7 @@ defaults_pool! {
             providers_queried: Vec::new(),
             providers_succeeded: vec!["stub".to_string()],
             providers_failed: Vec::new(),
+            providers_skipped: Vec::new(),
             total_before_dedup: 3,
             duplicates_removed: 0,
         })
@@ -1611,6 +1741,7 @@ defaults_pool! {
                 providers_queried: Vec::new(),
                 providers_succeeded: vec!["stub".to_string()],
                 providers_failed: Vec::new(),
+                providers_skipped: Vec::new(),
                 total_before_dedup: 1,
                 duplicates_removed: 0,
             });
@@ -1628,6 +1759,7 @@ defaults_pool! {
                 kind: "stub".to_string(),
                 error: "transient failure".to_string(),
             }],
+            providers_skipped: Vec::new(),
             total_before_dedup: 0,
             duplicates_removed: 0,
         })
@@ -1706,6 +1838,7 @@ stub_web_search_port! {
             }],
             providers_succeeded: vec![_provider.unwrap_or("default").to_string()],
             providers_failed: Vec::new(),
+            providers_skipped: Vec::new(),
             answer_box: None,
             related_questions: Vec::new(),
             total_before_dedup: 0,

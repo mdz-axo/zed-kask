@@ -62,7 +62,9 @@ pub(crate) fn validate_extraction(
     let content = content.ok_or_else(|| McpToolError::internal("Extraction has no content"))?;
     if content.starts_with("%PDF-") {
         return Err(McpToolError::internal(
-            "Provider returned raw PDF bytes; use a PDF extraction provider",
+            "Provider returned raw PDF bytes as content — the extract chain must \
+             extract PDF text, never pass raw bytes; retry, or download the file and \
+             run it through the corpus server's corpus_convert pipeline",
         ));
     }
     if actual_format != Some(requested_format) {

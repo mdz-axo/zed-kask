@@ -4,6 +4,7 @@
 //! provider pool with RRF fusion, content extraction, headless browsing,
 //! RSS feed management, response caching, and rate limiting.
 
+pub(crate) mod breaker;
 pub mod cache;
 pub mod db;
 pub(crate) mod evidence;
@@ -71,8 +72,16 @@ pub(crate) fn build_provider_pool(
     let mut extract_providers: Vec<Box<dyn WebExtractProvider>> = Vec::new();
     let mut browse_providers: Vec<Box<dyn WebBrowseProvider>> = Vec::new();
 
+    // Optional Semantic Scholar key: the keyless free tier shares a ~1
+    // req/s global pool (the 2026-11-01 rate-limit storm); a free key from
+    // https://www.semanticscholar.org/product/api lifts the limit. The
+    // provider is registered either way — keyless is a supported mode.
+    let semantic_scholar_api_key = credentials.get("HKASK_SEMANTIC_SCHOLAR_API_KEY").cloned();
+
     // Free providers — no API key required
-    search_providers.push(Box::new(SemanticScholarProvider::new()?));
+    search_providers.push(Box::new(SemanticScholarProvider::new(
+        semantic_scholar_api_key,
+    )?));
     search_providers.push(Box::new(ArxivProvider::new()?));
     // OpenAlex — free scholarly metadata; also held typed for paper-id
     // resolution (the `exa` pattern: one provider, two surfaces).
