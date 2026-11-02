@@ -1,8 +1,8 @@
 ---
 title: "Loop Register — zed-kask canonical loops"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-28
-version: "0.25.7"
+last_updated: 2026-11-02
+version: "0.25.8"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle]
