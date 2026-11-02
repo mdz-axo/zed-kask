@@ -2000,6 +2000,98 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["image", "video", "image restoration"],
         authority: "operator ruling 2026-10-30 (the inpainting ontology-anchor ruling, ratified in the agent chat thread; content prepared from research run d68530a3a6bd1a1c at the operator's direction; requested by visual-event-tagging-design.md open question 1 and media-model-selection-report.md R3 open question 3); Bertalmio et al., 'Image Inpainting', SIGGRAPH 2000, doi:10.1145/344779.344972; LaMa, arXiv:2109.07161 (WACV 2022); ProPainter, arXiv:2309.03897 (ICCV 2023); VOID, arXiv:2604.02296; Generative Omnimatte, arXiv:2411.16683 (CVPR 2025)",
     },
+    // The six goal-system anchor terms of the 2026-11-02 resolution
+    // directive (operator: 'research and resolve definitions for the items
+    // we have only coarse anchors for, in the correct context'); research
+    // runs d3849fff80a39c01, c36dc5cc569b7c0b, 6a7935055b4c560a,
+    // 4aade80f023a1962, consolidated in the anchor-rulings proposal of the
+    // goal recomposition session.
+    DerivedConcept {
+        term: "goal",
+        aliases: &["goals"],
+        identity: "the object or aim of an action — in zed-kask, the user's frozen requirement (goal text plus observable criteria under a spec digest, judged by workers, closed only by the human)",
+        definition: "A goal is the object or aim of an action, 'for example, to attain a specific standard of proficiency, usually within a specified time limit' (Locke & Latham 2002, p. 705; the antecedent adds 'what an individual is trying to accomplish', Locke et al. 1981, p. 126), and is simultaneously an outcome to aim for and 'a standard for judging satisfaction' (2002). In zed-kask it grounds the canonical Goal record of the goal system: goal_text carries the aim in the user's words, interpreted never revised; 1-4 criteria make the standard observable functional conditions; spec_digest freezes the specification at declaration; and a changed requirement declares a successor through supersedes, never a silent edit (kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs; GOAL_INTERFACE.md). Workers judge progress against every criterion while the satisfaction judgment — closure — belongs only to the human ActionChoice. The nameable violations: a goal whose criteria are revised to match progress, and a goal closed by anything other than the human ActionChoice.",
+        constituents: &["aim", "action", "criterion", "time limit"],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run d3849fff80a39c01); Locke & Latham, 'Building a practically useful theory of goal setting and task motivation', American Psychologist 57(9):705-717 (2002), doi:10.1037/0003-066x.57.9.705; antecedents: Locke, Shaw, Saari & Latham, Psychological Bulletin 90(1):125-152 (1981); Locke & Latham, Motivation Science (2019), doi:10.1037/mot0000127",
+    },
+    DerivedConcept {
+        term: "goal_setting",
+        aliases: &["goal-setting", "goal setting theory", "goal-setting theory"],
+        identity: "the process of establishing a goal as the specific, challenging, observable standard that directs choice, effort, persistence and strategy",
+        definition: "Goal setting establishes the object or aim of an action as the conscious standard that directs action — 'a technique that, if properly implemented, works... reliably to increase an individual and a team's performance' (Locke & Latham 2019) — whose core validated finding is that specific, appropriately difficult goals consistently outperform vague do-your-best exhortations because the latter have 'no external referent' (2002); commitment and feedback moderate the effect, and on complex or novel tasks learning goals outperform performance goals — the boundary zed-kask delegates to the task/kata level (kask/docs/research/goal-reference-models.md). In zed-kask it grounds goal intake: kanban_goal_create records the user's goal_text, 1-4 observable criteria and an honest source (never invented), retains criterion_ids and spec_digest, and changes requirements only through supersedes (crates/agent/src/templates/system_prompt.hbs, goal lifecycle block). The practice's documented failure mode — narrow goals invite gaming and tunnel vision (Ordonez et al. 2009) — is handled structurally in zed-kask (frozen observable criteria, digest-matched evidence, human-only closure), never motivationally. The nameable violations: an intake that invents its source, leaves criteria unobservable, or edits the frozen specification instead of declaring a successor.",
+        constituents: &[
+            "goal",
+            "specificity",
+            "difficulty",
+            "commitment",
+            "feedback",
+        ],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run d3849fff80a39c01); Locke & Latham, American Psychologist 57(9):705-717 (2002), doi:10.1037/0003-066x.57.9.705; Locke & Latham, 'The development of goal setting theory: A half century retrospective', Motivation Science (2019), doi:10.1037/mot0000127; Latham & Locke, 'New Developments in and Directions for Goal-Setting Research', European Psychologist 12(4):290-300 (2007), doi:10.1027/1016-9040.12.4.290; failure mode: Ordonez, Schweitzer, Galinsky & Bazerman, 'Goals Gone Wild', Academy of Management Perspectives (2009), doi:10.5465/amp.2009.37007999",
+    },
+    DerivedConcept {
+        term: "expectation",
+        aliases: &[
+            "expectation interest",
+            "expectation damages",
+            "protected expectation",
+            "expected performance",
+        ],
+        identity: "the counterparty's as-if-performed position under a frozen promise — 'to put the plaintiff in as good a position as he would have been in had the defendant performed his promise'",
+        definition: "In contract law the expectation interest is the value to the promisee of the promised performance — the benefit of the bargain, protected by putting the promisee in as good a position as full performance would have (Fuller & Perdue 1936-37; Cornell Wex, expectation damages). Hadfield-Menell & Hadfield carry the structure into AI alignment: human-AI objectives are incomplete contracts, and the obligation is to protect the human's as-if-performed position under the agreed specification, not whatever an optimizer finds cheapest to deliver. In zed-kask it grounds the goal system's frozen-contract discipline: the specification (goal_text plus 1-4 verification criteria) is frozen under spec_digest at declaration, interpreted never revised, changed only through a supersedes successor (types/goal.rs; GOAL_INTERFACE.md) — and, in the optional forecast path, expectations are declared first and reality is read against them (Rappaport & Mauboussin's expectations-investing inversion; the expectations_gap entry owns the Rappaport-Mauboussin gap sense). The nameable violation: revising the specification (or the expectation) after reality arrives instead of declaring a successor — post-hoc narrative where a pre-committed expectation was owed.",
+        constituents: &[
+            "frozen specification",
+            "benefit of the bargain",
+            "prospective commitment",
+            "supersedes",
+            "expectations investing",
+        ],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run c36dc5cc569b7c0b); Fuller & Perdue, 'The Reliance Interest in Contract Damages', 46 Yale L.J. 52 & 373 (1936-37); Cornell LII Wex, 'expectation damages'; Hadfield-Menell & Hadfield, 'Incomplete Contracting and AI Alignment', AIES 2019, doi:10.1145/3306618.3314250; Rappaport & Mauboussin, Expectations Investing (2001, zk-ref-open expectations-investing.md)",
+    },
+    DerivedConcept {
+        term: "criterion",
+        aliases: &[
+            "criteria",
+            "verification criterion",
+            "acceptance criterion",
+            "audit criteria",
+        ],
+        identity: "the stated required or desired state or expectation against which performance is compared and evaluated",
+        definition: "A criterion is the required or desired state or expectation against which performance is compared or evaluated — 'criteria identify the required or desired state or expectation with respect to the program or operation' (GAO, Government Auditing Standards 2024 Revision, para 6.25); requirements engineering makes verifiability constitutive: each requirement shall be verifiable, and its verification is by named independent methods (inspection, analysis, demonstration, test) that compare 'what is required versus what is being inspected' for objective proof of compliance (ISO/IEC/IEEE 29148:2018), while goal-setting research supplies the operative variable — specific, observable criteria with feedback outperform vague do-your-best goals (Locke & Latham 2002). In zed-kask it grounds the goal loop's exactly-once coverage contract: VerificationCriterion is the human-readable acceptance spec of the frozen goal specification (kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/verification.rs), declared 1-4 per goal, each covered exactly once by the worker's judgment (goal_judge: 'verdict must cover every criterion exactly once'; 'done contradicts failed criteria') and exactly once by the blinded assessor (validate_assessment: supported/contradicted findings must cite actually fetched digest-matched artifact IDs). The nameable violation: a criterion that cannot be checked by an independent method against objective evidence, or coverage that is partial, duplicated, or self-attested.",
+        constituents: &[
+            "observable condition",
+            "verification method",
+            "objective evidence",
+            "coverage",
+        ],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run c36dc5cc569b7c0b); GAO, Government Auditing Standards 2024 Revision, GAO-24-106786, para 6.25; ISO/IEC/IEEE 29148:2018 (verifiable requirements; verification by named independent methods); Locke & Latham (2002) on criterion specificity, doi:10.1037/0003-066x.57.9.705",
+    },
+    DerivedConcept {
+        term: "alignment",
+        aliases: &["ai alignment", "ai-alignment"],
+        identity: "the property of an AI-assisted goal chain that pursuit of the human's intended goal is never certified by a correct specification or by the worker's own verdict — worker verdicts, machine evidence, and human closure stay distinct records, and human authority over the outcome is enforced structurally",
+        definition: "The alignment field is 'concerned with AI systems that pursue unintended goals', and 'an AI system may pursue an undesired goal even when the specification is correct' (Shah et al. 2022) — so neither a correct specification nor the worker's competent self-report certifies the intended goal, which is why the Check is never the executor's own verdict on itself (the pdca_cycle violation clause); human authority over the outcome is corrigibility (Hadfield-Menell et al. 2016/2017), enforced by construction rather than learned deference because the deference result is fragile (Freedman & Gleave 2022; Neth 2025). In zed-kask it is the property the goal system enforces at every step: worker verdicts, machine evidence, and human closure are distinct records (GOAL_INTERFACE.md); decide() records nothing without a concrete offered option id and its decision values are created from the ActionChoice response, never deserialized from input (crates/agent/src/tools/goal_tools.rs); and the native goal tools are excluded from configurable permission grants because grants cannot supply a human judgment (crates/settings_ui/src/pages/tool_permissions_setup.rs). The nameable violation: a goal chain whose outcome can be recorded without a fresh human ActionChoice, or whose Check is the worker's own verdict on its work.",
+        constituents: &[
+            "intended goal",
+            "goal misgeneralization",
+            "specification gaming",
+            "corrigibility",
+            "human closure",
+        ],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run 6a7935055b4c560a); Shah, Varma, Kumar, Phuong, Krakovna, Uesato & Kenton, 'Goal Misgeneralization: Why Correct Specifications Aren't Enough For Correct Goals' (2022), arXiv:2210.01790; Hadfield-Menell, Dragan, Abbeel & Russell, 'Cooperative Inverse Reinforcement Learning' (2016), arXiv:1606.03137, and 'The Off-Switch Game', IJCAI-17, doi:10.24963/ijcai.2017/32; fragility critiques: Freedman & Gleave (2022); Neth, 'Off-Switching Not Guaranteed', Philosophical Studies (2025), doi:10.1007/s11098-025-02296-x; term sense: Christiano, 'Clarifying AI Alignment' (2018)",
+    },
+    DerivedConcept {
+        term: "reference_model",
+        aliases: &["reference models", "conceptual reference model"],
+        identity: "a named, published, implementation-independent model that provides a common basis for coordinating and describing design in a domain, against which existing practice is placed into perspective",
+        definition: "In the standards tradition a reference model is a published, named, abstract structure independent of any implementation — 'it does not intend to serve as an implementation specification' — that 'provides a common basis for the coordination of standards development... while allowing existing standards to be placed into perspective' (ISO/IEC 7498-1:1994, the OSI Basic Reference Model); the same form is instantiated by ISO/IEC 10746-2 | ITU-T X.902 (RM-ODP, a 'co-ordinating framework for the standardization of open distributed processing') and defined at term level by TOGAF ('a structure which allows the components of a system to be described in a consistent manner'), with the library-science lineage (FRBR -> IFLA LRM) extending it to published conceptual models that downstream rules cite and follow. In zed-kask it is the load-bearing convention that every capability, skill, doc and benchmark is anchored on a named published model cited and followed as design authority instead of a private definition: skills carry Reference-models sections, D-seams name their design-authority reference-model doc (DIVERGENCE.md D86), and the .rules forbid hand-deriving in-conversation what zk-ref-open already carries (sustainable-growth-rate.md, expectations-investing.md). The zk-ref-open corpus instantiates the license-compliant provenance form — Reference model origin plus Stands in for — where an operator-authorized, own-words definitional commentary stands in for the origin work in publisher rights. The enforced negative poles: a surface with no external model must declare that rather than invent one; a coarse 5w1h-core anchor requires an operator ruling — never fabricate a reference model citation; and a labeled-but-unfollowed model is a false provenance claim. The nameable violation: citing a model the system does not follow.",
+        constituents: &[
+            "published model",
+            "design authority",
+            "stands in for",
+            "operator ruling",
+        ],
+        authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run 4aade80f023a1962); ISO/IEC 10746-2 | ITU-T X.902, 'Open Distributed Processing — Reference model: Foundations' (RM-ODP); ISO/IEC 7498-1:1994, OSI Basic Reference Model; The Open Group TOGAF definitions; IFLA Library Reference Model, doi:10.82487/ifla.40.2",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2070,6 +2162,18 @@ mod tests {
             "equity risk premium",
             "expectations gap",
             "expectations_gap",
+            "goal",
+            "goals",
+            "goal setting",
+            "goal-setting",
+            "expectation",
+            "expectation interest",
+            "criterion",
+            "criteria",
+            "alignment",
+            "ai-alignment",
+            "reference model",
+            "reference models",
             "pdca",
             "plan-do-check-act",
             "deming cycle",
@@ -3292,5 +3396,85 @@ mod tests {
             restoration.concept, "cso:image_restoration",
             "image restoration resolves to the CSO domain supplement"
         );
+    }
+
+    /// expect: [P5] The six goal-system anchor terms that previously fell to
+    /// 5w1h-core resolve as derived concepts under the 2026-11-02 resolution
+    /// directive, with published authority — and the expectations_gap
+    /// boundary pins survive the new singular entry.
+    #[test]
+    fn goal_system_anchor_terms_resolve_with_published_authority() {
+        let goal = resolve_derived("goal").expect("goal is defined");
+        assert_eq!(goal.term, "goal");
+        assert!(goal.identity.contains("object or aim of an action"));
+        assert!(goal.authority.contains("10.1037/0003-066x.57.9.705"));
+        let goal_setting = resolve_derived("goal setting").expect("goal setting is defined");
+        assert_eq!(goal_setting.term, "goal_setting");
+        assert_eq!(
+            resolve_derived("goal-setting").map(|c| c.term),
+            Some("goal_setting")
+        );
+        assert!(goal_setting.authority.contains("mot0000127"));
+        let expectation = resolve_derived("expectation").expect("expectation is defined");
+        assert_eq!(expectation.term, "expectation");
+        assert!(expectation.authority.contains("Yale L.J."));
+        // The Rappaport-Mauboussin gap sense keeps its own entry, and the
+        // audit-homonym pin survives the singular entry.
+        assert_eq!(
+            resolve_derived("expectations gap").map(|c| c.term),
+            Some("expectations_gap")
+        );
+        assert!(resolve_derived("expectation gap").is_none());
+        let criterion = resolve_derived("criterion").expect("criterion is defined");
+        assert_eq!(criterion.term, "criterion");
+        assert_eq!(
+            resolve_derived("criteria").map(|c| c.term),
+            Some("criterion")
+        );
+        assert!(criterion.authority.contains("GAO-24-106786"));
+        assert!(criterion.authority.contains("29148"));
+        let alignment = resolve_derived("alignment").expect("alignment is defined");
+        assert_eq!(alignment.term, "alignment");
+        assert_eq!(
+            resolve_derived("ai alignment").map(|c| c.term),
+            Some("alignment")
+        );
+        assert!(alignment.identity.contains("never certified"));
+        assert!(alignment.authority.contains("2210.01790"));
+        let reference_model =
+            resolve_derived("reference model").expect("reference model is defined");
+        assert_eq!(reference_model.term, "reference_model");
+        assert!(
+            reference_model
+                .identity
+                .contains("implementation-independent")
+        );
+        assert!(reference_model.authority.contains("X.902"));
+        for concept in [
+            goal,
+            goal_setting,
+            expectation,
+            criterion,
+            alignment,
+            reference_model,
+        ] {
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-11-02"),
+                "{} cites the 2026-11-02 resolution directive",
+                concept.term
+            );
+        }
+        // The entries' cross-references resolve through the ladder — never
+        // fabricated: goal's criterion constituent is the derived criterion
+        // entry, and goal_setting's goal constituent is the derived goal entry.
+        assert_eq!(
+            resolve_derived("criterion").map(|c| c.term),
+            Some("criterion")
+        );
+        assert!(
+            goal_setting.constituents.contains(&"goal"),
+            "goal_setting's constituents name the goal entry"
+        );
+        assert_eq!(resolve_derived("goal").map(|c| c.term), Some("goal"));
     }
 }
