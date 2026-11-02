@@ -226,7 +226,14 @@ jobs:
           # is the only thing that keeps an advisory tool honest.
           # (goal-traceability's pair was retired outright 2026-11-01 —
           # see the header note; its selftest no longer exists.)
-          failed=""
+          # The check-code-docs-citations gate sweeps with ripgrep, which the
+          # ubuntu runner image does not carry — without it the gate exits 2
+          # in every selftest case ("FAIL: rg not found", observed run
+          # 41397665754 — the first run to reach this step after the
+          # reg-canonical red streak masked it; the gate landed 0355f9b10f
+          # inside the streak, so its runner dependency was never validated).
+          # jq and npx are runner-native.
+          command -v rg >/dev/null 2>&1 || sudo apt-get install -y -qq ripgrep
           for selftest in kask/scripts/check-*-selftest.sh; do
             if ! out="$(bash "$selftest" 2>&1)"; then
               # ::error:: annotations are recorded by GitHub separately
