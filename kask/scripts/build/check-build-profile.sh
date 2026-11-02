@@ -22,12 +22,15 @@
 # a ~7 GB executable (6.4 GB of it .debug_* sections) — the installer
 # deliberately does not strip the debugger-workflow profile.
 # split-debuginfo = "unpacked" keeps the profile's full debug info in .dwo
-# sidecars under the target tree; the linked binary lands ~0.4 GB.
+# sidecars under the target tree; the linked binary lands ~1.4 GB (measured
+# 2026-11-02: the split carries .debug_info/.debug_loc/.debug_str away, but
+# rustc keeps the address and line tables embedded — .debug_ranges 360 MB +
+# .debug_line 287 MB + .debug_addr 169 MB on top of ~340 MB of program).
 #
-# The same split applies to [profile.release-mcp] (same date): the nine
-# server binaries each carried ~219 MB of embedded limited DWARF and
-# shipped unstripped on --fast installs — one publication path, one
-# split protocol.
+# The same split applies to [profile.release-mcp] (same date): the eight
+# server binaries together carried ~1.6 GB of embedded limited DWARF (the
+# corpus server alone: 219 MB in a 263 MB binary) and shipped unstripped on
+# --fast installs — one publication path, one split protocol.
 #
 # Usage: bash kask/scripts/build/check-build-profile.sh  (from repo root)
 # Exit codes: 0 = seam intact, 1 = drift detected
@@ -101,8 +104,8 @@ fi
 # 3c. The --fast profile must split its full DWARF into .dwo sidecars (D46,
 # 2026-11-02): with debug = "full" embedded, each --fast link produces a
 # ~7 GB binary that the installer (by policy) ships unstripped. The split
-# keeps the linked binary ~0.4 GB while the target tree keeps the symbols
-# for debugger workflows.
+# keeps the linked binary ~1.4 GB (measured) while the target tree keeps
+# the symbols for debugger workflows.
 grep -A5 '^\[profile\.release-fast\]' "$CARGO_TOML" | grep -q 'split-debuginfo = "unpacked"' \
     || fail "[profile.release-fast] must set split-debuginfo = \"unpacked\" (D46) — embedded full DWARF links a ~7 GB installed binary"
 

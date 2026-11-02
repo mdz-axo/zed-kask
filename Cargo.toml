@@ -1271,9 +1271,11 @@ split-debuginfo = "unpacked"
 
 # zed-kask: D46 — the --fast route's full DWARF splits into .dwo sidecars
 # under the target tree (split-debuginfo = "unpacked"): the linked binary
-# stays ~0.4 GB instead of ~7 GB, and debugger workflows resolve through the
-# sidecars. Upstream carries this profile without the split. Pinned by
-# kask/scripts/build/check-build-profile.sh.
+# lands ~1.4 GB instead of ~7 GB (measured 2026-11-02; the split carries
+# .debug_info/.debug_loc/.debug_str to the sidecars — rustc keeps the
+# address and line tables embedded), and debugger workflows resolve
+# through the sidecars. Upstream carries this profile without the split.
+# Pinned by kask/scripts/build/check-build-profile.sh.
 [profile.release-fast]
 inherits = "release"
 debug = "full"
