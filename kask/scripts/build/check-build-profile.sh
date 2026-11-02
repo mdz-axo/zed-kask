@@ -109,7 +109,13 @@ fi
 grep -A5 '^\[profile\.release-fast\]' "$CARGO_TOML" | grep -q 'split-debuginfo = "unpacked"' \
     || fail "[profile.release-fast] must set split-debuginfo = \"unpacked\" (D46) — embedded full DWARF links a ~7 GB installed binary"
 
-# 4. The self-observing trace is wired (the observability half of D46).
+# 3d. The --fast strip opt-in is wired: HKASK_STRIP_FAST=true (2026-11-02,
+# operator opt-in) strips the --fast publication at install — the split
+# already carried the DWARF to the .dwo sidecars, so the strip removes
+# only the embedded address/line tables. The default (false) ships the
+# debugger-workflow symbols unstripped.
+grep -q 'HKASK_STRIP_FAST' "$INSTALL_SH" \
+    || fail "install.sh lost the HKASK_STRIP_FAST opt-in"
 grep -q 'build-monitor.sh' "$INSTALL_SH" \
     || fail "install.sh no longer starts build-monitor.sh — installs would burn CPU unobserved"
 

@@ -16,6 +16,10 @@
 #                       Cargo.toml version, or 0.40.2 if unreadable; falls back
 #                       to main only if HKASK_ALLOW_FALLBACK=true)
 #   HKASK_BUILD_TYPE    release or release-fast (default: release)
+#   HKASK_STRIP_FAST    --fast only: strip the publication at install
+#                      (default: false — ships the debugger-workflow
+#                      symbols; true strips only the embedded address/
+#                      line tables)
 #   HKASK_SOURCE_DIR    Use an existing source directory instead of cloning
 #   HKASK_REPO_URL      Git URL (default: https://github.com/mdz-axo/zed-kask.git)
 #   HKASK_ALLOW_FALLBACK  Set to "true" to allow silent fallback to main when
@@ -47,6 +51,7 @@ BIN_DIR="${INSTALL_DIR}/bin"
 
 HKASK_REPO_URL="${HKASK_REPO_URL:-https://github.com/mdz-axo/zed-kask.git}"
 HKASK_SOURCE_DIR="${HKASK_SOURCE_DIR:-}"
+HKASK_STRIP_FAST="${HKASK_STRIP_FAST:-false}"
 
 clone_repo() {
     if [ -n "$HKASK_SOURCE_DIR" ]; then
@@ -317,8 +322,21 @@ install_binaries() {
         strip_binaries=true
     else
         # --fast (release-fast) takes the zed binary from target/release-fast.
+        # Default: publish unstripped (the profile documents debugger
+        # workflows, and stripping at install would silently break that
+        # promise). HKASK_STRIP_FAST=true (2026-11-02) strips the --fast
+        # publication too: the DWARF split already carried the symbols to
+        # the .dwo sidecars under the target tree, so the strip removes
+        # only the embedded address/line tables (~815 MB on the zed
+        # binary), and post-mortem debugging resolves against the
+        # unstripped target/release-fast copies.
         zed_profile_dir="$workspace_root/target/release-fast"
-        strip_binaries=false
+        if [ "$HKASK_STRIP_FAST" = "true" ]; then
+            strip_binaries=true
+            log "HKASK_STRIP_FAST=true: stripping the --fast publication"
+        else
+            strip_binaries=false
+        fi
     fi
     publish_binaries "$zed_profile_dir" "$workspace_root/target/release-mcp" "$strip_binaries"
 }
@@ -710,6 +728,10 @@ Environment Variables:
     HKASK_VERSION         Tag to install (default: derived from workspace
                           Cargo.toml version, or 0.40.2 if unreadable)
     HKASK_BUILD_TYPE      release or release-fast (default: release)
+    HKASK_STRIP_FAST      --fast only: strip the publication at install
+                          (default: false — the profile documents debugger
+                          workflows and ships unstripped; the strip removes
+                          only the embedded address/line tables)
     HKASK_SOURCE_DIR      Use existing source directory instead of cloning
     HKASK_REPO_URL        Git repository URL
     HKASK_ALLOW_FALLBACK  Allow silent fallback to main if tag missing (default: false)
@@ -821,10 +843,23 @@ main() {
             ;;
     esac
 
-    # --system and --install-dir are mutually exclusive: --system installs to
-    # fixed system paths (/usr/local/libexec/hkask); --install-dir installs
-    # to a user-specified prefix. Combining them is a user error — reject it
-    # rather than silently discarding one (BH-19).
+    # --fast only: strip the publication. The default (false) ships the
+    # profile's full debug symbols — its documented purpose is debugger
+    # workflows. true strips them at install (the .dwo sidecars carry the
+    # symbols either way; the strip removes only the embedded address/line
+    # tables).
+    case "${HKASK_STRIP_FAST:-false}" in
+        true | false) ;;
+        *)
+            log_error "HKASK_STRIP_FAST must be 'true' or 'false' (got '${HKASK_STRIP_FAST}')"
+            exit 1
+            ;;
+    esac
+
+    # --system and --install-dir are mutually exclusive: --system installs
+    # to fixed system paths (/usr/local/libexec/hkask); --install-dir
+    # installs to a user-specified prefix. Combining them is a user
+    # error — reject it rather than silently discarding one (BH-19).
     if [ "$saw_system" = true ] && [ "$saw_install_dir" = true ]; then
         log_error "--system and --install-dir are mutually exclusive"
         log_error "  --system installs to /usr/local/libexec/hkask (system PATH)"
