@@ -244,7 +244,7 @@ The **concept model and server implementation already satisfy** R1 (partially
   (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/board.rs:12-24`),
   and `board_create` rejects an empty name, a zero-column board, and a
   name longer than the 128-character cap (`validate_board_name`,
-  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:147@validate_board_name`).
+  `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/service_impl/service.rs:229@validate_board_name`).
 - `task_create` verifies the board exists and returns `NotFound` otherwise
   (`service_impl/service.rs`, `task_create`) — R5 is enforced at the service
   seam, not just the schema; `task_create_rejects_unknown_board` pins this.
@@ -264,7 +264,7 @@ The **concept model and server implementation already satisfy** R1 (partially
 - `kanban_board_delete` cascades to the board's tasks
   (`hkask_mcp_kata_kanban.rs:358-393`) — R8.
 - The board h_mem is ontology-anchored as the PKO procedure root
-  (`service_impl/service.rs:203@board_h_mem`), with tasks carrying step identifiers —
+  (`service_impl/service.rs:285@board_h_mem`), with tasks carrying step identifiers —
   the in-tree vocabulary for R5. (Note: `onto_anchor("kanban board")` itself
   currently lands on the coarse 5W1H core rung; this document deliberately
   assigns no private definition — the PKO mapping above is the in-tree
@@ -347,8 +347,8 @@ created date), the way the thread picker shows timestamps.
   rename), ownership check mirroring `kanban_board_delete`
   (`hkask_mcp_kata_kanban.rs:366-377`), update the board h_mem **value**
   preserving the PKO procedure ontology (the update path task moves already
-  use, `service_impl/service.rs:1100@mutate_task`), and emit a `board_renamed` REG span
-  mirroring `board_created` (`service_impl/service.rs:231@board_create`).
+  use, `service_impl/service.rs:1344@mutate_task`), and emit a `board_renamed` REG span
+  mirroring `board_created` (`service_impl/service.rs:313@board_create`).
 - Tool: thin `kanban_board_update` wrapper.
 - **Replay safety (refined in v1.1.0):** rename is convergent by
   construction — replaying the same call re-applies the same name — so it

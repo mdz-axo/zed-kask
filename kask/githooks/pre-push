@@ -14,15 +14,31 @@
 # kask/githooks/pre-commit (its five scoped gates were all in the
 # unwired class).
 #
+# 2026-11-02 operator decision (T3 of the 2026-11-01 refactor-alignment
+# continuation, “complete T3”): the THREE CITATION GATES are re-wired —
+# check-docs-citations.sh, check-docs-citation-drift.sh and
+# check-code-docs-citations.sh run below against the pushed commit's
+# export. The rest of the 2026-10-31 unwired set stays unwired. The
+# citation gates gained export mode for this (REPO_ROOT honored, find
+# fallback for ls-files, history-dependent warn tiers degrade with a
+# surfaced note) — the evidence: the kanban specimen (live tool
+# descriptions citing a deleted doc for two days) and the false-clean
+# instrument lessons of 2026-11-01/02. Drift baseline discipline: the
+# drift gate's --refresh pins the audit hash after a deep audit or
+# re-anchoring pass, and the refreshed baseline is committed with the
+# change that earned it — never refreshed casually.
+#
 # Retired outright 2026-11-01 (operator approval): goal-traceability and
 # its selftest — warn-only, the weakest signal in the set; the commit-msg
 # hook's advisory invocation and the kask-invariants selftest-loop skip
 # entry went with them.
 #
-# What blocks a push, now and deliberately, is exactly one thing:
-# rustfmt drift in the pushed commits — the same check CI runs, so a
-# red push never becomes a wasted red CI run. It runs inside the
-# export (cargo fmt needs no .git, verified 2026-10-31), so a busy
+# What blocks a push, now and deliberately, is four things: rustfmt
+# drift and the three citation gates (docs citations, citation drift,
+# code->docs citations) in the pushed commits — the same checks CI
+# runs, so a red push never becomes a wasted red CI run. Each runs
+# inside the export (cargo fmt needs no .git, verified 2026-10-31;
+# the citation gates' export mode verified 2026-11-02), so a busy
 # working tree can neither block nor redden a push: a push of sha S
 # is gated on exactly S's content. --no-verify remains the explicit
 # bypass.
@@ -86,6 +102,9 @@ for line in "${ref_lines[@]}"; do
   fi
 
   run_gate "rustfmt" "$EXPORT_DIR/kask/scripts/check-rustfmt.sh" "$EXPORT_DIR"
+  run_gate "docs-citations" "$EXPORT_DIR/kask/scripts/check-docs-citations.sh" "$EXPORT_DIR"
+  run_gate "citation-drift" "$EXPORT_DIR/kask/scripts/check-docs-citation-drift.sh" "$EXPORT_DIR"
+  run_gate "code-docs-citations" "$EXPORT_DIR/kask/scripts/check-code-docs-citations.sh" "$EXPORT_DIR"
 
   rm -rf "$EXPORT_DIR"
   EXPORT_DIR=""

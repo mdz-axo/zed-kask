@@ -29,6 +29,17 @@ git init -q "$WORK"
 git -C "$WORK" config user.email selftest@local
 git -C "$WORK" config user.name selftest
 
+# Run the gate from a fixture-local copy: $0's SCRIPT_DIR decides the
+# baseline path, and a --refresh case writing into the REAL
+# kask/scripts/citation-drift-audit-hash.txt is selftest pollution of
+# the ratchet it pins.
+mkdir -p "$WORK/kask/scripts" "$WORK/kask/ast-grep/rules"
+cp "$GATE" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/ast-grep.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/ast-grep/rules/rust-definitions.yml" "$WORK/kask/ast-grep/rules/"
+cp "$KASK_ROOT/ast-grep/rules/rust-impls.yml" "$WORK/kask/ast-grep/rules/"
+GATE="$WORK/kask/scripts/check-docs-citation-drift.sh"
+
 # Fixture source: an UNSCOPED basename (the anchors gate's scoped set does
 # not contain widget.rs). alpha spans 1-3, beta spans 5-7.
 mkdir -p "$WORK/src" "$WORK/docs"

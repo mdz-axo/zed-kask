@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Self-test for the pre-push hook (kask/githooks/pre-push): the
-# net-lines reporting and the one blocking gate (rustfmt), run against
-# the PUSHED COMMIT via a git archive export.
+# net-lines reporting and the four blocking gates (rustfmt + the three
+# citation gates), run against the PUSHED COMMIT via a git archive export.
 #
 # The reporting job's RED proof is that the reported numbers are the
 # TRUE numbers for a known range. The gate's RED proof is that a push
@@ -19,8 +19,14 @@
 #   6. Pushing a non-HEAD green sha ALLOWS.
 #   7. A ref deletion measures nothing; exits 0.
 #   8. Containment: the hook names the rustfmt gate script and the
-#      export mechanism, and names NONE of the unwired bookkeeping
-#      gates (2026-10-31 operator mandate).
+#      three wired citation gates, and names NONE of the still-unwired
+#      bookkeeping gates (the 2026-11-02 T3 re-wiring).
+#   9. A pushed commit with a green citation set ALLOWS — all four
+#      gates pass against the pushed export.
+#  10. A pushed commit with a deliberately rotted @sym citation
+#      BLOCKS, naming citation-drift — the known-positive discipline:
+#      a gate that cannot fail is not a gate.
+#  11. A re-anchored citation ALLOWS again.
 #
 # Runs in CI via the kask/scripts/check-*-selftest.sh glob.
 # Exit codes: 0 = every case behaved as expected, 1 = the hook is wrong.
@@ -42,6 +48,29 @@ git -C "$WORK" config user.name selftest
 mkdir -p "$WORK/githooks" "$WORK/kask/scripts"
 cp "$HOOK_SRC" "$WORK/githooks/pre-push"
 cp "$KASK_ROOT/scripts/check-rustfmt.sh" "$WORK/kask/scripts/"
+# The citation gates + their tree-sitter instrument: export-gated pushes
+# must carry the gated object's own gate scripts (the hook warns and
+# skips a missing gate in the export; the red-proof cases below need
+# them live).
+cp "$KASK_ROOT/scripts/check-docs-citations.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/check-docs-citation-drift.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/check-code-docs-citations.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/ast-grep.sh" "$WORK/kask/scripts/"
+mkdir -p "$WORK/kask/ast-grep/rules"
+cp "$KASK_ROOT/ast-grep/rules/rust-definitions.yml" "$WORK/kask/ast-grep/rules/"
+cp "$KASK_ROOT/ast-grep/rules/rust-impls.yml" "$WORK/kask/ast-grep/rules/"
+mkdir -p "$WORK/kask/docs/fx"
+# Stub every kask/docs/**.md path the copied gate banners cite — the
+# code-docs gate sweeps non-docs surfaces for docs paths, so the banners'
+# citations must exist in the fixture as they do in the real tree.
+for p in $(cat "$KASK_ROOT/scripts/check-docs-citations.sh" \
+              "$KASK_ROOT/scripts/check-docs-citation-drift.sh" \
+              "$KASK_ROOT/scripts/check-code-docs-citations.sh" \
+              "$KASK_ROOT/scripts/ast-grep.sh" \
+    | grep -hoE 'kask/docs/[A-Za-z0-9_./-]+\.md' | sort -u); do
+  mkdir -p "$WORK/$(dirname "$p")"
+  : > "$WORK/$p"
+done
 
 # The rustfmt gate's minimal green tree: a single-crate workspace whose
 # one lib file is formatted.
@@ -164,22 +193,51 @@ out="$(run_hook "refs/heads/gone $ZERO refs/heads/gone $BASE")"; rc=$?
 expect_exit "hook exits 0 on a ref deletion" 0 "$rc"
 expect_not_contains "ref deletion measures no net-lines" "[pre-push] refs/heads/gone:" "$out"
 
-# Case 8: containment — the hook names the rustfmt gate script and the
-# export mechanism, and names NONE of the unwired bookkeeping gates.
+# Case 8: containment — the hook names the rustfmt gate script, the
+# export mechanism, and the three wired citation gates; it names none
+# of the still-unwired bookkeeping gates.
 hook_src="$(cat "$HOOK_SRC")"
 expect_contains "hook names the rustfmt gate script" "check-rustfmt.sh" "$hook_src"
 expect_contains "hook gates via the export mechanism" "git archive" "$hook_src"
+expect_contains "hook names the docs-citations gate" "check-docs-citations.sh" "$hook_src"
+expect_contains "hook names the citation-drift gate" "check-docs-citation-drift.sh" "$hook_src"
+expect_contains "hook names the code-docs-citations gate" "check-code-docs-citations.sh" "$hook_src"
 expect_not_contains "hook carries no docs-count gate" "check-docs-count-gate.sh" "$hook_src"
 expect_not_contains "hook carries no frontmatter gate" "check-docs-frontmatter.sh" "$hook_src"
-expect_not_contains "hook carries no citations gate" "check-docs-citations.sh" "$hook_src"
 expect_not_contains "hook carries no diagram gate" "check-diagram-registry-parity.sh" "$hook_src"
 expect_not_contains "hook carries no readme-counts gate" "check-mcp-readme-counts.sh" "$hook_src"
 expect_not_contains "hook carries no skill-crossrefs gate" "check-skill-crossrefs.sh" "$hook_src"
 expect_not_contains "hook carries no retired-record gate" "check-retired-record.sh" "$hook_src"
 
+# Case 9: a green citation in a pushed commit allows — all four gates
+# pass against the pushed export.
+printf 'See fixture.rs:1@fixture for the entry point.\n' \
+  > "$WORK/kask/docs/fx/doc.md"
+fcommit "green citations"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook allows a push with green citations" 0 "$rc"
+
+# Case 10: a deliberately rotted @sym citation in a pushed commit
+# BLOCKS, naming citation-drift — the known-positive discipline
+# (.rules): a gate that cannot fail is not a gate.
+printf 'See fixture.rs:1@alpha for the entry point.\n' \
+  > "$WORK/kask/docs/fx/doc.md"
+fcommit "rotted citation"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a push with a rotted citation" 1 "$rc"
+expect_contains "rotted-citation rejection names the drift gate" \
+  "invariant gate(s) red: citation-drift" "$out"
+
+# Case 11: a re-anchored citation allows again.
+printf 'See fixture.rs:1@fixture for the entry point.\n' \
+  > "$WORK/kask/docs/fx/doc.md"
+fcommit "restore citation"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook allows again after re-anchoring the citation" 0 "$rc"
+
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-push hook reports true numbers, gates only rustfmt over the pushed commit via export (busy tree allows; red sha blocked despite clean tree; non-HEAD green allowed), and carries none of the unwired bookkeeping gates (report + fmt red/green + export gating + containment all pinned)"
+  echo "SELFTEST OK: pre-push hook reports true numbers, gates rustfmt and the three citation gates over the pushed commit via export (busy tree allows; red sha blocked despite clean tree; non-HEAD green allowed; rotted citation blocked, re-anchored allowed), and carries none of the unwired bookkeeping gates (report + fmt red/green + citation red/green + export gating + containment all pinned)"
   exit 0
 fi
 echo "" >&2

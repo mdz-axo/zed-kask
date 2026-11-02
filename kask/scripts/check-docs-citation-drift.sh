@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 #
-# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
-# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut).
-# Run it voluntarily; nothing blocks a push or fails CI on it. Re-wiring
-# it into kask/githooks/pre-push or .github/workflows/kask-invariants.yml
-# requires an explicit operator decision.
+# WIRED into kask/githooks/pre-push by explicit operator decision
+# 2026-11-02 (T3 of the 2026-11-01 refactor-alignment continuation),
+# reversing the 2026-10-31 unwiring. The hook runs this gate against
+# the PUSHED COMMIT via a git archive export: in export mode (no .git)
+# the @sym gate phase runs in full and the drift-window warning tier
+# degrades with a surfaced note. Baseline discipline: --refresh after
+# a deep audit or re-anchoring pass, committed with the change that
+# earned it (the ratchet checks drift since the last pinned point).
 # Citation-drift ratchet — the standing detector for the semantic-drift rot
 # class (card 68518cb7's census, wired per the operator's 2026-10-24
 # approval). Both existing gates are blind to it: check-docs-citations.sh
@@ -39,10 +42,14 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "FAIL: not inside a git repository (run from the repo or a fixture repo)." >&2
+# Export-gating mode: the pre-push hook runs this gate inside a `git
+# archive` export of the pushed commit (no .git). REPO_ROOT from the
+# hook is honored first; without it, fall back to the git repo root.
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null)}"
+if [ -z "$REPO_ROOT" ] || [ ! -d "$REPO_ROOT" ]; then
+  echo "FAIL: no REPO_ROOT set and not inside a git repository (run from the repo, a fixture repo, or an export with REPO_ROOT)." >&2
   exit 2
-}
+fi
 cd "$REPO_ROOT" || exit 2
 DOCS_ROOT="${DOCS_ROOT:-kask/docs}"
 BASELINE="$SCRIPT_DIR/citation-drift-audit-hash.txt"
@@ -59,7 +66,13 @@ REFRESH=0
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-git ls-files '*.rs' | sort > "$TMP/rsfiles.txt"
+if git rev-parse --git-dir >/dev/null 2>&1; then
+  git ls-files '*.rs' | sort > "$TMP/rsfiles.txt"
+else
+  # Export mode: an archive export carries exactly the commit's tracked
+  # content — every .rs in it is a gated file.
+  find . -name '*.rs' | sed 's|^\./||' | sort > "$TMP/rsfiles.txt"
+fi
 
 # ── Phase A+B: census with order-preserving continuation inheritance ──────
 resolve() {
@@ -164,6 +177,12 @@ done < <(tr '\t' '\037' < "$TMP/citations.tsv")
 drift_warn=0
 if [ -f "$BASELINE" ]; then
   BASE=$(head -1 "$BASELINE")
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    # Export mode: no git history to diff against — the warning tier
+    # degrades (surfaced, never silent); the @sym gate phase above ran
+    # in full.
+    echo "warn: citation-drift: export mode (no .git) — the drift-window warning tier is skipped; the @sym gate phase ran in full."
+  else
   : > "$TMP/hunks.tsv"
   while IFS= read -r f; do
     git diff "$BASE..HEAD" --unified=0 -- "$f" 2>/dev/null | awk -v f="$f" '
@@ -196,6 +215,7 @@ if [ -f "$BASELINE" ]; then
       echo "warn: citation-drift: $doc cites $file:$line — in a region shifted/edited since the audit hash (re-anchor at consultation)"
     fi
   done < <(tr '\t' '\037' < "$TMP/citations.tsv")
+  fi
 else
   echo "warn: citation-drift: no audit hash at $BASELINE — run '$0 --refresh' after a deep audit to pin the audit point; the drift-warning phase is skipped until then."
 fi

@@ -18,10 +18,12 @@
 # Deliberate negative-test fixtures are allowlisted — each entry a
 # recorded decision (the check-no-python.sh allowlist pattern).
 #
-# ADVISORY AGENT TOOL — unwired from push/CI enforcement by operator
-# mandate 2026-10-31 (the rules-that-don't-improve-code-quality cut),
-# consistent with the sibling citation gates. Run it voluntarily;
-# re-wiring it requires an explicit operator decision.
+# WIRED into kask/githooks/pre-push by explicit operator decision
+# 2026-11-02 (T3 of the 2026-11-01 refactor-alignment continuation),
+# reversing the 2026-10-31 unwiring, consistent with the sibling
+# citation gates. The hook runs this gate against the PUSHED COMMIT
+# via a git archive export; REPO_ROOT (from the hook) or
+# CODE_CITES_ROOT override the root.
 #
 # Usage: bash kask/scripts/check-code-docs-citations.sh
 # Env:   CODE_CITES_ROOT — root override for the selftest (defaults to
@@ -32,10 +34,10 @@
 
 set -uo pipefail
 
-ROOT="${CODE_CITES_ROOT:-}"
+ROOT="${CODE_CITES_ROOT:-${REPO_ROOT:-}}"
 if [ -z "$ROOT" ]; then
     ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-        echo "FAIL: not inside a git repository (run from within the repo, or set CODE_CITES_ROOT)." >&2
+        echo "FAIL: not inside a git repository (run from within the repo, set CODE_CITES_ROOT, or pass REPO_ROOT for export gating)." >&2
         exit 2
     }
 fi
