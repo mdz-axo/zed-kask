@@ -1257,12 +1257,17 @@ zed = { codegen-units = 16 }
 # servers are I/O daemons: thin LTO and codegen-units=1 buy them nothing and
 # pin one core per crate for minutes (the historical install CPU-burn
 # defect). The `zed` binary remains on release with its upstream package
-# override of 16 codegen units. Pinned by
-# kask/scripts/build/check-build-profile.sh (kask-invariants.yml).
+# override of 16 codegen units. Like release-fast, the profile splits its
+# (limited) DWARF into .dwo sidecars under the target tree — the install
+# publishes editor and servers through one path, so they share the split
+# protocol — keeping the linked server binaries small in every install
+# mode. Pinned by kask/scripts/build/check-build-profile.sh
+# (kask-invariants.yml).
 [profile.release-mcp]
 inherits = "release"
 lto = false
 codegen-units = 16
+split-debuginfo = "unpacked"
 
 # zed-kask: D46 — the --fast route's full DWARF splits into .dwo sidecars
 # under the target tree (split-debuginfo = "unpacked"): the linked binary

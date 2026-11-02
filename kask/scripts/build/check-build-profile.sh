@@ -24,6 +24,11 @@
 # split-debuginfo = "unpacked" keeps the profile's full debug info in .dwo
 # sidecars under the target tree; the linked binary lands ~0.4 GB.
 #
+# The same split applies to [profile.release-mcp] (same date): the nine
+# server binaries each carried ~219 MB of embedded limited DWARF and
+# shipped unstripped on --fast installs — one publication path, one
+# split protocol.
+#
 # Usage: bash kask/scripts/build/check-build-profile.sh  (from repo root)
 # Exit codes: 0 = seam intact, 1 = drift detected
 
@@ -50,6 +55,8 @@ grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'lto = false' \
     || fail "[profile.release-mcp] must set lto = false (D46)"
 grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'codegen-units = 16' \
     || fail "[profile.release-mcp] must set codegen-units = 16 (D46)"
+grep -A5 '^\[profile\.release-mcp\]' "$CARGO_TOML" | grep -q 'split-debuginfo = "unpacked"' \
+    || fail "[profile.release-mcp] must set split-debuginfo = \"unpacked\" (D46) — embedded limited DWARF ships ~1.6 GB of server binaries unstripped on --fast installs"
 
 # The [profile.release] package tables — external dependencies must not
 # inherit single-unit release codegen (D46; absorbs the retired D50), and
@@ -193,4 +200,4 @@ if [ "$rc" -ne 42 ]; then
     fail "clippy wrapper must propagate Cargo's failure status (D52): rc=$rc"
 fi
 
-echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace, --fast DWARF split"
+echo "[OK] build-profile seam intact: release-mcp profile, split install build, jobs cap, CPU trace, release-fast + release-mcp DWARF splits"

@@ -374,8 +374,9 @@ strip_jsonc_comments() {
 # Strip policy is the caller's ($3): release builds strip (binary size);
 # release-fast keeps the full debug symbols its profile promises (debugger
 # workflows — stripping at install would silently break that contract);
-# the profile splits its DWARF into .dwo sidecars (split-debuginfo =
-# "unpacked"), so the linked --fast binary itself stays small. A
+# both install-time profiles (release-fast and release-mcp) split their
+# DWARF into .dwo sidecars (split-debuginfo = "unpacked"), so the linked
+# binaries stay small in every install mode. A
 # strip failure is non-fatal but VISIBLE: log_warning names the binary and
 # strip's own error; the success line prints only on success (the former
 # `strip ... || true` + unconditional message reported failed strips as
