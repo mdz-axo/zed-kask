@@ -441,6 +441,26 @@ impl SerializableItem for MediaPanel {
 mod tests {
     use super::*;
 
+    /// D98-PIN (batch-9 audit): the serializable-item registration is what
+    /// restores the panel into its dock position after a workspace reload —
+    /// the batch-9 audit found the registration unpinned (the DIVERGENCE row
+    /// had named the production trait method as if it were a pin). Source
+    /// pin on the registration call plus the kind identity, in the alacritty
+    /// resize-log precedent style: deleting the registration fails here.
+    #[test]
+    fn serializable_item_registration_is_pinned() {
+        assert_eq!(
+            MediaPanel::serialized_item_kind(),
+            "MediaPanel",
+            "the serialized kind string is the dock persistence identity"
+        );
+        let source = include_str!("media_panel.rs");
+        assert!(
+            source.contains("register_serializable_item::<MediaPanel>(cx)"),
+            "media_panel::init must register the serializable item — dock persistence depends on it"
+        );
+    }
+
     /// Every tool name the Steer prompt advertises in backticks must exist
     /// in the server's generated TOOL_NAMES. The list itself is rendered
     /// from TOOL_NAMES (`render_grouped_tool_advertisement`), so this passes
