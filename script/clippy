@@ -58,6 +58,17 @@ if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
     # (macro/feature-activated usage) that upstream CI owns, not us.
     (cd kask && cargo machete)
 
+    # zed-kask: nightly lib-target complement to machete (wired 2026-11-01,
+    # operator approval; was manual-only — DIVERGENCE.md). machete finds
+    # deps never imported in ANY target; this catches deps the lib target
+    # never uses. Skipped loudly when nightly is absent (the sccache
+    # pattern — never a silent pass); self-install stays manual-only.
+    if rustup run nightly rustc --version >/dev/null 2>&1; then
+        bash kask/scripts/check-unused-deps.sh
+    else
+        echo "warning: nightly toolchain not installed — skipping kask/scripts/check-unused-deps.sh (rustup toolchain install nightly to enable)" >&2
+    fi
+
     # zed-kask: D46 — the typos spell-check was removed from this gate
     # (2026-09-10, operator ruling): it never runs in CI and it blocked
     # the local build gate on domain proper nouns (DuPont). Do not

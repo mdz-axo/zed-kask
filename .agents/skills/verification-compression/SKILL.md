@@ -431,49 +431,29 @@ Template context variables (from each template's [inference] contract):
 
 ## Regression case
 
-Run the five pinned `lisp_eval` forms through the live tool with representative
-stub envs, BOTH directions per gate:
+Run the five pinned `lisp_eval` forms (VC-0 relevance, inventory gate,
+preservation gate, context/samples gate, deltas) through the live tool with
+representative stub envs, BOTH directions per gate, whenever a form changes.
+The inline forms are the authority for expected outcomes — this section does
+not restate them. Stub the discriminating cases the compiled pins do not
+cover:
 
-- **Relevance/classification form**: run VC-0 with `max_steps: 1000000` over
-  at least these branches: exact one-to-one complete current rows →
-  `gate_passed=true` + `full_preservation`; exact one-to-one fired tombstone
-  rows → `gate_passed=true` + `tombstone_fast_path`; mixed complete rows →
-  `partition_required`; missing/duplicate/extra IDs, whitespace or wrong-typed
-  references, an unsubstituted `<placeholder>`, missing authority/channel/trigger,
-  a current signal with a fired trigger, or a tombstone whose trigger is not
-  fired → `blocked`.
-
-- **Tombstone branch**: a source-text absence test with no current expectation
-  or live disturbance channel, plus a durable decision record, enters the fast
-  path; deleting it and sweeping its path/identifier can reach
-  `tombstone_retired` without invented signal mappings or a vacuous Lean proof.
-  The paired control is a negative test over stale persisted input or a mutable
-  registry: it remains `current_signal` and cannot enter the fast path.
-- **Inventory gate**: true when `missing_expectations` and
-  `unfalsifiable_expectations` are both 0; FALSE when either is nonzero.
-- **Preservation gate**: true when all seven count fields are 0 and
-  `lean_proof_passed` is true; FALSE when any count is nonzero (e.g.
-  `lost_falsifiers=1`).
-- **Context/samples gate**: true for an execute-mode env with matching
-  toolchain/environment/oracle/contract hashes,
-  `authorized_diff_verified=true`, `source_changed=true`,
-  `hashes_verified=true`, a measured cold block with >=2 positive samples,
-  an idle warm block, and a measured code-graph block
-  (`code_graph_status="measured"` with nonzero code node/edge counts).
-  Also true for an ANALYZE-mode env with identical source hashes and
-  unchanged code-graph counts. FALSE when: analyze mode with DIFFERENT
-  source hashes; execute mode with `source_changed=false` and a measured
-  code graph; a cold after-sample containing 0 (per-sample positivity);
-  or `hashes_verified=false`.
-- **Deltas form**: `workflow_graph_compression`, `code_graph_compression`,
-  `cold_speedup` from the sample means, `warm_speedup` null when not_run;
-  `code_graph_compression` is null when `code_graph_status="not_run"`
-  (a no-edit pilot cannot claim code-graph compression).
+- **VC-0**: one-to-one complete current rows, one-to-one fired tombstones,
+  mixed rows, and malformed rows (missing/duplicate/extra IDs, wrong-typed or
+  missing references, an unfilled placeholder, a current signal with a fired
+  trigger, a tombstone whose trigger is not fired), with `max_steps: 1000000`.
+  The typed-reference predicate and its invisible-leader bypass classes are
+  pinned compiled in `kask/crates/hkask-lisp/src/bin/check_skill_lisp_forms.rs`
+  (`vc0_typed_predicate_admits_content_and_rejects_invisible_leaders`) —
+  re-stub only the branches that pin does not cover.
+- **Tombstone branch**: pair a source-text absence test with no live channel
+  but a durable decision record against a stale-persisted-input negative
+  test that must stay `current_signal` and cannot enter the fast path.
 
 The Lean proof pipeline (`generate-verification-preservation-proof.sh` +
-the pinned Lean binary) and the receipt checker are separate script-level
-regression surfaces: `test-generate-verification-preservation-proof.sh`
-(valid + missing-signal proof cases) and
-`check-verification-compression-receipt-selftest.sh` (receipt controls).
-They need the pinned toolchain and are a recorded scope boundary, not run
-here.
+the pinned Lean binary; `test-generate-verification-preservation-proof.sh`,
+1 positive + 11 negative cases) and the receipt checker
+(`check-verification-compression-receipt.sh`, pinned by
+`check-verification-compression-receipt-selftest.sh` controls) are
+script-level regression surfaces. They need the pinned toolchain and are a
+recorded scope boundary, not run here.

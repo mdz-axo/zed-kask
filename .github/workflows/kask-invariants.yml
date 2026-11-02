@@ -6,8 +6,12 @@
 # diagram-registry-parity, mcp-readme-counts, skill-crossrefs and its
 # siblings, retired-record, and the goal-traceability advisory job.
 # Those scripts remain on disk as advisory agent tools, run voluntarily
-# by the streams that want them; nothing reddens CI on them again. The
-# kept steps below are the ones that enforce the operator's stated goal
+# by the streams that want them; nothing reddens CI on them again.
+# (Retired outright 2026-11-01, operator approval: goal-traceability and
+# its selftest — warn-only, the weakest signal in the unwired set; the
+# commit-msg hook's advisory invocation, this file's selftest-loop skip
+# entry, and the principle-constraints entry went with them.)
+# The kept steps below are the ones that enforce the operator's stated goal
 # — the code compiles and works: build, tests, formatting, installer
 # function, tool registration, and code-quality hygiene. Every
 # historical enforcement claim about the unwired gates (in
@@ -222,11 +226,6 @@ jobs:
           # only thing that keeps an advisory tool honest.
           failed=""
           for selftest in kask/scripts/check-*-selftest.sh; do
-            # Advisory tools, unwired from enforcement 2026-10-31 — their
-            # selftests remain valid but are not part of the gate set.
-            case "$selftest" in
-              kask/scripts/check-goal-traceability-selftest.sh) continue ;;
-            esac
             if ! out="$(bash "$selftest" 2>&1)"; then
               # ::error:: annotations are recorded by GitHub separately
               # from step logs, so the failing selftest is named even

@@ -62,15 +62,7 @@ principles:
         check:
           path: kask/scripts/check-commit-msg-selftest.sh
           command: bash kask/scripts/check-commit-msg-selftest.sh
-      - id: ax-goal-traceability-advisory
-        assertion: Local hook and independent CI job report skill goal trailers without blocking.
-        status: documented_process
-        scope: UUID trailer syntax only; goal existence and approval are not verified; remote CI not executed here
-        owner: repository maintainer
-        enforced_at: .github/workflows/kask-invariants.yml
-        check:
-          path: kask/scripts/check-goal-traceability-selftest.sh
-          command: bash kask/scripts/check-goal-traceability-selftest.sh
+
       - id: ax-port-typing
         assertion: Unsupported schema keywords do not yield a successful validation verdict.
         status: gap
