@@ -460,6 +460,7 @@ impl MediaServer {
             + Self::layers_search_router()
             + Self::layers_export_router()
             + Self::layers_store_router()
+            + Self::layers_edl_router()
             + Self::voice_router()
             + Self::youtube_router()
     }
