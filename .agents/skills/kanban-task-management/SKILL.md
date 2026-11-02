@@ -17,7 +17,16 @@ Decompose → Delegate → Operate
 - **Decompose**: Break a project description into INVEST-compliant kanban
   tasks with acceptance criteria, dependencies, and recomposition strategy.
   The agent then calls `kanban_board_create` + `kanban_task_create`.
-- **Delegate**: Configure one spawn for a task, call `kanban_task_spawn`, then read the spawn receipt and the delegate's report from the task's comment thread (`kanban_task_comments_since`). Comments and deliverable links are derived from that observed report; no second execution prompt runs.
+- **Delegate**: Configure one spawn for a task, then read the spawn receipt
+  and the delegate's report from the task's comment thread
+  (`kanban_task_comments_since`). Comments and deliverable links are
+  derived from that observed report; no second execution prompt runs.
+  Route selection by initiating party: a caller holding the kata-kanban
+  server grant (panel-driven, server-origin worktree delegation) uses
+  `kanban_task_spawn`; an agent running inside a Zed thread is denied
+  that route (crates/agent/src/thread.rs — until per-invocation identity
+  is carried end-to-end (P2), native agents delegate through the bound
+  `create_thread`/`spawn_agent` paths) and uses the builtin `spawn_agent`.
 - **Operate**: Monitor the board, coordinate agents through comment threads,
   track deliverables, move tasks through columns, verify completion, and
   escalate to the human operator. The agent calls `kanban_task_list`,
@@ -80,6 +89,27 @@ Anderson, *Kanban: Successful Evolutionary Change* (2010) — visualize work, li
 
 After `kanban_task_spawn`, the spawned worktree agent executes in its own session and reports through the task's comment thread — read the spawn receipt and the delegate's report with `kanban_task_comments_since` for the *same* task ID. If no report has landed, leave the task open and surface the missing receipt; do not render another execution prompt. Use the reported response and any verified paths to add a deliverable or post a progress/blocker comment. No second task record or model-produced execution report is created.
 
+### Native spawn_agent delegation (Zed-thread agents)
+
+When the delegating agent runs inside a Zed thread, delegate via the
+builtin `spawn_agent`. The spawned agent sees no conversation history,
+so the delegation message is self-contained: the task identity
+(`task_id`, board name + id — name for understanding, id for dispatch),
+the task title and acceptance criteria verbatim, every file path,
+requirement and constraint the worker needs, and the reporting contract.
+`spawn_agent` returns only the worker's final message, so the delegator
+posts the result to the task itself (`kanban_task_comment`,
+`kanban_task_add_deliverable` for verified paths) — one writer per task
+per batch. Follow-ups reuse the returned `session_id` with a short direct
+message; never a duplicate session. `model` takes an exact
+`list_agents_and_models` id and cannot be combined with `session_id`.
+Never delegate goal judgment or closure (worker progress only —
+GOAL_INTERFACE.md). Shapes that warrant a sub-agent: parallel
+independent steps with disjoint write sets, independent
+information-gathering, large-log validation runs where only the summary
+matters, fresh-perspective reviews — not anything one or two tool calls
+accomplish directly.
+
 ### Operate-phase sweep loop
 
 One bounded PDCA applies to the active phase: Plan from the initial and target conditions above; Do only the admitted board/spawn/transition operations; Check by re-reading real tool state and the cited goal criteria; Act once on a named gap (complete a missing board write or return failed work for correction), or stop with the gap and operator decision needed. Do not replay a spawn after an uncertain tool error. For the operate phase specifically, close with a board sweep:
@@ -102,7 +132,8 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
 | `kanban_task_create` | decompose | Create each accepted task with exact goal-criterion `advances` citations |
 | `kanban_task_list` | decompose, operate | Post-step: verify / pre-step: fetch |
 | `kanban_board_list` | operate | Pre-step: fetch board state |
-| `kanban_task_spawn` | delegate | Post-step: spawn subagent once (tool may require enabling in this session) |
+| `kanban_task_spawn` | delegate | Post-step: spawn subagent once — server-grant callers only (native Zed-thread agents use the builtin `spawn_agent`; the tool may require enabling in this session) |
+| `spawn_agent` (builtin) | delegate | Native Zed-thread agents only: self-contained delegation message; results return via the delegator's `kanban_task_comment` |
 | `kanban_task_comments_since` | delegate, operate | Post-step: read the spawn receipt and the delegate's report |
 | `kanban_task_comment` | delegate, operate | Post-step: post progress notes / coordinator replies |
 | `kanban_task_add_deliverable` | delegate, operate | Post-step: record deliverable links |
