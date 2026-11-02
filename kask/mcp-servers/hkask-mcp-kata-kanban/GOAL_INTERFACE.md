@@ -9,8 +9,18 @@ against the human outcome. No probability is synthesized for ordinary goals.
 **Forward-only policy:** obsolete goal-schema data is discarded, not migrated.
 There is no backward compatibility contract. Obsolete stored goal rows and their
 recall projections are removed by an explicit one-time reset, not a runtime
-migration, archive, or compatibility subsystem. This contract does not record an
-executed reset.
+migration, archive, or compatibility subsystem.
+
+**Executed reset — 2026-11-02 (operator ruling, disposition B):** ten stored
+schema-3 goal rows (written under the pre-removal shape that still carried
+`verdicts` and the trust-schema fields; census 10 obsolete / 0 current) and all
+ten `curator:goal:` recall projections were removed by the env-gated one-time
+reset (`tests/obsolete_goal_reset.rs`). The activation goal
+3e024639-c477-4d65-8006-25c845f7801f (human closure accomplished_achieved
+2026-10-21, one completed independent assessment) was among them; its frozen
+specification is preserved in the reset commit message, and re-declaration is
+the operator's option (a fresh lineage — `supersedes` cannot resolve a removed
+row).
 
 **Schema evolution:** a change to the stored row shape bumps schema version 3
 to a successor — the version bump, not an in-place field swap, is what retires
