@@ -13,7 +13,11 @@
 //!   merged with assets surfaced by the conversation's tool results, with
 //!   delete (two-step confirm) affordances. Each fetched page reconciles
 //!   the list — assets deleted from the gallery drop out of it.
-//! - **Queue**: research jobs (via `job_list`) with cancel affordances.
+//! - **Activity layer** (T2): research jobs (via `job_list`) as ambient
+//!   process state, never a destination — badges on the affected Library
+//!   rows, a live-count Activity toggle in the toolbar, and an on-demand
+//!   drawer whose rows keep op/status/created_at with Cancel for
+//!   queued/running jobs and the process-local history disclosure.
 //! - **Transcript**: the synced recordings — the recording-first browser
 //!   (per-recording transcription status, the Transcribe affordance), and
 //!   the synced-recording workspace (follow-along viewport tracking,
@@ -49,6 +53,17 @@ use util::ResultExt as _;
 const MEDIA_SERVER: &str = "media";
 const GALLERY_PAGE_LIMIT: usize = 100;
 const QUEUE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+/// The nonterminal job statuses — the observation probes' filter values.
+/// The server's `job_list` takes a SINGULAR status filter applied before
+/// the newest-first sort and limit, so one probe per status observes live
+/// jobs anywhere in the bounded store: an older running job behind a full
+/// page of newer completions included (loop-register L11, the deferred
+/// impedance the activity layer settles).
+const NONTERMINAL_JOB_STATUSES: [&str; 3] = ["queued", "running", "cancelling"];
+/// The activity drawer's share of the viewer's height (T2): the drawer is
+/// an on-demand strip below the active mode — bounded like the inspector
+/// pane, scrolling internally so it stays usable in every dock shape.
+const ACTIVITY_DRAWER_FRACTION: f32 = 0.3;
 /// Follow-along polling cadence (S3c) — 4 Hz marks the containing word
 /// responsively without saturating the render loop.
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -82,6 +97,7 @@ const INSPECTOR_PANE_FRACTION: f32 = 0.38;
 enum RequestOwner {
     GalleryPage(usize),
     Jobs,
+    JobObservation,
     Detail(String),
     Edit(&'static str),
     DetailTranscripts(String),
@@ -535,18 +551,19 @@ pub struct MediaAsset {
     pub gallery_asset_id: Option<String>,
 }
 
-/// The panel's task modes (T1, media-panel-redesign plan): primary
+/// The panel's task modes (T1/T2, media-panel-redesign plan): primary
 /// navigation mirrors user tasks, never server subsystems. `Workspace`
 /// is the one-asset mode — the player, the edit toolbar, and the
 /// toggleable inspector pane in one screen; the Detail tab it absorbed
-/// is its supporting pane. Library/Queue/Transcript remain top-level
-/// until phases B and C fold them into the activity layer and the
-/// Library.
+/// is its supporting pane. Library/Transcript remain top-level until
+/// phase C folds the recordings browser into the Library. The Queue tab
+/// it replaced is the activity layer (T2): ambient status (badges, the
+/// toolbar Activity toggle) plus an on-demand drawer — never a
+/// navigation destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewerTab {
     Workspace,
     Library,
-    Queue,
     Transcript,
 }
 
@@ -652,6 +669,10 @@ pub struct MediaViewer {
     assets: Vec<MediaAsset>,
     selected: Option<usize>,
     active_tab: ViewerTab,
+    /// The activity drawer's visibility (T2): the toolbar's Activity
+    /// toggle opens it over any mode — ambient process state observed on
+    /// demand (FCP Background Tasks), never a navigation destination.
+    activity_open: bool,
     /// The observed conversation thread (weak — the panel owns it), kept so
     /// `refresh` can re-ingest tool-result display hints without the panel
     /// forwarding the entity again.
@@ -676,7 +697,13 @@ pub struct MediaViewer {
     gallery_id: Option<String>,
     gallery_request: RequestLifecycle,
     jobs: Vec<JobRecord>,
-    /// The non-terminal transcribe job ids the last jobs listing saw
+    /// The nonterminal research jobs observed ANYWHERE in the bounded
+    /// store — the newest-first page's live rows plus the status-probe
+    /// rows (T2, loop-register L11: a live job deeper than the page
+    /// stays observed, not silently dropped). Badges, the toolbar
+    /// Activity count, and the poll condition read this set.
+    live_jobs: Vec<JobRecord>,
+    /// The non-terminal transcribe job ids the last observation saw
     /// (R5) — when one lands, the recordings browser reloads its listing
     /// once so the finished transcript appears under its recording.
     transcribing_ids: HashSet<String>,
@@ -684,6 +711,15 @@ pub struct MediaViewer {
     jobs_limit: usize,
     jobs_has_more: bool,
     jobs_request: RequestLifecycle,
+    /// The observation battery's lifecycle (the three status-filtered
+    /// probes a tick issues when the page admits deeper jobs) — its own
+    /// single-flight guard, so a slow battery cannot overlap the next.
+    job_observation_request: RequestLifecycle,
+    /// The process-local history disclosure (T2): the
+    /// `history_scope`/`restart_behavior` fields the strict listing parse
+    /// already validates — the drawer's footer copy renders them verbatim.
+    jobs_history_scope: Option<String>,
+    jobs_restart_behavior: Option<String>,
     processed_job_results: HashSet<String>,
     queue_poll_task: Option<Task<()>>,
     /// Inspector data for the selected asset (from `gallery_asset_detail`).
@@ -814,6 +850,7 @@ impl MediaViewer {
             assets: Vec::new(),
             selected: None,
             active_tab: ViewerTab::Workspace,
+            activity_open: false,
             thread: None,
             media_widget: None,
             media_widget_body: None,
@@ -824,11 +861,15 @@ impl MediaViewer {
             gallery_id: None,
             gallery_request: RequestLifecycle::new(),
             jobs: Vec::new(),
+            live_jobs: Vec::new(),
             transcribing_ids: HashSet::new(),
             jobs_total: None,
             jobs_limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
             jobs_has_more: false,
             jobs_request: RequestLifecycle::new(),
+            job_observation_request: RequestLifecycle::new(),
+            jobs_history_scope: None,
+            jobs_restart_behavior: None,
             processed_job_results: HashSet::new(),
             queue_poll_task: None,
             detail: None,
@@ -960,10 +1001,9 @@ impl MediaViewer {
             self.selection_mode = false;
             self.selection_anchor = None;
         }
-        if self.active_tab == ViewerTab::Queue && tab != ViewerTab::Queue {
-            self.stop_queue_polling();
-            self.jobs_request.invalidate();
-        }
+        // The activity poll (T2) is deliberately NOT touched here: job
+        // observation is ambient, not bound to any mode — a tab switch can
+        // neither start nor stop it (only the observed live set does).
         // Leaving the workspace keeps the inspector's loaded data (the
         // transcript workspace's persistence rule, T1): it belongs to the
         // selected asset, not to the mode, and a re-entry refreshes it.
@@ -972,7 +1012,6 @@ impl MediaViewer {
         self.confirm_delete_transcript.disarm();
         match tab {
             ViewerTab::Library => self.load_gallery(cx),
-            ViewerTab::Queue => self.load_jobs(cx),
             ViewerTab::Workspace => {
                 if self.inspector_should_load() {
                     self.load_inspector(cx);
@@ -1003,6 +1042,7 @@ impl MediaViewer {
         }
         self.thread = Some(thread.downgrade());
         let mut gallery_mutated = false;
+        let mut job_submitted = false;
         let mut tool_results = Vec::new();
         {
             let thread = thread.read(cx);
@@ -1014,12 +1054,19 @@ impl MediaViewer {
                     continue; // still running — no result to ingest yet
                 };
                 let tool: SharedString = call.tool_name.clone().unwrap_or_else(|| "tool".into());
+                let first_seen = self.processed_tool_results.insert(call.id.clone());
                 // First sight of a completed result carrying the server's
                 // gallery-change contract makes the cached Library stale.
-                if self.processed_tool_results.insert(call.id.clone())
-                    && tool_result_changed_gallery(output)
-                {
+                if first_seen && tool_result_changed_gallery(output) {
                     gallery_mutated = true;
+                }
+                // First sight of a completed job_submit starts job
+                // observation (T2): a chat-submitted job is ambient
+                // process state — its badges and the poll must not wait
+                // for the drawer to open (opening the retired Queue tab
+                // was the old trigger).
+                if first_seen && &*tool == "job_submit" {
+                    job_submitted = true;
                 }
                 tool_results.push((output.clone(), tool));
             }
@@ -1034,6 +1081,11 @@ impl MediaViewer {
         // wasted dispatches.
         if gallery_mutated && self.active_tab == ViewerTab::Library {
             self.reload_gallery(cx);
+        }
+        // A submitted job begins the activity tick: the poll chain, the
+        // badges, and the drawer all read the listing it fetches.
+        if job_submitted {
+            self.load_jobs(cx);
         }
     }
 
@@ -1267,7 +1319,6 @@ impl MediaViewer {
                 }
             }
             ViewerTab::Library => self.reload_gallery(cx),
-            ViewerTab::Queue => self.load_jobs(cx),
             ViewerTab::Transcript => {
                 if let Some(transcript) = self.transcript.as_ref() {
                     let transcript_id = transcript.transcript_id.clone();
@@ -1279,6 +1330,11 @@ impl MediaViewer {
                     self.load_transcript_listing(cx);
                 }
             }
+        }
+        // The activity drawer refreshes with the visible surface when it
+        // is open (T2): force-refresh reloads what is on screen.
+        if self.activity_open {
+            self.load_jobs(cx);
         }
         cx.notify();
     }
@@ -1461,7 +1517,10 @@ impl MediaViewer {
         }
     }
 
-    /// Load the research-operation queue (spec: see and manage running jobs).
+    /// Load the activity layer's job listing (T2): the newest-first page
+    /// that feeds the drawer's history rows, the completed-result ingest,
+    /// and the poll's page half. The status probes complete the
+    /// observation when the page admits deeper jobs.
     fn load_jobs(&mut self, cx: &mut Context<Self>) {
         let Some(epoch) = self.jobs_request.begin(RequestOwner::Jobs) else {
             return;
@@ -1526,36 +1585,33 @@ impl MediaViewer {
                     })
                     .collect::<Vec<_>>();
                 self.jobs = listing.jobs;
-                // A transcribe job that landed terminal while the recordings
-                // browser is showing reloads the listing once so the
-                // finished transcript appears under its recording (R5).
-                let still_transcribing = self
-                    .jobs
-                    .iter()
-                    .filter(|job| job_is_nonterminal(job) && job.op == "transcribe")
-                    .map(|job| job.id.clone())
-                    .collect::<HashSet<_>>();
-                let landed = self
-                    .transcribing_ids
-                    .iter()
-                    .any(|id| !still_transcribing.contains(id));
-                self.transcribing_ids = still_transcribing;
-                if landed && self.active_tab == ViewerTab::Transcript && self.transcript.is_none() {
-                    self.load_transcript_listing(cx);
-                }
                 self.jobs_total = Some(listing.total);
                 self.jobs_limit = listing.limit;
                 self.jobs_has_more = listing.has_more;
+                self.jobs_history_scope = Some(listing.history_scope);
+                self.jobs_restart_behavior = Some(listing.restart_behavior);
                 self.jobs_request.complete(epoch, Ok(()));
                 for (job_id, op, result) in completed_results {
                     if self.processed_job_results.insert(job_id) {
                         self.ingest_tool_result(&result, &op, cx);
                     }
                 }
-                if self.should_poll_jobs() {
-                    self.schedule_queue_poll(cx);
+                if listing.has_more {
+                    // Deeper pages exist: the newest-first page cannot see
+                    // whether a live job hides behind them — only the status
+                    // probes can (T2, loop-register L11). The tick settles
+                    // when the battery lands.
+                    self.observe_live_jobs(cx);
                 } else {
-                    self.stop_queue_polling();
+                    // The page IS the whole bounded store: its nonterminal
+                    // rows are the complete live set.
+                    self.live_jobs = self
+                        .jobs
+                        .iter()
+                        .filter(|job| job_is_nonterminal(job))
+                        .cloned()
+                        .collect();
+                    self.settle_activity_tick(cx);
                 }
             }
             Err(error) => {
@@ -1566,22 +1622,18 @@ impl MediaViewer {
         cx.notify();
     }
 
+    /// The poll condition (T2, loop-register L11): poll while any
+    /// nonterminal job is observed ANYWHERE in the bounded store. No
+    /// page-visibility limit — a live job deeper than the newest-first
+    /// page stays observed through the status probes — and no tab
+    /// limit: the activity layer is ambient, not a place you visit. A
+    /// failed observation battery over a listing with deeper pages
+    /// leaves the deep live set unknown — keep observing rather than
+    /// silently stop.
     fn should_poll_jobs(&self) -> bool {
-        self.jobs.iter().any(job_is_nonterminal)
-            && match self.active_tab {
-                ViewerTab::Queue => true,
-                // The recordings browser tracks its running transcribe jobs
-                // (R5) — the poll reloads the listing when one lands, so the
-                // finished transcript appears under its recording.
-                ViewerTab::Transcript => {
-                    self.transcript.is_none()
-                        && self
-                            .jobs
-                            .iter()
-                            .any(|job| job_is_nonterminal(job) && job.op == "transcribe")
-                }
-                _ => false,
-            }
+        !self.live_jobs.is_empty()
+            || (self.jobs_has_more
+                && matches!(self.job_observation_request.state, ResourceState::Failed(_)))
     }
 
     fn schedule_queue_poll(&mut self, cx: &mut Context<Self>) {
@@ -1598,6 +1650,154 @@ impl MediaViewer {
             })
             .log_err();
         }));
+    }
+
+    /// One observation battery (T2): the three status-filtered `job_list`
+    /// probes. The server filters by status BEFORE the newest-first sort
+    /// and limit, so each probe sees every job of that status anywhere in
+    /// the bounded store; together with the page's own nonterminal rows
+    /// they form the complete live set.
+    fn observe_live_jobs(&mut self, cx: &mut Context<Self>) {
+        let Some(epoch) = self
+            .job_observation_request
+            .begin(RequestOwner::JobObservation)
+        else {
+            return; // a battery is already in flight; its apply settles the tick
+        };
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_live_observation(
+                epoch,
+                Err("Tool invoker not wired — panel cannot observe jobs.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let limit = hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT;
+        let tasks = NONTERMINAL_JOB_STATUSES.map(|status| {
+            invoker.invoke_tool(
+                MEDIA_SERVER,
+                "job_list",
+                serde_json::json!({ "status": status, "limit": limit }),
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            let mut observed = Vec::new();
+            let mut failure = None;
+            for task in tasks {
+                let outcome = match task.await {
+                    Ok(text) => parse_job_listing(&text),
+                    Err(error) => Err(format!("job_list failed: {}", error.message())),
+                };
+                match outcome {
+                    Ok(listing) => observed.extend(listing.jobs),
+                    Err(error) => failure = Some(error),
+                }
+            }
+            let result = match failure {
+                Some(error) => Err(error),
+                None => Ok(observed),
+            };
+            this.update(cx, |this, cx| {
+                this.apply_live_observation(epoch, result, cx)
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
+    /// expect: The observed live set belongs only to the latest observation battery.
+    /// [P1] Motivating: a slow probe battery cannot graft stale rows onto the current live set.
+    /// pre: epoch was returned by job_observation_request.begin.
+    /// post: stale outcomes are ignored; the owned battery settles the tick exactly once.
+    fn apply_live_observation(
+        &mut self,
+        epoch: u64,
+        result: Result<Vec<JobRecord>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.job_observation_request.owns(epoch) {
+            return;
+        }
+        let page_live = self
+            .jobs
+            .iter()
+            .filter(|job| job_is_nonterminal(job))
+            .cloned()
+            .collect::<Vec<_>>();
+        match result {
+            Ok(observed) => {
+                // Defensive: the probes filter server-side, but the panel's
+                // live set is nonterminal BY CONSTRUCTION — a
+                // filter-violating response row never enters it (retention
+                // would otherwise keep it forever).
+                let mut live = page_live;
+                live.extend(observed.into_iter().filter(job_is_nonterminal));
+                dedupe_jobs_newest_first(&mut live);
+                self.live_jobs = live;
+                self.job_observation_request.complete(epoch, Ok(()));
+            }
+            Err(error) => {
+                let status = format!("job_list status observation failed: {error}");
+                self.job_observation_request.complete(epoch, Err(error));
+                self.status = Some(status);
+                // A failed battery proves nothing about deeper jobs: keep
+                // every previously observed live entry (badges and the
+                // poll condition survive a transient probe failure).
+                let mut live = page_live;
+                let retained = self
+                    .live_jobs
+                    .iter()
+                    .filter(|job| !live.iter().any(|known| known.id == job.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                live.extend(retained);
+                dedupe_jobs_newest_first(&mut live);
+                self.live_jobs = live;
+            }
+        }
+        self.settle_activity_tick(cx);
+        cx.notify();
+    }
+
+    /// The activity tick's settle step (T2): the live set is final for
+    /// this tick — reconcile the R5 transcribe tracking against it, then
+    /// arm or stop the 1 Hz poll by the observed-anywhere condition.
+    fn settle_activity_tick(&mut self, cx: &mut Context<Self>) {
+        // A transcribe job that landed while the recordings browser is
+        // showing reloads the listing once so the finished transcript
+        // appears under its recording (R5). Deep transcribe jobs count
+        // too — the probes observe them.
+        let still_transcribing = self
+            .live_jobs
+            .iter()
+            .filter(|job| job.op == "transcribe")
+            .map(|job| job.id.clone())
+            .collect::<HashSet<_>>();
+        let landed = self
+            .transcribing_ids
+            .iter()
+            .any(|id| !still_transcribing.contains(id));
+        self.transcribing_ids = still_transcribing;
+        if landed && self.active_tab == ViewerTab::Transcript && self.transcript.is_none() {
+            self.load_transcript_listing(cx);
+        }
+        if self.should_poll_jobs() {
+            self.schedule_queue_poll(cx);
+        } else {
+            self.stop_queue_polling();
+        }
+    }
+
+    /// Toggle the activity drawer (T2): opening refreshes the job listing
+    /// — the drawer is observed on demand (FCP Background Tasks), so it
+    /// never shows stale history as its opening state.
+    fn toggle_activity(&mut self, cx: &mut Context<Self>) {
+        self.activity_open = !self.activity_open;
+        if self.activity_open {
+            self.load_jobs(cx);
+        }
+        cx.notify();
     }
 
     /// Load the inspector data for the selected asset (spec: metadata, tags,
@@ -4130,12 +4330,6 @@ impl MediaViewer {
                 self.gallery_total.is_some(),
                 None,
             ),
-            ViewerTab::Queue => resource_status(
-                "Queue",
-                &self.jobs_request.state,
-                self.jobs_total.is_some(),
-                None,
-            ),
             ViewerTab::Transcript => resource_status(
                 "Transcript",
                 &self.transcript_request.state,
@@ -4153,11 +4347,23 @@ impl MediaViewer {
                     .map(|progress| (progress.into(), ui::Color::Muted))
             }),
         };
-        resource.or_else(|| {
-            self.status
-                .clone()
-                .map(|status| (status.into(), ui::Color::Error))
-        })
+        resource
+            // The activity layer (T2): with the drawer closed, a failed job
+            // listing has no surface of its own — the toolbar status line
+            // carries it (the open drawer renders the failure itself).
+            .or_else(|| {
+                (!self.activity_open).then(|| match &self.jobs_request.state {
+                    ResourceState::Failed(error) => {
+                        Some((format!("Activity: {error}").into(), ui::Color::Error))
+                    }
+                    _ => None,
+                })?
+            })
+            .or_else(|| {
+                self.status
+                    .clone()
+                    .map(|status| (status.into(), ui::Color::Error))
+            })
     }
 
     // ── Rendering ──────────────────────────────────────────────────────────
@@ -4423,8 +4629,8 @@ impl MediaViewer {
         // container gives its children indefinite height, and the video
         // widget's aspect-fit sizing needs a definite height derived from
         // the pane (min_h_0 lets flex_1 shrink below content size).
-        // Library/Queue scroll and the inspector scrolls internally; the
-        // player fills.
+        // Library/the activity drawer scroll and the inspector scrolls
+        // internally; the player fills.
         let content = div()
             .id("media-viewer-content")
             .flex_1()
@@ -4532,6 +4738,24 @@ impl MediaViewer {
                                     .size(LabelSize::XSmall)
                                     .color(ui::Color::Hint),
                             )
+                            // The ambient activity badge (T2): a live
+                            // research job whose primary source is this
+                            // asset — transient progress, never
+                            // error-styled (HIG Progress indicators).
+                            .when_some(self.asset_activity_verb(asset), |el, verb| {
+                                let badge_selector = format!("media-library-activity-{ix}");
+                                el.child(
+                                    div()
+                                        .id(SharedString::from(badge_selector.clone()))
+                                        .debug_selector(move || badge_selector)
+                                        .flex_shrink_0()
+                                        .child(
+                                            Label::new(verb)
+                                                .size(LabelSize::XSmall)
+                                                .color(ui::Color::Hint),
+                                        ),
+                                )
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_selection(Some(ix), cx);
                                 this.activate_tab(ViewerTab::Workspace, cx);
@@ -4628,106 +4852,70 @@ impl MediaViewer {
             .into_any_element()
     }
 
-    fn render_queue(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        if self.jobs_total.is_none() {
-            match &self.jobs_request.state {
-                ResourceState::Loading => {
-                    return self
-                        .render_empty("Loading Queue", "Fetching research jobs…")
-                        .into_any_element();
+    /// The activity drawer (T2): background research jobs observed on
+    /// demand — the ambient process state's monitor (FCP Background
+    /// Tasks: automatic work, observed when wanted, cancellable here).
+    /// Not a navigation mode: the toolbar's Activity toggle opens it over
+    /// any mode. Rows keep op/status/created_at with Cancel for
+    /// queued/running jobs — the observed live set first (a live job
+    /// deeper than the newest-first page is observed by the status probes
+    /// and stays cancellable here, loop-register L11), then the page's
+    /// recent history. The footer carries the process-local history
+    /// disclosure verbatim from the fields the strict listing parse
+    /// already validates.
+    fn render_activity_drawer(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let body = if self.jobs_total.is_none() {
+            let (title, hint) = match &self.jobs_request.state {
+                ResourceState::Loading => ("Loading activity", "Fetching research jobs…"),
+                ResourceState::Failed(error) => ("Activity unavailable", error.as_str()),
+                ResourceState::Idle => (
+                    "Activity not loaded",
+                    "Open the drawer or refresh to load it.",
+                ),
+                ResourceState::Ready => (
+                    "Activity ready — no jobs",
+                    "The job listing returned no rows.",
+                ),
+            };
+            self.render_empty(title, hint).into_any_element()
+        } else if self.jobs.is_empty() && self.live_jobs.is_empty() {
+            self.render_empty(
+                "No research jobs",
+                "No research jobs have been submitted (or process-local history restarted).",
+            )
+            .into_any_element()
+        } else {
+            let live_ids = self
+                .live_jobs
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<HashSet<_>>();
+            let recent = self
+                .jobs
+                .iter()
+                .filter(|job| !live_ids.contains(job.id.as_str()))
+                .collect::<Vec<_>>();
+            let mut rows = v_flex()
+                .id("media-activity-rows")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .gap_0p5()
+                .p_2();
+            if !self.live_jobs.is_empty() {
+                rows = rows.child(Self::section_label("Active"));
+                for job in &self.live_jobs {
+                    rows = rows.child(self.activity_job_row(job, cx));
                 }
-                ResourceState::Failed(error) => {
-                    return self
-                        .render_empty("Queue unavailable", error)
-                        .into_any_element();
-                }
-                ResourceState::Idle => {
-                    return self
-                        .render_empty("Queue not loaded", "Open or refresh Queue to load it.")
-                        .into_any_element();
-                }
-                ResourceState::Ready => {}
             }
-        }
-        if self.jobs.is_empty() {
-            return self
-                .render_empty(
-                    "Queue ready — no jobs",
-                    "No research jobs have been submitted (or process-local history restarted).",
-                )
-                .into_any_element();
-        }
-        let rows = self
-            .jobs
-            .iter()
-            .enumerate()
-            .map(|(ix, job)| {
-                let cancellable = job.status == "queued" || job.status == "running";
-                let short_id: SharedString = if job.id.len() > 8 {
-                    job.id[..8].to_string().into()
-                } else {
-                    job.id.clone().into()
-                };
-                div()
-                    .id(SharedString::from(format!("media-queue-row-{ix}")))
-                    .h_8()
-                    .px_2()
-                    .gap_2()
-                    .flex()
-                    .items_center()
-                    .rounded_sm()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(short_id)
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Hint),
-                    )
-                    .child(
-                        Label::new(job.op.clone())
-                            .size(LabelSize::Small)
-                            .color(ui::Color::Default),
-                    )
-                    .child(
-                        Label::new(job.status.clone())
-                            .size(LabelSize::XSmall)
-                            .color(if job.status == "failed" {
-                                ui::Color::Error
-                            } else if job.status == "completed" {
-                                ui::Color::Success
-                            } else {
-                                ui::Color::Muted
-                            }),
-                    )
-                    .child(
-                        Label::new(job.created_at.clone())
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Hint),
-                    )
-                    .when(cancellable, |el| {
-                        let job_id = job.id.clone();
-                        el.child(
-                            div()
-                                .id(SharedString::from(format!("media-queue-cancel-{ix}")))
-                                .ml_auto()
-                                .px_2()
-                                .h_5()
-                                .flex()
-                                .items_center()
-                                .rounded_sm()
-                                .hover(|el| el.bg(cx.theme().colors().element_hover))
-                                .cursor_pointer()
-                                .child(
-                                    Label::new("Cancel")
-                                        .size(LabelSize::XSmall)
-                                        .color(ui::Color::Muted),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.cancel_job(job_id.clone(), cx);
-                                })),
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
+            if !recent.is_empty() {
+                rows = rows.child(Self::section_label("Recent"));
+                for job in recent {
+                    rows = rows.child(self.activity_job_row(job, cx));
+                }
+            }
+            rows.into_any_element()
+        };
         let total = self.jobs_total.unwrap_or(self.jobs.len());
         let count_label = if self.jobs_has_more {
             format!(
@@ -4739,29 +4927,128 @@ impl MediaViewer {
             format!("Showing {} of {total} jobs", self.jobs.len())
         };
         v_flex()
-            .id("media-viewer-queue")
-            .flex_1()
+            .id("media-activity-drawer")
+            .debug_selector(|| "media-activity-drawer".into())
+            .h(gpui::relative(ACTIVITY_DRAWER_FRACTION))
             .min_h_0()
+            .min_w_0()
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(Self::tab_purpose(
-                "Async research jobs — the long-operation path (transcribe, batch edits); history is process-local.",
+                "Background research jobs — watch and cancel here; history is process-local and bounded.",
             ))
             .child(
-                h_flex().h_8().px_2().items_center().child(
-                    Label::new(count_label)
-                        .size(LabelSize::XSmall)
-                        .color(ui::Color::Muted),
-                ),
+                h_flex()
+                    .h_8()
+                    .px_2()
+                    .items_center()
+                    .min_w_0()
+                    .child(
+                        Label::new(count_label)
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Muted)
+                            .truncate(),
+                    ),
+            )
+            .child(body)
+            .when_some(self.jobs_restart_behavior.as_deref(), |el, disclosure| {
+                el.child(
+                    div()
+                        .id("media-activity-disclosure")
+                        .debug_selector(|| "media-activity-disclosure".to_string())
+                        .px_2()
+                        .py_1()
+                        .min_w_0()
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            Label::new(SharedString::from(disclosure.to_string()))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Hint),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// One activity-drawer job row (the retired Queue tab's row shape,
+    /// keyed by the stable job id so rows survive listing merges):
+    /// op/status/created_at with Cancel for queued/running jobs.
+    fn activity_job_row(
+        &self,
+        job: &JobRecord,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let cancellable = job.status == "queued" || job.status == "running";
+        let short_id: SharedString = if job.id.len() > 8 {
+            job.id[..8].to_string().into()
+        } else {
+            job.id.clone().into()
+        };
+        let row_selector = format!("media-activity-row-{}", job.id);
+        let cancel_selector = format!("media-activity-cancel-{}", job.id);
+        div()
+            .id(SharedString::from(row_selector.clone()))
+            .debug_selector(move || row_selector)
+            .h_8()
+            .px_2()
+            .gap_2()
+            .flex()
+            .items_center()
+            .min_w_0()
+            .rounded_sm()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(short_id)
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Hint),
             )
             .child(
-                v_flex()
-                    .id("media-viewer-queue-rows")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .gap_0p5()
-                    .p_2()
-                    .children(rows),
+                Label::new(job.op.clone())
+                    .size(LabelSize::Small)
+                    .color(ui::Color::Default),
             )
-            .into_any_element()
+            .child(
+                Label::new(job.status.clone())
+                    .size(LabelSize::XSmall)
+                    .color(if job.status == "failed" {
+                        ui::Color::Error
+                    } else if job.status == "completed" {
+                        ui::Color::Success
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
+            .child(
+                Label::new(job.created_at.clone())
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Hint),
+            )
+            .when(cancellable, |el| {
+                let job_id = job.id.clone();
+                el.child(
+                    div()
+                        .id(SharedString::from(cancel_selector.clone()))
+                        .debug_selector(move || cancel_selector)
+                        .ml_auto()
+                        .px_2()
+                        .h_5()
+                        .flex()
+                        .items_center()
+                        .rounded_sm()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .cursor_pointer()
+                        .child(
+                            Label::new("Cancel")
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Muted),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.cancel_job(job_id.clone(), cx);
+                        })),
+                )
+            })
     }
 
     /// The workspace's inspector pane (T1): the seven Detail sections as
@@ -6648,14 +6935,16 @@ impl MediaViewer {
             .into_any_element()
     }
 
-    /// The per-recording transcription status (R2/R5): a running
-    /// transcribe job whose source is the recording shows Transcribing;
-    /// a stored transcript linked to the recording shows Transcribed;
+    /// The per-recording transcription status (R2/R5): a live
+    /// transcribe job whose source is the recording shows Transcribing
+    /// (the observed-anywhere live set — a deep job counts too, T2); a
+    /// stored transcript linked to the recording shows Transcribed;
     /// otherwise Not transcribed.
     fn recording_transcription_status(&self, asset: &MediaAsset) -> RecordingTranscriptionStatus {
-        let running = self.jobs.iter().any(|job| {
-            job_is_nonterminal(job) && job.source.as_deref() == Some(asset.src.as_str())
-        });
+        let running = self
+            .live_jobs
+            .iter()
+            .any(|job| job.source.as_deref() == Some(asset.src.as_str()));
         if running {
             return RecordingTranscriptionStatus::Transcribing;
         }
@@ -6670,6 +6959,21 @@ impl MediaViewer {
         } else {
             RecordingTranscriptionStatus::NotTranscribed
         }
+    }
+
+    /// The ambient activity badge for one Library row (T2): the verb of
+    /// a live research job whose primary source is this asset —
+    /// transient progress (HIG Progress indicators: present only while
+    /// an operation is ongoing, never error-styled). `None` when no
+    /// live job targets the asset. The job record carries its primary
+    /// `source` (the transcribe input, the trim/clip source); for concat
+    /// jobs only the first input badges — the server exposes no wider
+    /// subject list on the record.
+    fn asset_activity_verb(&self, asset: &MediaAsset) -> Option<&'static str> {
+        self.live_jobs
+            .iter()
+            .find(|job| job.source.as_deref() == Some(asset.src.as_str()))
+            .map(|job| job_op_verb(&job.op))
     }
 
     /// The Transcribe affordance (R5, operator ruling 2026-10-28):
@@ -6688,7 +6992,7 @@ impl MediaViewer {
             cx.notify();
             return;
         };
-        self.status = Some("Transcription queued — the Queue tab tracks it.".into());
+        self.status = Some("Transcription queued — the Activity drawer tracks it.".into());
         let task = invoker.invoke_tool(
             MEDIA_SERVER,
             "job_submit",
@@ -8637,7 +8941,28 @@ fn parse_job_listing(output: &str) -> Result<JobListing, String> {
 }
 
 fn job_is_nonterminal(job: &JobRecord) -> bool {
-    matches!(job.status.as_str(), "queued" | "running" | "cancelling")
+    NONTERMINAL_JOB_STATUSES.contains(&job.status.as_str())
+}
+
+/// The ambient verb for a live research operation's badge — short enough
+/// for a row chip, never error-styled.
+fn job_op_verb(op: &str) -> &'static str {
+    match op {
+        "transcribe" => "Transcribing…",
+        "audio_trim" => "Trimming…",
+        "audio_concat" | "video_concat" => "Joining…",
+        "video_clip" => "Clipping…",
+        _ => "Working…",
+    }
+}
+
+/// Order the live set newest-first and drop duplicate ids — a job can
+/// appear in both the page and a probe snapshot within one tick. Stable
+/// sort: equal `created_at` keeps insertion order (page before probes).
+fn dedupe_jobs_newest_first(jobs: &mut Vec<JobRecord>) {
+    jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    let mut seen = HashSet::new();
+    jobs.retain(|job| seen.insert(job.id.clone()));
 }
 
 /// Render a scalar JSON value as display text (None for objects/arrays).
@@ -8659,7 +8984,12 @@ impl Render for MediaViewer {
                 .unwrap_or_else(|| self.assets.len().to_string())
         )
         .into();
-        let queue_label: SharedString = format!("Queue ({})", self.jobs.len()).into();
+        let live_count = self.live_jobs.len();
+        let activity_label: SharedString = if live_count > 0 {
+            format!("Activity ({live_count})").into()
+        } else {
+            "Activity".into()
+        };
         v_flex()
             .size_full()
             .child(
@@ -8677,7 +9007,6 @@ impl Render for MediaViewer {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.tab_button(ViewerTab::Workspace, "Workspace".into(), cx))
                     .child(self.tab_button(ViewerTab::Library, library_label, cx))
-                    .child(self.tab_button(ViewerTab::Queue, queue_label, cx))
                     .child(self.tab_button(ViewerTab::Transcript, "Transcript".into(), cx))
                     // Force-refresh: rebuild cached widgets + reload the
                     // active tab. Right-aligned so it stays put as tab labels
@@ -8695,6 +9024,42 @@ impl Render for MediaViewer {
                                 })),
                         ),
                     )
+                    // The activity toggle (T2) — the ambient status strip:
+                    // the live-job count over any mode, never error-styled
+                    // (progress is transient). Opening the drawer observes
+                    // on demand and cancels from there.
+                    .child(
+                        div()
+                            .id("media-activity-toggle")
+                            .debug_selector(|| "media-activity-toggle".to_string())
+                            .flex_shrink_0()
+                            .px_2()
+                            .h_6()
+                            .flex()
+                            .items_center()
+                            .rounded_sm()
+                            .map(|el| {
+                                if self.activity_open {
+                                    el.bg(cx.theme().colors().element_active)
+                                } else {
+                                    el.hover(|el| el.bg(cx.theme().colors().element_hover))
+                                }
+                            })
+                            .cursor_pointer()
+                            .child(
+                                Label::new(activity_label)
+                                    .size(LabelSize::XSmall)
+                                    .color(if live_count > 0 {
+                                        ui::Color::Hint
+                                    } else {
+                                        ui::Color::Muted
+                                    })
+                                    .truncate(),
+                            )
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.toggle_activity(cx);
+                            })),
+                    )
                     .when_some(self.presented_status(), |el, (status, color)| {
                         el.child(
                             Label::new(status)
@@ -8707,8 +9072,12 @@ impl Render for MediaViewer {
             .child(match self.active_tab {
                 ViewerTab::Workspace => self.render_workspace(_window, cx).into_any_element(),
                 ViewerTab::Library => self.render_library(cx).into_any_element(),
-                ViewerTab::Queue => self.render_queue(cx).into_any_element(),
                 ViewerTab::Transcript => self.render_transcript(_window, cx).into_any_element(),
+            })
+            // The on-demand activity drawer (T2): a bounded strip over any
+            // mode — job status is ambient, never a navigation destination.
+            .when(self.activity_open, |el| {
+                el.child(self.render_activity_drawer(cx))
             })
     }
 }
@@ -9331,6 +9700,38 @@ mod tests {
         }
     }
 
+    /// A job fixture with explicit identity, op, and timing — the L11 shape
+    /// needs controlled `created_at` ordering (a deep job older than the
+    /// page's newer completions).
+    fn scheduled_job(id: &str, op: &str, status: &str, created_at: &str) -> JobRecord {
+        JobRecord {
+            id: id.into(),
+            op: op.into(),
+            status: status.into(),
+            created_at: created_at.into(),
+            completed_at: None,
+            result: None,
+            error: None,
+            source: None,
+        }
+    }
+
+    /// A strict `job_list` response envelope for the scripted invoker —
+    /// the same contract shape `parse_job_list_response` validates.
+    fn jobs_listing_response(jobs: &[JobRecord], total: usize, has_more: bool) -> String {
+        serde_json::json!({
+            "content": {
+                "jobs": jobs,
+                "total": total,
+                "limit": hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                "has_more": has_more,
+                "history_scope": hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE,
+                "restart_behavior": hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR
+            }
+        })
+        .to_string()
+    }
+
     /// The confirmed-delete bug this pins: deleting in the Library reloads
     /// the listing, but the merge used to only add and update — the deleted
     /// asset's row never left the list, so a confirmed removal appeared to
@@ -9731,14 +10132,24 @@ mod tests {
         );
     }
 
-    /// dcterms:identifier: `MediaViewer::apply_jobs_listing`
-    /// expect: Queue polling exists only for an active nonterminal queue and stops on leave, terminal data, or error.
-    /// [P1] Motivating: background queue work is bounded by visible demand.
+    /// dcterms:identifier: `MediaViewer::should_poll_jobs`
+    /// expect: The activity poll arms while any nonterminal job is observed — on any mode, drawer closed — and stops only at complete quiescence or a listing failure; a superseded epoch never mutates state.
+    /// [P1] Motivating: background queue work is bounded by observed demand, never by page visibility (T2).
     #[gpui::test]
-    fn queue_polling_stops_at_every_stop_condition(cx: &mut gpui::TestAppContext) {
+    fn activity_polling_arms_on_any_live_job_and_stops_only_at_quiescence(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        // The lock: the tab switches below dispatch the modes' loads
+        // (`gallery_list_assets`, `educt_list_transcripts`) through the
+        // process-global invoker — unlocked they cross-wire into a
+        // concurrent lock-holder's scripted invoker.
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
-            viewer.active_tab = ViewerTab::Queue;
+            // Ambient from any mode: Library is active and the drawer is
+            // closed — no jobs surface is visible (visiting the retired
+            // Queue tab was the old visibility condition).
+            viewer.active_tab = ViewerTab::Library;
             let epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
@@ -9755,24 +10166,39 @@ mod tests {
                 }),
                 cx,
             );
-            assert!(viewer.queue_poll_task.is_some());
-            let stale_epoch = viewer.jobs_request.epoch;
+            assert!(
+                viewer.queue_poll_task.is_some(),
+                "a live job arms the poll with no jobs surface visible"
+            );
+            // Mode switches never cancel observation — the poll condition
+            // is the observed live set, not the visible page.
             viewer.activate_tab(ViewerTab::Workspace, cx);
             assert!(
-                viewer.queue_poll_task.is_none(),
-                "leaving Queue cancels timer"
+                viewer.queue_poll_task.is_some(),
+                "leaving a mode does not cancel the timer"
             );
-            viewer.apply_jobs_listing(stale_epoch, Err("stale queue error".into()), cx);
-            assert_eq!(viewer.jobs.len(), 1);
-            assert_eq!(viewer.jobs_request.state, ResourceState::Idle);
+            viewer.activate_tab(ViewerTab::Transcript, cx);
+            assert!(
+                viewer.queue_poll_task.is_some(),
+                "entering a mode does not cancel the timer"
+            );
+            // Closing the drawer never cancels observation either.
+            viewer.activity_open = true;
+            viewer.toggle_activity(cx);
+            assert!(!viewer.activity_open);
+            assert!(
+                viewer.queue_poll_task.is_some(),
+                "closing the drawer does not cancel the timer"
+            );
 
-            viewer.active_tab = ViewerTab::Queue;
-            let terminal_epoch = viewer
+            // Complete quiescence stops the poll: the page covers the
+            // whole bounded store (has_more false) and holds no live job.
+            let quiescent_epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
                 .expect("starts");
             viewer.apply_jobs_listing(
-                terminal_epoch,
+                quiescent_epoch,
                 Ok(JobListing {
                     jobs: vec![job("completed")],
                     total: 1,
@@ -9785,9 +10211,12 @@ mod tests {
             );
             assert!(
                 viewer.queue_poll_task.is_none(),
-                "terminal queue does not poll"
+                "complete quiescence stops the poll"
             );
+            assert!(viewer.live_jobs.is_empty());
 
+            // A superseded epoch's outcome is dropped; the owned error
+            // stops the poll and preserves the last-good rows.
             let running_epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
@@ -9805,10 +10234,18 @@ mod tests {
                 cx,
             );
             assert!(viewer.queue_poll_task.is_some());
+            let superseded_epoch = viewer.jobs_request.epoch;
             let error_epoch = viewer
                 .jobs_request
                 .begin(RequestOwner::Jobs)
-                .expect("starts");
+                .expect("supersedes");
+            assert_ne!(error_epoch, superseded_epoch);
+            viewer.apply_jobs_listing(superseded_epoch, Err("stale queue error".into()), cx);
+            assert_eq!(
+                viewer.jobs.len(),
+                1,
+                "a superseded epoch's outcome is dropped"
+            );
             viewer.apply_jobs_listing(error_epoch, Err("queue unavailable".into()), cx);
             assert!(viewer.queue_poll_task.is_none(), "error cancels timer");
             assert_eq!(viewer.jobs.len(), 1, "error preserves last-good jobs");
@@ -9822,7 +10259,12 @@ mod tests {
     fn completed_job_result_is_ingested_once(cx: &mut gpui::TestAppContext) {
         let viewer = cx.new(|_| MediaViewer::new());
         viewer.update(cx, |viewer, cx| {
-            viewer.active_tab = ViewerTab::Queue;
+            // Library mode suppresses the inspector trio the ingest's
+            // auto-select would otherwise fire (the retired Queue tab's old
+            // role in this setup) — this test holds no invoker lock, so any
+            // dispatch would cross-wire into a concurrent lock-holder's
+            // scripted invoker.
+            viewer.active_tab = ViewerTab::Library;
             let result = serde_json::json!({
                 "gallery_changed": true,
                 "gallery_asset_id": "job-asset",
@@ -9856,6 +10298,362 @@ mod tests {
                     .filter(|asset| asset.gallery_asset_id.as_deref() == Some("job-asset"))
                     .count(),
                 1
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::observe_live_jobs`
+    /// expect: A nonterminal job deeper than the newest-first page — behind 20 newer completed jobs — stays observed (the poll stays armed) and its landing updates the live set (loop-register L11, the falsifier T2 settles).
+    /// [P1] Motivating: page visibility never bounds job observation.
+    #[gpui::test]
+    fn deep_running_job_behind_a_full_page_stays_observed_and_updated(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let limit = hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT;
+        // The deep job: older than everything on the page (the L11 shape).
+        let mut deep = scheduled_job("job-deep", "transcribe", "running", "2026-09-01T00:00:00Z");
+        deep.source = Some("/talk.wav".into());
+        // Twenty newer completed jobs fill the page.
+        let newer: Vec<JobRecord> = (0..limit)
+            .map(|index| {
+                scheduled_job(
+                    &format!("job-new-{index}"),
+                    "video_clip",
+                    "completed",
+                    "2026-09-02T00:00:00Z",
+                )
+            })
+            .collect();
+        let page = jobs_listing_response(&newer, limit + 1, true);
+        let probe_empty = jobs_listing_response(&[], 0, false);
+        let probe_deep = jobs_listing_response(&[deep], 1, false);
+        // Tick 1: the unfiltered page plus the three status probes
+        // (queued, running, cancelling — the dispatch order); the running
+        // probe finds the deep job. Tick 2 (the poll's next link): the
+        // deep job landed — every probe is empty.
+        let (calls, _restore) = install_scripted_invoker(vec![
+            page.clone(),
+            probe_empty.clone(),
+            probe_deep,
+            probe_empty.clone(),
+            page,
+            probe_empty.clone(),
+            probe_empty.clone(),
+            probe_empty,
+        ]);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            // No jobs surface is visible: Library mode, drawer closed —
+            // the observation must be ambient, not visited.
+            viewer.active_tab = ViewerTab::Library;
+            viewer.load_jobs(cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.jobs.len(),
+                limit,
+                "the page holds only the newest jobs"
+            );
+            assert!(
+                !viewer.jobs.iter().any(|job| job.id == "job-deep"),
+                "the deep job is beyond the page — that is the L11 shape"
+            );
+            assert!(
+                viewer.live_jobs.iter().any(|job| job.id == "job-deep"),
+                "the status probes observe the deep running job"
+            );
+            assert_eq!(viewer.live_jobs.len(), 1);
+            assert!(
+                viewer.queue_poll_task.is_some(),
+                "the poll stays armed while a live job is observed anywhere"
+            );
+            assert_eq!(
+                viewer.transcribing_ids,
+                ["job-deep".to_string()].into_iter().collect::<HashSet<_>>(),
+                "deep transcribe jobs feed the R5 landing tracking"
+            );
+            assert_eq!(
+                viewer.jobs_restart_behavior.as_deref(),
+                Some(hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR),
+                "the drawer's disclosure copy is sourced from the validated listing fields"
+            );
+            assert_eq!(
+                viewer.jobs_history_scope.as_deref(),
+                Some(hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE)
+            );
+        });
+        // The dispatch shape: the page asks unfiltered, then one
+        // status-filtered `job_list` per nonterminal status — the server
+        // filters BEFORE the newest-first sort and limit, which is exactly
+        // what observes beyond the page.
+        {
+            let calls = calls.lock().expect("calls lock");
+            let status_args: Vec<Value> = calls
+                .iter()
+                .map(|(_, args)| args.get("status").cloned().unwrap_or(Value::Null))
+                .collect();
+            assert_eq!(
+                status_args,
+                vec![
+                    Value::Null,
+                    Value::String("queued".into()),
+                    Value::String("running".into()),
+                    Value::String("cancelling".into()),
+                ],
+                "one tick: the page, then one status probe per nonterminal status"
+            );
+        }
+        // Tick 2 — the poll's next link observes the landing: the deep job
+        // is gone from every probe, so the live set empties, the R5
+        // tracking updates, and the poll stops.
+        viewer.update(cx, |viewer, cx| viewer.load_jobs(cx));
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.live_jobs.is_empty(),
+                "the landing of a job beyond the page is observed and updated"
+            );
+            assert!(viewer.transcribing_ids.is_empty());
+            assert!(
+                viewer.queue_poll_task.is_none(),
+                "the poll stops when no live job remains anywhere"
+            );
+        });
+        // The second tick repeated the same dispatch shape.
+        {
+            let calls = calls.lock().expect("calls lock");
+            assert_eq!(
+                calls.len(),
+                8,
+                "two ticks of the page plus three probes each"
+            );
+        }
+    }
+
+    /// dcterms:identifier: `MediaViewer::settle_activity_tick`
+    /// expect: A transcribe job landing anywhere in the store reloads the recordings listing exactly once while its browser is showing (R5 continuity through the T2 poll restructure) — and not while it is not.
+    /// [P7] Motivating: the finished transcript appears under its recording.
+    #[gpui::test]
+    fn transcribe_landing_reloads_the_recordings_listing(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let transcript_listing = r#"{"content": {"transcripts": [], "count": 0}}"#.to_string();
+        let (calls, _restore) = install_scripted_invoker(vec![transcript_listing]);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_listing = Some(vec![]);
+            let running_listing = JobListing {
+                jobs: vec![scheduled_job(
+                    "job-r5",
+                    "transcribe",
+                    "running",
+                    "2026-09-03T00:00:00Z",
+                )],
+                total: 1,
+                limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                has_more: false,
+                history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
+            };
+            // Landing away from the recordings browser does not reload it.
+            viewer.active_tab = ViewerTab::Library;
+            let epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            viewer.apply_jobs_listing(epoch, Ok(running_listing.clone()), cx);
+            assert_eq!(
+                viewer.transcribing_ids,
+                ["job-r5".to_string()].into_iter().collect::<HashSet<_>>()
+            );
+            let landed_epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            let mut landed_listing = running_listing.clone();
+            landed_listing.jobs = vec![scheduled_job(
+                "job-r5",
+                "transcribe",
+                "completed",
+                "2026-09-03T00:00:00Z",
+            )];
+            viewer.apply_jobs_listing(landed_epoch, Ok(landed_listing), cx);
+            assert!(
+                viewer.transcribing_ids.is_empty(),
+                "the landing is observed from the live set"
+            );
+            assert_eq!(
+                viewer.transcript_listing_request.state,
+                ResourceState::Idle,
+                "no reload away from the recordings browser"
+            );
+
+            // Landing while the recordings browser is showing reloads it
+            // once — the finished transcript appears under its recording.
+            viewer.active_tab = ViewerTab::Transcript;
+            let epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("restarts");
+            viewer.apply_jobs_listing(epoch, Ok(running_listing), cx);
+            let landed_epoch = viewer
+                .jobs_request
+                .begin(RequestOwner::Jobs)
+                .expect("starts");
+            let landed_listing = JobListing {
+                jobs: vec![scheduled_job(
+                    "job-r5",
+                    "transcribe",
+                    "completed",
+                    "2026-09-03T00:00:00Z",
+                )],
+                total: 1,
+                limit: hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT,
+                has_more: false,
+                history_scope: hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into(),
+                restart_behavior: hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into(),
+            };
+            viewer.apply_jobs_listing(landed_epoch, Ok(landed_listing), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_listing_request.state,
+                ResourceState::Ready,
+                "the landing reloaded the recordings listing (R5)"
+            );
+            assert_eq!(
+                viewer.transcript_listing.as_ref().map(Vec::len),
+                Some(0),
+                "the reloaded listing committed"
+            );
+            let calls = calls.lock().expect("calls lock");
+            assert_eq!(calls.len(), 1, "the reload dispatched exactly once");
+            assert_eq!(calls[0].0, "educt_list_transcripts");
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::toggle_activity`
+    /// expect: Opening the activity drawer refreshes the job listing (observed on demand, never stale); closing dispatches nothing.
+    /// [P1] Motivating: the drawer's opening state is current, and closing is free.
+    #[gpui::test]
+    fn opening_the_activity_drawer_refreshes_the_listing(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let page = jobs_listing_response(&[job("completed")], 1, false);
+        let (calls, _restore) = install_scripted_invoker(vec![page]);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            assert!(!viewer.activity_open);
+            viewer.toggle_activity(cx);
+            assert!(viewer.activity_open);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.jobs_request.state,
+                ResourceState::Ready,
+                "opening the drawer dispatched a listing refresh"
+            );
+            assert_eq!(viewer.jobs.len(), 1);
+        });
+        let calls_before_close = calls.lock().expect("calls lock").len();
+        viewer.update(cx, |viewer, cx| viewer.toggle_activity(cx));
+        cx.run_until_parked();
+        assert!(!viewer.read_with(cx, |viewer, _| viewer.activity_open));
+        assert_eq!(
+            calls.lock().expect("calls lock").len(),
+            calls_before_close,
+            "closing the drawer dispatches nothing"
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::asset_activity_verb`
+    /// expect: The Library badge names the live job's verb from the record's primary source, and only for the asset it targets.
+    /// [P1] Motivating: ambient status is accurate to the affected asset.
+    #[test]
+    fn asset_activity_verb_follows_the_primary_source() {
+        let mut viewer = MediaViewer::new();
+        viewer.assets = vec![surfaced_asset("/talk.wav")];
+        let mut live = scheduled_job("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+        live.source = Some("/talk.wav".into());
+        viewer.live_jobs = vec![live];
+        assert_eq!(
+            viewer.asset_activity_verb(&viewer.assets[0]),
+            Some("Transcribing…")
+        );
+        let mut elsewhere =
+            scheduled_job("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+        elsewhere.source = Some("/elsewhere.wav".into());
+        viewer.live_jobs = vec![elsewhere];
+        assert_eq!(
+            viewer.asset_activity_verb(&viewer.assets[0]),
+            None,
+            "a job against another asset does not badge this one"
+        );
+        viewer.live_jobs.clear();
+        assert_eq!(viewer.asset_activity_verb(&viewer.assets[0]), None);
+        // The verb vocabulary covers every research op.
+        for (op, verb) in [
+            ("transcribe", "Transcribing…"),
+            ("audio_trim", "Trimming…"),
+            ("audio_concat", "Joining…"),
+            ("video_concat", "Joining…"),
+            ("video_clip", "Clipping…"),
+            ("render_video", "Working…"),
+        ] {
+            assert_eq!(job_op_verb(op), verb);
+        }
+    }
+
+    /// dcterms:identifier: `MediaViewer::apply_live_observation`
+    /// expect: A filter-violating probe response never grafts a terminal row onto the live set, and a failed battery retains the previously observed live entries.
+    /// [P1] Motivating: the live set is nonterminal by construction — retention must not immortalize a bad row.
+    #[gpui::test]
+    fn live_observation_rejects_terminal_rows_and_retains_through_failure(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            // A live entry observed by a previous tick, not on the page.
+            let mut deep =
+                scheduled_job("job-deep", "transcribe", "running", "2026-09-01T00:00:00Z");
+            deep.source = Some("/talk.wav".into());
+            viewer.live_jobs = vec![deep.clone()];
+            let epoch = viewer
+                .job_observation_request
+                .begin(RequestOwner::JobObservation)
+                .expect("starts");
+            // The probe response violates its own filter: a completed row.
+            let mut terminal =
+                scheduled_job("job-bad", "video_clip", "completed", "2026-09-02T00:00:00Z");
+            terminal.source = Some("/clip.mp4".into());
+            viewer.apply_live_observation(epoch, Ok(vec![terminal, deep]), cx);
+            assert_eq!(viewer.live_jobs.len(), 1);
+            assert!(
+                viewer.live_jobs.iter().all(|job| job_is_nonterminal(job)),
+                "the live set stays nonterminal by construction"
+            );
+            assert!(viewer.live_jobs.iter().any(|job| job.id == "job-deep"));
+
+            // A failed battery retains previously observed live entries —
+            // it proves nothing about deeper jobs.
+            let epoch = viewer
+                .job_observation_request
+                .begin(RequestOwner::JobObservation)
+                .expect("restarts");
+            viewer.apply_live_observation(epoch, Err("probe failed".into()), cx);
+            assert_eq!(
+                viewer.live_jobs.len(),
+                1,
+                "a failed battery retains the observed live set"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("observation failed")),
+                "the battery failure is surfaced"
             );
         });
     }
@@ -12931,6 +13729,22 @@ mod viewer_layout_tests {
     const FIXTURE: &str =
         "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
 
+    /// A job record fixture for the activity-layer render tests (this
+    /// module cannot reach `mod tests`' fixtures — `use super::*` stops at
+    /// the file root).
+    fn job_fixture(id: &str, op: &str, status: &str, created_at: &str) -> JobRecord {
+        JobRecord {
+            id: id.into(),
+            op: op.into(),
+            status: status.into(),
+            created_at: created_at.into(),
+            completed_at: None,
+            result: None,
+            error: None,
+            source: None,
+        }
+    }
+
     /// Layout ground truth at the VIEWER level — the full production chain
     /// (tab bar → tab content → toolbar → player), not the widget in
     /// isolation. The widget-level test passed while the app was broken,
@@ -13509,7 +14323,7 @@ mod viewer_layout_tests {
             alignment: "original".into(),
             gallery_asset_id: Some("asset-talk".into()),
         }]);
-        viewer.jobs = vec![JobRecord {
+        viewer.live_jobs = vec![JobRecord {
             id: "job-transcribe".into(),
             op: "transcribe".into(),
             status: "running".into(),
@@ -13683,6 +14497,144 @@ mod viewer_layout_tests {
             );
             cx.notify();
         });
+    }
+
+    /// The activity drawer (T2) renders on demand over any mode: the
+    /// observed live rows first with Cancel for queued/running jobs, the
+    /// recent history after them (terminal — no Cancel), and the
+    /// process-local history disclosure in the footer. The toolbar
+    /// toggle opens and closes it.
+    #[gpui::test]
+    fn activity_drawer_renders_rows_cancel_and_disclosure(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.active_tab = ViewerTab::Library;
+            viewer.gallery_total = Some(0);
+            viewer.jobs_total = Some(2);
+            viewer.jobs_limit = hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT;
+            viewer.jobs_has_more = false;
+            let mut live = job_fixture("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+            live.source = Some("/talk.wav".into());
+            viewer.live_jobs = vec![live];
+            viewer.jobs = vec![job_fixture(
+                "job-done",
+                "video_clip",
+                "completed",
+                "2026-09-06T00:00:00Z",
+            )];
+            viewer.jobs_history_scope =
+                Some(hkask_mcp_media::tools::jobs::JOB_HISTORY_SCOPE.into());
+            viewer.jobs_restart_behavior =
+                Some(hkask_mcp_media::tools::jobs::JOB_RESTART_BEHAVIOR.into());
+            viewer.activity_open = true;
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("media-activity-toggle").is_some(),
+            "the toolbar's Activity toggle renders"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-drawer").is_some(),
+            "the drawer renders open over any mode"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-row-job-live").is_some(),
+            "the observed live row renders"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-cancel-job-live").is_some(),
+            "a queued/running row carries Cancel"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-row-job-done").is_some(),
+            "the recent-history row renders"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-cancel-job-done").is_none(),
+            "a terminal history row carries no Cancel"
+        );
+        assert!(
+            cx.debug_bounds("media-activity-disclosure").is_some(),
+            "the footer carries the process-local history disclosure"
+        );
+
+        // The toggle closes the drawer — ambient state, never a
+        // destination.
+        viewer.update(cx, |viewer, cx| viewer.toggle_activity(cx));
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-activity-drawer").is_none(),
+            "the toggle closes the drawer"
+        );
+    }
+
+    /// The ambient activity badge (T2): a live research job whose primary
+    /// source is the asset badges its Library row — transient (it clears
+    /// when the job is no longer live), never error-styled.
+    #[gpui::test]
+    fn library_rows_badge_live_jobs(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.active_tab = ViewerTab::Library;
+            viewer.gallery_total = Some(2);
+            viewer.assets = vec![
+                MediaAsset {
+                    body: r#"{"kind":"audio","src":"/talk.wav"}"#.into(),
+                    src: "/talk.wav".into(),
+                    kind: "audio".into(),
+                    tool: "gallery".into(),
+                    gallery_index: Some(0),
+                    gallery_asset_id: Some("asset-talk".into()),
+                },
+                MediaAsset {
+                    body: r#"{"kind":"video","src":"/other.mp4"}"#.into(),
+                    src: "/other.mp4".into(),
+                    kind: "video".into(),
+                    tool: "gallery".into(),
+                    gallery_index: Some(1),
+                    gallery_asset_id: Some("asset-other".into()),
+                },
+            ];
+            let mut live = job_fixture("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+            live.source = Some("/talk.wav".into());
+            viewer.live_jobs = vec![live];
+            cx.notify();
+        });
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("media-library-activity-0").is_some(),
+            "the affected asset's Library row carries the badge"
+        );
+        assert!(
+            cx.debug_bounds("media-library-activity-1").is_none(),
+            "an unaffected asset carries no badge"
+        );
+        // The badge is transient: it clears when the job is no longer
+        // live (HIG Progress indicators — present only while ongoing).
+        viewer.update(cx, |viewer, cx| {
+            viewer.live_jobs.clear();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-library-activity-0").is_none(),
+            "the badge clears when the job is no longer live"
+        );
     }
 
     /// The shared fit assertions: the video area and the whole player
