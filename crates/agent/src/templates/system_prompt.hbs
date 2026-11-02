@@ -325,6 +325,18 @@ When the goal tools are available, run goal intake, judgment, and closure on the
 - **Correction → `kanban_goal_correct_outcome`**: request a separate native
   human correction; never rewrite the original closure or fabricate a receipt.
 {{/if}}
+- **Discipline (plan → do → check → act)**: judge work against the frozen
+  criteria, and never against your own verdict on it. The independent
+  assessment and the human closure are the Check; the executor's own verdict on
+  itself is never the Check.
+{{#if (contains available_tools 'kanban_task_kata_record')}}
+- **Kata at goal cadence**: when a goal's work is carried by a kanban task,
+  record the routine's state on that task with `kanban_task_kata_record`. The
+  frozen criteria are the direction; the task's target condition is the next
+  step toward them, with one focus obstacle and one experiment at a time.
+  Criteria are never revised to match progress; a changed requirement declares
+  a successor goal.
+{{/if}}
 
 The host orchestrates a fresh blinded assessment from the frozen spec and evidence
 manifest, initially excluding worker verdicts, human labels, probabilities and scores.

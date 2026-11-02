@@ -682,6 +682,72 @@ mod tests {
     }
 
     #[test]
+    fn test_goal_prompt_states_the_reference_model_discipline() {
+        // The reference-model operating discipline (research run
+        // 97cbe8789bda3545): the Check measures against the frozen criteria and
+        // is never the executor's own verdict on itself (pdca_cycle anchor);
+        // the kata linkage renders only when the kata tool is callable.
+        let project = prompt_store::ProjectContext::default();
+        let full = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec![
+                "kanban_goal_create".into(),
+                "kanban_goal_close".into(),
+                "kanban_task_kata_record".into(),
+            ],
+            model_name: None,
+            date: "2026-11-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        }
+        .render(&Templates::new())
+        .expect("render discipline goal prompt");
+        assert!(full.contains("plan → do → check → act"));
+        assert!(full.contains("never the Check"));
+        assert!(full.contains("kanban_task_kata_record"));
+        assert!(full.contains("one focus obstacle"));
+        let goal_only = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["kanban_goal_create".into(), "kanban_goal_close".into()],
+            model_name: None,
+            date: "2026-11-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        }
+        .render(&Templates::new())
+        .expect("render goal-only prompt");
+        assert!(goal_only.contains("never the Check"));
+        assert!(
+            !goal_only.contains("kanban_task_kata_record"),
+            "the kata linkage must not advertise a tool the session cannot call"
+        );
+        let bare = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: None,
+            date: "2026-11-01".to_string(),
+            user_agents_md: None,
+            static_context: None,
+            sandboxing: false,
+            is_linux: false,
+            is_windows: false,
+            mcp_tools_hidden: 0,
+        }
+        .render(&Templates::new())
+        .expect("render bare prompt");
+        assert!(!bare.contains("never the Check"));
+        assert!(!bare.contains("plan → do → check → act"));
+    }
+
+    #[test]
     fn test_system_prompt_omits_goal_tool_wiring_when_tools_unavailable() {
         // The conditional-section principle (skills-and-composition.md
         // §3.1): the model is never told about a capability it does not

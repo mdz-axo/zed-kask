@@ -4,6 +4,25 @@ Goals separate immutable requirements, worker progress, independent assessment,
 and authenticated human decisions. Forecasts are optional and resolve only
 against the human outcome. No probability is synthesized for ordinary goals.
 
+## Reference model
+
+Four published layers anchor this contract; the canonical anchor-model record
+with full citations is `kask/docs/research/goal-reference-models.md` (research
+run 6eb1d124a8cb38c4; candidate adjudication: research run 97cbe8789bda3545).
+Declaration — goal-setting theory (Locke & Latham 2002): criteria are specific,
+observable functional conditions. Expectation protection — the goal is a
+contract (André et al. 2023; Hadfield-Menell & Hadfield 2018), baselined per
+ISO/IEC/IEEE 29148: the specification is frozen under a digest, verified by
+independent methods, changed only through a successor record. Operating
+routine — PDCA (Shewhart/Deming) and the Toyota Improvement Kata + Coaching
+Kata (Rother 2010): the Check measures against the frozen target condition and
+is never the executor's own verdict on itself; one obstacle, one experiment.
+Separation and authority — Shah et al. 2022 and Amodei et al. 2016 with
+structural corrigibility (Hadfield-Menell et al. 2016/2017): worker verdicts,
+machine evidence and human closure are distinct records at every step.
+Considered, not adopted: OKR (revisable objectives conflict with the frozen
+contract); SMART (subsumed).
+
 ## Supported data
 
 **Forward-only policy:** obsolete goal-schema data is discarded, not migrated.

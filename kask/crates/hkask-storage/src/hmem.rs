@@ -1444,7 +1444,7 @@ mod tests {
         );
         let stamped = HMem::new(
             "curator:goal:1",
-            "kanban_goal_score",
+            "current",
             serde_json::json!({"achieved": true}),
             WebID::new(),
         )

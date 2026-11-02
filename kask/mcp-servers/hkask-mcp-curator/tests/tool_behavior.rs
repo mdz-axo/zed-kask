@@ -1572,7 +1572,7 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
     );
     let goal = hkask_storage::HMem::new(
         "curator:goal:invalid-publication",
-        "kanban_goal_score",
+        "current",
         serde_json::json!({
             "content": {"goal_id": "invalid-publication", "brier": null}
         }),

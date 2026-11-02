@@ -378,10 +378,12 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
          \n\
          {tool_section}\
          \n\
-         Goals persist through resolution until their scored outcome is stored in \
-         curator memory and acknowledged. The goal records the user's requirement \
-         in their words; the agent judges observable criteria without revising it, \
-         and the user decides whether it was achieved.\n\
+         Goals freeze the user's requirement at declaration: the goal text and its \
+         observable criteria are interpreted, never revised. A changed requirement \
+         declares a successor through `supersedes`. The agent judges progress as a \
+         worker verdict, never acceptance, and the user alone makes the closure \
+         decision through a native choice. One current curator-memory record \
+         tracks each goal; closed goals stay visible.\n\
          \n\
          When the operator asks to plan or decompose work, the `kanban-task-management` skill \
          cascade is available. Pass the board id so the cascade writes the durable link on every \
@@ -2158,15 +2160,20 @@ mod tests {
         }
     }
 
-    /// The Steer overlay must describe the persistent goal outbox, not the
-    /// retired in-memory-only goal lifecycle.
+    /// The Steer overlay must state the current goal custody model — the
+    /// frozen specification, worker verdicts and native human closure — not
+    /// the retired snapshot-outbox/delivery-acknowledgment model.
     #[test]
-    fn steer_prompt_describes_durable_goal_acknowledgment() {
+    fn steer_prompt_states_the_current_goal_custody_model() {
         let prompt = steer_system_prompt(None, None);
-        assert!(prompt.contains("Goals persist through resolution until"));
-        assert!(prompt.contains("curator memory"));
-        assert!(prompt.contains("acknowledged"));
-        assert!(!prompt.contains("EPHEMERAL"));
+        assert!(prompt.contains("freeze the user's requirement at declaration"));
+        assert!(prompt.contains("supersedes"));
+        assert!(prompt.contains("worker verdict"));
+        assert!(prompt.contains("native choice"));
+        assert!(prompt.contains("closed goals stay visible"));
+        assert!(!prompt.contains("persist through resolution until"));
+        assert!(!prompt.contains("acknowledged"));
+        assert!(!prompt.contains("outbox"));
     }
 
     /// The Steer prompt bakes the active board binding in at construction,
