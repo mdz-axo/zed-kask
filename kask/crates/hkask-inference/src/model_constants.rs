@@ -217,13 +217,18 @@ pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-tu
 /// via `KaskMediaSettings::cross_check_stt_models`) — the independent ASR
 /// voices the bounded transcription cross-check addresses per call
 /// (transcript-reel Phase 1b; operator direction 2026-11-02: three active
-/// ASR models). Nemotron 3.5 Transcribe via DeepInfra — word+segment
-/// timestamps at the documented OpenAI-compatible endpoint; Qwen3-ASR-Flash
-/// via OpenRouter — text-only there (rejects verbose_json; the arm's
-/// `json` fallback serves content-level cross-checks, no word timings).
+/// ASR models). Nemotron 3.5 Transcribe via DeepInfra — the documented
+/// OpenAI-compatible endpoint (segments-level measured 2026-11-02: words
+/// empty; $0.002/min). Qwen3-ASR via DeepInfra — Qwen3-ASR-1.7B, the
+/// largest servable variant, word+segment timestamps at $0.0000075/s.
+/// OpenRouter can no longer carry the Qwen ASR family (measured
+/// 2026-11-02: the dedicated line is withdrawn from its catalog and its
+/// transcriptions endpoint rejects chat-catalog omni models), and dated
+/// snapshot slugs retire — resolve the current carrier from the
+/// provider's live catalog before firing a leg.
 pub const DEFAULT_MEDIA_CROSS_CHECK_STT_MODELS: &[&str] = &[
     "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
-    "OpenRouter/qwen/qwen3-asr-flash-2026-02-10",
+    "DeepInfra/Qwen/Qwen3-ASR-1.7B",
 ];
 
 /// Default vision model for gallery analysis and image description (env

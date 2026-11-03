@@ -309,6 +309,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_MEDIA_DB",
             // Research model overrides, supplied by settings-layer defaults.
             "HKASK_MEDIA_STT_MODEL",
+            // Cross-check STT fleet (transcript-reel Phase 1b) — read by the
+            // media server's models module (CROSS_CHECK_STT_ENV) to list the
+            // fleet in model_list; per-call overrides address each entry.
+            "HKASK_MEDIA_CROSS_CHECK_STT_MODELS",
             "HKASK_MEDIA_VISION_MODEL",
             // Media role models (settings > kask > models) — the audio pass
             // resolves per-call → HKASK_MEDIA_SOUND_ANNOTATION_MODEL →
@@ -1103,6 +1107,43 @@ mod tests {
         );
     }
 
+    /// The media config_env allowlist must cover every env var the media
+    /// server reads — the reads→allowlist direction. The composed-path
+    /// filter silently drops an unlisted var while `mcp_env()` still emits
+    /// it, which is how HKASK_MEDIA_CROSS_CHECK_STT_MODELS shipped broken:
+    /// emitted by the settings layer, stripped before the child process,
+    /// with both half-tests green (the emission pin tests the pre-filter
+    /// map; the round-trip test asserted only the older keys).
+    #[test]
+    fn media_config_env_allowlist_matches_actual_reads() {
+        let s = server_by_id("media");
+        // Read sites: the media server's `models` module resolves STT_ENV,
+        // CROSS_CHECK_STT_ENV, VISION_ENV, SOUND_ANNOTATION_ENV, TAGGING_ENV
+        // and PASS_ENV (hkask-mcp-media/src/hkask_mcp_media.rs); HKASK_MEDIA_DB
+        // resolves the gallery DB; HKASK_INFERENCE_SOCKET, HKASK_DATA_DIR,
+        // HKASK_ARTIFACTS_DIR and HKASK_EMBEDDING_MODEL are read transitively
+        // (IPC bridge, path resolution, embed_text).
+        assert_eq!(
+            s.config_env.to_vec(),
+            vec![
+                "HKASK_INFERENCE_SOCKET",
+                "HKASK_DATA_DIR",
+                "HKASK_ARTIFACTS_DIR",
+                "HKASK_MEDIA_DB",
+                "HKASK_MEDIA_STT_MODEL",
+                "HKASK_MEDIA_CROSS_CHECK_STT_MODELS",
+                "HKASK_MEDIA_VISION_MODEL",
+                "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
+                "HKASK_MEDIA_TAGGING_MODEL",
+                "HKASK_MEDIA_PASS_MODEL",
+                "HKASK_EMBEDDING_MODEL",
+            ],
+            "media config_env allowlist drifted — every entry must have a \
+             read site in hkask-mcp-media, and every HKASK_MEDIA_* read must \
+             be listed (filter_config_env_for_server drops unlisted vars)"
+        );
+    }
+
     // The curator server should receive only the DB passphrase, no data
     // service API keys and no SMTP password (it has no email sink — the
     // alert email runs in the editor process). This pins the blast-radius
@@ -1143,6 +1184,7 @@ mod tests {
         let media_env = filter_config_env_for_server("media", &env);
         for key in [
             "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_CROSS_CHECK_STT_MODELS",
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
             "HKASK_MEDIA_TAGGING_MODEL",
@@ -1157,14 +1199,19 @@ mod tests {
             }
         }
         let cleared: settings_content::KaskMediaSettingsContent =
-            serde_json::from_value(
-                serde_json::json!({"stt_model":"", "vision_model":"", "sound_annotation_model":"", "tagging_model":""})
-            )
-                .expect("explicitly cleared models");
+            serde_json::from_value(serde_json::json!({
+                "stt_model": "",
+                "cross_check_stt_models": [],
+                "vision_model": "",
+                "sound_annotation_model": "",
+                "tagging_model": ""
+            }))
+            .expect("explicitly cleared models");
         settings.media = cleared.into();
         let cleared_env = settings.mcp_env();
         for key in [
             "HKASK_MEDIA_STT_MODEL",
+            "HKASK_MEDIA_CROSS_CHECK_STT_MODELS",
             "HKASK_MEDIA_VISION_MODEL",
             "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
             "HKASK_MEDIA_TAGGING_MODEL",

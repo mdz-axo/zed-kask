@@ -109,16 +109,19 @@ for short informal recordings. Budget ~$0.02 per intake for the
    independent evidence, never ground truth:
    auto-captions are ASR output with their own proper-noun error modes.
 3. Second-model leg: `transcribe_bundle` each slice WITHOUT storing it.
-   Try the per-call `model` override first (restart-free when the
-   running server supports it); fall back to the settings switch — set
-   `kask.media.stt_model`, let the server restart, verify via
-   `model_list`, transcribe, restore (switch receipts measured
-   2026-11-02). Failure mode: a running binary predating the in-tree
-   `json` fallback hardcodes `verbose_json`, and the Qwen leg fails
-   deterministically (400) — retry ≤3, then mark the leg failed,
-   adjudicate on the remaining families, and report degraded coverage.
-   Text-level output is what content adjudication needs; word timings
-   are welcome but never assumed.
+   Use the per-call `model` override (restart-free; measured 2026-11-02) —
+   the settings switch (`kask.media.stt_model`, restart, `model_list`
+   receipt, restore) is the fallback. Resolve each fleet model's current
+   carrier from the provider's live catalog BEFORE firing: dated snapshot
+   slugs retire, and a model in the chat catalog may not be served at the
+   transcriptions endpoint (measured 2026-11-02: Qwen3-ASR withdrawn from
+   OpenRouter — dated slug 404, omni models 400 at /audio/transcriptions —
+   the Qwen family carried on DeepInfra/Qwen/Qwen3-ASR-1.7B, $0.0000075/s
+   with word timings; Nemotron via DeepInfra $0.002/min, segments-only).
+   Retry a failing leg ≤3 (a carrier or arm switch is the retry), then
+   mark the leg failed, adjudicate on the remaining families, and report
+   degraded coverage. Text-level output is what content adjudication
+   needs; word timings are welcome but never assumed.
 4. Compare each slice against the STORED bundle's region — never against
    a fresh slice of the base model (measured 2026-11-02: a whisper slice
    pass dropped a 5-second passage the stored full-file bundle contains).

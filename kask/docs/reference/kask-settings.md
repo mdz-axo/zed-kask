@@ -334,7 +334,7 @@ in `Default` impls only, sourced from shared inference constants
 | Field | Type | Default | Env var |
 |-------|------|---------|---------|
 | `stt_model` | `String` | `"OpenRouter/openai/whisper-large-v3-turbo"` | `HKASK_MEDIA_STT_MODEL` |
-| `cross_check_stt_models` | `Vec<String>` | `["DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B", "OpenRouter/qwen/qwen3-asr-flash-2026-02-10"]` | `HKASK_MEDIA_CROSS_CHECK_STT_MODELS` (comma-joined) |
+| `cross_check_stt_models` | `Vec<String>` | `["DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B", "DeepInfra/Qwen/Qwen3-ASR-1.7B"]` | `HKASK_MEDIA_CROSS_CHECK_STT_MODELS` (comma-joined) |
 | `vision_model` | `String` | `"OpenRouter/openai/gpt-4o-mini"` | `HKASK_MEDIA_VISION_MODEL` |
 | `sound_annotation_model` | `String` | `"OpenRouter/qwen/qwen3.8-omni-flash"` | `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` |
 | `tagging_model` | `String` | `"openrouter/Qwen3 VL 8B Instruct"` | `HKASK_MEDIA_TAGGING_MODEL` |

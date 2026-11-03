@@ -211,7 +211,7 @@ mod tests {
             Some("OpenRouter/openai/whisper-large-v3-turbo".to_string()),
             vec![
                 "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B".to_string(),
-                "OpenRouter/qwen/qwen3-asr-flash-2026-02-10".to_string(),
+                "DeepInfra/Qwen/Qwen3-ASR-1.7B".to_string(),
                 "OpenRouter/openai/whisper-large-v3-turbo".to_string(),
             ],
             None,
@@ -222,7 +222,7 @@ mod tests {
             [
                 "OpenRouter/openai/whisper-large-v3-turbo",
                 "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
-                "OpenRouter/qwen/qwen3-asr-flash-2026-02-10",
+                "DeepInfra/Qwen/Qwen3-ASR-1.7B",
             ]
         );
         for model in &models {
