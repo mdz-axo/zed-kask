@@ -959,7 +959,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool()]
+    #[tool(
+        description = "Verify a completed task against its acceptance criteria (evidence text is the pass signal)."
+    )]
     pub async fn kanban_task_verify(
         &self,
         Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,

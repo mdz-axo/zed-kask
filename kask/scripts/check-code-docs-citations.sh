@@ -51,7 +51,7 @@ command -v rg >/dev/null 2>&1 || { echo "FAIL: rg not found" >&2; exit 2; }
 # - This gate and its own selftest carry cite-path strings as fixtures
 #   and documentation (the self-reference class): sweeping them would
 #   flag the very fixture data that pins the gate.
-ALLOWLIST_RE='(^|/)(check-code-docs-citations(-selftest)?|check-skill-review-instruments-selftest)\.sh$'
+ALLOWLIST_RE='(^|/)(check-code-docs-citations(-selftest)?|check-pre-push-selftest|check-skill-review-instruments-selftest)\.sh$'
 
 # Historical-record emitters: provenance mentions, not live pointers.
 HISTORICAL_RE='(^|/)DIVERGENCE\.md$'

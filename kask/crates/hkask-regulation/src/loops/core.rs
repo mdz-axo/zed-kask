@@ -248,19 +248,28 @@ pub enum LivenessTrust {
 /// single verdict that distinguishes wiring-closed from turning from working.
 /// The defining discipline: **wiring-closed ≠ turning ≠ working**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Reading {
     /// The loop is turning and producing verified impact. This is the
     /// "working" state — the loop is actually doing its job.
     Turning,
+    /// The loop is turning and met its latest cycle's demand: no
+    /// deviations, or every deviation received a typed disposition (open
+    /// conditions are carried by the review board). Impact is unverified —
+    /// the only impact producer (the rollout-impact pathway) retired
+    /// 2026-10-31 — so this is healthy homeostasis with the caveat stated
+    /// rather than read as health. Distinct from `Unobserved` (cannot
+    /// tell) and `Broken` (deviations with no disposition).
+    Homeostatic,
     /// The loop is wired but not turning — ticks are not firing. This is the
     /// dominant failure mode: a loop that reports success while having never
     /// run. Distinct from `Broken` (which means the loop IS turning but not
     /// working).
     WiringClosed,
     /// The loop is turning but not working — actions are not improving
-    /// metrics, or the sensor is broken. Distinct from `WiringClosed` (which
-    /// means the loop is not turning at all).
+    /// metrics, the sensor is broken, or deviations exist with no typed
+    /// disposition (the unacknowledged-alarm class: sensed, then dropped
+    /// with no action). Distinct from `WiringClosed` (which means the loop
+    /// is not turning at all).
     Broken,
     /// The loop is unobserved — not enough data to tell. Distinct from all
     /// other variants: we genuinely cannot determine the state.
@@ -271,6 +280,7 @@ impl std::fmt::Display for Reading {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Reading::Turning => write!(f, "turning"),
+            Reading::Homeostatic => write!(f, "homeostatic"),
             Reading::WiringClosed => write!(f, "wiring-closed"),
             Reading::Broken => write!(f, "broken"),
             Reading::Unobserved => write!(f, "unobserved"),
@@ -335,14 +345,22 @@ impl LoopView {
     /// 2. `Fault` -> `Broken` — the sensor is broken, so the loop is turning
     ///    but can't sense.
     /// 3. `Unknown` -> `Unobserved` — we can't read the sensor.
-    /// 4. `NotProducing` -> `WiringClosed` — the chain is wired but not
+    /// 4. `Idle` -> `Unobserved` — the sensor hasn't ticked; nothing is
+    ///    observed, and claiming homeostasis would fabricate an observation.
+    /// 5. `NotProducing` -> `WiringClosed` — the chain is wired but not
     ///    turning (no ticks firing).
-    /// 5. `Untrusted` -> `Broken` — the loop is turning but actions are
+    /// 6. `Untrusted` -> `Broken` — the loop is turning but actions are
     ///    making things worse.
-    /// 6. `Trusted` + `Producing` -> `Turning` — the loop is turning and
-    ///    working.
-    /// 7. Default -> `Unobserved` — not enough data to tell (e.g.,
-    ///    `Unverified` outcome, or `Stalled` loop model).
+    /// 7. `Stalled` -> `Broken` — deviations exist with no typed
+    ///    disposition: the unacknowledged-alarm class (sensed, then dropped
+    ///    with no action), a live defect rather than "not enough data".
+    /// 8. `Trusted` + `Producing` -> `Turning` — the loop is turning and
+    ///    working with verified impact.
+    /// 9. `Producing` + `Unverified` -> `Homeostatic` — the loop is turning
+    ///    and met its latest cycle's demand (no deviations, or all
+    ///    dispositioned); impact is unverified, stated as a caveat rather
+    ///    than collapsing the state into "not enough data".
+    /// 10. Default -> `Unobserved` — genuinely not enough data to tell.
     pub fn compute_reading(
         loop_model: LoopModel,
         panel_absence: SenseReading,
@@ -368,28 +386,51 @@ impl LoopView {
             return Reading::Unobserved;
         }
 
-        // Priority 4: If the chain is not producing, the loop is wired but
+        // Priority 4: An unticked sensor observes nothing — homeostasis
+        // would be a fabricated observation.
+        if panel_absence == SenseReading::Idle {
+            return Reading::Unobserved;
+        }
+
+        // Priority 5: If the chain is not producing, the loop is wired but
         // not turning — ticks are not firing.
         if loop_model == LoopModel::NotProducing {
             return Reading::WiringClosed;
         }
 
-        // Priority 5: If the output is untrusted, the loop is turning but
+        // Priority 6: If the output is untrusted, the loop is turning but
         // not working — actions are making things worse.
         if outcome_trust == OutcomeTrust::Untrusted {
             return Reading::Broken;
         }
 
-        // Priority 6: If the output is trusted and the chain is producing,
+        // Priority 7: Deviations with no typed disposition — the
+        // unacknowledged-alarm class. This used to fall to the default
+        // `Unobserved` ("not enough data"), reading a live defect as an
+        // absence (observed live through 2026-11-02: the chronic
+        // `deviations: 1, advisories_computed: 0` signature read
+        // `unobserved` for weeks while a below-threshold native-first rate
+        // was silently dropped by the policy).
+        if loop_model == LoopModel::Stalled {
+            return Reading::Broken;
+        }
+
+        // Priority 8: If the output is trusted and the chain is producing,
         // the loop is turning and working.
         if outcome_trust == OutcomeTrust::Trusted && loop_model == LoopModel::Producing {
             return Reading::Turning;
         }
 
-        // Default: not enough data to tell. This covers:
-        // - `Unverified` outcome (running but no impact reports)
-        // - `Stalled` loop model (ticks fire but no actions)
-        // - `Idle` panel absence (sensor hasn't ticked yet, but writer has)
+        // Priority 9: The chain met its cycle's demand with impact
+        // unverified — healthy homeostasis, the ordinary quiet session.
+        // `Unverified` is the only production outcome reading since the
+        // rollout-impact pathway retired (2026-10-31); before this branch
+        // every such session read `Unobserved` indefinitely.
+        if loop_model == LoopModel::Producing {
+            return Reading::Homeostatic;
+        }
+
+        // Default: not enough data to tell.
         Reading::Unobserved
     }
 }

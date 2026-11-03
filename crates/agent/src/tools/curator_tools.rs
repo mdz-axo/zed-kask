@@ -164,19 +164,28 @@ fn status_line(
     }
     if memory_degraded == Some(true) {
         "degraded (curator memory store down; self-healing re-open in progress)".to_string()
+    } else if loop_reading == Some("homeostatic") {
+        // `Homeostatic` implies liveness `Live` and a met demand on the
+        // latest cycle (`compute_reading` returns `WiringClosed` for
+        // `NeverRun` first and `Broken` for undispositioned deviations):
+        // the loop turned, sensed, and either found no deviations or
+        // dispositioned them all (open conditions are carried by the
+        // review board). Impact stays unverified — the only impact
+        // producer (the rollout-impact pathway) retired 2026-10-31 — and
+        // that caveat is stated rather than read as health. This state was
+        // introduced 2026-11-02: before it, every homeostatic session read
+        // `unobserved` indefinitely (observed live 2026-10-08: 720 cycles
+        // at zero deviations read as "not monitored").
+        "healthy (loop turning; homeostasis observed; impact unverified)".to_string()
     } else if loop_reading == Some("unobserved") {
-        // `Unobserved` implies liveness `Live` (`compute_reading` returns
-        // `WiringClosed` for `NeverRun` first): the loop IS turning and IS
-        // monitored (heartbeat, cycle count, deviations recorded in
-        // `reg.outcome.loop_quality`). What is absent is verified impact —
-        // the only production submitter of before/after rollout checks is
-        // the harness regression monitor, which fires on harness pass-rate
-        // regressions only, so an ordinary homeostatic session reads
-        // `unobserved` indefinitely. The former label ("loop or memory
-        // health not monitored") mislabeled every such session as
-        // unmonitored (observed live 2026-10-08: 720 cycles at zero
-        // deviations read as "not monitored").
-        "partial (loop turning; impact unverified)".to_string()
+        // `Unobserved` is the honest can't-tell: the loop's sensor cannot
+        // be read (panel absence `Unknown`/`Idle`) — NOT the ordinary quiet
+        // session, which reads `homeostatic` (observed, demand met) since
+        // 2026-11-02. The former permanent-unobserved behavior (2026-10-08
+        // through 2026-11-02: loop_model was derived from the
+        // structurally-zero impact counters, so every state collapsed
+        // here) mislabeled healthy homeostasis and live defects alike.
+        "partial (loop reading unobserved — sensors unreadable, not merely quiet)".to_string()
     } else if loop_reading.is_none() || memory_degraded.is_none() {
         "partial (loop or memory health not monitored)".to_string()
     } else if alert_log_approaching_cap == Some(true) {
@@ -225,40 +234,57 @@ mod status_snapshot_tests {
         );
     }
 
-    /// The `unobserved` Fermi `LoopView` reading is "turning but impact
-    /// unverified", NOT "not monitored": `unobserved` implies liveness
-    /// `Live` (`compute_reading` returns `WiringClosed` for `NeverRun`
-    /// first), and the loop monitors itself (heartbeat, cycle count,
-    /// deviations in `reg.outcome.loop_quality`). What is absent is
-    /// verified impact — the only production submitter of before/after
-    /// rollout checks is the harness regression monitor, which fires on
-    /// harness pass-rate regressions only — so an ordinary homeostatic
-    /// session reads `unobserved` indefinitely. The former label ("loop
-    /// or memory health not monitored") mislabeled every such session as
-    /// unmonitored (observed live 2026-10-08: 720 cycles at zero
-    /// deviations read as "not monitored").
+    /// Healthy homeostasis reads healthy — never "partial", never
+    /// "unobserved": the reading means the loop turned, sensed, and met
+    /// its cycle's demand, with the unverified-impact caveat stated
+    /// rather than hidden (observed live 2026-11-02: the weeks-long
+    /// `deviations: 1, advisories_computed: 0` signature was the
+    /// conflation this state splits).
     #[test]
-    fn status_line_labels_unobserved_as_turning_not_unmonitored() {
-        let line = status_line(Some(false), Some("unobserved"), Some(false));
-        assert!(line.starts_with("partial"), "never healthy (Goodhart)");
+    fn status_line_labels_homeostasis_healthy() {
+        let line = status_line(Some(false), Some("homeostatic"), Some(false));
         assert!(
-            line.contains("loop turning"),
-            "the unobserved reading means the loop is turning; got: {line}"
+            line.starts_with("healthy"),
+            "observed homeostasis is healthy; got: {line}"
+        );
+        assert!(
+            line.contains("homeostasis"),
+            "the reading names what it observed; got: {line}"
         );
         assert!(
             line.contains("impact unverified"),
-            "the absent thing is verified impact, not monitoring; got: {line}"
+            "the caveat is stated, not hidden; got: {line}"
         );
         assert!(
-            !line.contains("not monitored"),
-            "the loop IS monitored — heartbeat, cycles and deviations are \
-             recorded; got: {line}"
+            !line.contains("partial"),
+            "an observed healthy loop is not partial; got: {line}"
+        );
+    }
+
+    /// `unobserved` is the honest can't-tell (the sensor cannot be read)
+    /// — the ordinary quiet session reads `homeostatic` instead. It must
+    /// never read healthy, and it must not claim homeostasis it cannot
+    /// observe.
+    #[test]
+    fn status_line_labels_unobserved_as_genuinely_unknown() {
+        let line = status_line(Some(false), Some("unobserved"), Some(false));
+        assert!(
+            line.starts_with("partial"),
+            "never healthy (Goodhart); got: {line}"
+        );
+        assert!(
+            line.contains("sensors unreadable"),
+            "the reading names what is absent — observability, not impact; got: {line}"
+        );
+        assert!(
+            !line.contains("homeostasis"),
+            "an unreadable sensor is not homeostasis; got: {line}"
         );
     }
 
     /// The status output carries the loop's own cycle count (the ledger's
     /// `regulation_health.total_cycles` — one per cybernetics tick), so
-    /// the operator sees the loop turning behind an `unobserved` impact
+    /// the operator sees the loop turning behind a `homeostatic` impact
     /// reading, and never confuses the ledger's cycle counter with the
     /// loop-quality telemetry's `tick_count`.
     #[test]
@@ -274,7 +300,7 @@ mod status_snapshot_tests {
              not the loop-quality tick_count"
         );
         let output = CuratorStatusOutput {
-            status: status_line(Some(false), Some("unobserved"), Some(false)),
+            status: status_line(Some(false), Some("homeostatic"), Some(false)),
             regulation_acceptance_rate: None,
             escalation_count: Some(0),
             pending_escalations: Some(6),
@@ -284,7 +310,7 @@ mod status_snapshot_tests {
             alert_log_count: Some(3),
             alert_log_cap: Some(200),
             alert_log_approaching_cap: Some(false),
-            loop_reading: Some("unobserved".to_string()),
+            loop_reading: Some("homeostatic".to_string()),
             loop_cycles: Some(720),
             native_first_rate: None,
             native_first_samples: None,
@@ -294,8 +320,11 @@ mod status_snapshot_tests {
             language_model::LanguageModelToolResultContent::Text(text) => {
                 let text = text.to_string();
                 assert!(text.contains("Loop Cycles: 720"), "got: {text}");
-                assert!(text.contains("Loop Reading: unobserved"));
-                assert!(text.contains("loop turning; impact unverified"));
+                assert!(text.contains("Loop Reading: homeostatic"), "got: {text}");
+                assert!(
+                    text.contains("homeostasis observed"),
+                    "the loop reading names the observed homeostasis; got: {text}"
+                );
             }
             other => panic!("expected text, got {other:?}"),
         }

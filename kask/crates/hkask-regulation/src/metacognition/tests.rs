@@ -19,6 +19,39 @@ fn acceptance_is_not_causal_trust() {
     }
 }
 
+/// The LoopView reads the live cycle demand: cycles with all deviations
+/// dispositioned (or none) read Producing/Homeostatic; cycles with
+/// undispositioned deviations read Stalled/Broken — the sensed-but-dropped
+/// class surfaces as a defect, never as "unobserved" (observed live
+/// 2026-11-02: weeks of `deviations: 1, advisories_computed: 0` read
+/// `unobserved` while a below-threshold native-first rate was silently
+/// dropped by the policy).
+#[test]
+fn loop_view_reads_the_live_cycle_demand() {
+    let met = RegulationHealth {
+        total_cycles: 10,
+        ..Default::default()
+    };
+    let view = MetacognitionLoop::compute_loop_view(&met);
+    assert_eq!(view.loop_model, crate::loops::LoopModel::Producing);
+    assert_eq!(view.reading, crate::loops::Reading::Homeostatic);
+
+    let defect = RegulationHealth {
+        total_cycles: 10,
+        last_cycle_deviations: 1,
+        last_cycle_undispositioned: 1,
+        ..Default::default()
+    };
+    let view = MetacognitionLoop::compute_loop_view(&defect);
+    assert_eq!(view.loop_model, crate::loops::LoopModel::Stalled);
+    assert_eq!(view.reading, crate::loops::Reading::Broken);
+
+    let never = RegulationHealth::default();
+    let view = MetacognitionLoop::compute_loop_view(&never);
+    assert_eq!(view.loop_model, crate::loops::LoopModel::NotProducing);
+    assert_eq!(view.reading, crate::loops::Reading::WiringClosed);
+}
+
 /// expect: "Operator acceptance uses the emitted boolean payload and excludes malformed observations."
 #[test]
 fn operator_acceptance_reads_the_writer_contract() {

@@ -54,3 +54,49 @@ fn metric_name_round_trips() {
     // Unknown names are None, not a silent default.
     assert!(SignalMetric::from_str_name("not_a_metric").is_none());
 }
+
+/// The healthy side of a higher-is-worse ratio is not a deviation: a
+/// native-first rate BELOW its threshold is the compliant reading, never a
+/// BelowSetPoint "deviation" that no policy rule can disposition (the
+/// chronic `deviations: 1, advisories_computed: 0, coverage 0.0`
+/// signature, observed live for weeks through 2026-11-02).
+#[test]
+fn native_first_rate_below_set_point_is_healthy() {
+    let signal = Signal::new(
+        LoopId::Cybernetics,
+        SignalMetric::NativeFirstRate,
+        0.0,
+        0.65,
+    );
+    assert!(
+        Deviation::from_signal(&signal).is_none(),
+        "rate below threshold is the healthy side of a higher-is-worse ratio"
+    );
+}
+
+/// The count family is healthy below a configured tolerance too
+/// (`algedonic_events_max` is operator-configurable): a count under the
+/// tolerance is not a deviation in either direction.
+#[test]
+fn count_under_configured_tolerance_is_healthy() {
+    let signal = Signal::new(LoopId::Cybernetics, SignalMetric::AlgedonicEvents, 1.0, 3.0);
+    assert!(
+        Deviation::from_signal(&signal).is_none(),
+        "count under the configured tolerance is healthy, not a BelowSetPoint deviation"
+    );
+}
+
+/// Above the threshold the ratio still deviates — the fix must not
+/// suppress the actionable side.
+#[test]
+fn native_first_rate_above_set_point_still_deviates() {
+    let signal = Signal::new(
+        LoopId::Cybernetics,
+        SignalMetric::NativeFirstRate,
+        1.0,
+        0.65,
+    );
+    let deviation =
+        Deviation::from_signal(&signal).expect("a rate above the threshold still deviates");
+    assert_eq!(deviation.direction, DeviationDirection::AboveSetPoint);
+}

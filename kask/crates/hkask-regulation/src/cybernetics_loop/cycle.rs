@@ -442,7 +442,26 @@ impl super::CyberneticsLoop {
         let policy = RegulationPolicy::default();
 
         for dev in deviations {
-            for proposed in policy.decide(dev) {
+            let proposed = policy.decide(dev);
+            if proposed.is_empty() {
+                // Fail-visible, never silently dropped: a deviation with no
+                // matching (metric, direction) rule is the exact gap the
+                // policy-closure test names ("sensed and then silently
+                // dropped by decide"). The exhaustive healthy-direction
+                // match in `Deviation::from_signal` and this warn are the
+                // two halves of the same contract — the match prevents the
+                // reachable gap, the warn surfaces any future one.
+                tracing::warn!(
+                    target: "reg.cybernetics",
+                    metric = dev.signal.metric.as_str(),
+                    direction = ?dev.direction,
+                    value = dev.signal.value,
+                    set_point = dev.signal.set_point,
+                    "Deviation matched no policy rule — sensed but undispositionable"
+                );
+                continue;
+            }
+            for proposed in proposed {
                 let action = self.build_regulation_action(dev, proposed).await;
                 if let Some(disposition) = action {
                     actions.push(disposition);

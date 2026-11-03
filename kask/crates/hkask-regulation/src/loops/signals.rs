@@ -245,19 +245,45 @@ impl Deviation {
             return None;
         }
         let diff = signal.value - signal.set_point;
+        // Exhaustive with no `_` arm: a new SignalMetric variant fails this
+        // match until its healthy side is declared. The former `_ => false`
+        // fallthrough read ANY non-zero diff — in either direction — as a
+        // deviation for every metric outside the two named groups, which
+        // misread the HEALTHY side of higher-is-worse ratios as deviations:
+        // a native-first rate below its threshold produced a permanent
+        // BelowSetPoint deviation that no policy rule could disposition
+        // (the weeks-long `deviations: 1, advisories_computed: 0,
+        // response_coverage 0.0` signature, observed live through
+        // 2026-11-02), and a count under a configured tolerance did the
+        // same for the count family.
         let healthy = match signal.metric {
+            // Higher-is-healthy: value at or above the set point is healthy;
+            // a shortfall deviates BelowSetPoint.
             SignalMetric::ContextServerHealth
             | SignalMetric::ToolReliability
             | SignalMetric::TestCoverage
             | SignalMetric::MutationScore
             | SignalMetric::InferenceModelAvailable
-            | SignalMetric::MemoryLife => diff >= 0.0,
+            | SignalMetric::MemoryLife
+            | SignalMetric::PassRate => diff >= 0.0,
+            // Lower-is-healthy: value at or below the set point is healthy.
+            // For the count family (set point 0) only zero is healthy; for
+            // higher-is-worse ratios (NativeFirstRate) readings BELOW the
+            // threshold are the healthy side, never a deviation.
             SignalMetric::VarietyDeficit
             | SignalMetric::OcrSilentFailures
             | SignalMetric::TripleCount
             | SignalMetric::LowConfidenceCount
-            | SignalMetric::ConsolidationCandidates => diff <= 0.0,
-            _ => false,
+            | SignalMetric::ConsolidationCandidates
+            | SignalMetric::AlgedonicEvents
+            | SignalMetric::AlgedonicLogApproachingCap
+            | SignalMetric::PendingEscalations
+            | SignalMetric::GoalStaleCount
+            | SignalMetric::GoalExpiredCount
+            | SignalMetric::MetacognitionCriticalAlerts
+            | SignalMetric::ExperimentationStuckExperiments
+            | SignalMetric::NativeFirstRate
+            | SignalMetric::CircuitBreakerState => diff <= 0.0,
         };
         if healthy || diff.abs() < f64::EPSILON {
             return None;

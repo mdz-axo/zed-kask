@@ -678,8 +678,24 @@ impl CyberneticsLoop {
         self.report_cleared_conditions(&deviations);
 
         // Feed regulation health into Regulation for metacognition
-        // observability: the per-cycle counter behind the Loop Cycles status.
-        self.ledger.read().await.record_cycle().await;
+        // observability: the per-cycle counter behind the Loop Cycles
+        // status, plus the cycle's deviation/disposition outcome — the
+        // live demand signal the LoopView assembly reads to distinguish
+        // healthy homeostasis (demand met) from a live defect (deviations
+        // with no typed disposition).
+        let undispositioned = deviations
+            .iter()
+            .filter(|dev| {
+                !actions
+                    .iter()
+                    .any(|action| action.metric_name.as_deref() == Some(dev.signal.metric.as_str()))
+            })
+            .count() as u64;
+        self.ledger
+            .read()
+            .await
+            .record_cycle(deviations.len() as u64, undispositioned)
+            .await;
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
@@ -704,6 +720,23 @@ impl CyberneticsLoop {
                 "trigger": format!("{:?}", quality.trigger),
                 "deviations": deviations.len(),
                 "advisories_computed": actions.len(),
+                // Name the deviating metric(s), not just count them — a
+                // count-only row left the operator unable to see WHICH
+                // signal deviated (observed live through 2026-11-02: the
+                // weeks-long `deviations: 1` signature was identifiable
+                // only by board-card archaeology). Always present; empty
+                // is the explicit zero-deviation reading.
+                "deviating_metrics": deviations
+                    .iter()
+                    .map(|dev| {
+                        serde_json::json!({
+                            "metric": dev.signal.metric.as_str(),
+                            "value": dev.signal.value,
+                            "set_point": dev.signal.set_point,
+                            "direction": format!("{:?}", dev.direction),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
 
                 "suppressed_steady_state_cycles": decision.suppressed_cycles,
             });

@@ -276,8 +276,11 @@ impl MetacognitionLoop {
     ///
     /// Derives the four module readings:
     /// - `liveness_trust`: `NeverRun` if `total_cycles == 0`, otherwise `Live`.
-    /// - `loop_model`: `NotProducing` if `total_cycles == 0`, `Stalled` if
-    ///   cycles ran but no actions were verified, `Producing` if actions exist.
+    /// - `loop_model`: `NotProducing` if `total_cycles == 0`, `Stalled` when
+    ///   the latest cycle left deviations with no typed disposition (the
+    ///   sensed-but-dropped defect class), `Producing` otherwise — the
+    ///   chain met its cycle's demand, which includes the zero-deviation
+    ///   homeostatic cycle.
     /// - `panel_absence`: `Idle` if `total_cycles == 0`, otherwise `Empty`
     ///   (the sensor ticked and returned a real deficit value, including 0).
     /// - `outcome_trust`: `Unverified`; acceptance cannot establish causal efficacy.
@@ -287,8 +290,6 @@ impl MetacognitionLoop {
         use crate::loops::{LivenessTrust, LoopModel, OutcomeTrust, SenseReading};
 
         let total_cycles = regulation_health.total_cycles;
-        let total_verified =
-            regulation_health.accepted + regulation_health.staged + regulation_health.blocked;
 
         // Liveness: has the writer ever run?
         let liveness_trust = if total_cycles == 0 {
@@ -297,10 +298,14 @@ impl MetacognitionLoop {
             LivenessTrust::Live
         };
 
-        // Loop model: does the chain produce?
+        // Loop model: does the chain meet the cycle's demand? A cycle whose
+        // deviations all received typed dispositions — including the
+        // zero-deviation homeostatic cycle — met its demand; one that left
+        // deviations undispositioned is stalled in the unacknowledged-alarm
+        // sense and must surface as a defect, not as "not enough data".
         let loop_model = if total_cycles == 0 {
             LoopModel::NotProducing
-        } else if total_verified == 0 {
+        } else if regulation_health.last_cycle_undispositioned > 0 {
             LoopModel::Stalled
         } else {
             LoopModel::Producing

@@ -48,8 +48,11 @@ pub struct LedgerHealth {
 /// The accepted/staged/blocked counters aggregated the retired
 /// rollout-impact pathway's verdicts; with that pathway gone (2026-10-31)
 /// they are structurally zero and `acceptance_rate()` is `None` — which the
-/// metacognition status surface reports as "impact unverified". Only
-/// `total_cycles` is live (one per completed cycle).
+/// metacognition status surface reports as "impact unverified". Live
+/// fields: `total_cycles` (one per completed cycle) and the latest cycle's
+/// deviation/disposition outcome (`last_cycle_deviations`,
+/// `last_cycle_undispositioned`) — the demand signal the LoopView assembly
+/// reads to distinguish healthy homeostasis from a live defect.
 #[derive(Debug, Clone, Default)]
 pub struct RegulationHealth {
     /// Total regulation cycles recorded.
@@ -60,6 +63,15 @@ pub struct RegulationHealth {
     pub staged: u64,
     /// Observations triggering a block (severe worsening).
     pub blocked: u64,
+    /// Deviations detected on the most recent completed cycle — the live
+    /// demand signal. `total_cycles` is history; this is the current state.
+    pub last_cycle_deviations: u64,
+    /// Deviations on the most recent cycle that received no typed
+    /// disposition (no matching policy action). Zero is the healthy
+    /// homeostasis/holding state — every deviation was dispositioned, or
+    /// there were none. Positive is a live defect: the sensed-but-dropped
+    /// class the LoopView assembly must read as Broken, never Unobserved.
+    pub last_cycle_undispositioned: u64,
 }
 
 impl RegulationHealth {

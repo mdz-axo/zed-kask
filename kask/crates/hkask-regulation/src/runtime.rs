@@ -623,11 +623,15 @@ impl RegulationLedger {
     /// unverified", now structurally rather than incidentally.
     ///
     /// expect: "The system provides homeostatic self-regulation through variety tracking, algedonic alerting, and regulation record observation"
-    /// pre:  called once per completed cycle
-    /// post: regulation health cycle counter updated
-    pub(crate) async fn record_cycle(&self) {
+    /// pre:  called once per completed cycle with that cycle's deviation
+    ///       count and the subset that received no typed disposition
+    /// post: regulation health cycle counter and the latest cycle's
+    ///       deviation/undispositioned state updated
+    pub(crate) async fn record_cycle(&self, deviations: u64, undispositioned: u64) {
         let mut state = self.state.write().await;
         state.regulation_health.total_cycles += 1;
+        state.regulation_health.last_cycle_deviations = deviations;
+        state.regulation_health.last_cycle_undispositioned = undispositioned;
     }
 
     /// Get regulation health summary for metacognition.

@@ -182,7 +182,13 @@ fn loop_view_composes_four_modules_into_reading() {
         "Trusted + Producing + Live -> Turning"
     );
 
-    // Live + Empty + Stalled + Unverified -> Unobserved (can't tell)
+    // Live + Empty + Stalled + Unverified -> Broken: deviations exist with
+    // no typed disposition — the unacknowledged-alarm class (sensed, then
+    // dropped with no action). The former Stalled + Unverified -> Unobserved
+    // mapping read this defect as "not enough data" (the weeks-long
+    // `deviations: 1, advisories_computed: 0` signature read `unobserved`
+    // while the healthy side of a higher-is-worse ratio was silently
+    // dropped by the policy — observed live through 2026-11-02).
     let view = LoopView::new(
         LoopModel::Stalled,
         SenseReading::Empty,
@@ -191,8 +197,38 @@ fn loop_view_composes_four_modules_into_reading() {
     );
     assert_eq!(
         view.reading,
-        Reading::Unobserved,
-        "Stalled + Unverified -> Unobserved (not enough data)"
+        Reading::Broken,
+        "Stalled (undispositioned deviations) -> Broken, never Unobserved"
+    );
+
+    // Live + Empty + Producing + Unverified -> Homeostatic: the chain met
+    // its cycle's demand (no deviations, or all dispositioned) with impact
+    // unverified — the ordinary healthy quiet session. Before this state
+    // existed, every such session read `unobserved` indefinitely.
+    let view = LoopView::new(
+        LoopModel::Producing,
+        SenseReading::Empty,
+        OutcomeTrust::Unverified,
+        LivenessTrust::Live,
+    );
+    assert_eq!(
+        view.reading,
+        Reading::Homeostatic,
+        "Producing (demand met) + Unverified -> Homeostatic, never Unobserved"
+    );
+
+    // Stale + Empty + Producing + Unverified -> Homeostatic (was running,
+    // demand met; impact still unverified)
+    let view = LoopView::new(
+        LoopModel::Producing,
+        SenseReading::Empty,
+        OutcomeTrust::Unverified,
+        LivenessTrust::Stale,
+    );
+    assert_eq!(
+        view.reading,
+        Reading::Homeostatic,
+        "Stale + Producing + Unverified -> Homeostatic"
     );
 
     // Stale + Empty + Producing + Trusted -> Turning (was running, still verified)
@@ -227,6 +263,7 @@ fn loop_view_composes_four_modules_into_reading() {
 #[test]
 fn reading_display_provides_human_readable_string() {
     assert_eq!(Reading::Turning.to_string(), "turning");
+    assert_eq!(Reading::Homeostatic.to_string(), "homeostatic");
     assert_eq!(Reading::WiringClosed.to_string(), "wiring-closed");
     assert_eq!(Reading::Broken.to_string(), "broken");
     assert_eq!(Reading::Unobserved.to_string(), "unobserved");

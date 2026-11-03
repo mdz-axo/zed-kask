@@ -1458,6 +1458,65 @@ async fn permanent_inference_failure_routes_native_escalation() {
     );
 }
 
+/// The loop-quality telemetry row names the deviating metric(s), not
+/// just counts them — a count-only row left the operator unable to see
+/// WHICH signal deviated (observed live through 2026-11-02: the
+/// weeks-long `deviations: 1, advisories_computed: 0` signature required
+/// board-card archaeology to identify the signal). The array is always
+/// present; empty is the explicit zero-deviation reading (the four-way
+/// absence discipline).
+#[test]
+fn loop_quality_telemetry_names_deviating_metrics() {
+    let (runtime, ledger, sink) = capturing_runtime();
+    runtime.block_on(async {
+        ledger.read().await.record_agent_turn(true, true).await; // one substantive native-first turn: rate 1.0 > default 0.50
+        let regulation_loop = CyberneticsLoop::new(ledger)
+            .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.tick().await;
+
+        let spans = sink.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (path, observation) = spans
+            .iter()
+            .find(|(path, _)| path == "reg.outcome.loop_quality")
+            .expect("the first-appearance deviation tick emits");
+        assert_eq!(path, "reg.outcome.loop_quality");
+        assert_eq!(
+            observation["deviating_metrics"][0]["metric"],
+            serde_json::json!("native_first_rate"),
+            "the row names the deviating metric, not just its count"
+        );
+        assert_eq!(
+            observation["deviations"].as_u64().unwrap_or_default(),
+            1,
+            "path {path}"
+        );
+    });
+}
+
+/// Zero deviations is an explicit empty `deviating_metrics` array — never
+/// an absent field (absence would read as instrument failure, the
+/// `unwrap_or(0)` trap).
+#[test]
+fn loop_quality_telemetry_names_no_deviations_explicitly() {
+    let (runtime, ledger, sink) = capturing_runtime();
+    runtime.block_on(async {
+        let regulation_loop = CyberneticsLoop::new(ledger)
+            .with_event_sink(Arc::clone(&sink) as Arc<dyn hkask_types::RegulationSink>);
+        regulation_loop.tick().await;
+
+        let spans = sink.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (_, observation) = spans
+            .iter()
+            .find(|(path, _)| path == "reg.outcome.loop_quality")
+            .expect("the tick-1 idle heartbeat emits");
+        assert_eq!(
+            observation["deviating_metrics"],
+            serde_json::json!([]),
+            "zero deviations is an explicit empty array, not an absent field"
+        );
+    });
+}
+
 /// The heartbeat/telemetry test preamble: a fresh tokio runtime, a
 /// default ledger, and a capturing event sink — the pieces the tick-loop
 /// tests block on. The loop construction stays per test: the resilience
