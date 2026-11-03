@@ -89,10 +89,11 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 For assets ≥20 minutes, operator-flagged as important, or platform videos
 with a public transcript — the base transcript is one model's claim about
 the audio; this step buys independent evidence at bounded cost. Skip it
-for short informal recordings. Budget ~$0.02 per intake (≤3 slices;
-measured 2026-11-02: SerpAPI fetch ~$0.004 + Nemotron $0.002/min ≈
-$0.012 for 3 slices); record per-leg receipts in a cost ledger and stop
-and report if any paid call exceeds its estimate.
+for short informal recordings. Budget ~$0.02 per intake for the
+   cross-check legs (≤3 slices; measured 2026-11-02: platform
+   transcript fetch ~$0.004 + Nemotron slices $0.002/min ≈ $0.012 for
+   3 slices); record per-leg receipts in a cost ledger and stop and
+   report if any paid call exceeds its estimate.
 
 1. Pick ≤3 contested or representative regions (the opening, a name-dense
    middle span, or spans the correction pass has flagged) — locate each
@@ -100,11 +101,12 @@ and report if any paid call exceeds its estimate.
    believed to be in the opening was at ~16:52). `audio_trim` each from
    the stored media (free, local).
 2. Platform leg (YouTube sources): recover the video ID from the asset's
-   `video_fetch` lineage (`source_url`) BEFORE paying for a search —
-   the lineage makes the search free (measured 2026-11-02). Then
-   `web_search` with `provider: serpapi` and the watch URL — the
+   `video_fetch` lineage (`source_url`) before paying for a search —
+   the lineage makes an ID search unnecessary (measured 2026-11-02).
+   Then `web_search` with `provider: serpapi` and the watch URL — the
    `youtube_video_transcript` engine returns the platform transcript as
-   text. Treat it as independent evidence, never ground truth:
+   text (this fetch is the ~$0.004 paid call). Treat it as
+   independent evidence, never ground truth:
    auto-captions are ASR output with their own proper-noun error modes.
 3. Second-model leg: `transcribe_bundle` each slice WITHOUT storing it.
    Try the per-call `model` override first (restart-free when the
@@ -128,11 +130,14 @@ and report if any paid call exceeds its estimate.
      the sources.
    - Readings all differ but agree on the sound → CONTESTED: route to
      external verification (literature record; disclose its cost
-     outside the leg bound) and keep any single reading labeled
-     unverified (measured 2026-11-02: "Rosucci" /
+     outside the leg bound). If the literature resolves the
+     orthography, store the correction with the literature provenance
+     (measured 2026-11-02: "Rosucci" /
      "rasuu Chi" / "Rusuchi" → Risucci, Tortolani & Ward 1989, Surg
      Gynecol Obstet 169(6):519-26, PMID 2814768 — the described study
-     resolved the orthography where no two ASR strings matched).
+     resolved the orthography where no two ASR strings matched);
+     if not, keep the prior reading labeled unverified in the edit's
+     reason.
    - Contested or single-source spans carry a researcher annotation
      recording the competing readings and state — never a silent text
      edit (measured 2026-11-02: "Dutty and Kruger" / "dirty Krueger" /
