@@ -88,37 +88,60 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 
 For assets ≥20 minutes, operator-flagged as important, or platform videos
 with a public transcript — the base transcript is one model's claim about
-the audio; this step buys independent evidence for bounded cost (≤3 slices,
-~$0.05). Skip it for short informal recordings.
+the audio; this step buys independent evidence at bounded cost. Skip it
+for short informal recordings. Budget ~$0.02 per intake (≤3 slices;
+measured 2026-11-02: SerpAPI fetch ~$0.004 + Nemotron $0.002/min ≈
+$0.012 for 3 slices); record per-leg receipts in a cost ledger and stop
+and report if any paid call exceeds its estimate.
 
 1. Pick ≤3 contested or representative regions (the opening, a name-dense
-   middle span, or spans the correction pass has flagged). `audio_trim`
-   each from the stored media (free, local).
-2. Second-model leg: `transcribe_bundle` each slice WITHOUT storing
-   it, passing a configured cross-check model (`model_list` names the
-   configured fleet; pass its `model` id per call — the per-call
-   override makes the cross-check restart-free, no settings change).
-   Text-level output is what content adjudication needs; word
-   timings are welcome but never assumed (both live legs were
-   text-level 2026-11-02: Qwen3-ASR-Flash via OpenRouter rejects
-   `verbose_json`; Nemotron 3.5 Transcribe via DeepInfra parses to
-   segments with empty words).
-3. Platform leg (YouTube sources): `web_search` with `provider: serpapi`
-   and the watch URL as the query — SerpAPI's `youtube_video_transcript`
-   engine returns the platform transcript as text (the provider discards
-   its per-segment timings; treat it as text evidence).
+   middle span, or spans the correction pass has flagged) — locate each
+   in the working view before slicing (measured 2026-11-02: a span
+   believed to be in the opening was at ~16:52). `audio_trim` each from
+   the stored media (free, local).
+2. Platform leg (YouTube sources): recover the video ID from the asset's
+   `video_fetch` lineage (`source_url`) BEFORE paying for a search —
+   the lineage makes the search free (measured 2026-11-02). Then
+   `web_search` with `provider: serpapi` and the watch URL — the
+   `youtube_video_transcript` engine returns the platform transcript as
+   text. Treat it as independent evidence, never ground truth:
+   auto-captions are ASR output with their own proper-noun error modes.
+3. Second-model leg: `transcribe_bundle` each slice WITHOUT storing it.
+   Try the per-call `model` override first (restart-free when the
+   running server supports it); fall back to the settings switch — set
+   `kask.media.stt_model`, let the server restart, verify via
+   `model_list`, transcribe, restore (switch receipts measured
+   2026-11-02). Failure mode: a running binary predating the in-tree
+   `json` fallback hardcodes `verbose_json`, and the Qwen leg fails
+   deterministically (400) — retry ≤3, then mark the leg failed,
+   adjudicate on the remaining families, and report degraded coverage.
+   Text-level output is what content adjudication needs; word timings
+   are welcome but never assumed.
 4. Compare each slice against the STORED bundle's region — never against
    a fresh slice of the base model (measured 2026-11-02: a whisper slice
-   pass dropped a 5-second passage the stored full-file bundle contains
-   at words 389-390 and both other sources heard). Adjudicate per token:
-   - 2-of-3 sources agree on a reading the base got wrong → store it as
-     a correction edit at SOURCE indices, provenance naming the sources.
-   - All sources differ → audio ambiguity: no majority exists; route the
-     token to external verification (literature, reference corpus) and
-     keep any single reading labeled unverified in the edit's reason.
+   pass dropped a 5-second passage the stored full-file bundle contains).
+   Record each leg's model family (intake STT, platform ASR, slice STT)
+   and check independence before applying the corroboration rule —
+   same-family agreement counts as single-source. Adjudicate per span:
+   - ≥2 independent families agree on a reading → CORROBORATED:
+     store the correction edit at SOURCE indices, provenance naming
+     the sources.
+   - Readings all differ but agree on the sound → CONTESTED: route to
+     external verification (literature record; disclose its cost
+     outside the leg bound) and keep any single reading labeled
+     unverified (measured 2026-11-02: "Rosucci" /
+     "rasuu Chi" / "Rusuchi" → Risucci, Tortolani & Ward 1989, Surg
+     Gynecol Obstet 169(6):519-26, PMID 2814768 — the described study
+     resolved the orthography where no two ASR strings matched).
+   - Contested or single-source spans carry a researcher annotation
+     recording the competing readings and state — never a silent text
+     edit (measured 2026-11-02: "Dutty and Kruger" / "dirty Krueger" /
+     "Dunning Kruger").
    - All agree → confirmed; no action.
-5. Store adjudicated edits as a correction layer (cross-check provenance)
-   and pass the unresolved list to the Phase 2 correction pass.
+5. Store adjudicated edits as a correction layer at source indices
+   (cross-check provenance), realign, then probe the rendered view by
+   lexical search — old form gone, new form present — before passing
+   the unresolved list to the Phase 2 correction pass.
 
 ### Phase 2 — Correct and structure (the passes)
 
