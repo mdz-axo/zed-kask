@@ -398,6 +398,11 @@ pub struct KaskScenariosSettings {}
 pub struct KaskMediaSettings {
     /// STT model override (env `HKASK_MEDIA_STT_MODEL`).
     pub stt_model: String,
+    /// Additional STT models for the bounded transcription cross-check
+    /// (transcript-reel Phase 1b) — addressed per call via the transcribe
+    /// tools' `model` override and listed by `model_list` (env
+    /// `HKASK_MEDIA_CROSS_CHECK_STT_MODELS`, comma-joined).
+    pub cross_check_stt_models: Vec<String>,
     /// Vision model override (env `HKASK_MEDIA_VISION_MODEL`).
     pub vision_model: String,
     /// Sound-annotation model for the audio passes (env
@@ -413,6 +418,11 @@ impl Default for KaskMediaSettings {
     fn default() -> Self {
         Self {
             stt_model: hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL.to_string(),
+            cross_check_stt_models:
+                hkask_inference::model_constants::DEFAULT_MEDIA_CROSS_CHECK_STT_MODELS
+                    .iter()
+                    .map(|model| model.to_string())
+                    .collect(),
             vision_model: hkask_inference::model_constants::DEFAULT_MEDIA_VISION_MODEL.to_string(),
             sound_annotation_model:
                 hkask_inference::model_constants::DEFAULT_MEDIA_SOUND_ANNOTATION_MODEL.to_string(),
@@ -873,6 +883,9 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
         let default = Self::default();
         Self {
             stt_model: c.stt_model.unwrap_or(default.stt_model),
+            cross_check_stt_models: c
+                .cross_check_stt_models
+                .unwrap_or(default.cross_check_stt_models),
             vision_model: c.vision_model.unwrap_or(default.vision_model),
             sound_annotation_model: c
                 .sound_annotation_model
@@ -999,10 +1012,19 @@ mod tests {
             hkask_inference::model_constants::DEFAULT_MEDIA_TAGGING_MODEL,
             "default tagging_model must carry the settings-layer constant"
         );
+        assert_eq!(
+            default.cross_check_stt_models,
+            hkask_inference::model_constants::DEFAULT_MEDIA_CROSS_CHECK_STT_MODELS
+                .iter()
+                .map(|model| model.to_string())
+                .collect::<Vec<_>>(),
+            "default cross_check_stt_models must carry the settings-layer fleet"
+        );
         let serialized = serde_json::to_value(default).expect("serialize research media settings");
         let fields = serialized.as_object().expect("media settings object");
-        assert_eq!(fields.len(), 4);
+        assert_eq!(fields.len(), 5);
         assert!(fields.contains_key("stt_model"));
+        assert!(fields.contains_key("cross_check_stt_models"));
         assert!(fields.contains_key("vision_model"));
         assert!(fields.contains_key("sound_annotation_model"));
         assert!(fields.contains_key("tagging_model"));

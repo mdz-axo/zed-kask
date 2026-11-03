@@ -770,6 +770,44 @@ pub async fn run_speaker_pass_audio(
     Ok(layer)
 }
 
+/// Correction-pass content sanity — the gate the structural `validate`
+/// cannot be. `validate` sees bounds and disjointness only, so a model
+/// output that parses and respects ranges carried no content check at
+/// all: a degenerate layer (dozens of edits, every replacement one
+/// constant token) stored at rejection_rate 0.0 and corrupted every
+/// passage it touched (observed 2026-11-02, the 14,270-word Dunning
+/// sample — `gpt-4o-mini`, ~70 edits, every replacement "the"). Two
+/// named invariants:
+/// - a correction replaces text; an empty/blank replacement is a
+///   deletion, which belongs to EDL layers, not corrections;
+/// - more than two edits whose replacements are all one identical
+///   string is the collapse signature, not a correction set.
+///
+/// The false positive — a legitimately repeated identical fix (one
+/// misheard name throughout) — rejects visibly and can be retried or
+/// stored as a researcher-curated layer: this gate is the model-pass
+/// path only, `educt_store_layer` never runs it.
+fn validate_correction_content(edits: &[CorrectionEdit]) -> Result<(), LayerValidationError> {
+    for edit in edits {
+        if edit.replacement.trim().is_empty() {
+            return Err(LayerValidationError::EmptyReplacement {
+                start_word: edit.start_word,
+            });
+        }
+    }
+    if edits.len() > 2
+        && edits
+            .iter()
+            .all(|edit| edit.replacement == edits[0].replacement)
+    {
+        return Err(LayerValidationError::DegenerateCorrections {
+            edits: edits.len(),
+            replacement: edits[0].replacement.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// Run the correction pass: the model proposes text replacements over
 /// word ranges (mishearings, homophones, garbled fragments). Edits are
 /// proposals — applying them (via `corrected_text_view`) produces a
@@ -800,6 +838,18 @@ pub async fn run_correction_pass(
         "CorrectionPassOutput {\"edits\": [{start_word, end_word, replacement, reason}]}",
     )
     .await?;
+    // Content sanity before the structural gate — the collapse mode
+    // (uniform or empty replacements) is the more diagnostic failure, so
+    // it surfaces before bounds/disjointness can mask it; the rejection
+    // counts with the pass's other rejections (and structured's, in
+    // structured mode — the same measurement `validate_or_reject` feeds).
+    if let Err(error) = validate_correction_content(&output.edits) {
+        CORRECTION_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        if matches!(mode, PassMode::Structured) {
+            STRUCTURED_PASS_REJECTIONS.fetch_add(1, Ordering::Relaxed);
+        }
+        return Err(PassError::Validation(error));
+    }
     let layer = CorrectionLayer {
         provenance: LayerProvenance {
             model,
@@ -994,6 +1044,152 @@ mod tests {
             assert!(stats.get("rejection_rate").is_some());
             assert!(stats.get("structured").is_some(), "the A/B measurement");
         }
+    }
+
+    // ── correction-pass content gate (the 2026-11-02 collapse defect) ──
+
+    fn correction_edit(start_word: usize, end_word: usize, replacement: &str) -> CorrectionEdit {
+        CorrectionEdit {
+            start_word,
+            end_word,
+            replacement: replacement.to_string(),
+            reason: "mishearing".to_string(),
+        }
+    }
+
+    #[test]
+    fn correction_content_gate_rejects_empty_replacements() {
+        let edits = vec![correction_edit(0, 0, "the"), correction_edit(3, 3, "  ")];
+        assert_eq!(
+            validate_correction_content(&edits),
+            Err(LayerValidationError::EmptyReplacement { start_word: 3 })
+        );
+    }
+
+    #[test]
+    fn correction_content_gate_rejects_the_uniform_replacement_collapse() {
+        // The observed signature: dozens of edits, every replacement "the".
+        let edits: Vec<CorrectionEdit> = (0..70)
+            .map(|index| correction_edit(index, index, "the"))
+            .collect();
+        assert_eq!(
+            validate_correction_content(&edits),
+            Err(LayerValidationError::DegenerateCorrections {
+                edits: 70,
+                replacement: "the".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn correction_content_gate_allows_a_repeated_identical_fix_pair() {
+        // Two identical replacements are a legitimate repeated fix; the
+        // collapse threshold is strictly more than two.
+        let edits = vec![
+            correction_edit(0, 0, "Dunning"),
+            correction_edit(5, 5, "Dunning"),
+        ];
+        assert_eq!(validate_correction_content(&edits), Ok(()));
+    }
+
+    #[test]
+    fn correction_content_gate_allows_legitimate_varied_corrections() {
+        let edits = vec![
+            correction_edit(0, 0, "Rosenthal"),
+            correction_edit(5, 6, "one in seventeen"),
+            correction_edit(9, 9, "summits"),
+        ];
+        assert_eq!(validate_correction_content(&edits), Ok(()));
+    }
+
+    /// A canned correction-pass port: `media_generate` (the structured
+    /// path) returns the caller's text — the same surface the v2 spike
+    /// measures, and one a stub can serve without an `InferenceResult`.
+    struct CannedCorrectionPort {
+        model_text: String,
+    }
+    crate::test_support::media_inference_stub! {
+        CannedCorrectionPort,
+        generate(self, _prompt): { panic!("the structured test never calls generate") },
+        media_generate(self, _op, _params): {
+            let model_text = self.model_text.clone();
+            Box::pin(async move { Ok(serde_json::json!({ "text": model_text })) })
+        },
+    }
+
+    fn correction_bundle(word_texts: &[&str]) -> TranscriptBundle {
+        let mut bundle = TranscriptBundle::new(
+            "/missing/correction-pass.wav".into(),
+            word_texts.len() as f32,
+            word_texts.join(" "),
+        );
+        bundle.words = crate::test_support::timed_words(word_texts);
+        bundle
+    }
+
+    /// expect: A degenerate model response (uniform replacements) is
+    /// rejected by the pass end-to-end — never stored at rejection_rate
+    /// 0.0. The edits deliberately exceed the bundle's bounds: the content
+    /// gate runs before the structural gate, so this test fails if the
+    /// gate order is inverted (bounds would mask the collapse signature).
+    #[tokio::test]
+    async fn correction_pass_rejects_degenerate_output_end_to_end() {
+        let edits: Vec<serde_json::Value> = (0..70)
+            .map(|index| {
+                serde_json::json!({
+                    "start_word": index, "end_word": index,
+                    "replacement": "the", "reason": "mishearing"
+                })
+            })
+            .collect();
+        let port: Arc<dyn InferencePort> = Arc::new(CannedCorrectionPort {
+            model_text: serde_json::json!({ "edits": edits }).to_string(),
+        });
+        let env = crate::templates::create_env().expect("media templates must compile");
+        let bundle = correction_bundle(&["alpha", "beta", "gamma"]);
+        let error = run_correction_pass(
+            &port,
+            &env,
+            &bundle,
+            PassMode::Structured,
+            Some("test-model"),
+        )
+        .await
+        .expect_err("the collapse signature must never become a layer");
+        assert!(matches!(
+            error,
+            PassError::Validation(LayerValidationError::DegenerateCorrections { edits: 70, .. })
+        ));
+    }
+
+    /// expect: A legitimate varied correction set passes both gates and
+    /// carries the resolved model provenance — including a
+    /// cardinality-changing edit, which is legal at pass time (realignment
+    /// is the later, separate decision).
+    #[tokio::test]
+    async fn correction_pass_accepts_varied_output_end_to_end() {
+        let model_text = serde_json::json!({
+            "edits": [
+                { "start_word": 0, "end_word": 0, "replacement": "Alpha", "reason": "capitalization" },
+                { "start_word": 2, "end_word": 2, "replacement": "gamma ray", "reason": "garbled" }
+            ]
+        })
+        .to_string();
+        let port: Arc<dyn InferencePort> = Arc::new(CannedCorrectionPort { model_text });
+        let env = crate::templates::create_env().expect("media templates must compile");
+        let bundle = correction_bundle(&["alpha", "beta", "gamma"]);
+        let layer = run_correction_pass(
+            &port,
+            &env,
+            &bundle,
+            PassMode::Structured,
+            Some("test-model"),
+        )
+        .await
+        .expect("a legitimate varied correction set stores");
+        assert_eq!(layer.edits.len(), 2);
+        assert_eq!(layer.provenance.model, "test-model");
+        assert_eq!(layer.provenance.prompt_template, CORRECTION_PASS_TEMPLATE);
     }
 
     fn gate_span(

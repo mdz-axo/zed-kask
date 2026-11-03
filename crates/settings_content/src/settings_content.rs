@@ -1877,6 +1877,12 @@ pub struct KaskPredictionMarketsSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskMediaSettingsContent {
     pub stt_model: Option<String>,
+    /// Additional STT models for the bounded transcription cross-check
+    /// (transcript-reel Phase 1b) — addressed per call via the transcribe
+    /// tools' `model` override and listed by `model_list`. Absent uses the
+    /// settings-layer default fleet; an explicitly empty list disables the
+    /// cross-check fleet.
+    pub cross_check_stt_models: Option<Vec<String>>,
     pub vision_model: Option<String>,
     pub sound_annotation_model: Option<String>,
     pub tagging_model: Option<String>,

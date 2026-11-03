@@ -7,6 +7,7 @@ use crate::*;
 fn build_model_list(
     registry: Vec<hkask_types::ModelEntry>,
     stt: Option<String>,
+    cross_check_stt_models: Vec<String>,
     vision: Option<String>,
 ) -> Vec<MediaModelInfo> {
     let mut models = Vec::new();
@@ -19,6 +20,25 @@ fn build_model_list(
             capabilities: vec!["transcribe".to_string()],
             is_default: true,
             description: Some("Configured speech-to-text transcription model".to_string()),
+        });
+    }
+    for id in cross_check_stt_models {
+        // A settings file that repeats the primary in the fleet is a
+        // redundancy to skip, not a second entry to render.
+        if models.iter().any(|model| model.id == id) {
+            continue;
+        }
+        models.push(MediaModelInfo {
+            name: strip_provider_prefix(&id).to_string(),
+            provider: parse_provider(&id),
+            id,
+            modality: "audio".to_string(),
+            capabilities: vec!["transcribe".to_string()],
+            is_default: false,
+            description: Some(
+                "Configured cross-check speech-to-text model (transcript-reel Phase 1b)"
+                    .to_string(),
+            ),
         });
     }
     for entry in registry.into_iter().filter(|entry| entry.supports_vision) {
@@ -69,6 +89,7 @@ impl MediaServer {
         Ok(build_model_list(
             registry,
             models::stt_model(),
+            models::cross_check_stt_models(),
             models::vision_model(),
         ))
     }
@@ -181,6 +202,38 @@ mod tests {
         ))
     }
 
+    /// expect: The configured cross-check fleet renders as transcribe-capable
+    /// audio models, and a fleet entry repeating the primary is skipped.
+    #[test]
+    fn cross_check_fleet_renders_as_audio_models_without_primary_duplicates() {
+        let models = build_model_list(
+            Vec::new(),
+            Some("OpenRouter/openai/whisper-large-v3-turbo".to_string()),
+            vec![
+                "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B".to_string(),
+                "OpenRouter/qwen/qwen3-asr-flash-2026-02-10".to_string(),
+                "OpenRouter/openai/whisper-large-v3-turbo".to_string(),
+            ],
+            None,
+        );
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "OpenRouter/openai/whisper-large-v3-turbo",
+                "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
+                "OpenRouter/qwen/qwen3-asr-flash-2026-02-10",
+            ]
+        );
+        for model in &models {
+            assert_eq!(model.modality, "audio");
+            assert_eq!(model.capabilities, ["transcribe"]);
+        }
+        assert!(models[0].is_default);
+        assert!(!models[1].is_default);
+        assert!(!models[2].is_default);
+    }
+
     /// expect: Model tools enumerate the actual registry, model_info can inspect
     /// its entries, and bridge failures remain errors rather than empty lists.
     #[tokio::test]
@@ -255,6 +308,7 @@ mod tests {
                 entry("Provider/other-vision", true),
             ],
             Some("Provider/stt".into()),
+            Vec::new(),
             Some("Provider/vision".into()),
         );
         assert_eq!(models.len(), 3);
@@ -281,7 +335,10 @@ mod tests {
     /// confirmed registry capabilities, and no hidden defaults appear.
     #[test]
     fn empty_registry_does_not_invent_vision_or_audio_models() {
-        assert!(build_model_list(Vec::new(), None, Some("Provider/absent".into())).is_empty());
+        assert!(
+            build_model_list(Vec::new(), None, Vec::new(), Some("Provider/absent".into()))
+                .is_empty()
+        );
         assert_eq!(parse_provider("no-prefix"), "unknown");
         assert_eq!(
             strip_provider_prefix("Provider/family/model"),

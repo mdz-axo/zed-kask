@@ -88,6 +88,10 @@ pub(crate) static ARTIFACTS_ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>
 /// operator's no-hidden-models spec).
 pub mod models {
     pub const STT_ENV: &str = "HKASK_MEDIA_STT_MODEL";
+    /// The cross-check STT fleet (transcript-reel Phase 1b) — the
+    /// independent ASR voices the transcribe tools' `model` override
+    /// addresses per call, listed by `model_list`. Comma-joined.
+    pub const CROSS_CHECK_STT_ENV: &str = "HKASK_MEDIA_CROSS_CHECK_STT_MODELS";
     pub const VISION_ENV: &str = "HKASK_MEDIA_VISION_MODEL";
     pub const PASS_ENV: &str = "HKASK_MEDIA_PASS_MODEL";
     pub const SOUND_ANNOTATION_ENV: &str = "HKASK_MEDIA_SOUND_ANNOTATION_MODEL";
@@ -102,6 +106,21 @@ pub mod models {
 
     pub fn stt_model() -> Option<String> {
         configured(STT_ENV)
+    }
+    /// The configured cross-check STT fleet — empty when unset (the
+    /// cross-check's second-model leg then reports the fleet unconfigured
+    /// rather than guessing a model).
+    pub fn cross_check_stt_models() -> Vec<String> {
+        configured(CROSS_CHECK_STT_ENV)
+            .map(|fleet| {
+                fleet
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
     pub fn vision_model() -> Option<String> {
         configured(VISION_ENV)
@@ -1211,6 +1230,7 @@ mod tool_behavior_tests {
             .transcribe_bundle(Parameters(crate::types::TranscribeBundleRequest {
                 audio_url: "/nonexistent/mcp-review-probe.wav".to_string(),
                 language: None,
+                model: None,
                 gallery_asset_id: None,
             }))
             .await
@@ -3389,6 +3409,7 @@ mod tool_behavior_tests {
             .transcribe_and_store(Parameters(crate::types::TranscribeAndStoreRequest {
                 audio_url: audio_url.clone(),
                 language: Some("en".to_string()),
+                model: None,
                 gallery_asset_id: None,
             }))
             .await
@@ -3464,6 +3485,7 @@ mod tool_behavior_tests {
             .transcribe_and_store(Parameters(crate::types::TranscribeAndStoreRequest {
                 audio_url: audio_url.clone(),
                 language: Some("en".to_string()),
+                model: None,
                 gallery_asset_id: None,
             }))
             .await
@@ -3986,6 +4008,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(crate::types::EductLocateRequest {
                 transcript_id: transcript_id.clone(),
                 text: "Alpha beta".to_string(),
+                basis: None,
             }))
             .await
             .expect("corrected quote locates");
@@ -3994,6 +4017,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(crate::types::EductLocateRequest {
                 transcript_id: transcript_id.clone(),
                 text: "alpha beta".to_string(),
+                basis: None,
             }))
             .await
             .expect("stale quote returns no-match");
@@ -4141,6 +4165,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(crate::types::EductLocateRequest {
                 transcript_id: transcript_id.clone(),
                 text: "AlphaBeta".to_string(),
+                basis: None,
             }))
             .await
             .expect_err("unaligned locate must fail");
@@ -5614,6 +5639,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(crate::types::EductLocateRequest {
                 transcript_id,
                 text: "alpha beta".to_string(),
+                basis: None,
             }))
             .await
             .expect("locate succeeds");
@@ -5726,6 +5752,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(EductLocateRequest {
                 transcript_id: transcript_id.clone(),
                 text: "the cinder Cinder ella curve".to_string(),
+                basis: None,
             }))
             .await
             .expect_err("unaligned locate must fail");
@@ -5764,6 +5791,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(EductLocateRequest {
                 transcript_id: transcript_id.clone(),
                 text: "the cinder Cinder ella curve".to_string(),
+                basis: None,
             }))
             .await
             .expect("locate succeeds after realignment");
@@ -5850,6 +5878,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(EductLocateRequest {
                 transcript_id,
                 text: "the plan".to_string(),
+                basis: None,
             }))
             .await
             .expect("locate succeeds");
@@ -5869,6 +5898,7 @@ mod tool_behavior_tests {
             .educt_locate(Parameters(crate::types::EductLocateRequest {
                 transcript_id,
                 text: "a passage that never appears".to_string(),
+                basis: None,
             }))
             .await
             .expect("no_match is a surfaced status, not an error");

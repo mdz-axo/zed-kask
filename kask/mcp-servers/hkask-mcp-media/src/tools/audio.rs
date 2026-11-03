@@ -267,6 +267,7 @@ impl MediaServer {
         &self,
         audio_url: &str,
         language: &Option<String>,
+        model: Option<&str>,
     ) -> Result<TranscriptBundle, McpToolError> {
         ensure_local_input_exists(audio_url)?;
         if !crate::is_local_media_path(audio_url) {
@@ -284,6 +285,10 @@ impl MediaServer {
         let media_params = hkask_types::MediaGenerateParams {
             audio_url: Some(upload_audio_url),
             language: language.clone(),
+            // Per-call override wins; None keeps the router's configured
+            // STT model (HKASK_MEDIA_STT_MODEL) — the override is what makes
+            // the cross-check restart-free (2026-11-02).
+            model: model.map(str::to_string),
             ..Default::default()
         };
         let generate = self
@@ -334,6 +339,7 @@ impl MediaServer {
         Parameters(TranscribeBundleRequest {
             audio_url,
             language,
+            model,
             gallery_asset_id,
         }): Parameters<TranscribeBundleRequest>,
     ) -> Result<String, McpToolError> {
@@ -350,7 +356,9 @@ impl MediaServer {
                 )));
             }
             let _admission = self.admit_heavy_operation()?;
-            let bundle = self.transcribe_to_bundle(&audio_url, &language).await?;
+            let bundle = self
+                .transcribe_to_bundle(&audio_url, &language, model.as_deref())
+                .await?;
 
             Ok(serde_json::to_value(&bundle)
                 .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize bundle"})))
@@ -366,12 +374,15 @@ impl MediaServer {
         Parameters(TranscribeAndStoreRequest {
             audio_url,
             language,
+            model,
             gallery_asset_id,
         }): Parameters<TranscribeAndStoreRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_and_store", async {
             let _admission = self.admit_heavy_operation()?;
-            let bundle = self.transcribe_to_bundle(&audio_url, &language).await?;
+            let bundle = self
+                .transcribe_to_bundle(&audio_url, &language, model.as_deref())
+                .await?;
 
             let driver = &**self.gallery_store.driver();
             crate::tools::educt::store_transcript_summary_value(

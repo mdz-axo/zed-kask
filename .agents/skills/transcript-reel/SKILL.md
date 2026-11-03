@@ -84,6 +84,42 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
   citations, or surfaced missing timing/partial search; stop here. The reel
   convergence gate applies only when a reel is requested.
 
+### Phase 1b — Bounded cross-check (long-form or platform-sourced assets)
+
+For assets ≥20 minutes, operator-flagged as important, or platform videos
+with a public transcript — the base transcript is one model's claim about
+the audio; this step buys independent evidence for bounded cost (≤3 slices,
+~$0.05). Skip it for short informal recordings.
+
+1. Pick ≤3 contested or representative regions (the opening, a name-dense
+   middle span, or spans the correction pass has flagged). `audio_trim`
+   each from the stored media (free, local).
+2. Second-model leg: `transcribe_bundle` each slice WITHOUT storing
+   it, passing a configured cross-check model (`model_list` names the
+   configured fleet; pass its `model` id per call — the per-call
+   override makes the cross-check restart-free, no settings change).
+   Text-level output is what content adjudication needs; word
+   timings are welcome but never assumed (both live legs were
+   text-level 2026-11-02: Qwen3-ASR-Flash via OpenRouter rejects
+   `verbose_json`; Nemotron 3.5 Transcribe via DeepInfra parses to
+   segments with empty words).
+3. Platform leg (YouTube sources): `web_search` with `provider: serpapi`
+   and the watch URL as the query — SerpAPI's `youtube_video_transcript`
+   engine returns the platform transcript as text (the provider discards
+   its per-segment timings; treat it as text evidence).
+4. Compare each slice against the STORED bundle's region — never against
+   a fresh slice of the base model (measured 2026-11-02: a whisper slice
+   pass dropped a 5-second passage the stored full-file bundle contains
+   at words 389-390 and both other sources heard). Adjudicate per token:
+   - 2-of-3 sources agree on a reading the base got wrong → store it as
+     a correction edit at SOURCE indices, provenance naming the sources.
+   - All sources differ → audio ambiguity: no majority exists; route the
+     token to external verification (literature, reference corpus) and
+     keep any single reading labeled unverified in the edit's reason.
+   - All agree → confirmed; no action.
+5. Store adjudicated edits as a correction layer (cross-check provenance)
+   and pass the unresolved list to the Phase 2 correction pass.
+
 ### Phase 2 — Correct and structure (the passes)
 
 3. Call `educt_correction_pass` with the transcript id. It proposes
@@ -163,6 +199,10 @@ educt tool family plus the convergence form above.
 
 ## Constraints
 
+- The stored base bundle is the only index and timing ground truth: every
+  cross-check output lands as a correction layer at SOURCE indices with
+  evidence provenance; slices and platform transcripts are evidence,
+  never the base, and timings never change.
 - Never edit source word timings — layers anchor to word indices; the
   immutable source transcript remains auditable. Re-anchored timings are
   derived estimates, not newly observed STT timing or confidence.

@@ -222,6 +222,12 @@ pub(crate) fn emit_media_env(
     if !media.stt_model.is_empty() {
         env.insert("HKASK_MEDIA_STT_MODEL".to_string(), media.stt_model.clone());
     }
+    if !media.cross_check_stt_models.is_empty() {
+        env.insert(
+            "HKASK_MEDIA_CROSS_CHECK_STT_MODELS".to_string(),
+            media.cross_check_stt_models.join(","),
+        );
+    }
     if !media.vision_model.is_empty() {
         env.insert(
             "HKASK_MEDIA_VISION_MODEL".to_string(),
@@ -421,6 +427,14 @@ mod tests {
             env.get("HKASK_MEDIA_STT_MODEL").map(String::as_str),
             Some(hkask_inference::model_constants::DEFAULT_MEDIA_STT_MODEL),
             "default settings emit the code-default STT model"
+        );
+        let default_fleet =
+            hkask_inference::model_constants::DEFAULT_MEDIA_CROSS_CHECK_STT_MODELS.join(",");
+        assert_eq!(
+            env.get("HKASK_MEDIA_CROSS_CHECK_STT_MODELS")
+                .map(String::as_str),
+            Some(default_fleet.as_str()),
+            "default settings emit the cross-check STT fleet"
         );
         assert!(
             env.contains_key("HKASK_MEDIA_VISION_MODEL"),

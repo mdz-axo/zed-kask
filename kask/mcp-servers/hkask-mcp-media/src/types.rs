@@ -358,6 +358,12 @@ pub struct EductLocateRequest {
     /// included). All word-aligned matches are returned with their time
     /// ranges; ambiguity is surfaced as all candidates, never a guess.
     pub text: String,
+    /// The index basis of the returned ranges: `"working"` (the default —
+    /// the timing-aligned working view the quote matched against) or
+    /// `"source"` (immutable source-word indices, what correction-layer
+    /// edits and other source-anchored layers require; converted through
+    /// the re-anchored index map when a realignment is applied).
+    pub basis: Option<String>,
 }
 
 /// Lifecycle status of a face registry entry, set at registration by the
@@ -498,6 +504,13 @@ pub struct TranscribeBundleRequest {
     pub audio_url: String,
     /// Optional ISO 639-1 language code (e.g., "en", "ja").
     pub language: Option<String>,
+    /// Optional provider-prefixed STT model override for this
+    /// transcription — e.g. a configured cross-check model from
+    /// `model_list` (transcript-reel Phase 1b). Default: the configured
+    /// STT model; an explicit override makes the bounded cross-check
+    /// restart-free (no settings change, no server restart).
+    #[serde(default)]
+    pub model: Option<String>,
     /// Optional stable gallery asset id of the RECORDING this
     /// transcription belongs to (R5, operator ruling 2026-10-28). The
     /// transcribe JOB stores and links the finished transcript to the
@@ -516,6 +529,12 @@ pub struct TranscribeAndStoreRequest {
     pub audio_url: String,
     /// Optional ISO 639-1 language code (e.g., "en", "ja").
     pub language: Option<String>,
+    /// Optional provider-prefixed STT model override for this
+    /// transcription — e.g. a configured cross-check model from
+    /// `model_list` (transcript-reel Phase 1b). Default: the configured
+    /// STT model; an explicit override makes the bounded cross-check
+    /// restart-free (no settings change, no server restart).
+    pub model: Option<String>,
     /// Optional gallery asset id to key the transcript record to.
     pub gallery_asset_id: Option<String>,
 }

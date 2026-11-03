@@ -205,6 +205,9 @@ impl ResearchJob {
                             .unwrap_or_else(|| request.audio_url.clone()),
                     ),
                     language: request.language.clone(),
+                    // Per-call STT override (transcript-reel Phase 1b):
+                    // None keeps the router's configured STT model.
+                    model: request.model.clone(),
                     ..Default::default()
                 };
                 let result = port.media_generate("transcribe", &params).await;

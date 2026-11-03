@@ -382,6 +382,19 @@ impl Drop for HttpCapture {
 }
 impl HttpCapture {
     async fn start(status: u16) -> Self {
+        // A complete video result avoids timers; all other adapters use
+        // their actual decoding path over this provider response fixture.
+        let body = if status == 200 {
+            r#"{"id":"job","status":"completed","url":"https://example.invalid/video.mp4","data":[{"b64_json":"QUJD"}],"text":"hello","words":[],"choices":[{"message":{"content":"{}"}}]}"#
+        } else {
+            r#"{"error":"sentinel rejection"}"#
+        };
+        Self::start_with_responses(vec![(status, body.to_string())]).await
+    }
+
+    /// Serve the i-th response to the i-th request, repeating the last
+    /// after exhaustion — the sequential-request harness for retry paths.
+    async fn start_with_responses(responses: Vec<(u16, String)>) -> Self {
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -390,6 +403,7 @@ impl HttpCapture {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured = requests.clone();
         let task = tokio::spawn(async move {
+            let mut served = 0usize;
             loop {
                 let (stream, _) = listener.accept().await.expect("accept HTTP");
                 let mut stream = BufReader::new(stream);
@@ -422,12 +436,23 @@ impl HttpCapture {
                 });
                 // A complete video result avoids timers; all other adapters use
                 // their actual decoding path over this provider response fixture.
-                let response = if status == 200 {
-                    r#"{"id":"job","status":"completed","url":"https://example.invalid/video.mp4","data":[{"b64_json":"QUJD"}],"text":"hello","words":[],"choices":[{"message":{"content":"{}"}}]}"#
-                } else {
-                    r#"{"error":"sentinel rejection"}"#
-                };
-                stream.get_mut().write_all(format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.expect("response");
+                let (status, response) = responses
+                    .get(served)
+                    .or_else(|| responses.last())
+                    .cloned()
+                    .unwrap_or((500, "{\"error\":\"sequence exhausted\"}".to_string()));
+                served += 1;
+                stream
+                    .get_mut()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .expect("response");
             }
         });
         Self {
@@ -525,6 +550,7 @@ async fn real_router_adapters_capture_models_payloads_and_no_cross_provider_requ
             let expected_path = if provider == "DeepInfra" {
                 match op {
                     MediaOp::GenerateImage => "/v1/openai/images/generations",
+                    MediaOp::Transcribe => "/v1/openai/audio/transcriptions",
                     MediaOp::RemoveBackground => "/v1/inference/Bria/remove_background",
                     MediaOp::Upscale => "/v1/inference/latentconsistency/upscale",
                     _ => "/v1/inference/vendor/model",
@@ -545,6 +571,9 @@ async fn real_router_adapters_capture_models_payloads_and_no_cross_provider_requ
             if provider == "DeepInfra" && op == MediaOp::Transcribe {
                 assert!(request.body.contains("RIFF"));
                 assert!(request.body.contains("name=\"language\""));
+                assert!(request.body.contains("name=\"model\""));
+                assert!(request.body.contains("name=\"response_format\""));
+                assert!(request.body.contains("name=\"timestamp_granularities[]\""));
                 continue;
             }
             let body: Value = serde_json::from_str(&request.body).expect("JSON payload");
@@ -718,12 +747,13 @@ async fn lazy_media_is_child_local_with_actual_settings_stt_default() {
     assert_eq!(body["input_audio"]["data"], "UklGRg==");
 }
 
-/// expect: "A DeepInfra-qualified STT model routes child-local to the native
-/// inference endpoint and requests word-level chunks."
+/// expect: "A DeepInfra-qualified STT model routes child-local to the
+/// documented OpenAI-compatible speech-to-text endpoint and requests
+/// verbose_json with word+segment granularities."
 /// [P1] Motivating; dcterms:identifier: LazyInferencePort::media_generate
 #[cfg(unix)]
 #[tokio::test]
-async fn deepinfra_qualified_stt_routes_with_chunk_level_word() {
+async fn deepinfra_qualified_stt_routes_to_openai_compatible_endpoint() {
     if std::env::var_os("HKASK_MEDIA_ROUTING_TEST_CASE").is_some() {
         let result = crate::LazyInferencePort::new()
             .media_generate(
@@ -748,16 +778,17 @@ async fn deepinfra_qualified_stt_routes_with_chunk_level_word() {
     let selected = HttpCapture::start(200).await;
     let other = HttpCapture::start(200).await;
     let mut command = subprocess(
-        "deepinfra_qualified_stt_routes_with_chunk_level_word",
+        "deepinfra_qualified_stt_routes_to_openai_compatible_endpoint",
         "lazy",
     );
     command
         .env("HKASK_INFERENCE_SOCKET", &socket)
         .env("HKASK_MEDIA_TEST_AUDIO", &audio)
         // NOT the settings default: this pins the explicit
-        // DeepInfra-qualified STT routing — the held Nemotron flip's exact
-        // shape (the arm sends chunk_level=word; the API's "segment"
-        // default cannot back the word-indexed layer system).
+        // DeepInfra-qualified STT routing — the cross-check fleet's exact
+        // shape (the arm requests verbose_json with word+segment
+        // granularities at the OpenAI-compatible endpoint; a segments-only
+        // response cannot back the word-indexed layer system).
         .env(
             "HKASK_MEDIA_STT_MODEL",
             "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
@@ -791,18 +822,20 @@ async fn deepinfra_qualified_stt_routes_with_chunk_level_word() {
     let requests = selected.requests.lock().expect("capture");
     assert_eq!(requests.len(), 1);
     let request = requests.first().expect("STT request");
-    assert_eq!(
-        request.path,
-        "/v1/inference/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B"
-    );
+    assert_eq!(request.path, "/v1/openai/audio/transcriptions");
     assert!(
-        request.body.contains("name=\"chunk_level\""),
-        "the DeepInfra STT arm must request word-level chunks: {}",
+        request.body.contains("name=\"model\""),
+        "the model rides the multipart form: {}",
         request.body
     );
     assert!(
-        request.body.contains("\r\n\r\nword\r\n"),
-        "chunk_level value must be word: {}",
+        request.body.contains("name=\"response_format\""),
+        "response_format must be requested: {}",
+        request.body
+    );
+    assert!(
+        request.body.contains("name=\"timestamp_granularities[]\""),
+        "word and segment granularities must be requested: {}",
         request.body
     );
     assert!(
@@ -812,20 +845,75 @@ async fn deepinfra_qualified_stt_routes_with_chunk_level_word() {
     );
 }
 
-/// Live STT probe for the reviewed-but-held Nemotron-Transcribe flip
-/// (2026-10-29): one real transcription through the DeepInfra Nemotron arm
-/// sending `chunk_level: "word"` against the real API. Env-gated: runs
-/// only with `HKASK_STT_LIVE_PROBE=1` and `HKASK_STT_LIVE_AUDIO` set to
+/// expect: A text-only ASR model's verbose_json rejection (400 naming
+/// verbose_json) triggers exactly one json retry; the degraded response
+/// parses and both request bodies are captured.
+#[tokio::test]
+async fn openrouter_stt_falls_back_to_json_when_verbose_json_is_rejected() {
+    let directory = tempfile::tempdir().expect("audio directory");
+    let audio = directory.path().join("input.wav");
+    std::fs::write(&audio, b"RIFF").expect("audio fixture");
+    let rejected = HttpCapture::start_with_responses(vec![
+        (
+            400,
+            r#"{"error":{"message":"The selected model does not support response_format \"verbose_json\". Use \"json\" instead.","code":400}}"#
+                .to_string(),
+        ),
+        (200, r#"{"text":"hello"}"#.to_string()),
+    ])
+    .await;
+    let router = MediaRouter::new(InferenceConfig {
+        openrouter_api_key: "sentinel-openrouter".into(),
+        openrouter_base_url: rejected.url.clone(),
+        ..Default::default()
+    });
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        router.media_generate(
+            "transcribe",
+            &MediaGenerateParams {
+                audio_url: Some(audio.to_string_lossy().into_owned()),
+                language: Some("en".into()),
+                model: Some("OpenRouter/qwen/qwen3-asr-flash".into()),
+                ..Default::default()
+            },
+        ),
+    )
+    .await
+    .expect("bounded HTTP")
+    .expect("json fallback transcription");
+    assert_eq!(result["text"], "hello");
+    let requests = rejected.requests.lock().expect("capture");
+    assert_eq!(
+        requests.len(),
+        2,
+        "one verbose_json attempt then one json retry"
+    );
+    let first: Value = serde_json::from_str(&requests[0].body).expect("first payload");
+    assert_eq!(first["response_format"], "verbose_json");
+    let retry: Value = serde_json::from_str(&requests[1].body).expect("retry payload");
+    assert_eq!(retry["response_format"], "json");
+    assert!(
+        retry.get("timestamp_granularities").is_none(),
+        "the retry drops the granularities the text-only model rejects"
+    );
+}
+
+/// Live STT probe for the DeepInfra Nemotron arm (the cross-check
+/// fleet's second model, transcript-reel Phase 1b): one real transcription
+/// through the documented OpenAI-compatible speech-to-text endpoint —
+/// the native `/v1/inference` arm's `chunk_level: "word"` response proved
+/// unstable (word-keyed once, then segment-only across 7 same-day
+/// requests, then a monolithic single-segment response 2026-11-02), so
+/// the arm moved to `/v1/openai/audio/transcriptions` with verbose_json
+/// word+segment granularities. Env-gated: runs only with
+/// `HKASK_STT_LIVE_PROBE=1` and `HKASK_STT_LIVE_AUDIO` set to
 /// speech-bearing audio (a machine-noise clip legitimately returns zero
-/// words; live-probe discipline: `--test-threads=1`; the credential
-/// rides the child env and never appears in output). STATUS 2026-10-29:
-/// the endpoint returned word-level, `word`-keyed tokens ONCE (8 words,
-/// real speech clip) and then segment-only across 7 consecutive
-/// requests — the flip is held until this probe is green repeatedly.
-/// Pins that the real response's word entries carry exactly the shape
-/// the media-server bundle parse consumes (`word`-keyed tokens with
-/// start/end seconds; the DeepInfra docs' `text`-keyed example is
-/// accepted too), matching the parse fixture in
+/// words; live-probe discipline: `--test-threads=1`; the credential rides
+/// the child env and never appears in output). Pins that the real
+/// response's word entries carry exactly the shape the media-server
+/// bundle parse consumes (`word`-keyed tokens with start/end seconds; a
+/// `text`-keyed example is accepted too), matching the parse fixture in
 /// `deepinfra_nemotron_response_parses_into_word_timed_bundle`.
 #[tokio::test]
 async fn live_stt_nemotron_returns_word_timings() {
@@ -1124,7 +1212,6 @@ async fn model_url_safety_preserves_native_model_identity() {
         for op in [
             MediaOp::ImageToImage,
             MediaOp::GenerateSpeech,
-            MediaOp::Transcribe,
             MediaOp::GenerateVideo,
             MediaOp::ImageToVideo,
         ] {
@@ -1150,6 +1237,6 @@ async fn model_url_safety_preserves_native_model_identity() {
             assert!(request.headers.contains("Bearer sentinel-deepinfra"));
         }
     }
-    assert_eq!(deepinfra.requests.lock().expect("capture").len(), 25);
+    assert_eq!(deepinfra.requests.lock().expect("capture").len(), 20);
     assert!(openrouter.requests.lock().expect("unselected").is_empty());
 }

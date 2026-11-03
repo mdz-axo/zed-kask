@@ -202,6 +202,23 @@ pub enum LayerValidationError {
     EmptyIdentificationField { field: &'static str },
     #[error("identification margin {margin} is negative")]
     NegativeMargin { margin: f64 },
+    /// A correction replaces text; an empty or blank replacement is a
+    /// deletion, which belongs to EDL layers, not corrections.
+    #[error(
+        "correction at word {start_word} has an empty replacement — corrections replace \
+         text; deletions belong to EDL layers"
+    )]
+    EmptyReplacement { start_word: usize },
+    /// The model-output collapse signature: more than two edits whose
+    /// replacements are all one identical string is a degenerate layer,
+    /// not a correction set (observed 2026-11-02: ~70 edits, every
+    /// replacement the constant token "the", accepted at rejection_rate
+    /// 0.0 by the structural gate — bounds and disjointness alone).
+    #[error(
+        "degenerate correction layer: all {edits} edits replace with {replacement:?} — \
+         model output collapsed"
+    )]
+    DegenerateCorrections { edits: usize, replacement: String },
 }
 
 impl TranscriptLayer {

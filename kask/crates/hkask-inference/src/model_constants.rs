@@ -204,14 +204,27 @@ mod qa_generation_tests {
 /// timings) and the educt layer system anchors to word indices, so a
 /// segments-only STT response cannot back a reel. The reviewed
 /// Nemotron-3.5-Transcribe flip (DeepInfra, $0.002/min, 40 languages,
-/// one-hour context) is prepared and pinned — the DeepInfra arm sends
-/// `chunk_level: "word"`, and the bundle parse accepts both the observed
-/// `word`-keyed response shape and the docs' `text`-keyed example — but
-/// the flip is HELD (2026-10-29): the endpoint returned word timestamps
-/// once and then segment-only across 7 same-day requests. Re-run the
-/// live probe (`live_stt_nemotron_returns_word_timings`) when
-/// re-evaluating; Whisper stays the documented default.
+/// one-hour context) is prepared and pinned — the DeepInfra arm serves
+/// the documented OpenAI-compatible `/v1/openai/audio/transcriptions`
+/// endpoint (verbose_json, word+segment granularities; the native
+/// `/v1/inference` endpoint returned word timestamps once and then
+/// segment-only across 7 same-day requests 2026-10-29, then a
+/// monolithic-segment response 2026-11-02). Whisper stays the default
+/// primary; Nemotron and Qwen serve as the cross-check fleet below.
 pub const DEFAULT_MEDIA_STT_MODEL: &str = "OpenRouter/openai/whisper-large-v3-turbo";
+
+/// Default cross-check STT fleet (env `HKASK_MEDIA_CROSS_CHECK_STT_MODELS`
+/// via `KaskMediaSettings::cross_check_stt_models`) — the independent ASR
+/// voices the bounded transcription cross-check addresses per call
+/// (transcript-reel Phase 1b; operator direction 2026-11-02: three active
+/// ASR models). Nemotron 3.5 Transcribe via DeepInfra — word+segment
+/// timestamps at the documented OpenAI-compatible endpoint; Qwen3-ASR-Flash
+/// via OpenRouter — text-only there (rejects verbose_json; the arm's
+/// `json` fallback serves content-level cross-checks, no word timings).
+pub const DEFAULT_MEDIA_CROSS_CHECK_STT_MODELS: &[&str] = &[
+    "DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B",
+    "OpenRouter/qwen/qwen3-asr-flash-2026-02-10",
+];
 
 /// Default vision model for gallery analysis and image description (env
 /// `HKASK_MEDIA_VISION_MODEL` via `KaskMediaSettings::vision_model`). The

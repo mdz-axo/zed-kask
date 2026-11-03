@@ -211,6 +211,22 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
     std::fs::rename(&staged_dir, &published_dir)
         .map_err(|error| document_io_error("publish", &published_dir, error))?;
     cleanup.mark_published(published_dir.clone());
+    // A rename success is not existence proof for the operator-facing
+    // artifact (observed 2026-11-02: a corpus_text export reported success
+    // while the output path never materialized). Verify the published
+    // document exists and carries bytes before recording the export — no
+    // live export path legitimately produces an empty document (SRT
+    // refuses an untimed source; corpus text requires timed words; both
+    // CSVs carry a header).
+    let published_len = std::fs::metadata(&output)
+        .map_err(|error| document_io_error("verify", &output, error))?
+        .len();
+    if published_len == 0 {
+        return Err(map_media_error(MediaError::AssetPersistence(format!(
+            "published transcript export is empty: {}",
+            output.display()
+        ))));
+    }
     crate::transcript_store::record_export(
         driver,
         export_id,
@@ -498,5 +514,70 @@ mod tests {
         };
         let csv = highlights_csv(&words, &[record]).expect("csv builds");
         assert_eq!(csv.lines().count(), 1, "header only");
+    }
+
+    /// expect: A publish that lands an empty document refuses visibly and
+    /// rolls the publication back — the operator is never handed a success
+    /// record pointing at nothing (the 2026-11-02 defect).
+    #[test]
+    fn document_publication_refuses_an_empty_published_document()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let driver = SqliteDriver::in_memory_driver();
+        let error = publish_document_in_dir(
+            &*driver,
+            dir.path(),
+            "export-empty",
+            "empty-export",
+            "transcript-1",
+            TranscriptExportFormat::CorpusText,
+            b"",
+            &serde_json::json!({"words": 3}),
+        )
+        .expect_err("an empty document must not publish");
+        assert!(
+            error.to_string().contains("empty"),
+            "names the empty publication: {error}"
+        );
+        assert!(
+            !dir.path().join("empty-export").exists(),
+            "the failed publication rolled back"
+        );
+        assert!(!dir.path().join(".empty-export.staged").exists());
+        Ok(())
+    }
+
+    /// expect: A successful publish leaves a verifiable, non-empty
+    /// document at the recorded output path — the existence check the
+    /// operator handoff requires (path, bytes, re-runnable read).
+    #[test]
+    fn document_publication_leaves_a_verifiable_document() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let driver = SqliteDriver::in_memory_driver();
+        let mut bundle = crate::transcript::TranscriptBundle::new(
+            "/missing/verified.wav".into(),
+            2.0,
+            "alpha beta".to_string(),
+        );
+        bundle.words = timed_words(&["alpha", "beta"]);
+        let summary = crate::transcript_store::store_transcript(&*driver, &bundle, None)?;
+        let result = publish_document_in_dir(
+            &*driver,
+            dir.path(),
+            "export-ok",
+            "verified-export",
+            &summary.id,
+            TranscriptExportFormat::CorpusText,
+            b"rendered transcript text",
+            &serde_json::json!({"words": 2}),
+        )?;
+        let output = std::path::Path::new(
+            result["output"]
+                .as_str()
+                .ok_or("published output path in the result")?,
+        );
+        assert_eq!(std::fs::read(output)?, b"rendered transcript text");
+        Ok(())
     }
 }

@@ -283,11 +283,38 @@ impl DeepInfraMediaProvider {
         }))
     }
 
-    /// Transcribe audio via DeepInfra native inference API (Whisper).
+    /// The OpenAI-compatible speech-to-transcript endpoint (the
+    /// documented serving path for Nemotron 3.5 Transcribe; the native
+    /// `/v1/inference/{model}` arm's word-timestamps response proved
+    /// unstable — word-keyed once, then segment-only across 7 same-day
+    /// requests 2026-10-29, then a monolithic-segment response
+    /// 2026-11-02).
+    fn openai_transcriptions_url(&self) -> Result<reqwest::Url, InferenceError> {
+        let invalid_base = || {
+            InferenceError::NotConfigured(
+                "DEEPINFRA_BASE_URL must be an absolute hierarchical URL".into(),
+            )
+        };
+        let mut url = reqwest::Url::parse(&self.base_url).map_err(|_| invalid_base())?;
+        url.path_segments_mut()
+            .map_err(|_| invalid_base())?
+            .pop_if_empty()
+            .extend(["v1", "openai", "audio", "transcriptions"]);
+        Ok(url)
+    }
+
+    /// Transcribe audio via DeepInfra's OpenAI-compatible speech-to-text
+    /// endpoint (`/v1/openai/audio/transcriptions`, multipart upload).
     ///
-    /// Uses multipart form upload (`-F audio=@file`) to the
-    /// `/v1/inference/{model}` endpoint. The audio file is downloaded from
-    /// the URL first, then uploaded as a multipart form field.
+    /// Nemotron 3.5 Transcribe is served here with `response_format:
+    /// verbose_json` and word+segment timestamp granularities
+    /// (DeepInfra's release documentation, 2026-10-28) — the OpenAI
+    /// verbose_json shape the media-server bundle parse consumes
+    /// (`word`-keyed entries with start/end seconds). The previous
+    /// native `/v1/inference/{model}` arm sent `chunk_level: "word"`
+    /// but its response proved unstable (2026-10-29: word-keyed once,
+    /// then segment-only across 7 same-day requests; 2026-11-02: a
+    /// monolithic single-segment response).
     async fn transcribe(
         &self,
         audio_url: &str,
@@ -309,11 +336,13 @@ impl DeepInfraMediaProvider {
             _ => "application/octet-stream",
         };
 
-        let url = self.inference_url(model)?;
+        let url = self.openai_transcriptions_url()?;
 
-        // Build multipart form: audio file + optional language parameter.
+        // Build the multipart form: audio file + the verbose_json
+        // word/segment granularities the word-indexed transcript layer
+        // requires, plus the optional language.
         let mut form = reqwest::multipart::Form::new().part(
-            "audio",
+            "file",
             reqwest::multipart::Part::bytes(audio_bytes.to_vec())
                 .file_name(filename)
                 .mime_str(mime)
@@ -321,18 +350,15 @@ impl DeepInfraMediaProvider {
                     InferenceError::Connection(format!("multipart mime set failed: {e}"))
                 })?,
         );
+        form = form
+            .text("model", model.to_string())
+            .text("response_format", "verbose_json".to_string())
+            .text("timestamp_granularities[]", "word".to_string())
+            .text("timestamp_granularities[]", "segment".to_string())
+            .text("chunk_length_s", "30".to_string());
         if let Some(lang) = language {
             form = form.text("language", lang.to_string());
         }
-        // DeepInfra's ASR API defaults `chunk_level` to "segment" — a
-        // segments-only response cannot back the word-indexed transcript
-        // layer (the same rationale as the OpenRouter arm's
-        // `timestamp_granularities: ["word", "segment"]`). The live
-        // Nemotron response at chunk_level:"word" is Whisper-shaped
-        // (`word`-keyed entries, verified 2026-10-29 against the real
-        // endpoint); the API docs' example keys the token as "text" —
-        // the bundle parse accepts both.
-        form = form.text("chunk_level", "word");
 
         let resp = self
             .client
@@ -524,6 +550,31 @@ impl OpenRouterMediaProvider {
         })
     }
 
+    /// POST the given JSON body to the given URL with the provider
+    /// authorization header, returning the HTTP status and the raw
+    /// response text. Shared by the transcribe path's verbose_json and
+    /// json fallback legs.
+    async fn post_transcription(
+        &self,
+        url: &str,
+        body: &serde_json::Value,
+    ) -> Result<(reqwest::StatusCode, String), InferenceError> {
+        let resp = self
+            .client
+            .post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("OpenRouter STT failed: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
+        Ok((status, text))
+    }
+
     /// Generate an image via OpenRouter's dedicated Image API.
     ///
     /// `POST /v1/images` returns base64-encoded image bytes in
@@ -613,26 +664,41 @@ impl OpenRouterMediaProvider {
             body["language"] = Value::String(lang.to_string());
         }
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("OpenRouter STT failed: {e}")))?;
-
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| InferenceError::Connection(format!("response body read failed: {e}")))?;
-        if !status.is_success() {
-            return Err(provider_http_error("OpenRouter STT", status, &text));
+        let (status, text) = self.post_transcription(&url, &body).await?;
+        if status.is_success() {
+            return serde_json::from_str(&text)
+                .map_err(|e| InferenceError::Json(format!("OpenRouter STT parse: {e}")));
         }
-
-        serde_json::from_str(&text)
-            .map_err(|e| InferenceError::Json(format!("OpenRouter STT parse: {e}")))
+        // Text-only ASR models on OpenRouter reject verbose_json with a
+        // 400 naming it (observed live 2026-11-02, Qwen3-ASR-Flash:
+        // "The selected model does not support response_format
+        // 'verbose_json'. Use 'json' instead") — retry once with plain
+        // json. The response then carries text and segments but no word
+        // timings: a surfaced degradation (the bundle's words stay
+        // empty and `has_word_timings` reads false), never a silent
+        // failure.
+        if status.as_u16() == 400 && text.contains("verbose_json") {
+            tracing::warn!(
+                target: "reg.inference",
+                model,
+                "OpenRouter STT model rejected verbose_json — retrying with response_format json (text-only, no word timings)"
+            );
+            body["response_format"] = Value::String("json".to_string());
+            if let Some(object) = body.as_object_mut() {
+                object.remove("timestamp_granularities");
+            }
+            let (status, text) = self.post_transcription(&url, &body).await?;
+            if !status.is_success() {
+                return Err(provider_http_error(
+                    "OpenRouter STT (json fallback)",
+                    status,
+                    &text,
+                ));
+            }
+            return serde_json::from_str(&text)
+                .map_err(|e| InferenceError::Json(format!("OpenRouter STT parse: {e}")));
+        }
+        Err(provider_http_error("OpenRouter STT", status, &text))
     }
 
     /// Chat with an LLM over audio input — the OpenAI audio-chat format

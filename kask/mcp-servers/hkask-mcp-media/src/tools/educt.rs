@@ -1355,7 +1355,7 @@ impl MediaServer {
             // success and failure paths (the preconditioning cleanup's
             // pattern; it must not accumulate in the ffmpeg temp dir).
             let section = self
-                .transcribe_to_bundle(&span.display().to_string(), &language)
+                .transcribe_to_bundle(&span.display().to_string(), &language, None)
                 .await;
             if let Err(error) = std::fs::remove_file(&span) {
                 tracing::warn!(
@@ -2140,16 +2140,26 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Locate a quoted passage in the timing-aligned working transcript, deterministically. Returns every word-aligned match and time range; ambiguity is surfaced, unaligned corrections fail visibly, and no model guesses timestamps."
+        description = "Locate a quoted passage in the timing-aligned working transcript, deterministically. Returns every word-aligned match and time range with the index basis declared; pass basis=\"source\" for source-word indices (what correction-layer edits need) — converted through the re-anchored index map on a realigned view. Ambiguity is surfaced, unaligned corrections fail visibly, and no model guesses timestamps."
     )]
     pub async fn educt_locate(
         &self,
         Parameters(EductLocateRequest {
             transcript_id,
             text,
+            basis,
         }): Parameters<EductLocateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_locate", async {
+            let requested_source_basis = match basis.as_deref().unwrap_or("working") {
+                "working" => false,
+                "source" => true,
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "unknown basis {other:?} — basis is \"working\" (default) or \"source\""
+                    )));
+                }
+            };
             let driver = &**self.gallery_store.driver();
             let bundle = load_timed_transcript(
                 driver,
@@ -2159,15 +2169,91 @@ impl MediaServer {
             )?;
             let working = working_transcript(driver, &transcript_id, &bundle)?;
             let working_words = working.require_timed_words("educt_locate")?;
+            // The index-basis declaration, never a silent working-view basis
+            // (observed 2026-11-02: researcher corrections authored against
+            // realigned indices landed shifted by the cumulative
+            // cardinality delta — locate never said which space it
+            // indexed). `Original` means the working words ARE the source
+            // words; `Aligned` corrections are 1:1 by construction
+            // (`aligned_corrected_words` refuses token-count mismatches),
+            // so working indices equal source indices there too.
+            let (view_basis, view_note): (&str, Option<&str>) = match working.alignment {
+                WorkingTranscriptAlignment::Original => ("source", None),
+                WorkingTranscriptAlignment::Aligned => (
+                    "aligned_working",
+                    Some(
+                        "a count-neutral correction is applied; working indices equal \
+                         source indices",
+                    ),
+                ),
+                WorkingTranscriptAlignment::ReAnchored => (
+                    "realigned_working",
+                    Some(
+                        "ranges index the re-anchored working view, NOT source words — \
+                         pass basis=\"source\" for source-index ranges (correction-layer \
+                         edits anchor to source indices)",
+                    ),
+                ),
+                // require_timed_words refused both before here.
+                WorkingTranscriptAlignment::Unaligned | WorkingTranscriptAlignment::Untimed => {
+                    ("unavailable", None)
+                }
+            };
+            let source_word_count = bundle.words.len();
+            let working_word_count = working_words.len();
+            // basis="source" on a re-anchored view: convert through the
+            // same projection walk that built the working words. On every
+            // other view the working indices already equal source indices.
+            let source_index_map = if requested_source_basis
+                && matches!(working.alignment, WorkingTranscriptAlignment::ReAnchored)
+            {
+                let layers = transcript_store::list_layers(driver, &transcript_id)
+                    .map_err(map_store_error)?;
+                let (_record, correction) = select_correction_layer(
+                    &layers,
+                    &transcript_id,
+                    working.correction_layer_id.as_deref(),
+                )?;
+                let map = crate::transcript_layers::reanchored_index_map(
+                    &bundle.words,
+                    &correction.edits,
+                )
+                .map_err(|error| {
+                    McpToolError::internal(format!(
+                        "impossible: the re-anchored projection behind the working view \
+                         failed to rebuild: {error}"
+                    ))
+                })?;
+                if map.len() != working_word_count {
+                    return Err(McpToolError::internal(format!(
+                        "impossible: the re-anchored index map covers {} tokens against \
+                         a {}-token working view",
+                        map.len(),
+                        working_word_count
+                    )));
+                }
+                Some(map)
+            } else {
+                None
+            };
             let ranges = text_to_word_ranges(working_words, &text);
             if ranges.is_empty() {
-                return Ok(serde_json::json!({
+                let mut response = serde_json::json!({
                     "status": "no_match",
                     "ranges": [],
                     "count": 0,
+                    "index_basis": view_basis,
+                    "working_view": view_basis,
+                    "source_word_count": source_word_count,
+                    "working_word_count": working_word_count,
+                    "cardinality_changed": working_word_count != source_word_count,
                     "note": "no word-aligned match — quote the rendered form exactly \
                              (punctuation included)",
-                }));
+                });
+                if let Some(view_note) = view_note {
+                    response["view_note"] = serde_json::json!(view_note);
+                }
+                return Ok(response);
             }
             let mut located = Vec::with_capacity(ranges.len());
             for range in ranges {
@@ -2178,18 +2264,69 @@ impl MediaServer {
                              range: {error}"
                         ))
                     })?;
-                located.push(serde_json::json!({
-                    "start_word": range.start_word,
-                    "end_word": range.end_word,
+                // basis="source": the working range maps to its source
+                // range's min..max — expansion and contraction edges map
+                // coarsely (every token of an expansion attributes to the
+                // source word it replaced).
+                let (start_word, end_word, working_range) = match &source_index_map {
+                    Some(map) => {
+                        let slice =
+                            map.get(range.start_word..=range.end_word).ok_or_else(|| {
+                                McpToolError::internal(
+                                    "impossible: a locate range escaped the index map",
+                                )
+                            })?;
+                        let start_word = *slice.iter().min().ok_or_else(|| {
+                            McpToolError::internal("impossible: an empty index-map slice")
+                        })?;
+                        let end_word = *slice.iter().max().ok_or_else(|| {
+                            McpToolError::internal("impossible: an empty index-map slice")
+                        })?;
+                        (
+                            start_word,
+                            end_word,
+                            Some((range.start_word, range.end_word)),
+                        )
+                    }
+                    None => (range.start_word, range.end_word, None),
+                };
+                let mut entry = serde_json::json!({
+                    "start_word": start_word,
+                    "end_word": end_word,
                     "start_ms": start_ms,
                     "end_ms": end_ms,
-                }));
+                });
+                if let Some((working_start_word, working_end_word)) = working_range {
+                    entry["working_start_word"] = serde_json::json!(working_start_word);
+                    entry["working_end_word"] = serde_json::json!(working_end_word);
+                }
+                located.push(entry);
             }
-            Ok(serde_json::json!({
+            let mut response = serde_json::json!({
                 "status": "located",
                 "ranges": located,
                 "count": located.len(),
-            }))
+                "index_basis": if requested_source_basis {
+                    "source"
+                } else {
+                    view_basis
+                },
+                "working_view": view_basis,
+                "source_word_count": source_word_count,
+                "working_word_count": working_word_count,
+                "cardinality_changed": working_word_count != source_word_count,
+            });
+            if let Some(view_note) = view_note {
+                response["view_note"] = serde_json::json!(view_note);
+            }
+            if source_index_map.is_some() {
+                response["note"] = serde_json::json!(
+                    "source-index ranges converted from the working view through the \
+                     re-anchored index map; expansion and contraction edges map coarsely \
+                     (a working range collapses to its source range's min..max)"
+                );
+            }
+            Ok(response)
         })
         .await
     }
@@ -2216,6 +2353,163 @@ mod researcher_tests {
         let mut bundle = TranscriptBundle::new(path.into(), words.len() as f32, words.join(" "));
         bundle.words = crate::test_support::timed_words(words);
         bundle
+    }
+
+    /// The locate fixture: a 3-word source whose middle word expands to
+    /// two tokens under a realigned correction — the cardinality change
+    /// that shifts realigned indices off source indices (the 2026-11-02
+    /// defect class).
+    async fn expansion_transcript() -> Result<(MediaServer, String), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let driver = &**server.gallery_store.driver();
+        let bundle = recording("/missing/locate.wav", &["alpha", "beta", "gamma"]);
+        let summary = transcript_store::store_transcript(driver, &bundle, None)?;
+        let correction = transcript_store::store_layer(
+            driver,
+            &summary.id,
+            &TranscriptLayer::Correction(crate::transcript_layers::CorrectionLayer {
+                provenance: LayerProvenance {
+                    model: "test".into(),
+                    prompt_template: "test".into(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                edits: vec![crate::transcript_layers::CorrectionEdit {
+                    start_word: 1,
+                    end_word: 1,
+                    replacement: "one two".into(),
+                    reason: "garbled".into(),
+                }],
+            }),
+        )?;
+        transcript_store::store_layer(
+            driver,
+            &summary.id,
+            &TranscriptLayer::Realignment(crate::transcript_layers::RealignmentLayer {
+                provenance: LayerProvenance {
+                    model: "test".into(),
+                    prompt_template: "test".into(),
+                    created_at: hkask_types::time::now_rfc3339(),
+                },
+                correction_layer_id: correction.id,
+            }),
+        )?;
+        Ok((server, summary.id))
+    }
+
+    /// expect: On a realigned view, locate declares the working-view basis
+    /// instead of silently returning realigned indices as if they were
+    /// source indices (the 2026-11-02 defect).
+    #[tokio::test]
+    async fn researcher_locate_declares_the_realigned_working_basis()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (server, transcript_id) = expansion_transcript().await?;
+        let result = payload(
+            &server
+                .educt_locate(Parameters(EductLocateRequest {
+                    transcript_id,
+                    text: "one two".into(),
+                    basis: None,
+                }))
+                .await?,
+        );
+        assert_eq!(result["status"], "located");
+        assert_eq!(result["index_basis"], "realigned_working");
+        assert_eq!(result["working_view"], "realigned_working");
+        assert_eq!(result["source_word_count"], 3);
+        assert_eq!(result["working_word_count"], 4);
+        assert_eq!(result["cardinality_changed"], true);
+        assert_eq!(result["ranges"][0]["start_word"], 1);
+        assert_eq!(result["ranges"][0]["end_word"], 2);
+        let note = result["view_note"].as_str().ok_or("view note")?;
+        assert!(note.contains("basis=\"source\""));
+        Ok(())
+    }
+
+    /// expect: basis="source" converts realigned ranges back to
+    /// source-word indices through the re-anchored index map — the indices
+    /// a correction-layer edit needs, with the working range retained for
+    /// audit. The expansion's two working tokens both attribute to the
+    /// source word they replaced.
+    #[tokio::test]
+    async fn researcher_locate_source_basis_maps_through_the_index_map()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (server, transcript_id) = expansion_transcript().await?;
+        let result = payload(
+            &server
+                .educt_locate(Parameters(EductLocateRequest {
+                    transcript_id,
+                    text: "one two".into(),
+                    basis: Some("source".into()),
+                }))
+                .await?,
+        );
+        assert_eq!(result["index_basis"], "source");
+        assert_eq!(result["working_view"], "realigned_working");
+        assert_eq!(result["ranges"][0]["start_word"], 1);
+        assert_eq!(result["ranges"][0]["end_word"], 1);
+        assert_eq!(result["ranges"][0]["working_start_word"], 1);
+        assert_eq!(result["ranges"][0]["working_end_word"], 2);
+        // The interpolated re-anchored timings still carry the range.
+        assert_eq!(result["ranges"][0]["start_ms"], 1000);
+        assert_eq!(result["ranges"][0]["end_ms"], 1500);
+        let note = result["note"].as_str().ok_or("conversion note")?;
+        assert!(note.contains("coarsely"));
+        Ok(())
+    }
+
+    /// expect: An unknown basis value is the named closed-set rejection —
+    /// invalid_argument naming the valid values, never a silent default.
+    #[tokio::test]
+    async fn researcher_locate_rejects_an_unknown_basis() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (server, transcript_id) = expansion_transcript().await?;
+        let error = server
+            .educt_locate(Parameters(EductLocateRequest {
+                transcript_id,
+                text: "one two".into(),
+                basis: Some("bogus".into()),
+            }))
+            .await
+            .expect_err("an unknown basis must reject");
+        let message = error.to_string();
+        assert!(
+            message.contains("bogus"),
+            "names the rejected value: {message}"
+        );
+        assert!(
+            message.contains("working") && message.contains("source"),
+            "names the valid values: {message}"
+        );
+        Ok(())
+    }
+
+    /// expect: With no correction applied, locate keeps the source basis —
+    /// the pre-declaration response values unchanged, plus the
+    /// declaration that says so.
+    #[tokio::test]
+    async fn researcher_locate_on_an_uncorrected_transcript_stays_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let bundle = recording("/missing/plain.wav", &["alpha", "beta", "gamma"]);
+        let summary =
+            transcript_store::store_transcript(&**server.gallery_store.driver(), &bundle, None)?;
+        let result = payload(
+            &server
+                .educt_locate(Parameters(EductLocateRequest {
+                    transcript_id: summary.id,
+                    text: "beta gamma".into(),
+                    basis: None,
+                }))
+                .await?,
+        );
+        assert_eq!(result["status"], "located");
+        assert_eq!(result["index_basis"], "source");
+        assert_eq!(result["working_view"], "source");
+        assert_eq!(result["cardinality_changed"], false);
+        assert_eq!(result["ranges"][0]["start_word"], 1);
+        assert_eq!(result["ranges"][0]["end_word"], 2);
+        assert!(result.get("view_note").is_none());
+        Ok(())
     }
 
     /// expect: All eight CRUD requests deserialize without self-attested approval
