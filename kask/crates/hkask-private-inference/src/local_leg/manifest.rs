@@ -44,6 +44,9 @@ pub struct FlagVocabulary {
     pub model: String,
     pub n_gpu_layers: String,
     pub cpu_moe: String,
+    /// Per-tensor placement override — the pin mechanism for weights that
+    /// must stay on CPU while layers offload (the PLE n-gram table).
+    pub override_tensor: String,
     /// Every spelling is emitted with the policy value; a future re-merged
     /// engine surface is a one-element list — data-only.
     pub kv_cache_type: Vec<String>,
@@ -108,6 +111,11 @@ pub struct ConstraintEnv {
     pub model_mmap: bool,
     pub expert_bytes: u64,
     pub dense_bytes: u64,
+    /// Dense bytes pinned to CPU by a tensor override
+    /// (`--override-tensor`) — excluded from the VRAM offload budget (the
+    /// 28.8 GiB PLE table).
+    #[serde(default)]
+    pub pinned_cpu_bytes: u64,
     pub kv_bytes_estimate: u64,
     pub compute_bytes_estimate: u64,
     pub context_length: u32,
@@ -245,8 +253,20 @@ pub fn evaluate_constraint(
                     "GPU offload planned but no VRAM budget known".into(),
                 ));
             };
-            let resident = env
+            // Dense bytes pinned to CPU by a tensor override are excluded
+            // from the offload budget — the PLE n-gram table must not make
+            // an otherwise-feasible partial placement read as over-budget.
+            let offloadable = env
                 .dense_bytes
+                .checked_sub(env.pinned_cpu_bytes)
+                .ok_or_else(|| ManifestError::Constraint {
+                    constraint: "vram_dense_fit".into(),
+                    reason: format!(
+                        "pinned_cpu_bytes {} exceeds dense_bytes {} — inconsistent placement env",
+                        env.pinned_cpu_bytes, env.dense_bytes
+                    ),
+                })?;
+            let resident = offloadable
                 .checked_add(env.kv_bytes_estimate)
                 .ok_or_else(|| ManifestError::Constraint {
                     constraint: "vram_dense_fit".into(),
@@ -256,29 +276,37 @@ pub fn evaluate_constraint(
                 Ok(Evaluation::Allow)
             } else {
                 Ok(Evaluation::Deny(format!(
-                    "dense {dense} + kv {kv} bytes exceed the VRAM budget {vram}",
+                    "offloadable dense {offloadable} (dense {dense} − pinned {pinned}) + kv {kv} bytes exceed the declared VRAM budget {vram}",
                     dense = env.dense_bytes,
+                    pinned = env.pinned_cpu_bytes,
                     kv = env.kv_bytes_estimate
                 )))
             }
         }
-        Constraint::ExpertSlotFloor { floor_mult } => match (env.slot_count, env.n_expert_used) {
-            (None, None) => Ok(Evaluation::Allow),
-            (Some(slots), Some(used)) => {
-                let floor = floor_mult.saturating_mul(used);
-                if slots >= floor {
-                    Ok(Evaluation::Allow)
-                } else {
-                    Ok(Evaluation::Deny(format!(
-                        "expert cache slots {slots} below floor {floor_mult}×{used} = {floor}"
-                    )))
+        Constraint::ExpertSlotFloor { floor_mult } => {
+            // Streaming is declared by slot_count alone; n_expert_used is
+            // model metadata present for every MoE — a non-streaming plan
+            // must not read as half-declared merely because the model
+            // reports its per-token expert count (the first live matrix
+            // run was refused on exactly that misreading, 2026-11-04).
+            match (env.slot_count, env.n_expert_used) {
+                    (None, _) => Ok(Evaluation::Allow),
+                    (Some(slots), Some(used)) => {
+                        let floor = floor_mult.saturating_mul(used);
+                        if slots >= floor {
+                            Ok(Evaluation::Allow)
+                        } else {
+                            Ok(Evaluation::Deny(format!(
+                                "expert cache slots {slots} below floor {floor_mult}×{used} = {floor}"
+                            )))
+                        }
+                    }
+                    (Some(_), None) => Ok(Evaluation::Deny(
+                        "streaming plan declared (slot_count set) without n_expert_used — the floor cannot be checked"
+                            .into(),
+                    )),
                 }
-            }
-            _ => Ok(Evaluation::Deny(
-                "streaming plan is half-declared: slot_count and n_expert_used must both be set"
-                    .into(),
-            )),
-        },
+        }
         Constraint::MutuallyExclusive { a, b } => {
             let has_a = env.planned_flags.iter().any(|f| f == a);
             let has_b = env.planned_flags.iter().any(|f| f == b);

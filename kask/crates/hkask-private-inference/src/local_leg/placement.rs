@@ -175,6 +175,11 @@ pub struct PlacementPolicy {
     /// emitted when a GPU tier exists (`n_gpu_layers > 0`) — inert and
     /// omitted on a GPU-less build.
     pub cpu_moe: bool,
+    /// Tensor-name substring pinned to CPU while layers offload to the GPU
+    /// (the PLE n-gram table: `per_layer_token_embd`). Emitted as
+    /// `--override-tensor <pattern>=CPU`; the pinned bytes are excluded
+    /// from the VRAM budget the `vram_dense_fit` guard checks.
+    pub pin_to_cpu: Option<String>,
     pub n_gpu_layers: u32,
     pub threads: u32,
     pub host: String,
@@ -190,6 +195,7 @@ impl Default for PlacementPolicy {
             kv_cache_type: "q8_0".into(),
             flash_attn: true,
             cpu_moe: true,
+            pin_to_cpu: None,
             // v1 P0 runs the CPU-only build; the GPU tier lands with
             // Vulkan/HIP (plan §11).
             n_gpu_layers: 0,
@@ -214,6 +220,19 @@ pub fn compile_placement(
         .kv_bytes_per_token
         .saturating_mul(u64::from(policy.context_length));
 
+    // Dense bytes the pin keeps on CPU — excluded from the VRAM budget.
+    let pinned_cpu_bytes = policy
+        .pin_to_cpu
+        .as_deref()
+        .map(|pattern| {
+            meta.tensors
+                .iter()
+                .filter(|t| !t.is_expert && t.name.contains(pattern))
+                .map(|t| t.approx_bytes)
+                .fold(0u64, |acc, bytes| acc.saturating_add(bytes))
+        })
+        .unwrap_or(0);
+
     let vocabulary = &manifest.flags;
     let mut args: Vec<String> = vec![vocabulary.model.clone(), model_path.display().to_string()];
     args.push(vocabulary.ctx_size.clone());
@@ -232,6 +251,10 @@ pub fn compile_placement(
         args.push(policy.n_gpu_layers.to_string());
         if policy.cpu_moe {
             args.push(vocabulary.cpu_moe.clone());
+        }
+        if let Some(pattern) = &policy.pin_to_cpu {
+            args.push(vocabulary.override_tensor.clone());
+            args.push(format!("{pattern}=CPU"));
         }
     }
     args.push(vocabulary.threads.clone());
@@ -253,6 +276,7 @@ pub fn compile_placement(
         model_mmap: true,
         expert_bytes: meta.expert_bytes,
         dense_bytes: meta.dense_bytes,
+        pinned_cpu_bytes,
         kv_bytes_estimate,
         compute_bytes_estimate: policy.compute_buffer_bytes,
         context_length: policy.context_length,

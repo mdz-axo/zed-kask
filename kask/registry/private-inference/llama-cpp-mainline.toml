@@ -20,6 +20,7 @@ binary = "llama-server"
 model = "--model"
 n_gpu_layers = "-ngl"
 cpu_moe = "--cpu-moe"
+override_tensor = "--override-tensor"
 kv_cache_type = ["--cache-type-k", "--cache-type-v"]
 ctx_size = "--ctx-size"
 flash_attn = "--flash-attn"
@@ -172,3 +173,54 @@ context_length = 65536
 slot_count = 20
 n_expert_used = 10
 planned_flags = ["-ngl", "999", "--moe-stream"]
+
+[[fixtures]]
+name = "moe_metadata_alone_is_not_streaming"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["--model", "/p0/qwen38.gguf", "--ctx-size", "65536"]
+
+[[fixtures]]
+name = "gpu_offload_refused_without_ple_pin"
+expected_denials = ["vram_dense_fit"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8573157376
+model_mmap = true
+expert_bytes = 46000000000
+dense_bytes = 33537241600
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--cpu-moe"]
+
+[[fixtures]]
+name = "gpu_offload_allowed_with_ple_pinned_to_cpu"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8573157376
+model_mmap = true
+expert_bytes = 46000000000
+dense_bytes = 33537241600
+pinned_cpu_bytes = 28800138432
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--cpu-moe", "--override-tensor", "per_layer_token_embd=CPU"]

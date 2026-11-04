@@ -58,15 +58,22 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
     // refusal is a printed finding for the record, not a test failure —
     // the matrix adapts with a recorded deviation, never silently.
     let model = paths[0].clone();
-    for (leg, flash_attn, n_gpu_layers) in [
-        ("a-cpu-control [build/bin]", true, 0u32),
-        ("b-dgpu-vulkan-fa-on [build-vulkan/bin]", true, 999),
-        ("c-dgpu-vulkan-fa-off [build-vulkan/bin]", false, 999),
-        ("d-dgpu-hip-fa-on [build-hip/bin]", true, 999),
+    for (leg, flash_attn, n_gpu_layers, pin_ple) in [
+        ("a-cpu-control [build/bin]", true, 0u32, false),
+        ("b-dgpu-vulkan-fa-on [build-vulkan/bin]", true, 999, true),
+        ("c-dgpu-vulkan-fa-off [build-vulkan/bin]", false, 999, true),
+        ("d-dgpu-hip-fa-on [build-hip/bin]", true, 999, true),
     ] {
         let mut policy = PlacementPolicy::default();
         policy.flash_attn = flash_attn;
         policy.n_gpu_layers = n_gpu_layers;
+        // The 28.8 GiB PLE n-gram table (`per_layer_token_embd`) stays on
+        // CPU: pinning it keeps the offloadable dense + KV inside the
+        // 8 GB dGPU budget — the un-pinned plan is correctly refused by
+        // the `vram_dense_fit` guard (observed live 2026-11-04).
+        if pin_ple {
+            policy.pin_to_cpu = Some("per_layer_token_embd".into());
+        }
         match compile_placement(model.clone(), &meta, &hw, &policy, &manifest) {
             Ok(plan) => println!("[{leg}] {plan}"),
             Err(err) => println!("[{leg}] REFUSED: {err}"),
