@@ -71,7 +71,7 @@ pub use template::LLMParameters;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 
 pub use hmem_ontology::HMemOntology;
-pub use visibility::{Confidence, Dimension, Visibility};
+pub use visibility::{Confidence, Dimension, InferenceProvenance, Visibility};
 
 pub use ports::*;
 

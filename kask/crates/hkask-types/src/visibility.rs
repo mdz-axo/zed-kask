@@ -76,6 +76,98 @@ impl std::fmt::Display for Visibility {
     }
 }
 
+/// Which inference leg produced this content — FR-4's provenance mark
+/// (the private-inference marking predicate, D-2 2026-10-30).
+///
+/// `Visibility` answers WHO may see a record; this attribute answers
+/// WHERE it was produced — a thread routed to private inference (the
+/// local leg or the private cloud endpoint) marks its content so the
+/// per-surface filters (FR-4's recall/export blocks) and FR-3's routing
+/// enforcement can hold the line. The two axes compose; no parallel
+/// predicate exists (P5.5). Engine-independent: the mark travels with
+/// the content, never with a particular inference engine.
+///
+/// Ontology: `dcterms:provenance` — a statement of custody significant
+/// for the record's authenticity and interpretation: its production
+/// channel.
+///
+/// Principle ties: P11 (Digital Public/Private Sphere — users explicitly
+/// control what is private), P2.1 (Shared vs Public Visibility — the FR-4
+/// filters are that OUGHT's first enforcement leg).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceProvenance {
+    /// Produced on public (non-private) providers — the unmarked default.
+    #[default]
+    PublicProvider,
+    /// Produced by a thread routed to private inference: this content
+    /// must never flow to a public provider (FR-3's global falsifier) and
+    /// stays inside private recall and export paths (FR-4).
+    PrivateInference,
+}
+
+impl InferenceProvenance {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            InferenceProvenance::PublicProvider => "public_provider",
+            InferenceProvenance::PrivateInference => "private_inference",
+        }
+    }
+
+    pub fn parse_str(s: &str) -> Option<Self> {
+        match s {
+            "public_provider" | "PublicProvider" => Some(InferenceProvenance::PublicProvider),
+            "private_inference" | "PrivateInference" => Some(InferenceProvenance::PrivateInference),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for InferenceProvenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_the_unmarked_public_provider_leg() {
+        assert_eq!(
+            InferenceProvenance::default(),
+            InferenceProvenance::PublicProvider
+        );
+    }
+
+    #[test]
+    fn string_forms_round_trip() {
+        for provenance in [
+            InferenceProvenance::PublicProvider,
+            InferenceProvenance::PrivateInference,
+        ] {
+            assert_eq!(
+                InferenceProvenance::parse_str(provenance.as_str()),
+                Some(provenance)
+            );
+            assert_eq!(provenance.to_string(), provenance.as_str());
+        }
+        // The provenance mark is not the visibility tier: "private"
+        // belongs to Visibility and must not parse here.
+        assert_eq!(InferenceProvenance::parse_str("private"), None);
+    }
+
+    #[test]
+    fn serde_round_trips_snake_case() {
+        let marked = InferenceProvenance::PrivateInference;
+        let json = serde_json::to_string(&marked).expect("serialize");
+        assert_eq!(json, r#""private_inference""#);
+        let parsed: InferenceProvenance = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, marked);
+    }
+}
+
 /// Access control grouping for h_mems and other stored artifacts.
 ///
 /// \[DECLARATIVE\] Bundles the three fields that always appear together: (P5 — Essentialism).
