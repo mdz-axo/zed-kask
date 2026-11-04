@@ -21,6 +21,11 @@ toml.workspace = true
 # hatch and the CI manifest fixture gates route through it (never an
 # external interpreter dependency).
 hkask-lisp.workspace = true
+# Model acquisition: HTTP fetch with Range resume + LFS sha256
+# verification (sha2), streaming through tokio.
+reqwest.workspace = true
+sha2.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

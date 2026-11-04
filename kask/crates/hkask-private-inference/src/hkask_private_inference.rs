@@ -15,6 +15,9 @@
 //!
 //! This slice implements the local leg's core (`local_leg`): the
 //! drift-absorption stack of the local-leg plan
-//! (`kask/docs/plans/private-inference-local-leg-llama-wrapper-plan-2026-11-04.md`).
+//! (`kask/docs/plans/private-inference-local-leg-llama-wrapper-plan-2026-11-04.md`),
+//! plus model `acquisition` from HuggingFace through the canonical
+//! credential path.
 
+pub mod acquisition;
 pub mod local_leg;
