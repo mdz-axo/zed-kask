@@ -261,9 +261,11 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "https://runpod.io/",
         shows_in_ui: true,
     },
-    // The Nebius (GPU training host) and HuggingFace (model-weights/artifact
-    // host) rows were removed with the training server: both existed only to
-    // configure training jobs, and neither has a remaining read site.
+    // The Nebius (GPU training host) row was removed with the training
+    // server and stays removed: it existed only to configure training
+    // jobs and has no read site. The HuggingFace row was retired with it
+    // for the same reason — and is REINSTATED below (2026-11-04) with a
+    // live read site.
     // FRED (Federal Reserve Economic Data) — read by the prediction-markets
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
     // reference-level fetches. Optional (curated static fallback when absent),
@@ -275,6 +277,19 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         credential_key: "fred",
         label: "FRED API Key",
         dashboard_url: "https://fred.stlouisfed.org/docs/api/api_key.html",
+        shows_in_ui: true,
+    },
+    // HuggingFace — reinstated 2026-11-04 with a live read site: the
+    // private-inference core service's acquisition module
+    // (`hkask-private-inference::acquisition`) consumes this token for
+    // model-weights fetches (Range resume + LFS sha256 verification) on
+    // the zed side — no MCP child ever receives it. Public repos work
+    // anonymously; this key unlocks gated repos.
+    DataServiceDescriptor {
+        env_var: "HF_TOKEN",
+        credential_key: "hf_token",
+        label: "HuggingFace (model-weights host)",
+        dashboard_url: "https://huggingface.co/settings/tokens",
         shows_in_ui: true,
     },
 ];
