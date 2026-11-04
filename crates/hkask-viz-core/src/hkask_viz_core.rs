@@ -42,7 +42,7 @@ use std::hash::{Hash, Hasher};
 
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
-    Window, div,
+    Window, div, px,
 };
 
 use hkask_graph_widget::GraphWidget;
@@ -368,7 +368,21 @@ pub fn block_renderer() -> BlockRenderer {
         // Media stays outside the generic viz LRU because its visibility
         // heartbeat governs active loading/playback suspension.
         if let Some(entity) = shared_media_widget(body, window, cx) {
-            return Some(CachedWidget::new(entity).render());
+            // The player's usable-height floor lives at this content-flow
+            // embedding site, not on the shared widget entity (one entity
+            // also serves the viewer's definite-height panes, where the
+            // floor's overflow painted past the pane — the
+            // close-transcript overlap, 2026-11-04). In content flow
+            // `size_full` collapses, so this wrapper holds the player open
+            // — but never for a failed load: an error is a compact status
+            // line, and a floor would bury the surrounding surface
+            // (operator report 2026-10-28).
+            let floored = entity.read(cx).error_message().is_none();
+            let mut wrapper = div().size_full();
+            if floored {
+                wrapper = wrapper.min_h(px(240.0));
+            }
+            return Some(wrapper.child(entity).into_any_element());
         }
 
         for factory in factories {

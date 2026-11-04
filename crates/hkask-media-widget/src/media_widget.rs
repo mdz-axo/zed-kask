@@ -1030,14 +1030,17 @@ impl gpui::Render for MediaWidget {
             // layout ground-truth tests (noop in release builds).
             .debug_selector(|| "media-widget".into())
             .size_full()
-            // In definite-height containers (the viewer pane) size_full
-            // fills; in content-flow containers (conversation inline) it
-            // collapses and this floor keeps the player usable — but never
-            // for a failed load: an error is a compact status line, and a
-            // 240px floor would bury the surrounding surface (operator
-            // report 2026-10-28: the transcript tab dead-ended behind the
-            // errored widget).
-            .when(self.error.is_none(), |el| el.min_h(px(240.0)))
+            // The usable-height floor no longer lives on the widget: this
+            // is a shared per-asset entity rendered by BOTH the viewer's
+            // definite-height panes and the conversation's content flow,
+            // so a render-site floor on the entity cannot differ per
+            // embedding. The content-flow embedder holds the floor
+            // (`hkask_viz_core::block_renderer`); definite-height panes
+            // shrink the widget freely and the panel's content container
+            // clips as the backstop (the close-transcript overlap,
+            // 2026-11-04: the 240px floor painted the transport 228px past
+            // a 24px content area, pinned by
+            // `closing_transcript_leaves_widget_inside_pane`).
             // Flex column so the main content's flex_1 resolves against a
             // definite height — the root's size_full is definite only when
             // the embedding pane provides one (the viewer's Media tab does;
@@ -1060,6 +1063,16 @@ impl gpui::Render for MediaWidget {
 }
 
 impl MediaWidget {
+    /// The surfaced load-error message, if any — the embedding sites'
+    /// layout gate. A failed load renders as a compact status line, so the
+    /// content-flow embedder (`block_renderer`) suppresses its
+    /// usable-height floor while an error is shown: a floor under an error
+    /// would bury the surrounding surface (operator report 2026-10-28).
+    #[must_use]
+    pub fn error_message(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
     /// The current playback-clock position in seconds. For audio the
     /// player is eagerly constructed, so the audio arm reports `Some(0.0)`
     /// before a load completes or after a load error — callers gate on the

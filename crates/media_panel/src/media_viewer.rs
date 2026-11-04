@@ -2455,6 +2455,7 @@ impl MediaViewer {
         self.transcript = None;
         self.transcript_request.invalidate();
         self.current_word = None;
+        self.selection_mode = false;
         self.selection_anchor = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
@@ -4574,8 +4575,18 @@ impl MediaViewer {
         // internally; the player fills.
         let content = div()
             .id("media-viewer-content")
+            // Test-support hook: exposes the content container's laid-out
+            // bounds to layout ground-truth tests (noop in release builds).
+            .debug_selector(|| "media-viewer-content".into())
             .flex_1()
             .min_h_0()
+            // The no-overlap backstop: the shared player shrinks with the
+            // pane (its usable-height floor moved to the content-flow
+            // embedder, `block_renderer`), and anything that still wants
+            // more height at extreme pane heights clips here instead of
+            // painting past the viewer pane into the Steer director — the
+            // close-transcript overlap (operator report 2026-11-04).
+            .overflow_hidden()
             .p_3()
             .child(widget);
 
@@ -11377,6 +11388,11 @@ mod tests {
             assert!(viewer.selection_anchor.is_none());
             assert!(viewer.highlight_edit.is_none());
             assert!(viewer.transcript_follow_task.is_none());
+            assert!(
+                !viewer.selection_mode,
+                "close tears down the Select-text mode with the rest of the sub-surface state \
+                 (open_transcript resets it; the close path must match)"
+            );
             assert_eq!(
                 viewer.active_tab,
                 ViewerTab::Workspace,
@@ -14302,6 +14318,103 @@ mod viewer_layout_tests {
             cx.simulate_resize(size(dock_width, px(600.)));
             cx.run_until_parked();
             assert_viewer_fits_narrow_pane(cx, dock_width, pane_available);
+        }
+    }
+
+    /// THE close-transcript overlap pin (S1, operator report 2026-11-04):
+    /// closing the transcript sub-surface must never leave the shared
+    /// player painting past the workspace's content area — the artifact
+    /// the operator saw as transport buttons superimposed over the Steer
+    /// director below. The transcript's 140px player row clips, which
+    /// masked the player's intrinsic usable-height floor; closing the
+    /// transcript was the first unclipped render of the same shared
+    /// widget. The invariant: the player's laid-out bounds stay inside
+    /// the content container at every pane height — the floor belongs to
+    /// the content-flow embedder (`block_renderer`), and this container
+    /// clips as the backstop.
+    #[gpui::test]
+    fn closing_transcript_leaves_widget_inside_pane(cx: &mut TestAppContext) {
+        if !std::path::Path::new(FIXTURE).exists() {
+            return;
+        }
+        init_layout_test_globals(cx);
+
+        let viewer = cx.new(|_| MediaViewer::new());
+        let output = serde_json::json!({
+            "content": {
+                "status": "fetched",
+                "display_hint": format!(
+                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
+                )
+            }
+        })
+        .to_string();
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
+        });
+
+        fn pinned_pane_state() -> TranscriptPaneState {
+            TranscriptPaneState {
+                transcript_id: "t-close-pin".into(),
+                media_path: FIXTURE.into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(vec![PaneWord {
+                    word: "pin".into(),
+                    start_ms: 0,
+                    end_ms: 100,
+                }]),
+                working_text: "pin".into(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            }
+        }
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+
+        // A short pane (the host halves the window: the viewer area is
+        // ~159px at 320px, far below the player's former 240px floor) and
+        // a tall one — the invariant holds at every height, exercised over
+        // the open→close transition each time.
+        for window_height in [px(320.), px(900.)] {
+            cx.simulate_resize(size(px(480.), window_height));
+            cx.run_until_parked();
+
+            // Open the sub-surface — the player rides the clipped 140px
+            // header row — then close: the transition the operator
+            // reported.
+            viewer.update(cx, |viewer, cx| {
+                viewer.transcript = Some(pinned_pane_state());
+                viewer.active_tab = ViewerTab::Workspace;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, cx| viewer.close_transcript_workspace(cx));
+            cx.run_until_parked();
+
+            let content = cx
+                .debug_bounds("media-viewer-content")
+                .expect("the workspace content container lays out after close");
+            let widget = cx
+                .debug_bounds("media-widget")
+                .expect("the shared player lays out after close");
+            assert!(
+                widget.top() >= content.top() - px(1.),
+                "the player starts inside the content area (window height {window_height:?}): \
+                 widget {widget:?} vs content {content:?}"
+            );
+            assert!(
+                widget.bottom() <= content.bottom() + px(1.),
+                "the player must not paint past the content area after closing the transcript \
+                 (window height {window_height:?}): widget {widget:?} vs content {content:?}"
+            );
         }
     }
 
