@@ -323,3 +323,35 @@ per-surface filter code in four stores, +3 planning documents (this set).
 **V1 scope (PI ruling 2026-10-30):** all three platforms; a single zed-kask user; the
 group-membership and group-credential constructs deferred, not designed speculatively
 (P7) — their revisit point is §10 item 5.
+---
+
+## Amendment 2026-11-04 — PI ruling: core shared service, not an MCP server
+
+The PI ruled that private inference is a core kask shared service, not another MCP
+server: the interface is local-only by intent, and the agent-callable tool surface an
+MCP server would give it is the wrong posture for a capability whose boundary must be
+written by someone other than the caller (P4) — a core service removes that surface by
+construction, where the MCP design carried it in approval tokens. Consequences:
+
+- **M1 relocates:** `kask/mcp-servers/hkask-mcp-private-inference/` →
+  `kask/crates/hkask-private-inference/` — a core service crate consumed by the
+  zed-side seams (the M6 routing hook, M7 settings, a future panel). The local-leg
+  core (placement compiler, engine-surface manifests, launch plan) already lives there.
+- **M1's substance carries over unchanged:** approval records, stage gates, the verify
+  probe, the model-brief service (FR-5) are logic, not presentation. What changes is
+  the presentation of the guided cloud workflow (FR-1): it moves off agent-callable
+  tools — default, the M7 settings-UI page as the PI-owned workflow surface; a thin
+  read-mostly intake veneer remains an option the PI may re-affirm explicitly.
+- **Model acquisition uses the HuggingFace credential through the canonical chain.**
+  `HF_TOKEN` was retired with the training server for having no read site; it is
+  reinstated WITH the acquisition module as its read site — one companion change,
+  never a credential row without a consumer.
+- **Engine-surface manifests live under `kask/registry/private-inference/`** — the
+  registry's versioned-data conventions (like `registry/providers/`), decode home in
+  the crate.
+- **M8's `mcp/private-inference/` DB path prefix** is re-derived for a core service by
+  the implementation engagement (the `HKASK_PRIVATE_INFERENCE_DB` override stands).
+
+Recorded as a dated amendment, not a silent edit of the committed D-2/D-3 text; the
+local-leg plan (`private-inference-local-leg-llama-wrapper-plan-2026-11-04.md`) §5
+carries the placement and the reuse map.
