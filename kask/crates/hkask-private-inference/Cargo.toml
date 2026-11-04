@@ -1,0 +1,26 @@
+[package]
+name = "hkask-private-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Private-inference core shared service — placement, lifecycle and verification for the private local and cloud inference legs"
+
+[lib]
+name = "hkask_private_inference"
+path = "src/hkask_private_inference.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+# In-tree deterministic evaluator — the manifest Expr constraint escape
+# hatch and the CI manifest fixture gates route through it (never an
+# external interpreter dependency).
+hkask-lisp.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

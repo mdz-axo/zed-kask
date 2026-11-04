@@ -7982,6 +7982,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-private-inference"
+version = "0.40.2"
+dependencies = [
+ "hkask-lisp",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml 0.8.23",
+]
+
+[[package]]
 name = "hkask-regulation"
 version = "0.40.2"
 dependencies = [

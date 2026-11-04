@@ -276,6 +276,7 @@ members = [
     "kask/crates/hkask-regulation",
     "kask/crates/hkask-forecast",
     "kask/crates/hkask-lisp",
+    "kask/crates/hkask-private-inference",
 
     "kask/crates/hkask-memory",
     "kask/crates/hkask-mcp",
