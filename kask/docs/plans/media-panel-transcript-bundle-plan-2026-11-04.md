@@ -176,6 +176,22 @@ Steer/`educt_search_transcripts` concern, not this surface.
 field-wise mark composition (`resolved_highlight_runs:8743` — match styling composes
 with highlight/cut marks).
 
+**Landed:** S3 complete 2026-11-04 — the core (search state, debounced rescan,
+reveal jump, header input, match marks, seven pins) landed inside the
+private-inference stream's `593bfe07e2` (swept by a `git add -A` while the S3
+work sat uncommitted mid-debug — the shared-tree hazard, recorded here for
+attribution), the final tail in `a23af25a8d`. Pins:
+`transcript_search_matches_orders_maps_and_edges`,
+`transcript_search_status_counts_zero_and_degrades`,
+`search_marks_compose_with_highlight_and_strike_overlays`,
+`transcript_search_resets_with_the_surface`,
+`transcript_search_finds_cycles_and_lands_the_current_match`,
+`transcript_search_rescan_debounces_the_burst`,
+`transcript_search_focus_suspends_follow_and_blur_restores`. The focus
+registration lesson is recorded in the reference model: listeners register
+from the input's click handler (an event context) — registration during
+render defers through the frame's effect cycle and never activates.
+
 **Design:** client-side lexical search over pane blocks (the open transcript is
 materialized in the pane — no server dispatch); 150 ms debounce via
 `cx.background_executor().timer` (NEVER `smol::Timer` — `.rules`); focus in the
