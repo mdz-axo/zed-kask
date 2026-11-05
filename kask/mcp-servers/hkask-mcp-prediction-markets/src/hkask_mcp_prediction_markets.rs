@@ -1091,31 +1091,7 @@ mod smoke {
     use std::pin::Pin;
     use std::sync::{Arc, Mutex};
 
-    /// No-op inference port for smoke tests — every call returns an error.
-    /// Smoke tests only exercise tools that don't call inference, so this never
-    /// runs; it exists solely to satisfy the `inference_port` field.
-    struct NoopInferencePort;
-
-    impl InferencePort for NoopInferencePort {
-        fn generate(
-            &self,
-            _: &str,
-            _: &LLMParameters,
-            _: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<
-            Box<
-                dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
-                    + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Err(InferenceError::Connection(
-                    "noop inference port — not configured for smoke tests".into(),
-                ))
-            })
-        }
-    }
+    use hkask_mcp_server::server::test_support::NoopInferencePort;
 
     /// Construct a server with minimal/test backends: a no-op inference port,
     /// an empty calibration store, and no FRED key — no real data dir is

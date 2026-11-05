@@ -69,14 +69,22 @@ const ACTIVITY_DRAWER_FRACTION: f32 = 0.3;
 /// responsively without saturating the render loop.
 const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// The transcript search's rescan debounce (S3): a burst of edits rescans
+/// once, this long after the last keystroke — the GPUI-native timer
+/// (never smol::Timer — .rules).
+const TRANSCRIPT_SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
+
 /// The workspace list's fixed header items before the surface body:
 /// player, mode chips (the surface toggle plus the select and follow
-/// toggles), the surface's status note, and the section label — the whole
-/// workspace scrolls as one piece, exactly as it did before virtualization
-/// (a pinned header taller than a tight pane would starve the reading area).
-/// The close affordance and recording name live in the sub-surface's header
-/// row above the list (T3), not as list items.
-const WORKSPACE_HEADER_ITEMS: usize = 4;
+/// toggles), the search row, the surface's status note, and the section
+/// label — the whole workspace scrolls as one piece, exactly as it did
+/// before virtualization (a pinned header taller than a tight pane would
+/// starve the reading area). The search row renders its input only on the
+/// word surface but keeps its row on both, so the item count (and with it
+/// the reading position) stays stable across surface switches. The close
+/// affordance and recording name live in the sub-surface's header row
+/// above the list (T3), not as list items.
+const WORKSPACE_HEADER_ITEMS: usize = 5;
 
 /// The workspace list's fixed tail items after the transcript blocks:
 /// highlights, cuts, and reel actions — always present as items, so the
@@ -821,6 +829,26 @@ pub struct MediaViewer {
     /// The selection popover's focus handle, created lazily on first open
     /// (pure tests construct the viewer without a GPUI context).
     selection_popover_focus: Option<gpui::FocusHandle>,
+    /// S3: the in-transcript search — the typed query, its ordered matches
+    /// over working word indices, and the current match. Blank query → no
+    /// matches → no marks.
+    transcript_search: TranscriptSearch,
+    /// The search input's focus handle, created lazily on first render
+    /// together with its focus/blur listeners (S3: focusing the search
+    /// suspends viewport tracking so typing and the auto-landed matches
+    /// never fight the follow-along; blur restores what it took).
+    transcript_search_focus: Option<gpui::FocusHandle>,
+    /// The search input's focus/blur subscriptions — held for the viewer's
+    /// lifetime (dropping them would unregister the listeners).
+    transcript_search_focus_subscriptions: Vec<gpui::Subscription>,
+    /// Whether focusing the search input suspended viewport tracking (S3):
+    /// blur restores tracking only when the search took it — a manually
+    /// suspended follow stays suspended.
+    transcript_search_suspended_follow: bool,
+    /// S3: the pending debounced rescan — a keystroke burst rescans once,
+    /// 150 ms after the last edit. Dropping the task cancels the pending
+    /// rescan (the follow-task lifecycle pattern).
+    transcript_search_task: Option<Task<()>>,
     /// S4-3: the open label editor — a completed range awaiting its label
     /// (create) or a researcher highlight being renamed. Word clicks are
     /// inert while it is open; Enter confirms, Escape cancels.
@@ -928,6 +956,11 @@ impl MediaViewer {
             drag_last_word: None,
             selection_popover: None,
             selection_popover_focus: None,
+            transcript_search: TranscriptSearch::default(),
+            transcript_search_focus: None,
+            transcript_search_focus_subscriptions: Vec::new(),
+            transcript_search_suspended_follow: false,
+            transcript_search_task: None,
             highlight_edit: None,
             label_input_focus: None,
             reel_selection: HashSet::new(),
@@ -2414,6 +2447,7 @@ impl MediaViewer {
         self.selection_mode = false;
         self.selection_anchor = None;
         self.selection_popover = None;
+        self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
         // A fresh workspace starts on the word surface with no visual-event
@@ -2485,6 +2519,7 @@ impl MediaViewer {
         self.selection_mode = false;
         self.selection_anchor = None;
         self.selection_popover = None;
+        self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
         self.transcript_surface = TranscriptSurface::Words;
@@ -3102,9 +3137,11 @@ impl MediaViewer {
                     .collect();
                 // A fresh workspace invalidates any open label editor and
                 // selection popover — their annotation ids and word ranges
-                // belong to the previous view.
+                // belong to the previous view — and the transcript search
+                // (the pending matches are stale in the reloaded view).
                 self.highlight_edit = None;
                 self.selection_popover = None;
+                self.reset_transcript_search();
                 self.transcript = Some(state);
                 self.current_word = None;
                 self.transcript_request.complete(epoch, Ok(()));
@@ -4214,6 +4251,178 @@ impl MediaViewer {
         } else {
             self.create_workspace_highlight(start_word, end_word, resolve_create_label(""), cx);
         }
+    }
+
+    // ── In-transcript search (S3) ───────────────────────────────────────
+
+    /// S3: schedule the debounced search rescan — one burst of edits
+    /// rescans once, 150 ms after the last keystroke. Taking the old task
+    /// cancels any pending rescan (the follow-task lifecycle pattern); the
+    /// timer is GPUI-native (never smol::Timer — .rules).
+    fn schedule_transcript_search_rescan(&mut self, cx: &mut Context<Self>) {
+        self.transcript_search_task.take();
+        self.transcript_search_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(TRANSCRIPT_SEARCH_DEBOUNCE)
+                .await;
+            this.update(cx, |viewer, cx| {
+                viewer.rescan_transcript_search(cx);
+            })
+            .ok();
+        }));
+    }
+
+    /// S3: recompute the search matches from the typed query over the
+    /// loaded transcript — the debounced rescan's landing. A fresh match
+    /// list starts the cycle on its first match and lands it in view (the
+    /// find-bar precedent: the stabilized query shows where the results
+    /// are); zero matches clear the marks and surface beside the input,
+    /// never silently. The query is trimmed and matched case-insensitively
+    /// for ASCII, exactly for non-ASCII (the server's lexical rule).
+    fn rescan_transcript_search(&mut self, cx: &mut Context<Self>) {
+        self.transcript_search_task.take();
+        let words = self
+            .transcript
+            .as_ref()
+            .and_then(|state| state.words.as_deref());
+        let query = self.transcript_search.query.text();
+        self.transcript_search.matches = transcript_search_matches(words.unwrap_or(&[]), &query);
+        self.transcript_search.current = 0;
+        if !self.transcript_search.matches.is_empty() {
+            self.reveal_transcript_search_match();
+        }
+        cx.notify();
+    }
+
+    /// S3: scroll the current match's block into view — Enter/Shift-Enter's
+    /// jump and the rescan's first-match landing, using the follow reveal's
+    /// item-anchored idiom (blocks deep in a long recording are unmeasured
+    /// until rendered, so the reveal anchors by item index, not pixels). The
+    /// reveal accounting keeps the follow tick from misreading this scroll
+    /// as manual.
+    fn reveal_transcript_search_match(&mut self) {
+        let Some(&(start_word, _)) = self
+            .transcript_search
+            .matches
+            .get(self.transcript_search.current)
+        else {
+            return;
+        };
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let Some(block_ix) = block_index_for_word(state, start_word) else {
+            return;
+        };
+        let item_ix = WORKSPACE_HEADER_ITEMS + block_ix;
+        let visible = self
+            .transcript_list
+            .bounds_for_item(item_ix)
+            .is_some_and(|item| {
+                let viewport = self.transcript_list.viewport_bounds();
+                item.top() >= viewport.top() && item.bottom() <= viewport.bottom()
+            });
+        if !visible {
+            self.follow_reveals_in_flight = self.follow_reveals_in_flight.saturating_add(1);
+            self.transcript_list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: px(0.),
+            });
+            self.follow_scroll_baseline = self.transcript_list.logical_scroll_top();
+        }
+    }
+
+    /// Route the search input's keystrokes (S3): Enter cycles to the next
+    /// match and lands it (Shift-Enter cycles back; both wrap), Escape
+    /// clears the query and its marks, editing keys go to the buffer and
+    /// schedule the debounced rescan. Bound on the input element itself, so
+    /// the keys only fire while it holds focus.
+    fn handle_transcript_search_key(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        let count = self.transcript_search.matches.len();
+        match keystroke.key.as_str() {
+            "enter" if count > 0 => {
+                self.transcript_search.current = if keystroke.modifiers.shift {
+                    (self.transcript_search.current + count - 1) % count
+                } else {
+                    (self.transcript_search.current + 1) % count
+                };
+                self.reveal_transcript_search_match();
+                cx.notify();
+            }
+            "escape" => {
+                // Escape clears the query — the search leaves no marks
+                // behind, immediately (no debounce on the way out).
+                self.transcript_search = TranscriptSearch::default();
+                self.transcript_search_task.take();
+                cx.notify();
+            }
+            _ => {
+                if self.transcript_search.query.apply_keystroke(keystroke) {
+                    self.schedule_transcript_search_rescan(cx);
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    /// Paste clipboard text into the search query (S3) — the label
+    /// editor's paste fix (2026-10-26): modifier chords never type, so a
+    /// phrase could not be pasted otherwise. Control characters are
+    /// dropped — the input is single-line. Inert with no clipboard text.
+    fn paste_into_transcript_search(&mut self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        self.transcript_search.query.insert_str(&text);
+        self.schedule_transcript_search_rescan(cx);
+        cx.notify();
+    }
+
+    /// S3: clear the transcript search with the surface — the query, the
+    /// matches, the pending rescan, and the follow custody all belong to the
+    /// workspace they were opened on (a reload's fresh working view makes
+    /// the pending matches stale).
+    fn reset_transcript_search(&mut self) {
+        self.transcript_search = TranscriptSearch::default();
+        self.transcript_search_task.take();
+        self.transcript_search_suspended_follow = false;
+    }
+
+    /// S3: register the search input's focus/blur listeners — focusing the
+    /// search suspends viewport tracking (typing and the auto-landed matches
+    /// must not fight the follow-along — the manual-scroll precedent), and
+    /// blur restores tracking only when the search took it (a manually
+    /// suspended follow stays suspended). Idempotent; called from the
+    /// input's click handler, an event context — listener registration
+    /// during render defers through the frame's effect cycle and never
+    /// activates, so the listeners would sit pending forever.
+    fn ensure_transcript_search_focus_listeners(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.transcript_search_focus_subscriptions.is_empty() {
+            return;
+        }
+        let Some(focus) = self.transcript_search_focus.clone() else {
+            return;
+        };
+        let on_focus = cx.on_focus(&focus, window, |viewer, _window, cx| {
+            eprintln!("PROBE: on_focus FIRED, follow={}", viewer.follow_viewport);
+            if viewer.follow_viewport {
+                viewer.follow_viewport = false;
+                viewer.transcript_search_suspended_follow = true;
+                cx.notify();
+            }
+        });
+        let on_blur = cx.on_blur(&focus, window, |viewer, _window, cx| {
+            if viewer.transcript_search_suspended_follow {
+                viewer.transcript_search_suspended_follow = false;
+                viewer.follow_viewport = true;
+                cx.notify();
+            }
+        });
+        self.transcript_search_focus_subscriptions = vec![on_focus, on_blur];
     }
 
     /// The label editor row (S4-3): the focused single-line input plus
@@ -6218,10 +6427,15 @@ impl MediaViewer {
             .selection_popover_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
-        let state = self
-            .transcript
-            .as_ref()
-            .expect("the empty-state guard returned above");
+        // The search input's focus handle (S3) — created on first need; the
+        // focus/blur listeners register with it on the input's first click
+        // (`ensure_transcript_search_focus_listeners`), an event context —
+        // listener registration during render defers through the frame's
+        // effect cycle and never activates, so the listeners would sit
+        // pending forever. The header's search row reads the stored handle.
+        if self.transcript_search_focus.is_none() {
+            self.transcript_search_focus = Some(cx.focus_handle());
+        }
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
@@ -6553,6 +6767,108 @@ impl MediaViewer {
                 chips.into_any_element()
             }
             2 => {
+                // S3: in-transcript search — a lexical input in the surface
+                // header, on the word surface only (the events log has its
+                // own reading model; the row keeps its item either way so
+                // the reading position stays stable across switches).
+                if self.transcript_surface != TranscriptSurface::Words {
+                    div().into_any_element()
+                } else if let Some(focus) = self.transcript_search_focus.clone() {
+                    let search = &self.transcript_search;
+                    let typed = search.query.text();
+                    let cursor = search.query.cursor();
+                    let before: String = typed.chars().take(cursor).collect();
+                    let after: String = typed.chars().skip(cursor).collect();
+                    let mut input = div()
+                        .id("media-transcript-search-input")
+                        .track_focus(&focus)
+                        .flex()
+                        .items_center()
+                        .min_w_0()
+                        .w(px(160.))
+                        .overflow_hidden()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .px_1()
+                        .debug_selector(|| "media-transcript-search-input".into())
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                            let keystroke = &event.keystroke;
+                            if (keystroke.modifiers.control || keystroke.modifiers.platform)
+                                && keystroke.key == "v"
+                            {
+                                this.paste_into_transcript_search(cx);
+                            } else {
+                                this.handle_transcript_search_key(keystroke, cx);
+                            }
+                            cx.stop_propagation();
+                        }))
+                        .on_click({
+                            let focus = focus.clone();
+                            cx.listener(move |this, _, window, cx| {
+                                this.ensure_transcript_search_focus_listeners(window, cx);
+                                window.focus(&focus, cx);
+                            })
+                        });
+                    if typed.is_empty() {
+                        input = input.child(
+                            Label::new(SharedString::from("Search transcript"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Muted),
+                        );
+                    } else {
+                        input = input
+                            .child(
+                                Label::new(SharedString::from(before))
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Default),
+                            )
+                            .child(
+                                div()
+                                    .id("media-transcript-search-caret")
+                                    .w(px(1.))
+                                    .h(px(12.))
+                                    .bg(cx.theme().colors().text),
+                            )
+                            .child(
+                                Label::new(SharedString::from(after))
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Default),
+                            );
+                    }
+                    let has_words = self
+                        .transcript
+                        .as_ref()
+                        .is_some_and(|state| state.words.is_some());
+                    h_flex()
+                        .items_center()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(input)
+                        .when_some(
+                            transcript_search_status(&self.transcript_search, has_words),
+                            |row, status| {
+                                row.child(
+                                    div()
+                                        .id("media-transcript-search-status")
+                                        .debug_selector(|| "media-transcript-search-status".into())
+                                        .child(
+                                            Label::new(SharedString::from(status))
+                                                .size(LabelSize::XSmall)
+                                                .color(ui::Color::Muted),
+                                        ),
+                                )
+                            },
+                        )
+                        .into_any_element()
+                } else {
+                    // Unreachable in practice — the workspace render creates
+                    // the handle before the list renders — but a render path
+                    // never unwraps.
+                    div().into_any_element()
+                }
+            }
+            3 => {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
@@ -6786,6 +7102,29 @@ impl MediaViewer {
                 {
                     highlights.push((range, strike_style));
                 }
+            }
+        }
+        // S3: search matches paint after the researcher overlays so a match
+        // stays visible inside a highlight, and the field-wise composition
+        // keeps a struck match's line-through; the current match paints over
+        // the plain match. Marks render on every words view — the search is
+        // working-view-local, never source-mapped.
+        let search_match_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().element_hover),
+            ..Default::default()
+        };
+        let search_current_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().element_active),
+            ..Default::default()
+        };
+        for (index, (start_word, end_word)) in self.transcript_search.matches.iter().enumerate() {
+            if let Some(range) = block_word_char_range(block, *start_word, *end_word) {
+                let style = if index == self.transcript_search.current {
+                    search_current_style
+                } else {
+                    search_match_style
+                };
+                highlights.push((range, style));
             }
         }
         let word_starts = block.word_starts.clone();
@@ -8184,8 +8523,21 @@ struct HighlightEdit {
     buffer: LabelBuffer,
 }
 
-/// A single-line text buffer with a cursor — the label input's model.
-/// Char-indexed so multi-byte labels edit as characters, not bytes.
+/// S3: in-transcript search state — the typed query, the ordered match list
+/// over working word indices (each match the inclusive word range it
+/// covers), and the current match the Enter cycle sits on. The rescan is
+/// debounced; Enter/Shift-Enter cycle and jump. Blank query → no matches →
+/// no marks and no count.
+#[derive(Clone, Debug, Default)]
+struct TranscriptSearch {
+    query: LabelBuffer,
+    matches: Vec<(usize, usize)>,
+    current: usize,
+}
+
+/// A single-line text buffer with a cursor — the model behind the panel's
+/// inline inputs (the label editor and the transcript search). Char-indexed
+/// so multi-byte text edits as characters, not bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct LabelBuffer {
     chars: Vec<char>,
@@ -9086,6 +9438,65 @@ fn block_index_for_word(state: &TranscriptPaneState, word: usize) -> Option<usiz
         block += 1;
     }
     Some(block)
+}
+
+/// The ordered match list for the in-transcript search (S3): every
+/// occurrence of the trimmed query over the working words joined by single
+/// spaces (the same join the pane blocks render), mapped to the inclusive
+/// word range each occurrence covers — so a phrase spanning words marks and
+/// jumps as one range. The case rule matches the server's
+/// `educt_search_transcripts` lexical mode (ASCII case-insensitive,
+/// non-ASCII exact — `to_ascii_lowercase` preserves byte offsets, so the
+/// lowered text's positions map back to the original) so the panel and the
+/// server agree on what a match is. Occurrences never overlap (the scan
+/// resumes past each hit); a blank query or wordless view matches nothing.
+fn transcript_search_matches(words: &[PaneWord], query: &str) -> Vec<(usize, usize)> {
+    let query = query.trim();
+    if query.is_empty() || words.is_empty() {
+        return Vec::new();
+    }
+    let mut joined = String::new();
+    let mut word_starts: Vec<usize> = Vec::with_capacity(words.len());
+    for (index, word) in words.iter().enumerate() {
+        if index > 0 {
+            joined.push(' ');
+        }
+        word_starts.push(joined.len());
+        joined.push_str(&word.word);
+    }
+    let haystack = joined.to_ascii_lowercase();
+    let needle = query.to_ascii_lowercase();
+    let mut matches = Vec::new();
+    let mut from = 0;
+    while let Some(found) = haystack[from..].find(&needle) {
+        let start = from + found;
+        let end = start + needle.len();
+        // Byte offsets map back through the per-word starts: the last word
+        // starting at or before the hit starts, and the last word starting
+        // before the hit ends (the trimmed query never ends on a space).
+        let start_word = word_starts.partition_point(|&offset| offset <= start) - 1;
+        let end_word = word_starts.partition_point(|&offset| offset < end) - 1;
+        matches.push((start_word, end_word));
+        from = end;
+    }
+    matches
+}
+
+/// The search input's status label (S3): the current match's position over
+/// the total, the honest zero-match state, or the word-timing degradation
+/// note for text-only views — `None` while the query is blank (nothing to
+/// report, no noise).
+fn transcript_search_status(search: &TranscriptSearch, has_words: bool) -> Option<String> {
+    if search.query.text().trim().is_empty() {
+        return None;
+    }
+    if !has_words {
+        return Some("Search needs a word-timed view".into());
+    }
+    if search.matches.is_empty() {
+        return Some("No matches".into());
+    }
+    Some(format!("{}/{}", search.current + 1, search.matches.len()))
 }
 
 /// Build the pane's paragraph blocks: paragraphs over the working words
@@ -13207,6 +13618,149 @@ mod tests {
         });
     }
 
+    /// dcterms:identifier: `transcript_search_matches`
+    /// expect: The search matches the trimmed query case-insensitively over
+    /// the working words joined by single spaces (the same join the blocks
+    /// render), maps every occurrence to the inclusive word range it covers
+    /// (phrases span words), never overlaps, matches nothing on an empty
+    /// query or wordless view, and treats non-ASCII exactly (the server's
+    /// `educt_search_transcripts` lexical rule, so the panel and the server
+    /// agree on what a match is).
+    /// [P1] Motivating: the match list is the search's ground truth — wrong
+    /// ranges mark and jump to the wrong words.
+    #[test]
+    fn transcript_search_matches_orders_maps_and_edges() {
+        let words = |texts: &[&str]| {
+            texts
+                .iter()
+                .map(|text| PaneWord {
+                    word: (*text).into(),
+                    start_ms: 0,
+                    end_ms: 0,
+                })
+                .collect::<Vec<_>>()
+        };
+        let transcript = words(&["We", "see", "the", "Dunning", "effect", "in", "dunning"]);
+        assert_eq!(
+            transcript_search_matches(&transcript, "dunning"),
+            vec![(3, 3), (6, 6)],
+            "case-insensitive, ordered, word-mapped"
+        );
+        assert_eq!(
+            transcript_search_matches(&transcript, "the dunning effect"),
+            vec![(2, 4)],
+            "a phrase maps to the covering word range"
+        );
+        assert_eq!(
+            transcript_search_matches(&transcript, "we see"),
+            vec![(0, 1)],
+            "a lowercase query matches capitalized words"
+        );
+        assert!(
+            transcript_search_matches(&transcript, "absent").is_empty(),
+            "no occurrence is an empty list, never silence downstream"
+        );
+        assert!(
+            transcript_search_matches(&transcript, "   ").is_empty(),
+            "a whitespace-only query matches nothing"
+        );
+        assert!(
+            transcript_search_matches(&[], "dunning").is_empty(),
+            "a wordless view matches nothing"
+        );
+        assert_eq!(
+            transcript_search_matches(&words(&["aaaa"]), "aa"),
+            vec![(0, 0), (0, 0)],
+            "adjacent occurrences count separately and never overlap"
+        );
+        // Non-ASCII is exact (the server's rule): the accented word does
+        // not answer to the plain query and vice versa.
+        let accented = words(&["Café", "cafe"]);
+        assert_eq!(transcript_search_matches(&accented, "café"), vec![(0, 0)]);
+        assert_eq!(transcript_search_matches(&accented, "CAFE"), vec![(1, 1)]);
+        assert_eq!(transcript_search_matches(&accented, "cafe"), vec![(1, 1)]);
+    }
+
+    /// dcterms:identifier: `transcript_search_status`
+    /// expect: The search status is honest at every state — no label for a
+    /// blank query, the word-timing degradation note on text-only views, "No
+    /// matches" for zero results (never silence), and the current-position
+    /// count while matches exist.
+    /// [P1] Motivating: zero matches must surface, and a text-only view must
+    /// say why it cannot search rather than claim absence.
+    #[test]
+    fn transcript_search_status_counts_zero_and_degrades() {
+        let mut search = TranscriptSearch::default();
+        assert_eq!(transcript_search_status(&search, true), None);
+        search.query = LabelBuffer::from_str("dunning");
+        assert_eq!(
+            transcript_search_status(&search, false).as_deref(),
+            Some("Search needs a word-timed view"),
+            "a text-only view names why it cannot search, not 'no matches'"
+        );
+        assert_eq!(
+            transcript_search_status(&search, true).as_deref(),
+            Some("No matches"),
+            "zero matches surface, never silence"
+        );
+        search.matches = vec![(3, 3), (9, 9), (12, 12)];
+        search.current = 1;
+        assert_eq!(
+            transcript_search_status(&search, true).as_deref(),
+            Some("2/3"),
+            "the count names the current match's position"
+        );
+    }
+
+    /// dcterms:identifier: `reset_transcript_search`
+    /// expect: The search tears down with the surface — the close path, a
+    /// fresh open, and a fresh workspace reload all clear the query, the
+    /// matches, the pending rescan, and the follow custody (stale matches
+    /// would mark words that no longer exist in the reloaded view).
+    /// [P1] Motivating: teardown asymmetries are latent traps (the S1
+    /// hygiene rule).
+    #[gpui::test]
+    fn transcript_search_resets_with_the_surface(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(pane_state("t-search-teardown"));
+            let populate = |viewer: &mut MediaViewer, cx: &mut Context<MediaViewer>| {
+                viewer.transcript_search.query = LabelBuffer::from_str("dunning");
+                viewer.transcript_search.matches = vec![(3, 3)];
+                viewer.transcript_search.current = 0;
+                viewer.schedule_transcript_search_rescan(cx);
+            };
+            let assert_cleared = |viewer: &MediaViewer| {
+                assert_eq!(viewer.transcript_search.query.text(), "");
+                assert!(viewer.transcript_search.matches.is_empty());
+                assert_eq!(viewer.transcript_search.current, 0);
+                assert!(
+                    viewer.transcript_search_task.is_none(),
+                    "the pending rescan cancels with the surface"
+                );
+                assert!(!viewer.transcript_search_suspended_follow);
+            };
+            populate(viewer, cx);
+            viewer.close_transcript_workspace(cx);
+            assert_cleared(viewer);
+
+            populate(viewer, cx);
+            viewer.open_transcript("t-search-open".into(), cx);
+            assert_cleared(viewer);
+
+            // The reload path: a fresh workspace state invalidates the
+            // pending search the same way.
+            populate(viewer, cx);
+            let epoch = viewer
+                .transcript_request
+                .begin(RequestOwner::Transcript("t-search-open".into()))
+                .expect("the reload owns its request");
+            viewer.apply_transcript_result(epoch, Ok(pane_state("t-search-open")), cx);
+            assert_cleared(viewer);
+        });
+    }
+
     /// dcterms:identifier: `highlight_create_params`
     /// expect: The create dispatch carries the exact request contract with
     /// the label editor's typed label.
@@ -13493,6 +14047,65 @@ mod tests {
         assert_eq!(runs[3].0, 10..12);
         // No marks, no runs — the plain text path.
         assert!(resolved_highlight_runs(Vec::new()).is_empty());
+    }
+
+    /// dcterms:identifier: `resolved_highlight_runs` (search composition)
+    /// expect: Search marks compose with the researcher overlays field-wise
+    /// — a match pushed after a highlight keeps its own background (the
+    /// match stays visible inside the researcher's range), a struck match
+    /// keeps the line-through, and the current match paints over the plain
+    /// match (the render's push order: highlight, strike, match, current).
+    /// [P1] Motivating: search must find words inside highlights and cuts —
+    /// an overlay-erased match is a false negative on screen (S3 AC3).
+    #[test]
+    fn search_marks_compose_with_highlight_and_strike_overlays() {
+        let range = 2..6;
+        let highlight = HighlightStyle {
+            background_color: Some(highlight_label_color("thesis")),
+            ..Default::default()
+        };
+        let strike = HighlightStyle {
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(1.),
+                color: None,
+            }),
+            ..Default::default()
+        };
+        let match_style = HighlightStyle {
+            background_color: Some(gpui::white()),
+            ..Default::default()
+        };
+        let current_style = HighlightStyle {
+            background_color: Some(gpui::black()),
+            ..Default::default()
+        };
+        let runs = resolved_highlight_runs(vec![
+            (range.clone(), highlight),
+            (range.clone(), strike),
+            (range.clone(), match_style),
+        ]);
+        let merged = runs.first().expect("the marked range resolves");
+        assert_eq!(merged.0, range, "the composed run keeps the word range");
+        assert_eq!(
+            merged.1.background_color,
+            Some(gpui::white()),
+            "the match's background wins over the highlight's — a match inside a highlight stays visible"
+        );
+        assert!(
+            merged.1.strikethrough.is_some(),
+            "a struck match keeps its line-through"
+        );
+
+        let runs = resolved_highlight_runs(vec![
+            (range.clone(), match_style),
+            (range.clone(), current_style),
+        ]);
+        let merged = runs.first().expect("the marked range resolves");
+        assert_eq!(
+            merged.1.background_color,
+            Some(gpui::black()),
+            "the current match paints over the plain match"
+        );
     }
 
     /// dcterms:identifier: `block_word_char_range`
@@ -15410,6 +16023,348 @@ mod viewer_layout_tests {
                     .is_some_and(|status| status.contains("dismissed")),
                 "the dismissal surfaces: {:?}",
                 viewer.status
+            );
+        });
+    }
+
+    /// A words pane state for the search tests: `total` words in 5-word
+    /// blocks, "dunning" at each index in `matches_at`.
+    fn search_pane_state(total: usize, dunning_at: &[usize]) -> TranscriptPaneState {
+        TranscriptPaneState {
+            transcript_id: "t-search".into(),
+            media_path: "/generated/search.wav".into(),
+            gallery_asset_id: None,
+            alignment: "original".into(),
+            alignment_note: None,
+            words: Some(
+                (0..total)
+                    .map(|index| PaneWord {
+                        word: if dunning_at.contains(&index) {
+                            "dunning".into()
+                        } else {
+                            format!("w{index}")
+                        },
+                        start_ms: index as u64 * 100,
+                        end_ms: index as u64 * 100 + 90,
+                    })
+                    .collect(),
+            ),
+            working_text: String::new(),
+            paragraph_breaks: Some((1..(total / 5)).map(|block| block * 5 - 1).collect()),
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+        }
+    }
+
+    /// The blank-modifier keystroke helper for the search tests.
+    fn search_key(key: &str, shift: bool) -> Keystroke {
+        Keystroke {
+            modifiers: gpui::Modifiers {
+                control: false,
+                alt: false,
+                shift,
+                platform: false,
+                function: false,
+            },
+            key: key.into(),
+            key_char: None,
+        }
+    }
+
+    /// Whether the block at `block_ix` is fully inside the list's viewport
+    /// — the same visibility read `follow_marked_block_into_view` performs.
+    fn search_block_in_view(
+        viewer: &gpui::Entity<MediaViewer>,
+        cx: &mut gpui::VisualTestContext,
+        block_ix: usize,
+    ) -> bool {
+        viewer.update(cx, |viewer, _| {
+            let item_ix = WORKSPACE_HEADER_ITEMS + block_ix;
+            viewer
+                .transcript_list
+                .bounds_for_item(item_ix)
+                .is_some_and(|item| {
+                    let viewport = viewer.transcript_list.viewport_bounds();
+                    item.top() >= viewport.top() && item.bottom() <= viewport.bottom()
+                })
+        })
+    }
+
+    /// The in-transcript search (S3): typing into the header input finds
+    /// every match of the query over the loaded transcript, the stabilized
+    /// query lands the first match in view, Enter cycles forward and
+    /// Shift-Enter back (wrapping), each cycled match's block scrolls into
+    /// view, and a query with no results shows the honest no-matches state
+    /// — the plan's S3 acceptance 1 and 2.
+    #[gpui::test]
+    fn transcript_search_finds_cycles_and_lands_the_current_match(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        // 120 words in 5-word blocks, "dunning" at 25, 85, 115 — three
+        // matches, the later two far below the first fold.
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(search_pane_state(120, &[25, 85, 115]));
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        // A taller window than the other layout tests: the search row sits
+        // BELOW the 140px player row, so the first fold must cover the whole
+        // header for the input to paint — and its focus path to register
+        // (focus events dispatch from the painted frame's focus path).
+        cx.simulate_resize(size(px(480.), px(900.)));
+        cx.run_until_parked();
+
+        // The search input renders in the header from the first paint.
+        assert!(
+            cx.debug_bounds("media-transcript-search-input").is_some(),
+            "the search input renders in the header"
+        );
+
+        // Type the query; the debounced rescan runs once the burst settles.
+        // The paint before the rescan carries the typed query and the
+        // honest interim status ("No matches" — the rescan has not run).
+        viewer.update(cx, |viewer, cx| {
+            for character in "dunning".chars() {
+                viewer.handle_transcript_search_key(&search_key(&character.to_string(), false), cx);
+            }
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-search-status").is_some(),
+            "the match count renders beside the input"
+        );
+        cx.executor().advance_clock(TRANSCRIPT_SEARCH_DEBOUNCE);
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_search.matches,
+                vec![(25, 25), (85, 85), (115, 115)],
+                "typing finds all the matches"
+            );
+            assert_eq!(viewer.transcript_search.current, 0);
+            assert_eq!(
+                transcript_search_status(&viewer.transcript_search, true).as_deref(),
+                Some("1/3")
+            );
+        });
+        // The rescan's auto-land scrolled the first match's block into view
+        // — the header rows (input included) are above the viewport now, so
+        // the input's rendering is pinned by the PRE-rescan bounds asserts
+        // above; here the reveal is the observable.
+        assert!(
+            search_block_in_view(&viewer, cx, 5),
+            "the stabilized query lands the first match (word 25, block 5) in view"
+        );
+
+        // Enter cycles forward (wrapping) and lands each cycled match in
+        // view; Shift-Enter cycles back.
+        for (expected_current, block) in [(1usize, 17usize), (2, 23), (0, 5)] {
+            viewer.update(cx, |viewer, cx| {
+                viewer.handle_transcript_search_key(&search_key("enter", false), cx);
+            });
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, _| {
+                assert_eq!(
+                    viewer.transcript_search.current, expected_current,
+                    "Enter cycles and wraps"
+                );
+            });
+            assert!(
+                search_block_in_view(&viewer, cx, block),
+                "the cycled match's block scrolls into view"
+            );
+        }
+        viewer.update(cx, |viewer, cx| {
+            viewer.handle_transcript_search_key(&search_key("enter", true), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_search.current, 2,
+                "Shift-Enter cycles back"
+            );
+        });
+
+        // A query with no results shows the honest no-matches state.
+        viewer.update(cx, |viewer, cx| {
+            viewer.handle_transcript_search_key(&search_key("escape", false), cx);
+            for character in "absent".chars() {
+                viewer.handle_transcript_search_key(&search_key(&character.to_string(), false), cx);
+            }
+        });
+        cx.executor().advance_clock(TRANSCRIPT_SEARCH_DEBOUNCE);
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(viewer.transcript_search.matches.is_empty());
+            assert_eq!(
+                transcript_search_status(&viewer.transcript_search, true).as_deref(),
+                Some("No matches"),
+                "zero matches surface, never silence"
+            );
+        });
+    }
+
+    /// The search rescan is debounced (S3): a burst of keystrokes rescans
+    /// once, 150 ms after the LAST edit — never per keystroke, never before
+    /// the burst settles.
+    #[gpui::test]
+    fn transcript_search_rescan_debounces_the_burst(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(search_pane_state(30, &[5]));
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        viewer.update(cx, |viewer, cx| {
+            for character in "dun".chars() {
+                viewer.handle_transcript_search_key(&search_key(&character.to_string(), false), cx);
+            }
+        });
+        // 149 ms after the last keystroke: the rescan has not run.
+        cx.executor()
+            .advance_clock(TRANSCRIPT_SEARCH_DEBOUNCE - Duration::from_millis(1));
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.transcript_search.matches.is_empty(),
+                "the rescan waits out the burst"
+            );
+        });
+        // One millisecond later it fires, once, on the final query.
+        cx.executor().advance_clock(Duration::from_millis(1));
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.transcript_search.matches,
+                vec![(5, 5)],
+                "the settled burst rescans once, on the final query"
+            );
+            assert!(
+                viewer.transcript_search_task.is_none(),
+                "the rescan task completes"
+            );
+        });
+    }
+
+    /// Focusing the search input suspends viewport tracking (the plan's S3
+    /// design: typing and the auto-landed matches must not fight the
+    /// follow-along); blur restores tracking only when the search took it —
+    /// a manually suspended follow stays suspended.
+    #[gpui::test]
+    fn transcript_search_focus_suspends_follow_and_blur_restores(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(search_pane_state(30, &[5]));
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        // The search row sits below the 140px player row — the fold must
+        // cover the header for the input to paint and register its focus
+        // path (focus events dispatch from the painted frame's focus path,
+        // so an off-screen input never gains focus events).
+        cx.simulate_resize(size(px(480.), px(900.)));
+        cx.run_until_parked();
+
+        use gpui::VisualContext as _;
+        // Focus the search input (its click handler's path: ensure the
+        // focus listeners, then focus). The registration's activation is
+        // deferred to the effect cycle's end, so it parks BETWEEN ensure and
+        // focus — the focus dispatch happens at the next draw, and the
+        // listener must be live by then.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.ensure_transcript_search_focus_listeners(window, cx);
+        });
+        cx.run_until_parked();
+        eprintln!(
+            "PROBE: input bounds pre-focus: {:?}",
+            cx.debug_bounds("media-transcript-search-input")
+        );
+        eprintln!(
+            "PROBE: subs registered: {}",
+            viewer.read_with(cx, |viewer, _| viewer
+                .transcript_search_focus_subscriptions
+                .len())
+        );
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            let focus = viewer
+                .transcript_search_focus
+                .clone()
+                .expect("rendering the header created the focus handle");
+            window.focus(&focus, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(!viewer.follow_viewport, "focus suspends tracking");
+            assert!(
+                viewer.transcript_search_suspended_follow,
+                "the search holds the follow custody it took"
+            );
+        });
+
+        // Blur (focus the label input): custody restores the tracking.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            let focus = viewer
+                .label_input_focus
+                .get_or_insert_with(|| cx.focus_handle())
+                .clone();
+            window.focus(&focus, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(viewer.follow_viewport, "blur restores the follow it took");
+            assert!(!viewer.transcript_search_suspended_follow);
+        });
+
+        // A manually suspended follow is not the search's to restore.
+        viewer.update(cx, |viewer, _| {
+            viewer.follow_viewport = false;
+        });
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            let focus = viewer
+                .transcript_search_focus
+                .clone()
+                .expect("the search focus handle exists");
+            window.focus(&focus, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                !viewer.transcript_search_suspended_follow,
+                "the search never takes custody of an already-suspended follow"
+            );
+        });
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            let focus = viewer
+                .label_input_focus
+                .clone()
+                .expect("the label focus handle exists");
+            window.focus(&focus, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                !viewer.follow_viewport,
+                "a manually suspended follow stays suspended after blur"
             );
         });
     }

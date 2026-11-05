@@ -1098,13 +1098,6 @@ fn is_index_entry(line: &str) -> bool {
     }
 }
 
-/// Classify a single page as boilerplate (title, TOC, index, copyright, blank)
-/// or content. Returns true if the page should be dropped.
-#[cfg(test)]
-fn is_boilerplate_page(page: &str) -> bool {
-    boilerplate_page_reason(page).is_some()
-}
-
 fn boilerplate_page_reason(page: &str) -> Option<&'static str> {
     let trimmed = page.trim();
     if trimmed.is_empty() {
@@ -1818,31 +1811,31 @@ mod tests {
     #[test]
     fn filter_drops_toc_pages() {
         let toc = "Contents\n\n1. Introduction          3\n2. Background             15\n3. Methods               27\n4. Results               42\n5. Discussion            58\n6. Conclusion            71";
-        assert!(is_boilerplate_page(toc));
+        assert!(boilerplate_page_reason(toc).is_some());
     }
 
     #[test]
     fn filter_drops_dot_leader_toc() {
         let toc = "1. Introduction........... 3\n2. Background.............. 15\n3. Methods................. 27\n4. Results................. 42";
-        assert!(is_boilerplate_page(toc));
+        assert!(boilerplate_page_reason(toc).is_some());
     }
 
     #[test]
     fn filter_drops_index_pages() {
         let index = "Index\n\nalgorithm, 42, 87, 103\nlambda calculus, 15, 22\ntype theory, 8, 34, 56\nsequent, 12, 45, 78\nturnstile, 3, 19";
-        assert!(is_boilerplate_page(index));
+        assert!(boilerplate_page_reason(index).is_some());
     }
 
     #[test]
     fn filter_keeps_content_pages() {
         let content = "This is a substantial paragraph of real academic content that discusses important concepts in formal logic and their application to natural language semantics. The author argues that ludics provides a framework for understanding meaning through interaction.";
-        assert!(!is_boilerplate_page(content));
+        assert!(boilerplate_page_reason(content).is_none());
     }
 
     #[test]
     fn filter_drops_title_pages() {
         let title = "Meaning, Logic and Ludics\n\nAlain Lecomte";
-        assert!(is_boilerplate_page(title));
+        assert!(boilerplate_page_reason(title).is_some());
     }
 
     /// expect: I can exclude front matter and a trailing bibliography from a
