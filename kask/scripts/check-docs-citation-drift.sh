@@ -5,7 +5,11 @@
 # reversing the 2026-10-31 unwiring. The hook runs this gate against
 # the PUSHED COMMIT via a git archive export: in export mode (no .git)
 # the @sym gate phase runs in full and the drift-window warning tier
-# degrades with a surfaced note. Baseline discipline: --refresh after
+# degrades with a surfaced note. Also in CI (kask-invariants.yml
+# citation-gates step, 2026-11-04 operator ratification) over the real
+# checkout, blocking tier only: drift-window warnings log, never
+# redden, and --refresh never runs there (pinning the audit point is
+# an operator action earned by an audit). Baseline discipline: --refresh after
 # a deep audit or re-anchoring pass, committed with the change that
 # earned it (the ratchet checks drift since the last pinned point).
 # Citation-drift ratchet — the standing detector for the semantic-drift rot

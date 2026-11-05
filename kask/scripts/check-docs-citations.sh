@@ -5,7 +5,10 @@
 # reversing the 2026-10-31 unwiring. The hook runs this gate against
 # the PUSHED COMMIT via a git archive export — the REPO_ROOT/find
 # export mode below is that wiring's requirement (a busy working tree
-# can neither block nor redden a push).
+# can neither block nor redden a push). Also in CI (kask-invariants.yml
+# citation-gates step, 2026-11-04 operator ratification): the same gate
+# over the real checkout, blocking tier only — warnings log, never
+# redden.
 # Docs-citation gate (the tree-sitter adoption proposal's UC-3 cleanup,
 # kask/docs/research/tree-sitter-adoption-proposal.md): every
 # `path.rs:line` citation in kask/docs resolves to a live file in the

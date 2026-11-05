@@ -23,7 +23,10 @@
 # reversing the 2026-10-31 unwiring, consistent with the sibling
 # citation gates. The hook runs this gate against the PUSHED COMMIT
 # via a git archive export; REPO_ROOT (from the hook) or
-# CODE_CITES_ROOT override the root.
+# CODE_CITES_ROOT override the root. Also in CI (kask-invariants.yml
+# citation-gates step, 2026-11-04 operator ratification): the same gate
+# over the real checkout, blocking tier only — warnings log, never
+# redden.
 #
 # Usage: bash kask/scripts/check-code-docs-citations.sh
 # Env:   CODE_CITES_ROOT — root override for the selftest (defaults to

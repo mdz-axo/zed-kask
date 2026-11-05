@@ -35,12 +35,16 @@
 #
 # What blocks a push, now and deliberately, is four things: rustfmt
 # drift and the three citation gates (docs citations, citation drift,
-# code->docs citations) in the pushed commits. Only rustfmt mirrors a CI
-# step; the three citation gates are stricter than CI — CI runs every
-# gate's selftest (the check-*-selftest.sh glob keeps a gate from
-# silently going vacuous), not the tree sweep, so the pre-push gate is
-# the only tree-wide citation enforcement and a red push never becomes
-# a wasted red CI run. Each runs
+# code->docs citations) in the pushed commits — all four mirroring CI
+# steps, so a red push never becomes a wasted red CI run. 2026-11-04
+# operator ratification: the citation-gates CI step (kask-invariants.yml)
+# runs the same three gates over the real checkout, blocking tier only —
+# warnings log, never redden, honoring the 2026-10-31 mandate's substance
+# while superseding its letter; --refresh never runs in CI, the audit
+# point is operator-earned. The hook remains the point-of-change
+# enforcement over the exact pushed sha; CI is the shared-record
+# backstop, and its selftest glob still keeps every gate from silently
+# going vacuous. Each runs
 # inside the export (cargo fmt needs no .git, verified 2026-10-31;
 # the citation gates' export mode verified 2026-11-02), so a busy
 # working tree can neither block nor redden a push: a push of sha S
