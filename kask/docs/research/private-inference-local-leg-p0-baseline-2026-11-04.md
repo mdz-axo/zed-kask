@@ -48,6 +48,20 @@ test; shard 2 at 33.2 GB and writing; shards 3–4 pending). Header-shard
 metadata parsed live at handoff: expert_count=512, expert_used=10,
 block_count=48, context_length=262144.
 
+**Storage relocation (2026-11-04, the two-root rule):** `~/models/` is
+retired — accreted sprawl from the P0 download gate, never a designed
+location. Models + measurements live in the visible artifacts root at
+`~/Documents/zk-data/private-inference/{models,measurements}/` (all
+seven weight files byte-verified at the new location); the engine
+install (clone + builds + scripts) lives in the hidden data root at
+`~/.local/share/zed-kask/private-inference/engine/`; the engine pin
+stays in-tree at `kask/registry/private-inference/`. The moved
+binaries' absolute RUNPATHs pointed at the retired location, so the
+three builds were rebuilt fresh at the canonical path (sccache-warm;
+the Vulkan build now links the system loader the operator's apt gate
+installed, not the pre-gate prefix fetch). Paths cited above are
+historical facts of the runs that produced them.
+
 ## 2. VRAM auto-detection (capability change, 2026-11-04)
 
 `HardwareInventory.vram: Option<VramSource>` —
@@ -122,9 +136,11 @@ The leg's build-dir binary is prefixed at hand-launch time (the plan's
 (2026-11-04): `--flash-attn` is now always explicit (`on`/`off`),
 replacing omit-when-false — both A/B legs must be emittable plans.
 
-Measurement harness (pinned 2026-11-04; v2 same day — see D6):
-`~/models/measure-leg.sh`, sha256
-`50e661492bff46e3287fd68c3eda3473923e02e7c81eb90cbdde2a819ae432d5`,
+Measurement harness (pinned 2026-11-04; v2 same day — see D6; v3 same
+day — the outdir relocated with the storage move):
+`~/Documents/zk-data/private-inference/measurements/measure-leg.sh`,
+sha256
+`a94225bb2d4a461d5b2805be33e4e64dbb65254a86192fb8b18af90ddf24df70`,
 `bash -n` clean. One call per leg: launches the emitted plan verbatim,
 polls `/health` (20-minute bound), captures the server banner + load
 report (the GPU-engagement evidence) + `/metrics`, then runs the fixed
