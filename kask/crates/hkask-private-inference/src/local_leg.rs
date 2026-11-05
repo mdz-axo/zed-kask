@@ -11,4 +11,5 @@
 pub mod gguf;
 pub mod launch;
 pub mod manifest;
+pub mod model_brief;
 pub mod placement;

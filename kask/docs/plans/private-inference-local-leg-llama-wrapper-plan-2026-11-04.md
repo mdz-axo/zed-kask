@@ -290,9 +290,34 @@ cache, pinned by two new tests (23 total green).
 
 ## 12. Open items for the operator
 
-1. **P0 approval** — the ~79 GB download is the only spend; everything else in P1 is
-   in-repo work against fixtures and a stub server.
+1. ~~**P0 approval**~~ — **COMPLETE 2026-11-04** (matrix ran, all four legs
+   measured, record §4 filled, fleet downloaded).
 2. **Step 7 checkpoint** — approve the P2 streaming experiment shape (pinned fork +
-   parity band) with streaming unroutable in v1 routing.
+   parity band) with streaming unroutable in v1 routing. **Deferred** — the
+   operator has not asked for it; the trigger stands.
 3. **Drift-watch ownership** — operator-triaged on each llama.cpp release, or delegated
    with typed escalation; the runbook (step 8) is written either way.
+
+## 13. Generalization (PI question 2026-11-04, post-matrix)
+
+The placement compiler is machine-adaptive by design (live hardware probe,
+guard arithmetic over detected numbers, fail-closed defaults). The honest
+three gaps the PI identified, now accepted as next slices:
+
+1. **Backend auto-detection is missing** — the probe finds amdgpu but the
+   policy hardcodes the HIP build. On a non-AMD machine the HIP build
+   doesn’t exist and the fallback is manual. Next slice: a `GpuBackend`
+   probe that tries HIP → Vulkan → CPU in order.
+2. **The VRAM walk covers only amdgpu sysfs** — on NVIDIA or Apple
+   Silicon, `probe_vram` returns `None` → `VramDenseFit` refuses →
+   CPU-only. Correct but suboptimal. Next slice: multi-vendor probe
+   (nvidia-smi path, unified-memory detection).
+3. **Per-model data (the PLE pin, expert counts, recommended KV) is
+   policy-hardcoded** — the pin `per_layer_token_embd=CPU` is correct for
+   Qwen3.8-Flash-Next but not for Gemma or Muse. Next slice: the **model
+   brief** (M9’s deterministic core) — a per-model TOML in the registry
+   carrying the pin pattern, expert metadata, recommended settings.
+
+**Implementation order (the next three slices):** model brief (M9)
+→ backend auto-detect → multi-vendor VRAM probe. Each is data-first
+(registry TOML + Rust decode home), test-gated, and fails closed.

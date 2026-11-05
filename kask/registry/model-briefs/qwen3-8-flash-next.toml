@@ -1,0 +1,42 @@
+# Model brief — Qwen3.8-Flash-Next (M9 deterministic core, 2026-11-04)
+#
+# Per-model metadata the placement compiler composes with the hardware
+# probe and the engine manifest. The GGUF parse supplies the tensor
+# structure; this brief supplies the model-level policy that the parse
+# cannot infer (the PLE pin pattern, the recommended KV type, the
+# streaming floor context).
+#
+# Sourced from: unsloth/Qwen3.8-Flash-Next-GGUF, verified live
+# 2026-11-04 (all four shards downloaded, GGUF parsed, matrix measured).
+
+model_id = "qwen3-8-flash-next"
+display_name = "Qwen3.8 Flash Next"
+
+[model]
+# Total parameters in the MoE (from the GGUF metadata).
+total_params = 125_000_000_000
+# Active parameters per token (from the GGUF metadata).
+active_params = 6_000_000_000
+# Routed experts (from the GGUF `expert_count`).
+expert_count = 512
+# Experts used per token (from the GGUF `expert_used_count`).
+expert_used_count = 10
+
+[placement]
+# The n-gram/PLE table tensor (28.8 GiB) stays on CPU while layers
+# offload. This is the tensor-name prefix that matches the PLE family
+# — confirmed by the live parse (1224 tensors) and the matrix.
+#
+# Other MoE models need different patterns:
+#   - Gemma 4 31B:   "model.layers.*.mlp.experts." (dense MoE, no PLE)
+#   - Muse Glimmer:   "model.layers.*.moe." (varies by architecture)
+#
+# The compiler emits `--override-tensor <pattern>=CPU`.
+ple_pin_pattern = "per_layer_token_embd"
+
+[recommendations]
+# The measured best on the matrix (§4): HIP + fa-on + KV q8_0
+# at 65536 context.
+kv_cache_type = "q8_0"
+flash_attn = true
+context_length = 65_536
