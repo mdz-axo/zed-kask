@@ -495,6 +495,28 @@ mod tests {
         assert!(manifest.flags.spec_draft_ngl.is_none());
     }
 
+    #[test]
+    fn byte_sum_overflow_is_a_typed_error_not_a_wrap() {
+        // The overflow invariant (the T5 not-formalizable class): every
+        // guard sum is checked — a u64 overflow refuses the constraint
+        // evaluation with a typed error, never a wrapped sum that could
+        // read as under-budget.
+        let constraint = Constraint::AvailableRamHeadroom {
+            headroom_factor: 0.15,
+        };
+        let env = ConstraintEnv {
+            kv_bytes_estimate: u64::MAX,
+            compute_bytes_estimate: 1,
+            ..ConstraintEnv::default()
+        };
+        let err = evaluate_constraint(&constraint, &env)
+            .expect_err("the anonymous byte sum must refuse on overflow");
+        assert!(
+            matches!(err, ManifestError::Constraint { ref constraint, .. } if constraint == "available_ram_headroom"),
+            "overflow must surface as the typed constraint error, got: {err}"
+        );
+    }
+
     const MANIFEST_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");
 

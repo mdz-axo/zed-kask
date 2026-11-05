@@ -418,7 +418,12 @@ pub fn compile_placement(
                 let used = offloadable
                     .saturating_add(kv_bytes_estimate)
                     .saturating_add(policy.compute_buffer_bytes);
-                vram.bytes().saturating_sub(used) >= spec.draft_bytes
+                // The exact routing predicate: the budget covers the used
+                // set AND the headroom covers the draft. The ordering
+                // makes the subtraction underflow-free, and the degenerate
+                // zero-byte draft never rides the GPU on a saturated
+                // headroom (the corner the T5 proof pins closed).
+                vram.bytes() >= used && vram.bytes() - used >= spec.draft_bytes
             }
             _ => false,
         };
@@ -976,5 +981,55 @@ mod tests {
             matches!(err, PlacementError::DraftBriefMissing(ref id) if id == "gemma-4-31b"),
             "refusal must name the brief without a draft spec, got: {err}"
         );
+    }
+
+    const ZERO_BYTE_DRAFT_BRIEF_TOML: &str = r#"
+model_id = "qwen3-8-flash-next"
+display_name = "Qwen3.8 Flash Next"
+
+[model]
+total_params = 125_000_000_000
+active_params = 6_000_000_000
+expert_count = 512
+expert_used_count = 10
+
+[placement]
+ple_pin_pattern = "per_layer_token_embd"
+
+[recommendations]
+kv_cache_type = "q8_0"
+flash_attn = true
+context_length = 65_536
+
+[draft]
+module_file = "MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+spec_type = "draft-mtp"
+draft_n_max = 2
+draft_bytes = 0
+"#;
+
+    #[test]
+    fn zero_byte_draft_never_rides_a_saturated_headroom() {
+        // The degenerate corner the exact routing predicate closes: a
+        // zero-byte draft with an over-budget used set (offloadable 6.9 +
+        // kv 0.5 + compute 4.29 GiB > the 7.5 GB card) — the headroom is
+        // saturated, so the draft routes to CPU even though draft_bytes
+        // is zero; the base plan still fits and emits with -ngld 0.
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let brief =
+            ModelBrief::decode(ZERO_BYTE_DRAFT_BRIEF_TOML).expect("zero-byte-draft brief decodes");
+        let (_dir, model_path) = draft_dir();
+        let plan = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(7_500_000_000),
+            &brief,
+            &draft_policy(),
+            &manifest,
+        )
+        .expect("the base plan fits; the draft rides CPU");
+        let rendered = plan.to_string();
+        assert!(rendered.contains("--spec-draft-ngl 0"));
+        assert!(!rendered.contains("--spec-draft-ngl 999"));
     }
 }
