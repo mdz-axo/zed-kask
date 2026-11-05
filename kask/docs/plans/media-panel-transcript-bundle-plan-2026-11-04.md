@@ -178,9 +178,10 @@ with highlight/cut marks).
 
 **Landed:** S3 complete 2026-11-04 — the core (search state, debounced rescan,
 reveal jump, header input, match marks, seven pins) landed inside the
-private-inference stream's `593bfe07e2` (swept by a `git add -A` while the S3
-work sat uncommitted mid-debug — the shared-tree hazard, recorded here for
-attribution), the final tail in `a23af25a8d`. Pins:
+census stream's `b01e4a168b` ("Delete the test-only orphans the
+three-family census surfaced", pushed to origin/main — swept by a `git add
+-A` while the S3 work sat uncommitted mid-debug; the shared-tree hazard,
+recorded here for attribution), the final tail in `a23af25a8d`. Pins:
 `transcript_search_matches_orders_maps_and_edges`,
 `transcript_search_status_counts_zero_and_degrades`,
 `search_marks_compose_with_highlight_and_strike_overlays`,
