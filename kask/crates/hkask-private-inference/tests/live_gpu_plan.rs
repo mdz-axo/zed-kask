@@ -72,6 +72,12 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
     // The measured GPU placement (work order phase 4): dense/attention/KV on
     // the dGPU, routed experts resident in RAM. `cpu_moe` is already true.
     policy.n_gpu_layers = 999;
+    // This model's dense class carries per-layer token embedding tables
+    // (the PLE class): without the pin the guard correctly refuses — the
+    // dense class alone exceeds the 8.57 GB budget. The launcher sets the
+    // pin for models that carry them; it stays model-specific, never a
+    // policy default (an unmatched pattern would emit a dead flag).
+    policy.pin_to_cpu = Some("per_layer_token_embd".into());
 
     // Shard 1 is the metadata-only header shard; llama.cpp discovers the
     // split set from the `-00001-of-00004` naming convention.

@@ -195,10 +195,18 @@ impl Default for PlacementPolicy {
             kv_cache_type: "q8_0".into(),
             flash_attn: true,
             cpu_moe: true,
+            // Model-specific in the caller, never defaulted: an unmatched
+            // pattern would emit a dead `--override-tensor` on models
+            // without the tensors it names (Flint, Gemma 4). The PLE pin
+            // is set by the launcher for models that carry per-layer
+            // embeddings (baseline record §4).
             pin_to_cpu: None,
-            // v1 P0 runs the CPU-only build; the GPU tier lands with
-            // Vulkan/HIP (plan §11).
-            n_gpu_layers: 0,
+            // Measured 2026-11-04 (baseline record §4/§5): the GPU tier
+            // serves this machine 13.0–15.0 tok/s (HIP) / 10.1–11.5
+            // (Vulkan) vs 7.4–8.3 CPU-only — the §11 recommendation
+            // from the matrix, not an estimate. Fail-closed: a machine
+            // without detectable VRAM is refused by `vram_dense_fit`.
+            n_gpu_layers: 999,
             threads: 12,
             host: "127.0.0.1".into(),
             port: 8010,
@@ -338,17 +346,21 @@ mod tests {
     #[test]
     fn cpu_plan_passes_guards_and_renders_the_command_line() {
         let manifest = decode(MANIFEST_TOML).expect("manifest");
+        // The CPU control is an explicit policy since the default became
+        // the measured GPU tier (2026-11-04 matrix, baseline record §5).
+        let mut policy = PlacementPolicy::default();
+        policy.n_gpu_layers = 0;
         let plan = compile_placement(
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &test_hw(),
-            &PlacementPolicy::default(),
+            &policy,
             &manifest,
         )
         .expect("healthy CPU plan compiles");
         let rendered = plan.to_string();
         assert!(rendered.starts_with("llama-server --model"));
-        // No GPU tier on the P0 policy: no -ngl, no --cpu-moe.
+        // No GPU tier on the control policy: no -ngl, no --cpu-moe.
         assert!(!rendered.contains("-ngl"));
         assert!(!rendered.contains("--cpu-moe"));
         assert!(rendered.contains("--ctx-size 65536"));
@@ -384,6 +396,7 @@ mod tests {
     fn flash_attn_off_renders_the_explicit_off_spelling() {
         let manifest = decode(MANIFEST_TOML).expect("manifest");
         let mut policy = PlacementPolicy::default();
+        policy.n_gpu_layers = 0; // CPU control shape: the off spelling, not the GPU tier
         policy.flash_attn = false;
         let plan = compile_placement(
             PathBuf::from("/models/test.gguf"),
@@ -419,6 +432,7 @@ mod tests {
     fn guard_denies_oversized_anonymous_bytes() {
         let manifest = decode(MANIFEST_TOML).expect("manifest");
         let mut policy = PlacementPolicy::default();
+        policy.n_gpu_layers = 0; // the anonymous-class guard on a CPU plan
         // 65_536 tokens × 1 MiB/token ≈ 64 GiB of KV — far beyond the
         // 72 GB × 0.85 budget: the H4 anonymous class trips.
         policy.kv_bytes_per_token = 1 << 20;

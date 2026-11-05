@@ -1,5 +1,6 @@
-# L1 engine-surface manifest — llama.cpp mainline, the CPU-only P0
-# surface (plan §11). The flag spellings and constraint parameters below
+# L1 engine-surface manifest — llama.cpp mainline at 9e2a04a, the P0
+# surface: CPU control + the measured GPU tier (Vulkan/HIP, plan §11,
+# baseline record §4/§5). The flag spellings and constraint parameters below
 # are the drift layer: a llama.cpp release that renames flags or changes
 # constraint semantics is absorbed HERE, plus fixture updates — zero Rust
 # changes (hypothesis H2). The startup probe refuses engine builds older
@@ -7,7 +8,7 @@
 # manifest is never trusted alone).
 
 surface_id = "llama-cpp-mainline-cpu-p0"
-engine_version_pin = "v0.9.0-era mainline (commit recorded in the P0 baseline)"
+engine_version_pin = "v0.9.0-dev mainline, commit 9e2a04a — builds: CPU (build/), Vulkan (build-vulkan/), HIP gfx1102 (build-hip/)"
 
 # --- flags: intent -> concrete spellings for THIS pinned build. The KV
 # cache-type intent carries TWO spellings: v0.9.0-dev (commit 9e2a04a)

@@ -269,7 +269,13 @@ Kata PDCA (step 4): *next step* — run P0. *prediction* — decode lands in the
 band (anchors: machine-D CPU-only 9.3 on IQ2_XS; M4 Max streaming 26 on the same
 model+quant). *measurement method* — llama-server timing logs, fixed prompt suite,
 `volumedetect`-style environment noted. *when to check* — at the P0 run.
-`metric_after`: **pending_check** — never filled from a plan.
+`metric_after`: **measured 2026-11-04, P0 run complete.** CPU control decode
+**7.4–8.3 tok/s** (200-token runs ×2, temperature 0, threads 12; agent-turn 256 tok
+30.4–35.0 s) — the 9–20 prediction is **missed at the floor** on the CPU leg: the
+machine-D anchor overestimated this CPU path by ~1.5 tok/s; recorded as a miss,
+not smoothed. The GPU tier lands in-band and above it: Vulkan 10.1–11.5, HIP
+**13.0–15.0 tok/s** (agent-turn 18.4–21.5 s). Full method + raw numbers and the
+engagement evidence: baseline record §4.
 
 ## 12. Open items for the operator
 
