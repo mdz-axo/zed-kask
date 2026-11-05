@@ -18,7 +18,8 @@ use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, VramSource, compile_placement, probe_hardware,
 };
 
-mod common;
+#[path = "common/shards.rs"]
+mod shards;
 
 const MANIFEST_TOML: &str =
     include_str!("../../../registry/private-inference/llama-cpp-mainline.toml");
@@ -30,7 +31,7 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
         eprintln!("HKASK_P0_LIVE_PLAN unset; skipping the live GPU plan compile");
         return;
     }
-    let Some(paths) = common::p0_shard_paths() else {
+    let Some(paths) = shards::p0_shard_paths() else {
         panic!(
             "HKASK_P0_LIVE_PLAN set but HKASK_P0_GGUF_DIR unset: \
                 the plan compile needs the real tensor accounting"

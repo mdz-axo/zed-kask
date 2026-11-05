@@ -14,12 +14,13 @@ use std::path::PathBuf;
 
 use hkask_private_inference::local_leg::gguf::{self, GgufError};
 
-mod common;
+#[path = "common/shards.rs"]
+mod shards;
 
 #[test]
 #[ignore]
 fn parses_real_qwen38_flash_next_shard_headers() {
-    let Some(paths) = common::p0_shard_paths() else {
+    let Some(paths) = shards::p0_shard_paths() else {
         eprintln!("HKASK_P0_GGUF_DIR unset; skipping the live shard parse");
         return;
     };

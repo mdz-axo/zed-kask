@@ -19,7 +19,8 @@ use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, compile_placement, probe_hardware,
 };
 
-mod common;
+#[path = "common/shards.rs"]
+mod shards;
 
 const MANIFEST_TOML: &str =
     include_str!("../../../registry/private-inference/llama-cpp-mainline.toml");
@@ -27,7 +28,7 @@ const MANIFEST_TOML: &str =
 #[test]
 #[ignore]
 fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
-    let Some(paths) = common::p0_shard_paths() else {
+    let Some(paths) = shards::p0_shard_paths() else {
         eprintln!("HKASK_P0_GGUF_DIR unset; skipping plan emission");
         return;
     };
