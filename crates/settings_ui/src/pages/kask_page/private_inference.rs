@@ -2,8 +2,9 @@
 //! private local leg (M7/Seam B): the `openai_compatible` provider id
 //! the leg registers under, the loopback endpoint, the endpoint token
 //! (at the provider `api_url` keychain slot — the same slot zed's
-//! `ApiKeyState` reads), and the Register action that writes the M3
-//! configured-instance entry.
+//! `ApiKeyState` reads), the Register action that writes the M3
+//! configured-instance entry, and the Serving section — the P1
+//! supervisor's launch/stop surface.
 
 use super::*;
 use language_model::{LanguageModelProviderId, LanguageModelRegistry};
@@ -260,6 +261,97 @@ pub(crate) fn render_private_inference_page(
                 )
                 .child(register_button),
         )
+        .child(Divider::horizontal())
+        .child({
+            // The Serving section — the P1 supervisor's zed-side surface
+            // (slice plan step 8): the live status line, one Launch
+            // button per shipped fleet model, and Stop when serving. The
+            // supervisor handle is cheap; status() is a snapshot read,
+            // never HTTP — the refresh happens through the actions'
+            // `cx.refresh_windows()`.
+            use kask_bridge::private_inference_supervisor::StatusSnapshot;
+
+            let supervisor = kask_bridge::private_inference_supervisor::supervisor();
+            let status = supervisor.status();
+            let fleet = kask_bridge::private_inference_supervisor::fleet_cards();
+            let outcome = kask_bridge::private_inference_supervisor::last_action_outcome();
+
+            let status_line = match &status {
+                StatusSnapshot::Stopped => {
+                    "Stopped — no private-leg server is running.".to_string()
+                }
+                StatusSnapshot::Serving {
+                    model_id,
+                    endpoint,
+                    adopted,
+                } => format!(
+                    "Serving {model_id} at {endpoint}{}",
+                    if *adopted {
+                        " (adopted — no reload)"
+                    } else {
+                        ""
+                    }
+                ),
+                StatusSnapshot::Failed { reason } => {
+                    format!("Failed — {reason} (no restart: relaunch explicitly)")
+                }
+            };
+
+            let launch_buttons = fleet.iter().map(|(model_id, display)| {
+                let model_id = model_id.clone();
+                let serving_this = matches!(
+                    &status,
+                    StatusSnapshot::Serving {
+                        model_id: serving,
+                        ..
+                    } if serving == &model_id
+                );
+                Button::new(
+                    SharedString::from(format!("kask-private-inference-launch-{model_id}")),
+                    format!("Launch {display}"),
+                )
+                .style(ButtonStyle::Subtle)
+                .label_size(LabelSize::Small)
+                .disabled(serving_this)
+                .on_click(move |_, _, cx| {
+                    kask_bridge::private_inference_supervisor::launch_private_model(
+                        model_id.clone(),
+                        cx,
+                    )
+                })
+            });
+
+            let stop_button = matches!(status, StatusSnapshot::Serving { .. }).then(|| {
+                Button::new("kask-private-inference-stop", "Stop Server")
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .on_click(|_, _, cx| {
+                        kask_bridge::private_inference_supervisor::stop_private_model(cx)
+                    })
+            });
+
+            v_flex()
+                .gap_1()
+                .child(Label::new("Serving"))
+                .child(
+                    Label::new(status_line)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .when_some(outcome, |this, outcome| {
+                    this.child(
+                        Label::new(format!("Last action: {outcome}"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .children(launch_buttons)
+                        .when_some(stop_button, |this, button| this.child(button)),
+                )
+        })
         .into_any_element()
 }
 
@@ -312,5 +404,18 @@ mod tests {
     fn register_action_routes_through_the_bridge_emission() {
         let page = include_str!("private_inference.rs");
         assert!(page.contains("kask_bridge::private_inference::apply_provider_entry"));
+    }
+
+    /// The Serving section routes through the bridge supervisor
+    /// actions and reads the bridge's state — never a direct spawn or
+    /// an HTTP poll on render (D-S6).
+    #[test]
+    fn serving_section_routes_through_the_bridge_supervisor() {
+        let page = include_str!("private_inference.rs");
+        assert!(page.contains("launch_private_model"));
+        assert!(page.contains("stop_private_model"));
+        assert!(page.contains("fleet_cards"));
+        assert!(page.contains("supervisor().status()"));
+        assert!(page.contains("last_action_outcome"));
     }
 }

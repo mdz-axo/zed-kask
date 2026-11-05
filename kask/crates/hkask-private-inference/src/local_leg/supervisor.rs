@@ -207,16 +207,17 @@ struct WatchHandle {
 
 impl Supervisor {
     /// The full production launch: prepare (resolve, parse, probe,
-    /// compile) then spawn.
-    pub async fn launch(&self, config: &LaunchConfig) -> Result<ServingSnapshot, SupervisionError> {
-        let prepared = prepare_launch(config)?;
+    /// compile) then spawn. Takes the config BY VALUE — the returned
+    /// future owns its data (the bridge hands it to `Tokio::spawn`).
+    pub async fn launch(&self, config: LaunchConfig) -> Result<ServingSnapshot, SupervisionError> {
+        let prepared = prepare_launch(&config)?;
         self.launch_prepared(config, &prepared).await
     }
 
     /// Spawn over a prepared launch — the seam the stub tests use.
     pub async fn launch_prepared(
         &self,
-        config: &LaunchConfig,
+        config: LaunchConfig,
         prepared: &PreparedLaunch,
     ) -> Result<ServingSnapshot, SupervisionError> {
         let token = config
@@ -254,7 +255,7 @@ impl Supervisor {
         // matching model + digest + endpoint, healthy probe) — D-S3.
         if tcp_connectable(&prepared.plan.host, prepared.plan.port).await {
             return self
-                .adopt_or_refuse(config, prepared, &record_path, &endpoint, &digest)
+                .adopt_or_refuse(&config, prepared, &record_path, &endpoint, &digest)
                 .await;
         }
 
@@ -334,7 +335,7 @@ impl Supervisor {
             health_url,
             record_path.clone(),
             key_path.clone(),
-            record.clone(),
+            record,
             Some(child),
         );
 
@@ -632,8 +633,10 @@ mod tests {
         assert_eq!(a, plan_digest(&plan, "qwen3-8-flash-next"), "stable");
         // A different model never adopts the same record.
         assert_ne!(a, plan_digest(&plan, "gemma-4-31b"));
-        // A different policy (port) never adopts either.
-        let mut other = plan.clone();
+        // A different policy (port) never adopts either (the digest
+        // hashes the endpoint fields explicitly — the plan's Display
+        // alone misses host/port).
+        let mut other = plan;
         other.port = 8011;
         assert_ne!(a, plan_digest(&other, "qwen3-8-flash-next"));
     }

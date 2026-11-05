@@ -443,11 +443,23 @@ the token (the leg is a core service, not an MCP server), so there is no
 MCP restart nudge on its writes. Changing host or port moves the token's
 keychain slot — re-enter the token at the new endpoint.
 
-The supervisor that launches llama-server from emitted placement plans
-(the P1 wrapper) is the companion seam: until it lands, the endpoint is
-unresponsive and inference attempts against the private models fail with
-a connection error — the cards surface the fleet, the wrapper will serve
-it.
+The Serving section (landed with the P1 supervisor) is the launch
+surface: one Launch button per shipped fleet model and Stop when
+serving. Launch runs the full production path — fleet resolve → real
+shard parse → live hardware probe → guard-verified compile → startup
+probe against the installed binary (`--version`/`--help` vs the
+manifest pin: exact-commit refusal, D-S2) → spawn (plan args + `--alias
+model_id` + `--api-key-file`) → health-poll to the measured 20-minute
+bound. An occupied policy port adopts only a VERIFIED launch record
+(live pid + digest + endpoint + health; D-S3); anything less is a
+typed refusal naming the holder. One serving instance at a time —
+launching a different model while one serves is a typed refusal, never
+a silent swap; death surfaces as a typed Failed within one poll
+interval, never a silent Serving, and the supervisor never restarts on
+its own (the restart policy is operator-owned). The measured live
+launch (2026-11-04, HIP backend, warm cache): serving in 8s,
+`/v1/models` listing exactly the card name, a 28-token completion, clean
+stop in 13s wall (`tests/live_supervisor.rs`, `HKASK_P1_LIVE=1`).
 
 ## Keychain Architecture
 

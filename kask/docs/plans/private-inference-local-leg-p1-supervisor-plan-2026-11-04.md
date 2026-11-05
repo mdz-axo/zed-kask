@@ -3,7 +3,7 @@ title: "Private-inference local leg — P1 supervisor slice design (draft for PI
 audience: [architects, developers, operators, agents]
 last_updated: "2026-11-04"
 version: "0.1.0"
-status: "Proposed — drafted against the committed local-leg plan (§5 L4, §11 P1) and the landed M7/Seam-B settings surface (98499104aa); implementation is a separate engagement — nothing here is built or claimed built"
+status: "Active — implemented 2026-11-04 (steps 1-8 plus the live server-side launch; the agent-panel turn is the remaining operator checkpoint) — see the implementation record §12"
 domain: "Private inference / core shared service"
 mds_categories: [domain, composition, trust, lifecycle]
 ---
@@ -294,3 +294,55 @@ per-step.
    adopt-iff (the measured 20-minute load bound is the argument).
 4. **Live-launch checkpoint (step 9) ownership** — operator-run or
    delegated with the launch bound recorded.
+
+## 12. Implementation record (2026-11-04, the same day — the approved draft executed)
+
+Steps 1–8 landed and step 9's server-side half ran live, same day.
+Attribution: the core-crate work (steps 1–7) was swept into the
+concurrent stream's commit `593bfe07e2` while its gates were being
+re-run (the shared-tree `git add -A` instance the `.rules` records —
+the work landed intact under a faithful message); the zed-side surface
+(step 8), the gate-driven refinements and this record landed in the
+follow-up commit.
+
+**Rulings executed as proposed:** D-S2 (exact-commit refusal — the
+manifest gained the structured `[version_pin]`; the probe refuses any
+other commit, newer included), D-S3 (adopt-iff-verified — liveness +
+digest + endpoint + health, never the file), D-S4 (one serving
+instance; `ServingOtherModel` is a typed refusal), D-S5 (in-editor
+tokio via `gpui_tokio::Tokio::spawn`; the child outlives the editor),
+D-S1 (`--api-key-file`, 0600 under the hidden root).
+
+**Step outcomes:** 1 — the dead `probe_backend` repaired
+(`engine_root()` via `resolve_under_data_dir`; the HIP build found live
+at the canonical root — the defect's counter-evidence); 2–3 — the
+manifest carries `alias`/`api_key_file`, `[version_pin]`, `[probe]` +
+the embedded `shipped_manifest()` home; 4 — the fleet `local_paths`
+layer (fail-closed resolution); 5 — `probe.rs` with the
+identifier-boundary flag match (the extension-rename drift class,
+found by the probe's own falsifier); 6–7 — the supervisor + the
+stub-llama-server fixture (`--features test-fixture --test-threads=1`,
+8/8); 8 — `kask_bridge::private_inference_supervisor` + the page's
+Serving section.
+
+**Step 9 (server-side), measured 2026-11-04:** the full production
+path on the real machine — HIP backend at the canonical root, serving
+in **8s** (warm cache; the 20-minute bound held with ~150× headroom,
+cold-start measured 35s on the first run), `/v1/models` listing exactly
+`qwen3-8-flash-next` (the alias identity — the served name IS the card
+name), a 28-token completion (`content="OK"`, reasoning present),
+clean stop with the record and token removed, 13s total wall
+(`tests/live_supervisor.rs`, `HKASK_P1_LIVE=1`).
+
+**Hypotheses adjudicated:** H-P1.1 corroborated (the wrong-commit and
+dropped-flag stubs both refuse, naming both commits / the exact
+missing spellings); H-P1.2 corroborated (a killed stub surfaces as a
+typed `Failed` within one poll interval); H-P1.3 corroborated (the
+foreign holder is refused naming "no launch record"; the verified
+record is adopted and stopped by pid); H-P1.4 not adjudicated at the
+spawn boundary this slice (no live launch reached a runtime abort —
+every guard passed; the falsifier stands armed for the first refusal).
+
+**Remaining operator checkpoint:** the agent-panel turn — select the
+private model in the panel's model picker (after the page's Register)
+and run one turn; that GUI leg is the operator's, per §11 item 4.

@@ -37,8 +37,11 @@ fn main() {
 
     let mut host = "127.0.0.1".to_string();
     let mut port: u16 = 8010;
-    let mut emit_version = "stub-version".to_string();
-    let mut emit_commit = "stub-commit".to_string();
+    // The fixture DEFAULTS mirror the pinned surface (the shipped
+    // manifest's [version_pin]) so a direct-use stub answers the probe;
+    // misbehavior is injected per test via the --stub-emit-* overrides.
+    let mut emit_version = "0.9.0-dev".to_string();
+    let mut emit_commit = "9e2a04a".to_string();
     let mut drop_flags: Vec<String> = Vec::new();
     let mut exit_after_secs: Option<u64> = None;
     let mut mode = "serve";

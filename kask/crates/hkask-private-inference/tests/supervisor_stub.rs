@@ -108,8 +108,15 @@ fn config(state_dir: &Path, binary: &Path, api_key: Option<&str>) -> LaunchConfi
     }
 }
 
-fn wait_for_status(supervisor: &Supervisor, secs: u64, wanted: impl Fn(&StatusSnapshot) -> bool) {
+async fn wait_for_status(
+    supervisor: &Supervisor,
+    secs: u64,
+    wanted: impl Fn(&StatusSnapshot) -> bool,
+) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    // Async sleep — the watch task shares the (multi-thread) runtime;
+    // a blocking sync loop here would starve it on a current-thread
+    // runtime (found live: the death test never observed the flip).
     loop {
         if wanted(&supervisor.status()) {
             return;
@@ -119,11 +126,11 @@ fn wait_for_status(supervisor: &Supervisor, secs: u64, wanted: impl Fn(&StatusSn
             "status never reached the wanted state: {:?}",
             supervisor.status()
         );
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn launch_reaches_healthy_writes_state_and_stop_drains() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
@@ -132,7 +139,7 @@ async fn launch_reaches_healthy_writes_state_and_stop_drains() {
     let config = config(state.path(), Path::new(STUB), Some("the-token"));
 
     let serving = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect("the stub launches and reaches healthy");
     assert!(!serving.adopted);
@@ -172,7 +179,7 @@ async fn launch_reaches_healthy_writes_state_and_stop_drains() {
     assert!(rebound.is_ok(), "the stub stopped listening after drain");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_wrong_commit_stub_is_refused_by_the_probe_and_writes_no_state() {
     let state = tempfile::tempdir().expect("state dir");
     let wrappers = tempfile::tempdir().expect("wrapper dir");
@@ -187,7 +194,7 @@ async fn a_wrong_commit_stub_is_refused_by_the_probe_and_writes_no_state() {
     let config = config(state.path(), &binary, Some("tok"));
 
     let err = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect_err("a wrong-commit binary must be refused");
     match err {
@@ -206,7 +213,7 @@ async fn a_wrong_commit_stub_is_refused_by_the_probe_and_writes_no_state() {
     assert_eq!(supervisor.status(), StatusSnapshot::Stopped);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dropped_flag_stub_is_refused_naming_the_missing_flag() {
     let state = tempfile::tempdir().expect("state dir");
     let wrappers = tempfile::tempdir().expect("wrapper dir");
@@ -221,7 +228,7 @@ async fn a_dropped_flag_stub_is_refused_naming_the_missing_flag() {
     let config = config(state.path(), &binary, Some("tok"));
 
     let err = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect_err("a binary missing a required spelling must be refused");
     match err {
@@ -234,7 +241,7 @@ async fn a_dropped_flag_stub_is_refused_naming_the_missing_flag() {
     assert_eq!(supervisor.status(), StatusSnapshot::Stopped);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_missing_or_blank_token_is_a_typed_refusal() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
@@ -244,7 +251,7 @@ async fn a_missing_or_blank_token_is_a_typed_refusal() {
     for token in [None, Some("   ")] {
         let config = config(state.path(), Path::new(STUB), token);
         let err = supervisor
-            .launch_prepared(&config, &prepared)
+            .launch_prepared(config.clone(), &prepared)
             .await
             .expect_err("no token, no launch");
         assert!(matches!(err, SupervisionError::TokenMissing), "{err:?}");
@@ -252,7 +259,7 @@ async fn a_missing_or_blank_token_is_a_typed_refusal() {
     assert_eq!(supervisor.status(), StatusSnapshot::Stopped);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_dead_stub_surfaces_as_a_typed_failure_within_the_poll_interval() {
     let state = tempfile::tempdir().expect("state dir");
     let wrappers = tempfile::tempdir().expect("wrapper dir");
@@ -263,7 +270,7 @@ async fn a_dead_stub_surfaces_as_a_typed_failure_within_the_poll_interval() {
     let config = config(state.path(), &binary, Some("tok"));
 
     let serving = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect("the stub is healthy before it dies");
     assert!(!serving.adopted);
@@ -272,7 +279,8 @@ async fn a_dead_stub_surfaces_as_a_typed_failure_within_the_poll_interval() {
     // never a silent Serving.
     wait_for_status(&supervisor, 10, |status| {
         matches!(status, StatusSnapshot::Failed { .. })
-    });
+    })
+    .await;
     match supervisor.status() {
         StatusSnapshot::Failed { reason } => assert!(reason.contains("exited"), "{reason}"),
         other => panic!("expected a typed failure, got {other:?}"),
@@ -282,7 +290,7 @@ async fn a_dead_stub_surfaces_as_a_typed_failure_within_the_poll_interval() {
     assert!(!state.path().join("llama-server.key").exists());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_foreign_port_holder_is_refused_not_adopted() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
@@ -291,15 +299,15 @@ async fn a_foreign_port_holder_is_refused_not_adopted() {
 
     // A raw stub holds the port with NO launch record — the holder the
     // supervisor cannot verify as its own (H-P1.3's foreign arm).
-    let mut foreign = std::process::Command::new(STUB)
+    let mut foreign = tokio::process::Command::new(STUB)
         .args(["--port", &port.to_string()])
         .spawn()
         .expect("spawn the foreign stub");
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     let config = config(state.path(), Path::new(STUB), Some("tok"));
     let err = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect_err("an unverified holder is refused, never adopted");
     match err {
@@ -310,11 +318,11 @@ async fn a_foreign_port_holder_is_refused_not_adopted() {
     }
     assert_eq!(supervisor.status(), StatusSnapshot::Stopped);
 
-    let _ = foreign.kill();
-    let _ = foreign.wait();
+    let _ = foreign.start_kill();
+    let _ = foreign.wait().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_matching_live_server_is_adopted_and_stopped_by_pid() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
@@ -325,13 +333,13 @@ async fn a_matching_live_server_is_adopted_and_stopped_by_pid() {
     // adoption: verified liveness + digest + health, never the file alone.
     let a = Supervisor::default();
     let config = config(state.path(), Path::new(STUB), Some("tok"));
-    a.launch_prepared(&config, &prepared)
+    a.launch_prepared(config.clone(), &prepared)
         .await
         .expect("session A launches");
 
     let b = Supervisor::default();
     let adopted = b
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect("session B adopts the verified live server");
     assert!(
@@ -352,10 +360,11 @@ async fn a_matching_live_server_is_adopted_and_stopped_by_pid() {
             status,
             StatusSnapshot::Failed { .. } | StatusSnapshot::Stopped
         )
-    });
+    })
+    .await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_different_model_while_serving_is_a_typed_refusal_never_a_swap() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
@@ -363,13 +372,13 @@ async fn a_different_model_while_serving_is_a_typed_refusal_never_a_swap() {
     let supervisor = Supervisor::default();
     let mut config = config(state.path(), Path::new(STUB), Some("tok"));
     supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect("gemma serves");
 
     config.model_id = "qwen3-8-flash-next".into();
     let err = supervisor
-        .launch_prepared(&config, &prepared)
+        .launch_prepared(config.clone(), &prepared)
         .await
         .expect_err("a different model never swaps silently");
     match err {
