@@ -122,8 +122,9 @@ The leg's build-dir binary is prefixed at hand-launch time (the plan's
 (2026-11-04): `--flash-attn` is now always explicit (`on`/`off`),
 replacing omit-when-false — both A/B legs must be emittable plans.
 
-Measurement harness (pinned 2026-11-04): `~/models/measure-leg.sh`,
-sha256 `7db74fa1ccb0dc92f995faf791ad6b62cc11e79625c7797c6c03cefdf0e41869`,
+Measurement harness (pinned 2026-11-04; v2 same day — see D6):
+`~/models/measure-leg.sh`, sha256
+`50e661492bff46e3287fd68c3eda3473923e02e7c81eb90cbdde2a819ae432d5`,
 `bash -n` clean. One call per leg: launches the emitted plan verbatim,
 polls `/health` (20-minute bound), captures the server banner + load
 report (the GPU-engagement evidence) + `/metrics`, then runs the fixed
@@ -183,6 +184,39 @@ Deviations and harness limits, recorded:
 - **D4:** the server provisions `n_slots=4` at `n_ctx_slot=65536` —
   noted, not adapted (identical across legs, so comparisons hold).
 
+### Cross-model confirmation — Flint (2026-11-04, same method)
+
+The operator's finding — HIP fastest for serving on this machine —
+confirmed on a second model to rule out a single-model artifact:
+Flint UD-Q4_K_XL (39.8B MoE / ~2.5B active, Q4; 779 tensors,
+`expert_bytes=21.47 GiB`, `dense_bytes=1.86 GiB` — no PLE class, so
+its plans emit without the pin; the emit instrument is now
+model-aware — it pins only when the parse finds matching non-expert
+tensors, fixing the dead `--override-tensor` the first Flint emission
+carried; the Qwen plans are unchanged, regression-verified).
+
+| leg | decode tok/s (r1/r2, 200 tok) | agent-turn s (r1/r2, 256 tok) | cold prefill s (r1) | VmRSS |
+|---|---|---|---|---|
+| a — CPU control | 22.7 / 23.1 | 12.7 / 11.5 | 31.9 | 26.8 GB |
+| b — Vulkan `-fa on` | 21.2 / 25.6 | 12.1 / 9.9 | 16.9 | 24.5 GB |
+| d — HIP `-fa on` | **23.2 / 30.7** | **9.4 / 7.9** | **10.3** | 24.9 GB |
+
+HIP is fastest on every metric on both fleet models — decode (Qwen
+13.0–15.0 vs Vulkan 10.1–12.1 and CPU 7.4–8.3; Flint 23.2–30.7 vs
+21.2–25.6 and 22.7–23.1), agent-turn, and cold prefill. **Finding
+confirmed cross-model.**
+
+Additional deviations:
+
+- **D6 (harness, fixed in v2):** the load-report grep aborted the leg
+  under `set -euo pipefail` when the CPU build logged nothing matching
+  (observed live on flint-a); v2 tolerates zero matches.
+- **D7 (model-architecture FA gap):** on Flint, BOTH backends log
+  `Flash Attention over K/V rows ... not supported, set to disabled` —
+  the `-fa on` flag is accepted but the fused FA op does not engage on
+  this architecture (unlike Qwen, where FA engaged and mattered for KV
+  quantization). HIP's Flint win is therefore FA-independent.
+
 The `-fa on/off` A/B on gfx1102 is load-bearing, not optional: Vulkan
 flash-attention shipped 2026 validated on gfx1100, with third-party
 degradation reports for gfx1102 — the recommendation must be measured.
@@ -195,6 +229,16 @@ for this machine.** HIP serves 13.0–15.0 tok/s decode (agent-turn
 Vulkan 10.1–11.5 tok/s; CPU control 7.4–8.3. `-fa on` is recommended:
 throughput tie with `-fa off` on gfx1102, required for quantized V
 cache, ~47% KV-VRAM cut, no degradation observed at ctx 65536.
+
+**Primary serving backend: HIP** — confirmed cross-model (§4 matrix +
+§4 cross-model confirmation): fastest on every metric on both fleet
+models. Execution adjusts accordingly: the fleet serves through
+`build-hip/bin/llama-server`; the Vulkan build is the fallback backend
+and serves the exploratory iGPU axis (Vulkan1); the CPU build remains
+the control. The wrapper's launcher (P1) prefers the HIP binary by
+default — the plan's `binary` stays the manifest's backend-agnostic
+`llama-server` (backend choice is launcher policy, not compiler
+policy, by the L1/L3 drift split).
 
 Landed with the measurement (phase 5): `PlacementPolicy::default()`
 carries `n_gpu_layers: 999` (the measured tier; fail-closed where VRAM

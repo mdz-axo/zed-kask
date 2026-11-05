@@ -256,6 +256,10 @@ not a v1 decision); swap pressure (headroom factor in the guard).
   A/B `-fa` on the gfx1102. Record decode/prefill/TTFT/agent-turn on a fixed private-
   workload prompt suite.
 - **P1 — v1 wrapper (steps 2–6).** The four-layer stack, tests-first at each seam.
+  Launcher backend policy (measured 2026-11-04, baseline record §5): prefer
+  the HIP build — fastest on both fleet models (Qwen3.8 decode 13.0–15.0
+  tok/s, Flint 23.2–30.7, vs Vulkan 10.1–12.1 / 21.2–25.6 and CPU
+  7.4–8.3 / 22.7–23.1); Vulkan is the fallback and the iGPU axis.
 - **P2 — gated streaming (step 7, operator checkpoint).** Pinned three-tier fork
   experiment behind the same wrapper + parity harness with the measured band; streaming
   becomes routable only when the band gates it. Telemetry loop lands when its trigger
