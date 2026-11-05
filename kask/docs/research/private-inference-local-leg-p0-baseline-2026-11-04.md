@@ -325,6 +325,19 @@ stream: fetch order, URLs and expected sizes unchanged
 (25054688704 / 18822970304 / 15878222368), one instance running, no
 parallel fetches.
 
+**Post-relocation verification (2026-11-04, after `e91fdae7f7`):** all 7
+weight files re-verified at the canonical two-root location
+(`~/Documents/zk-data/private-inference/models/`) by sha256 against the
+HuggingFace LFS oids (`sha256sum -c`, 7/7 OK, ~139.4 GB in 2:06) — a
+stronger oracle than the download-time size check, since the LFS oid IS
+the file's sha256: Qwen3.8-Flash-Next UD-Q2_K_XL shards 00001–00004
+(10,946,618 / 49,732,486,272 / 1,037,181,344 / 28,800,138,432 bytes),
+Flint UD-Q4_K_XL (25,054,688,704), Gemma 4 31B UD-Q4_K_XL
+(18,822,970,304), Muse Glimmer 30B UD-Q4_K_XL (15,878,222,368). The
+engine install is present at the hidden data root
+(`~/.local/share/zed-kask/private-inference/engine/`); the pin remains
+in-tree (`kask/registry/private-inference/llama-cpp-mainline.toml`).
+
 **Download incident, corrected record (2026-11-04):** shard 2
 completed 13:27 (49,732,486,272 bytes — byte-exact vs the HF listing)
 and shard 3 completed 13:29 (1,037,181,344 bytes — byte-exact); the
