@@ -14,8 +14,8 @@ The media viewer has two task modes backed by live state — Library and the
 Asset workspace (`ViewerTab`, `crates/media_panel/src/media_viewer.rs:569`) —
 plus one ambient activity layer, never a navigation destination: an
 "Activity (N)" toolbar chip over any mode (live-job count,
-`crates/media_panel/src/media_viewer.rs:9196-9200`) opening an on-demand
-drawer at the viewer root (`render_activity_drawer`, :5140), and per-asset
+`crates/media_panel/src/media_viewer.rs:9207-9211`) opening an on-demand
+drawer at the viewer root (`render_activity_drawer`, :5151), and per-asset
 job badges on the Library rows (`asset_activity_verb`, :7180). The workspace
 is the selected asset in one screen — the player and derivative-edit toolbar
 as the primary area, with a toggleable inspector pane whose pane-internal
@@ -177,7 +177,7 @@ operation can be hidden by a later epoch.
 | Detail transcripts | stable gallery asset ID | `detail_transcripts_request.owns(epoch)` | `load_detail_transcripts`, :1913 |
 | Detail annotations | stable gallery asset ID | `detail_annotations_request.owns(epoch)` | `load_detail_annotations`, :1995 |
 | Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :2384,3052 |
-| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :3199 |
+| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :3200 |
 | Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :1191 |
 
 Failures retain last-good data and surface degraded status instead of clearing
@@ -194,7 +194,7 @@ it, `open_transcript` :2384 / `close_transcript_workspace` :2454).
 Published assets, imports, transcript renders, and deletions carry
 `gallery_changed: true` only after their durable gallery transition succeeds —
 the viewer reads the completed-result field
-(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:9394`)
+(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:9405`)
 inside `ingest_tool_result`
 (`crates/media_panel/src/media_viewer.rs:1114`). The panel observes that
 completed-result field rather than classifying tool names; read-only
@@ -211,7 +211,7 @@ The Library requests 100 rows per page (`GALLERY_PAGE_LIMIT`,
 `crates/media_panel/src/media_viewer.rs:54`). A response commits only
 when its gallery ID, total, requested offset, positive limit, row count, row
 indices, and required asset fields validate (`parse_gallery_listing`,
-`crates/media_panel/src/media_viewer.rs:7330`). Failed or superseded page
+`crates/media_panel/src/media_viewer.rs:7341`). Failed or superseded page
 requests preserve the prior page and cursor (`apply_gallery_listing` :1412).
 
 Previous/next navigation uses the server-confirmed page size and total, with
@@ -235,7 +235,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-002
 verified_date: 2026-11-02
-verified_against: crates/media_panel/src/media_viewer.rs:1372-1536 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:7330 (parse_gallery_listing validation)
+verified_against: crates/media_panel/src/media_viewer.rs:1372-1536 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:7341 (parse_gallery_listing validation)
 status: VERIFIED
 -->
 
@@ -254,8 +254,8 @@ calling `video_concat` (`dispatch_concat`,
 
 Job state is ambient process state — never a place the operator visits. The
 toolbar's "Activity (N)" chip shows the live-job count over any mode
-(`crates/media_panel/src/media_viewer.rs:9196-9200`) and opens an on-demand
-drawer at the viewer root (`render_activity_drawer`, :5140): the observed
+(`crates/media_panel/src/media_viewer.rs:9207-9211`) and opens an on-demand
+drawer at the viewer root (`render_activity_drawer`, :5151): the observed
 live set under an "Active" heading, the page's recent history under
 "Recent", and Cancel on queued/running rows (`cancel_job`, :4352). The
 drawer footer carries the process-local history disclosure verbatim from
@@ -271,7 +271,7 @@ consume one strict `JobListPayload` carrying `jobs`, `total`, `limit`,
 (`kask/mcp-servers/hkask-mcp-media/src/types.rs:629-636`). Legacy arrays,
 incomplete objects, incoherent counts, and unknown statuses surface degradation
 while the last-good page remains visible (`parse_job_listing`,
-`crates/media_panel/src/media_viewer.rs:9147`).
+`crates/media_panel/src/media_viewer.rs:9158`).
 
 While any nonterminal job is observed — anywhere in the bounded store, on any
 mode — one single-flight GPUI-native one-second poll task is armed
@@ -309,7 +309,7 @@ Annotations, Reel) are alternate views of the same selected object, rendering
 the image record, tags, lineage, faces when present, linked transcripts
 (words/timings per row), reel provenance, and — since 2026-10-27 — the
 researcher tags & notes CRUD surface (`render_inspector`,
-`crates/media_panel/src/media_viewer.rs:5334`). The Annotations tab lists
+`crates/media_panel/src/media_viewer.rs:5345`). The Annotations tab lists
 `gallery_annotation_list` rows under its own request lifecycle
 (`load_detail_annotations`, :1995), offers add tag / add note editors
 (the label editor's modal input pattern), per-row value replacement through
@@ -326,7 +326,7 @@ section and the asset workspace — never a standalone destination. The
 Library lists the recordings' stored transcripts nested beneath each
 recording's row (`educt_list_transcripts` at the server's 500 cap,
 lifecycle-protected at `load_transcript_listing`,
-`crates/media_panel/src/media_viewer.rs:3199`); rows carry the five-state
+`crates/media_panel/src/media_viewer.rs:3200`); rows carry the five-state
 alignment note before the click (`transcript_alignment_note` :7653). The
 alignment is the same working-transcript computation the workspace gate uses,
 so the rows never disagree with the opened view. Unlinked transcripts —
@@ -345,10 +345,10 @@ screen share on open; the header toggle restores it in one click (:2415).
 
 - **Workspace**: one strict `educt_get_transcript` dispatch drives paragraph
   blocks (`build_pane_blocks`,
-  crates/media_panel/src/media_viewer.rs:8646), speaker
+  crates/media_panel/src/media_viewer.rs:8657), speaker
   labels, highlight overlays, and cut line-through marks. The sub-surface's
   media body is the RECORDING's (`workspace_media_body`,
-  crates/media_panel/src/media_viewer.rs:5742):
+  crates/media_panel/src/media_viewer.rs:5753):
   a transcript linked to a live gallery recording renders the recording's
   asset body — a video-keyed transcript plays the video; an unlinked
   transcript falls to its stored media path, keeping the transcript and
@@ -356,8 +356,8 @@ screen share on open; the header toggle restores it in one click (:2415).
   recording title, bounded 140px player, Select text, transcript text,
   highlights/cuts, Create a reel — renders as ONE virtualized `gpui::list`
   (`render_transcript_workspace`,
-  crates/media_panel/src/media_viewer.rs:5763; item
-  dispatch `render_workspace_list_item` :5961), so long recordings render
+  crates/media_panel/src/media_viewer.rs:5774; item
+  dispatch `render_workspace_list_item` :5972), so long recordings render
   only the visible blocks; the pending label editor stays pinned above the
   list. The presentation order is unchanged: recording title → player →
   Select text → transcript → highlights/cuts → Create a reel. Raw layer
@@ -365,7 +365,7 @@ screen share on open; the header toggle restores it in one click (:2415).
   workflow; technical lineage remains available in the inspector.
 - **Sync**: clicking a word seeks the bound shared player to its start
   (`seek_workspace_transcript`,
-  crates/media_panel/src/media_viewer.rs:4142 over
+  crates/media_panel/src/media_viewer.rs:4143 over
   `MediaWidget::seek_to_secs`); while playing, a 4 Hz GPUI-native follow-along
   marks the containing word and KEEPS IT VISIBLE — the marked paragraph block
   is scrolled into the list's viewport by an item-anchored scroll
@@ -456,7 +456,7 @@ transcript sub-surface the close affordance and recording name live in the
 header row above the workspace list — the first thing in view — and a failed
 player never dead-ends navigation or transcript text
 (`render_workspace_header_item`,
-crates/media_panel/src/media_viewer.rs:6011). Playback speed,
+crates/media_panel/src/media_viewer.rs:6022). Playback speed,
 zoom, and fullscreen controls are not implemented in `media_panel` or the
 widget as of this edit (method: grep for `playback_speed`, `set_rate`,
 `fullscreen`, `zoom` over `crates/media_panel/src/` and

@@ -74,13 +74,15 @@ pane, in any pane height; the close path's state teardown matches the open path'
 **Anchor:** study §1 (mechanism analysis); GPUI discipline rules 1–2 and 5 (study §7).
 
 **Touchpoints:**
-- `crates/media_panel/src/media_viewer.rs:4575-4580` — workspace content container
-  (add `overflow_hidden`)
-- `crates/media_panel/src/media_viewer.rs:2454-2470` vs `:2384-2443` —
+- `crates/media_panel/src/media_viewer.rs:4576-4591` — workspace content container
+  (add `overflow_hidden` — done in S1, `828b9c09f7`, with the
+  `media-viewer-content` test hook)
+- `crates/media_panel/src/media_viewer.rs:2454-2459` vs `:2384-2443` —
   `close_transcript_workspace` teardown symmetry (add `selection_mode = false`,
-  list-state reset)
-- `crates/hkask-media-widget/src/media_widget.rs:1040` — the unconditional
-  `min_h(240px)` floor (sub-item S1b: move floor ownership to embedders)
+  list-state reset; the `selection_mode` half landed in S1, `828b9c09f7`)
+- `crates/hkask-media-widget/src/media_widget.rs:1033-1042` — where the unconditional
+  `min_h(240px)` floor lived (sub-item S1b: move floor ownership to embedders —
+  done in S1, `828b9c09f7`; the site now documents the move)
 - viewer tests module (`media_viewer.rs` `mod tests`, layout-test precedents at
   ~:9448+) — the new pin test's home
 
@@ -121,7 +123,7 @@ cancels, Delete cuts; the two-click range stays as the fallback gesture.
 **Anchor:** study §6 P1-2; Reduct's verified select-to-act pattern; Shneiderman
 direct manipulation; MeetScript low-effort-dominance.
 
-**Touchpoints:** `handle_word_selection` (`media_viewer.rs:3281`), word blocks
+**Touchpoints:** `handle_word_selection` (`media_viewer.rs:3282`), word blocks
 (`render_workspace_block:6277`), label editor (`open_label_editor:3860`,
 `confirm_label_edit:3892`), strike path (`strike_selected_range:3447`,
 `create_workspace_strike:3468`), gate (`highlight_range_gate:7871`).
@@ -129,7 +131,7 @@ direct manipulation; MeetScript low-effort-dominance.
 **Design:** drag = pointer down on a word + move + up (threshold ~3px to stay
 compatible with click-to-seek), range = anchor→last hovered word, union across block
 boundaries (same union math as the two-click anchor). Popover renders pinned above
-the list (the label-editor pin pattern, `media_viewer.rs:5934`) and hosts actions
+the list (the label-editor pin pattern, `media_viewer.rs:5945-5951`) and hosts actions
 that reuse existing dispatchers — no new server calls.
 
 **Acceptance:**

@@ -134,7 +134,7 @@ items are re-exported; `sql_impls` is feature-gated
 
 The `ports` module re-exports the current port and companion types at
 `kask/crates/hkask-types/src/ports.rs:7-23`; the crate root re-exports the module at
-`kask/crates/hkask-types/src/hkask_types.rs:74`.
+`kask/crates/hkask-types/src/hkask_types.rs:76`.
 
 ```mermaid
 classDiagram
@@ -349,7 +349,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-003
 verified_date: 2026-10-23
-verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:75,88-131; kask/crates/hkask-types/src/hkask_types.rs:74
+verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:75,88-131; kask/crates/hkask-types/src/hkask_types.rs:76
 status: VERIFIED
 -->
 
@@ -364,7 +364,7 @@ status: VERIFIED
    `kask/crates/hkask-types/src/ports/memory_port.rs:75`).
 3. Re-export through `kask/crates/hkask-types/src/ports.rs:7-23`; the crate root
    already re-exports `ports::*` at
-   `kask/crates/hkask-types/src/hkask_types.rs:74`.
+   `kask/crates/hkask-types/src/hkask_types.rs:76`.
 4. Implement the port in the crate that owns the concrete backend and wire that
    adapter in the composition root.
 5. Test object safety, delegation, and the unavailable path. Degradation must be

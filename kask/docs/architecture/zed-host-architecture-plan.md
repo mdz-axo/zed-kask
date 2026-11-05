@@ -215,7 +215,7 @@ The current system has two credential paths with different owners.[^fowler-di]
    This is why media generation stays child-local: the media child receives
    `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`, while the editor process does
    not mirror those values into a Kask keyring
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:485-528`).
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:527-628`).
 3. **Sovereignty key storage.** `hkask-keystore` uses `oo7` directly for its
    Secret Service entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`;
    `kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`). It does not use
