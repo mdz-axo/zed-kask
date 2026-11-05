@@ -88,22 +88,35 @@ impl GpuBackend {
     }
 }
 
-/// The llama.cpp build tree root — the same root the P0 hand-launcher
-/// prefixed binaries from, now a data constant the probe walks.
-pub const LLAMA_CPP_ROOT: &str = "~/models/llama.cpp";
+/// The llama.cpp engine root — the canonical hidden-root engine install
+/// (`{data_dir}/private-inference/engine/llama.cpp/`, the two-root
+/// storage schema; the relocation `e91fdae7f7` retired the P0 `~/models`
+/// sprawl). Resolved through `agent_paths` — the HKASK_DATA_DIR → XDG →
+/// platform-default chain — never a literal home-dir string.
+pub fn engine_root() -> PathBuf {
+    hkask_types::agent_paths::resolve_under_data_dir(Path::new(
+        "private-inference/engine/llama.cpp",
+    ))
+}
 
 /// Probe which GPU backend this machine can serve from. Walks the
-/// llama.cpp build tree looking for `llama-server` in `build-hip/`
-/// (ROCm) then `build-vulkan/` (Vulkan). First hit wins — the measured
-/// preference order. The probe is deliberately simple: it answers
-/// "which build exists on disk?" — the same question the P0
-/// hand-launcher answered by prefixing the binary.
+/// engine root's build tree looking for `llama-server` in `build-hip/`
+/// (ROCm) then `build-vulkan/` (Vulkan) — first hit wins, the measured
+/// preference order (HIP primary, Vulkan fallback; baseline record §5).
+/// The probe answers "which build exists on disk?" — the same question
+/// the P0 hand-launcher answered by prefixing the binary, now against
+/// the canonical root.
 ///
 /// On a machine without either build, the answer is `GpuBackend::None`
 /// and the compiler emits a CPU-only plan.
 pub fn probe_backend() -> GpuBackend {
-    let root = PathBuf::from(LLAMA_CPP_ROOT);
+    probe_backend_at(&engine_root())
+}
 
+/// The engine-build probe against an explicit root — the test seam: the
+/// HIP → Vulkan → None order is pinned over a stubbed root, no env or
+/// home-dir involved.
+pub fn probe_backend_at(root: &Path) -> GpuBackend {
     let hip = root.join("build-hip/bin/llama-server");
     if hip.exists() {
         return GpuBackend::Hip { binary: hip };
@@ -402,6 +415,45 @@ pub fn compile_placement(
 mod tests {
     use super::*;
     use crate::local_leg::manifest::decode;
+
+    #[test]
+    fn backend_probe_walks_the_engine_root_in_the_measured_order() {
+        // The probe is root-driven (the canonical engine install), never a
+        // literal home path: empty root → CPU-only; Vulkan alone → Vulkan;
+        // both builds → HIP (the measured preference, baseline record §5).
+        let root = tempfile::tempdir().expect("tempdir");
+        assert_eq!(probe_backend_at(root.path()), GpuBackend::None);
+
+        std::fs::create_dir_all(root.path().join("build-vulkan/bin")).expect("mkdir");
+        std::fs::write(root.path().join("build-vulkan/bin/llama-server"), b"").expect("write");
+        match probe_backend_at(root.path()) {
+            GpuBackend::Vulkan { binary } => {
+                assert_eq!(binary, root.path().join("build-vulkan/bin/llama-server"));
+            }
+            other => panic!("Vulkan must win alone: {other:?}"),
+        }
+
+        std::fs::create_dir_all(root.path().join("build-hip/bin")).expect("mkdir");
+        std::fs::write(root.path().join("build-hip/bin/llama-server"), b"").expect("write");
+        match probe_backend_at(root.path()) {
+            GpuBackend::Hip { binary } => {
+                assert_eq!(binary, root.path().join("build-hip/bin/llama-server"));
+            }
+            other => panic!("HIP must win when both builds exist: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn engine_root_resolves_the_canonical_hidden_root() {
+        // The shape pin: the engine lives under the private-inference data
+        // subtree — the resolution chain (HKASK_DATA_DIR → XDG → platform
+        // default) is `agent_paths`' own, tested there; this pins that the
+        // private-inference call site names the canonical subpath, never a
+        // `~` literal (the retired probe bug).
+        let resolved = engine_root();
+        assert!(resolved.ends_with("private-inference/engine/llama.cpp"));
+        assert!(!resolved.to_string_lossy().contains('~'));
+    }
 
     const MANIFEST_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");

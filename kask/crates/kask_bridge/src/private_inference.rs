@@ -56,13 +56,13 @@ pub enum ProviderEntryError {
 pub fn provider_entry(
     pi: &KaskPrivateInferenceSettings,
 ) -> Result<OpenAiCompatibleSettingsContent, ProviderEntryError> {
-    let briefs = hkask_private_inference::local_leg::fleet::shipped_model_briefs()?;
+    let briefs = hkask_private_inference::local_leg::fleet::shipped_models()?;
     let available_models = briefs
         .iter()
-        .map(|brief| OpenAiCompatibleAvailableModel {
-            name: brief.model_id.clone(),
-            display_name: Some(brief.display_name.clone()),
-            max_tokens: u64::from(brief.recommendations.context_length),
+        .map(|model| OpenAiCompatibleAvailableModel {
+            name: model.brief.model_id.clone(),
+            display_name: Some(model.brief.display_name.clone()),
+            max_tokens: u64::from(model.brief.recommendations.context_length),
             max_output_tokens: None,
             max_completion_tokens: None,
             reasoning_effort: None,
@@ -119,18 +119,18 @@ mod tests {
         let entry = provider_entry(&pi).expect("entry builds from the default policy");
         assert_eq!(entry.api_url, "http://127.0.0.1:8010/v1");
         assert!(entry.auto_discover);
-        let briefs = hkask_private_inference::local_leg::fleet::shipped_model_briefs()
-            .expect("fleet decodes");
-        assert_eq!(entry.available_models.len(), briefs.len());
-        for (model, brief) in entry.available_models.iter().zip(&briefs) {
-            assert_eq!(model.name, brief.model_id);
+        let fleet =
+            hkask_private_inference::local_leg::fleet::shipped_models().expect("fleet decodes");
+        assert_eq!(entry.available_models.len(), fleet.len());
+        for (model, shipped) in entry.available_models.iter().zip(&fleet) {
+            assert_eq!(model.name, shipped.brief.model_id);
             assert_eq!(
                 model.display_name.as_deref(),
-                Some(brief.display_name.as_str())
+                Some(shipped.brief.display_name.as_str())
             );
             assert_eq!(
                 model.max_tokens,
-                u64::from(brief.recommendations.context_length)
+                u64::from(shipped.brief.recommendations.context_length)
             );
             // The agent-panel contract: private models are
             // tool-calling chat models.

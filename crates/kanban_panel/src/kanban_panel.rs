@@ -602,8 +602,6 @@ pub(crate) fn pending_board_to_select(
 
 /// A persistent, auto-refreshing kanban board panel.
 pub struct KanbanPanel {
-    #[allow(dead_code)]
-    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     /// The currently selected board ID. None until the operator picks one
     /// (auto-selected to the first board after the initial fetch).
@@ -710,7 +708,6 @@ impl KanbanPanel {
                 )
             });
             let mut this = Self {
-                workspace: workspace_handle.clone(),
                 focus_handle: cx.focus_handle(),
                 selected_board_id: None,
                 board_name: None,

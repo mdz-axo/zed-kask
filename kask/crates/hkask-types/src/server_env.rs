@@ -49,12 +49,4 @@ impl ServerEnv {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-
-    /// The composed map, for boundaries that must hand env to non-kask types
-    /// (zed's `ContextServerCommand`). Each call site documents why the
-    /// escape hatch is legitimate.
-    #[doc(hidden)]
-    pub fn into_inner(self) -> HashMap<String, String> {
-        self.0
-    }
 }

@@ -17,10 +17,19 @@ use serde::{Deserialize, Serialize};
 pub struct EngineSurfaceManifest {
     /// Stable identifier of the engine surface this manifest pins.
     pub surface_id: String,
-    /// The engine build this flag-spelling set was verified against. The
-    /// supervisor's startup probe refuses builds older than this pin with
-    /// a typed error naming both versions.
+    /// The engine build this flag-spelling set was verified against —
+    /// display text. The startup probe enforces the structured
+    /// [`VersionPin`] (exact-commit: a different commit is an unverified
+    /// surface, newer included) and refuses with a typed error naming
+    /// both commits.
     pub engine_version_pin: String,
+    /// The structured pin the startup probe enforces (D-S2, slice plan
+    /// §6: commit hashes are not orderable, so "older than" is not
+    /// computable as stated — the honest floor is exact-commit).
+    pub version_pin: VersionPin,
+    /// The endpoints the supervisor health-polls and verifies (drift
+    /// data: an upstream endpoint rename is a manifest edit, zero Rust).
+    pub probe: ProbeExpectations,
     pub flags: FlagVocabulary,
     #[serde(default)]
     pub constraints: Vec<Constraint>,
@@ -29,6 +38,28 @@ pub struct EngineSurfaceManifest {
     /// manifest (plan §4, L2).
     #[serde(default)]
     pub fixtures: Vec<ConstraintFixture>,
+}
+
+/// The structured engine version pin the startup probe enforces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VersionPin {
+    /// The engine commit the flag surface was verified against.
+    pub commit: String,
+    /// The engine version string (display text).
+    pub version: String,
+}
+
+/// The endpoints the supervisor probes after spawn — data, not Rust.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeExpectations {
+    /// The health endpoint the launch gate polls (bounded by the
+    /// measured load bound until first healthy).
+    pub health_path: String,
+    /// The OpenAI-compatible models listing the supervisor verifies
+    /// after first healthy.
+    pub models_path: String,
 }
 
 /// Intent → concrete flag spelling(s) for one pinned surface. One intent
@@ -55,6 +86,14 @@ pub struct FlagVocabulary {
     pub host: String,
     pub port: String,
     pub threads: String,
+    /// The served-model alias pin — the server serves the loaded model
+    /// under the brief's `model_id`, matching the provider entry's card
+    /// names (the identity seam of the M7 surface).
+    pub alias: String,
+    /// The token file flag — the endpoint token reaches the server from a
+    /// 0600 file, never a command-line arg (`/proc/<pid>/cmdline` leak) and
+    /// never an env var (the pinned build exposes none for the key).
+    pub api_key_file: String,
 }
 
 /// The closed vocabulary of constraint kinds. New kinds upstream semantics
@@ -168,6 +207,19 @@ pub fn decode(toml_text: &str) -> Result<EngineSurfaceManifest, ManifestError> {
         toml::from_str(toml_text).map_err(|e| ManifestError::Decode(e.to_string()))?;
     manifest.validate()?;
     Ok(manifest)
+}
+
+/// The shipped engine-surface manifest — embedded at compile time from the
+/// registry (the fleet layer's precedent: registry data ships with the
+/// binary; a missing file is a compile error, not a runtime hole). Adding
+/// a second pinned surface is a second entry + its registry TOML.
+pub const SHIPPED_MANIFEST_TOML: &str =
+    include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");
+
+/// Decode the shipped manifest — the installed binary's manifest home;
+/// the decode path is the same one decode home for every consumer.
+pub fn shipped_manifest() -> Result<EngineSurfaceManifest, ManifestError> {
+    decode(SHIPPED_MANIFEST_TOML)
 }
 
 /// Stable name of a constraint, for typed refusal messages.
@@ -380,6 +432,22 @@ mod tests {
         assert_eq!(m.flags.binary, "llama-server");
         assert!(!m.constraints.is_empty());
         assert!(!m.fixtures.is_empty());
+        // The structured pin and probe expectations are required (the
+        // fail-closed admission: no manifest ships without them).
+        assert_eq!(m.version_pin.commit, "9e2a04a");
+        assert_eq!(m.probe.health_path, "/health");
+        assert_eq!(m.probe.models_path, "/v1/models");
+        assert_eq!(m.flags.alias, "--alias");
+        assert_eq!(m.flags.api_key_file, "--api-key-file");
+    }
+
+    #[test]
+    fn shipped_manifest_home_decodes_the_same_bytes_as_the_registry() {
+        // The installed-binary home embeds the registry file verbatim and
+        // routes through the one decode home — including the fixture gate.
+        let m = shipped_manifest().expect("shipped manifest decodes");
+        run_fixtures(&m).expect("shipped manifest fixtures gate");
+        assert_eq!(m.surface_id, "llama-cpp-mainline-cpu-p0");
     }
 
     #[test]
@@ -390,20 +458,33 @@ mod tests {
 
     #[test]
     fn unknown_constraint_kind_is_rejected() {
+        // Every required field is present so the ONLY decode error is the
+        // unknown constraint kind — the pin isolates its intent (a
+        // missing-field failure would pass the assert without testing the
+        // closed vocabulary).
         let bad = r#"
             surface_id = "x"
             engine_version_pin = "y"
+            [version_pin]
+            commit = "c0"
+            version = "v0"
+            [probe]
+            health_path = "/health"
+            models_path = "/v1/models"
             [flags]
             binary = "b"
             model = "--model"
             n_gpu_layers = "-ngl"
             cpu_moe = "--cpu-moe"
+            override_tensor = "--override-tensor"
             kv_cache_type = ["--cache-type-k", "--cache-type-v"]
             ctx_size = "--ctx-size"
             flash_attn = "--flash-attn"
             host = "--host"
             port = "--port"
             threads = "--threads"
+            alias = "--alias"
+            api_key_file = "--api-key-file"
             [[constraints]]
             kind = "vibe_based"
         "#;

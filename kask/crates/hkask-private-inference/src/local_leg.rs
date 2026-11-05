@@ -14,3 +14,5 @@ pub mod launch;
 pub mod manifest;
 pub mod model_brief;
 pub mod placement;
+pub mod probe;
+pub mod supervisor;

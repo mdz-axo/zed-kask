@@ -7986,6 +7986,8 @@ name = "hkask-private-inference"
 version = "0.40.2"
 dependencies = [
  "hkask-lisp",
+ "hkask-types",
+ "nix 0.30.1",
  "serde",
  "serde_json",
  "sha2",

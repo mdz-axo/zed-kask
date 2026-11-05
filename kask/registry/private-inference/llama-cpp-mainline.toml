@@ -3,12 +3,27 @@
 # baseline record §4/§5). The flag spellings and constraint parameters below
 # are the drift layer: a llama.cpp release that renames flags or changes
 # constraint semantics is absorbed HERE, plus fixture updates — zero Rust
-# changes (hypothesis H2). The startup probe refuses engine builds older
-# than `engine_version_pin`, naming both versions (Good Regulator: the
-# manifest is never trusted alone).
+# changes (hypothesis H2). The startup probe refuses engine builds whose
+# `--version` commit is not the pinned one — exact-commit, not "older
+# than": commit hashes are not orderable, so any other commit is an
+# unverified surface, newer included (slice plan D-S2). The manifest is
+# never trusted alone (Good Regulator).
 
 surface_id = "llama-cpp-mainline-cpu-p0"
 engine_version_pin = "v0.9.0-dev mainline, commit 9e2a04a — builds: CPU (build/), Vulkan (build-vulkan/), HIP gfx1102 (build-hip/)"
+
+# The structured pin the startup probe enforces (the probe parses the
+# binary's `--version` line: "version: 0.9.0-dev (build 1, commit 9e2a04a)",
+# verified live 2026-11-04 against build-hip/bin/llama-server).
+[version_pin]
+commit = "9e2a04a"
+version = "0.9.0-dev"
+
+# The endpoints the supervisor polls (verified live at P0: the measure-leg
+# harness polls /health with a 20-minute bound on every leg).
+[probe]
+health_path = "/health"
+models_path = "/v1/models"
 
 # --- flags: intent -> concrete spellings for THIS pinned build. The KV
 # cache-type intent carries TWO spellings: v0.9.0-dev (commit 9e2a04a)
@@ -28,6 +43,13 @@ flash_attn = "--flash-attn"
 host = "--host"
 port = "--port"
 threads = "--threads"
+# The served-model alias: the server answers /v1/models under the brief's
+# model_id, matching the provider cards' names (verified live 2026-11-04:
+# "-a, --alias STRING (env: LLAMA_ARG_ALIAS)").
+alias = "--alias"
+# The token file: "--api-key-file FNAME — path to file containing API keys"
+# (verified live 2026-11-04; no env var exists for the key).
+api_key_file = "--api-key-file"
 
 # --- constraints (closed vocabulary; every one gated by the fixtures below) ---
 

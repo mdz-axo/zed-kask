@@ -9,6 +9,17 @@ description = "Private-inference core shared service — placement, lifecycle an
 name = "hkask_private_inference"
 path = "src/hkask_private_inference.rs"
 
+[features]
+# The stub-llama-server fixture + the supervisor integration tests that
+# spawn it (slice plan step 7). Live-mutation probe suites run with
+# `--features test-fixture --test-threads=1` (the house pattern).
+test-fixture = []
+
+[[bin]]
+name = "stub-llama-server"
+path = "tests/fixtures/stub_llama_server.rs"
+required-features = ["test-fixture"]
+
 [lints]
 workspace = true
 
@@ -26,6 +37,13 @@ hkask-lisp.workspace = true
 reqwest.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+# Canonical path resolution (the two-root storage schema) — the engine
+# root and the models root resolve through `agent_paths`, never literal
+# home-dir strings.
+hkask-types.workspace = true
+# Signal delivery for the stop path (SIGTERM drain; the safe wrapper —
+# no unsafe blocks in this crate).
+nix = { workspace = true, features = ["signal"] }
 
 [dev-dependencies]
 tempfile.workspace = true

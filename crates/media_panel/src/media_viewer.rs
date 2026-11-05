@@ -6429,7 +6429,6 @@ impl MediaViewer {
                 // the active surface renders Default, the other Muted.
                 let words_chip = div()
                     .id("media-transcript-surface-words")
-                    .debug_selector(|| "media-transcript-surface-words".into())
                     .cursor_pointer()
                     .flex()
                     .flex_wrap()
