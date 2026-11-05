@@ -96,9 +96,9 @@ parent environment.
 The settings hierarchy has one source of default values: each settings type's
 `Default` implementation. Content conversion consults those defaults, while
 MCP environment emitters compare against them
-(`kask/crates/kask_bridge/src/settings.rs:24-34,130-137,790-812`). The general
+(`kask/crates/kask_bridge/src/settings.rs:23-33,126-135,784-985`). The general
 settings contain concurrency, timeout, and circuit-breaker controls—there is no
-batch-size setting (`kask/crates/kask_bridge/src/settings.rs:102-130`). No
+batch-size setting (`kask/crates/kask_bridge/src/settings.rs:106-135`). No
 settings section carries a separate passphrase field — one shared
 `HKASK_DB_PASSPHRASE` covers every SQLCipher database.
 

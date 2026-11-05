@@ -14,8 +14,8 @@ use settings_content::{
     KaskCondenserSettingsContent, KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent,
     KaskCuratorSettingsContent, KaskGeneralSettingsContent, KaskMcpSettingsContent,
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
-    KaskScenariosSettingsContent, KaskSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskPrivateInferenceSettingsContent,
+    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
 };
 
 use collections::HashMap;
@@ -83,6 +83,13 @@ pub struct KaskSettings {
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
+
+    /// Private-inference local-leg policy (M7/Seam B): the
+    /// `openai_compatible` provider id and the loopback endpoint. The
+    /// served fleet comes from the shipped model briefs; the endpoint
+    /// token lives at the provider `api_url` keychain slot — there is
+    /// no `*_enabled` toggle.
+    pub private_inference: KaskPrivateInferenceSettings,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -561,6 +568,55 @@ impl KaskModelsSettings {
     }
 }
 
+/// Private-inference local-leg policy (M7, Seam B — the
+/// `kask.private_inference` section). The PI-owned surface for the
+/// private local leg: which `openai_compatible` provider id the leg
+/// registers under, and the loopback endpoint a launched llama-server
+/// serves on. The served-model fleet is registry data (the shipped
+/// model briefs) — never a settings list; the endpoint token lives at
+/// the provider `api_url` keychain slot (D5 one-key-one-location), so
+/// there are no `*_enabled` toggles — the token's presence is the
+/// toggle.
+///
+/// `Default` is the single source of truth: host/port delegate to the
+/// placement policy's own default (`PlacementPolicy::default()`), so
+/// the settings row and the placement compiler can never disagree on
+/// the endpoint. Do not add `#[serde(default = ...)]` attributes here
+/// (see `KaskSettings`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct KaskPrivateInferenceSettings {
+    /// The `openai_compatible` provider id (the settings HashMap key and
+    /// the qualified-name prefix, e.g.
+    /// `private-local/qwen3-8-flash-next`).
+    pub provider_id: String,
+    /// The loopback host (default from `PlacementPolicy::default()`).
+    pub host: String,
+    /// The loopback port (default from `PlacementPolicy::default()`).
+    pub port: u16,
+}
+
+impl Default for KaskPrivateInferenceSettings {
+    fn default() -> Self {
+        let policy = hkask_private_inference::local_leg::placement::PlacementPolicy::default();
+        Self {
+            provider_id: "private-local".to_string(),
+            host: policy.host,
+            port: policy.port,
+        }
+    }
+}
+
+impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings {
+    fn from(c: KaskPrivateInferenceSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            provider_id: c.provider_id.unwrap_or(default.provider_id),
+            host: c.host.unwrap_or(default.host),
+            port: c.port.unwrap_or(default.port),
+        }
+    }
+}
+
 /// Resolve a storage-root setting with the single priority chain shared by
 /// both roots (hidden data dir, visible artifacts dir): settings field →
 /// env var → resolved platform default. One chain, not two — the duplicated
@@ -925,6 +981,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
+            private_inference: c.private_inference.map(Into::into).unwrap_or_default(),
         }
     }
 }
@@ -1204,6 +1261,44 @@ mod tests {
         // hard-coded path.
         assert_eq!(settings.data_dir, "");
         assert_eq!(settings.artifacts_dir, "");
+        // The private leg defaults to its provider id and the placement
+        // policy's loopback endpoint.
+        assert_eq!(settings.private_inference.provider_id, "private-local");
+        assert_eq!(settings.private_inference.host, "127.0.0.1");
+        assert_eq!(settings.private_inference.port, 8010);
+    }
+
+    #[test]
+    fn private_inference_defaults_match_the_placement_policy() {
+        // The settings row and the placement compiler must never disagree
+        // on the endpoint: the Default impl delegates to
+        // `PlacementPolicy::default()` by construction, and this pin
+        // holds the delegation in place.
+        let settings = KaskPrivateInferenceSettings::default();
+        let policy = hkask_private_inference::local_leg::placement::PlacementPolicy::default();
+        assert_eq!(settings.host, policy.host);
+        assert_eq!(settings.port, policy.port);
+        assert_eq!(settings.provider_id, "private-local");
+    }
+
+    #[test]
+    fn private_inference_from_absent_content_fields_uses_defaults() {
+        let effective: KaskPrivateInferenceSettings =
+            KaskPrivateInferenceSettingsContent::default().into();
+        let default = KaskPrivateInferenceSettings::default();
+        assert_eq!(effective.provider_id, default.provider_id);
+        assert_eq!(effective.host, default.host);
+        assert_eq!(effective.port, default.port);
+        // A present section with every field set overrides each one.
+        let content = KaskPrivateInferenceSettingsContent {
+            provider_id: Some("pi-test".into()),
+            host: Some("127.0.0.2".into()),
+            port: Some(9020),
+        };
+        let effective: KaskPrivateInferenceSettings = content.into();
+        assert_eq!(effective.provider_id, "pi-test");
+        assert_eq!(effective.host, "127.0.0.2");
+        assert_eq!(effective.port, 9020);
     }
 
     // The artifacts root must flow through mcp_env() with the same priority

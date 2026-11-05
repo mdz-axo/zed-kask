@@ -36,10 +36,10 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-122`).
 
 ## Settings hierarchy
 
-`KaskSettings` contains the data and artifact roots plus 11 subsystem sections:
+`KaskSettings` contains the data and artifact roots plus 12 subsystem sections:
 `general`, `mcp`, `curator`, `memory`, `condenser`, `research`,
-`corpus`, `scenarios`, `prediction_markets`, `media`, and
-`models` (`kask/crates/kask_bridge/src/settings.rs:56-89`).
+`corpus`, `scenarios`, `prediction_markets`, `media`, `models`, and
+`private_inference` (`kask/crates/kask_bridge/src/settings.rs:35-104`).
 
 ```mermaid
 classDiagram
@@ -85,7 +85,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
 verified_date: 2026-10-28
-verified_against: kask/crates/kask_bridge/src/settings.rs:35-90 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs media + Default; settings.rs models + Default
+verified_against: kask/crates/kask_bridge/src/settings.rs:35-104 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs media + Default; settings.rs models + Default; settings.rs private_inference + Default
 status: VERIFIED
 -->
 
@@ -99,14 +99,15 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 
 | Settings type | Current defaults | Evidence |
 | --- | --- | --- |
-| `KaskGeneralSettings` | concurrency 96; timeout 300s; circuit threshold 3; open interval 30s | `kask/crates/kask_bridge/src/settings.rs:102-130` |
-| `KaskMcpSettings` | load defaults; empty overrides; empty delegated-tool grants | `kask/crates/kask_bridge/src/settings.rs:140-160` |
-| `KaskCuratorSettings` | always on; algedonic threshold 0.8 | `kask/crates/kask_bridge/src/settings.rs:170-196` |
-| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:226-291`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
-| `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:299-318` |
-| `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:332-352` |
-| `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:398-424` |
-| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:489-561` |
+| `KaskGeneralSettings` | concurrency 96; timeout 300s; circuit threshold 3; open interval 30s | `kask/crates/kask_bridge/src/settings.rs:106-135` |
+| `KaskMcpSettings` | load defaults; empty overrides; empty delegated-tool grants | `kask/crates/kask_bridge/src/settings.rs:144-165` |
+| `KaskCuratorSettings` | always on; algedonic threshold 0.8 | `kask/crates/kask_bridge/src/settings.rs:174-201` |
+| `KaskMemorySettings` | consolidation 300s; confidence 0.3; recall 5 at 0.3; auto-inject; federated auto-inject off with empty `federated_source_ids`; distillation 600s/300s; memory life 90 from `MemoryStore::default_memory_life_days`; forgetting 7 | `kask/crates/kask_bridge/src/settings.rs:230-296`; `kask/crates/hkask-memory/src/memory_store.rs:199` |
+| `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:303-323` |
+| `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:336-357` |
+| `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:405-440` |
+| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:472-569` |
+| `KaskPrivateInferenceSettings` | provider id `private-local`; host 127.0.0.1; port 8010 (host/port from `PlacementPolicy::default()`) | `kask/crates/kask_bridge/src/settings.rs:587-621` |
 
 ## Built-in MCP registry
 
@@ -238,7 +239,7 @@ Add an allowlist-alignment test beside the existing per-server tests, such as
 #### 3. Declare the non-secret configuration boundary
 
 Set `config_env` to `&[]` or an exact list of non-secret variables emitted
-by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:662`). The
+by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:694`). The
 config filter also fails closed for unknown IDs
 (`kask/crates/kask_bridge/src/mcp_servers.rs:929@filter_config_env_for_server`). Do not place database
 passphrases or API keys in this list.
@@ -255,13 +256,13 @@ embedding model (`kask/crates/kask_bridge/src/mcp_servers.rs:283-334`).
 If the server needs a new non-secret setting, add it to the relevant settings
 sub-structure and its `mcp_env` emitter, then add that exact environment name to
 the server descriptor. Defaults belong only in `Default` implementations
-(`kask/crates/kask_bridge/src/settings.rs:24-34`). The emitted-default seam is
+(`kask/crates/kask_bridge/src/settings.rs:23-33`). The emitted-default seam is
 pinned by `mcp_env_emits_nothing_for_default_settings`
 (`kask/crates/kask_bridge/src/mcp_env.rs:370`).
 
 Do not invent a batch-size control or a second database-passphrase setting. The
 general settings expose concurrency, timeout, and circuit-breaker controls
-(`kask/crates/kask_bridge/src/settings.rs:102-130`), and all SQLCipher consumers
+(`kask/crates/kask_bridge/src/settings.rs:106-135`), and all SQLCipher consumers
 share `HKASK_DB_PASSPHRASE`. Rotation is
 startup-coordinated via the pending slot and is documented in
 [`kask-settings.md`](../../reference/kask-settings.md) under Passphrase rotation.

@@ -968,6 +968,7 @@ hkask-tool-port = { path = "kask/crates/hkask-tool-port" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }
+hkask-private-inference = { path = "kask/crates/hkask-private-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
 

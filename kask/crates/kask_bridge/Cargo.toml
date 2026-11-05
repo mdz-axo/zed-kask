@@ -22,6 +22,7 @@ hkask-mcp-server.workspace = true
 r2d2.workspace = true
 
 hkask-inference.workspace = true
+hkask-private-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true

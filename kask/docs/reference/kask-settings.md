@@ -20,7 +20,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` has 14 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-97`):
+`KaskSettings` has 15 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-104`):
 
 | Field | Type | Default source |
 |-------|------|---------------|
@@ -37,6 +37,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `media` | `KaskMediaSettings` | `Default` |
 | `models` | `KaskModelsSettings` | `Default` |
+| `private_inference` | `KaskPrivateInferenceSettings` | `Default` (host/port delegate to `PlacementPolicy::default()`) |
 
 ## Inference admission and resilience (`KaskGeneralSettings`)
 
@@ -54,7 +55,7 @@ capacity returns `Overloaded` before provider dispatch; full active utilization
 alone is healthy. Expiry returns `Timeout`. Caller/channel closure cancels local
 queued or running work and releases capacity.
 
-`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:109-139`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
+`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:106-135`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
 
 ## MCP Servers (`KaskMcpSettings`)
 
@@ -210,7 +211,7 @@ reads its remaining configuration (`HKASK_MXROUTE_SERVER`,
 | `alert_email` | `String` | `""` | alert recipient (falls back to `smtp_username`) |
 | `authorized_emails` | `Vec<String>` | `[]` | settings→transport note above |
 
-These are the only `KaskCuratorEmailSettings` fields (`kask/crates/kask_bridge/src/settings.rs:213-230`).
+These are the only `KaskCuratorEmailSettings` fields (`kask/crates/kask_bridge/src/settings.rs:210-226`).
 
 When `email` is `None` or unconfigured, the alert email sink falls back to the
 log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
@@ -251,7 +252,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
 | `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled). Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
 
-These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:233-300`).
+These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:230-296`).
 
 **Settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
 
@@ -268,7 +269,7 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:330-336`) |
+| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:327-332`) |
 
 ## Corpus (`KaskCorpusSettings`)
 
@@ -278,7 +279,7 @@ Step 6 of the settings-flow checklist is **already implemented**, not skipped: S
 | `embedding_model` | `String` | `"OpenRouter/qwen/qwen3-embedding-8b"` | Corpus-layer default (moved from `ollama/qwen3-embedding:0.6b` on 2026-09-28); `models.embedding_model` overrides it; the OpenRouter route needs `OPENROUTER_API_KEY` |
 | `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; `mcp_env()` publishes the effective root to MCP servers and `KaskSettings::resolved_template_root()` resolves the same rule in-process (curator memory chunk tagging) |
 
-These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:362-393`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
+These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:336-357`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
 
 ### Embedding model lifecycle (2026-09-28 migration)
 
@@ -317,7 +318,7 @@ No fields — the scenarios data dir is derived from the global `data_dir` as `m
 
 ## Prediction Markets (`KaskPredictionMarketsSettings`)
 
-Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:397-407`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
+Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:375-378`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
@@ -402,7 +403,51 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:650-718`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:191-229`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:472-569`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:191-229`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+
+## Private Inference (`KaskPrivateInferenceSettings`)
+
+The private local leg's PI-owned policy — M7/Seam B (extends D9): the
+`openai_compatible` provider id the leg registers under and the loopback
+endpoint a launched llama-server serves on
+(`kask/crates/kask_bridge/src/settings.rs:587-621`). The served-model fleet is
+registry data (the shipped model briefs in `kask/registry/model-briefs/`,
+embedded through `hkask_private_inference::local_leg::fleet`), never a
+settings list; the endpoint token lives at the provider `api_url` keychain
+slot (D5 one-key-one-location), so there are no `*_enabled` toggles — the
+token's presence is the toggle.
+
+| Field | Type | Default | Resolution |
+|-------|------|---------|------------|
+| `provider_id` | `String` | `"private-local"` | The `language_models.openai_compatible` settings key and the qualified-name prefix of the private models (e.g. `private-local/qwen3-8-flash-next`) |
+| `host` | `String` | `"127.0.0.1"` (from `PlacementPolicy::default()`) | The loopback host; the `Default` impl delegates to the placement policy so the settings row and the placement compiler can never disagree on the endpoint |
+| `port` | `u16` | `8010` (from `PlacementPolicy::default()`) | The loopback port; same delegation |
+
+The Register action on **Settings → Kask → Private Inference** runs the
+connect step: `kask_bridge::private_inference::apply_provider_entry`
+composes the policy with the shipped briefs into the
+`language_models.openai_compatible.<provider_id>` entry (`api_url` from the
+endpoint construction home `hkask_private_inference::local_leg::launch::endpoint_url`,
+one model card per brief — `name` = model_id, `display_name`, `max_tokens`
+= the recommended context length) and writes it through the existing
+settings store; the registry re-reads settings on write and registers the
+provider, so the model cards appear in the agent panel model selector
+(Curator and Z-K alike) with no restart. Idempotent; a refusal (empty
+provider id, a broken shipped brief) writes nothing and logs the reason.
+
+The endpoint token is written by the page's token row through the existing
+`write_credential` path at the SAME slot the registered provider's
+`ApiKeyState` reads (the entry's `api_url`) plus the provider's live
+`set_api_key` refresh — the D29 RunPod-row precedent. No MCP child consumes
+the token (the leg is a core service, not an MCP server), so there is no
+MCP restart nudge on its writes. Changing host or port moves the token's
+keychain slot — re-enter the token at the new endpoint.
+
+The supervisor that launches llama-server from emitted placement plans
+(the P1 wrapper) is the companion seam: until it lands, the endpoint is
+unresponsive and inference attempts against the private models fail with
+a connection error — the cards surface the fleet, the wrapper will serve
+it.
 
 ## Keychain Architecture
 
@@ -503,7 +548,7 @@ action) until the next startup applies it
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
-environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:738` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
+environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:694` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
 `HKASK_CURATOR_WEBID` → `HKASK_WEBID` when set in the parent environment.
 
 ### Storage

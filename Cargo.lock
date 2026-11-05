@@ -9395,6 +9395,7 @@ dependencies = [
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
  "hkask-memory",
+ "hkask-private-inference",
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",

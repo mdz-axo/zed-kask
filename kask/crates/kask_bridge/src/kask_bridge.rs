@@ -48,6 +48,7 @@ mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
+pub mod private_inference;
 mod settings;
 #[cfg(test)]
 mod test_support;
@@ -94,8 +95,8 @@ pub use passphrase_rotation::{
 pub use settings::{
     KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings,
     KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings, KaskScenariosSettings,
-    KaskSettings,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskPrivateInferenceSettings,
+    KaskResearchSettings, KaskScenariosSettings, KaskSettings,
 };
 
 mod metacognition_bridge;

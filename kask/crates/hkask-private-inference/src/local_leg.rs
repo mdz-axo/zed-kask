@@ -8,6 +8,7 @@
 //! future supervisor L4 consumes). The privacy marking itself is
 //! engine-independent and lives in the committed M4/M5/M6 surfaces.
 
+pub mod fleet;
 pub mod gguf;
 pub mod launch;
 pub mod manifest;

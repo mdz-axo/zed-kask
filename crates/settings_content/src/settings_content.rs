@@ -1707,6 +1707,14 @@ pub struct KaskSettingsContent {
     /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
     #[serde(default)]
     pub models: Option<KaskModelsSettingsContent>,
+
+    /// Private-inference local-leg policy (M7/Seam B): the
+    /// `openai_compatible` provider id the leg registers under and the
+    /// loopback endpoint it serves on. The served-model fleet comes from
+    /// the shipped model briefs (registry data), and the endpoint token
+    /// lives at the provider `api_url` keychain slot — never here.
+    #[serde(default)]
+    pub private_inference: Option<KaskPrivateInferenceSettingsContent>,
 }
 
 /// Per-turn instrument-affordance injection (D94, spec B). Surfaces the
@@ -1919,4 +1927,30 @@ pub struct KaskModelsSettingsContent {
     /// (provider-prefixed). When empty, falls back to the kask default
     /// (`deepinfra/Qwen/Qwen3-Reranker-8B`).
     pub rerank_model: Option<String>,
+}
+
+/// Private-inference local-leg policy (the `"kask.private_inference"`
+/// section in settings.json) — M7/Seam B.
+///
+/// The PI-owned surface for the private local leg: the
+/// `openai_compatible` provider id the leg registers under and the
+/// loopback endpoint a launched llama-server serves on. The served-model
+/// fleet is registry data (the shipped model briefs in
+/// `kask/registry/model-briefs/`), never a settings list; the endpoint
+/// token lives at the provider `api_url` keychain slot (D5/D9b), so
+/// there are no `*_enabled` toggles — the token's presence is the
+/// toggle.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPrivateInferenceSettingsContent {
+    /// The `openai_compatible` provider id (the settings HashMap key and
+    /// the qualified-name prefix, e.g.
+    /// `"private-local/qwen3-8-flash-next"`). Absent uses the
+    /// settings-layer default.
+    pub provider_id: Option<String>,
+    /// The loopback host the private leg serves on. Absent uses the
+    /// settings-layer default (matching the placement policy's host).
+    pub host: Option<String>,
+    /// The loopback port the private leg serves on. Absent uses the
+    /// settings-layer default (matching the placement policy's port).
+    pub port: Option<u16>,
 }

@@ -28,8 +28,8 @@ pub(crate) use {
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
-    research::render_research_page, scenarios::render_scenarios_page,
-    security::render_security_page,
+    private_inference::render_private_inference_page, research::render_research_page,
+    scenarios::render_scenarios_page, security::render_security_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -37,6 +37,7 @@ mod media;
 mod memory;
 mod models;
 mod prediction_markets;
+mod private_inference;
 mod research;
 mod scenarios;
 
@@ -425,6 +426,12 @@ pub(crate) fn kask_string_input(
                 ("models", "rerank_model") => {
                     kask.models.get_or_insert_default().rerank_model = Some(parsed);
                 }
+                ("private_inference", "provider_id") => {
+                    kask.private_inference.get_or_insert_default().provider_id = Some(parsed);
+                }
+                ("private_inference", "host") => {
+                    kask.private_inference.get_or_insert_default().host = Some(parsed);
+                }
                 ("corpus", "embedding_dim") => {
                     if let Ok(v) = parsed.parse::<u32>() {
                         kask.corpus.get_or_insert_default().embedding_dim = Some(v);
@@ -746,6 +753,29 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_models_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Private Inference".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.private_inference"),
+            description: Some(
+                "The private local leg (llama.cpp) — the PI-owned policy: the \
+                 provider id the leg registers under, the loopback endpoint, \
+                 and the endpoint token. Register writes the \
+                 openai_compatible settings entry so the private models appear \
+                 in the agent panel model selector.".into(),
+            ),
+            search_aliases: &[
+                "private inference",
+                "llama",
+                "local model",
+                "private leg",
+                "model brief",
+                "vram",
+            ],
+            in_json: true,
+            files: USER,
+            render: render_private_inference_page,
         }),
     ];
 
