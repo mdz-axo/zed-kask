@@ -288,6 +288,25 @@ engagement evidence: baseline record §4.
 (`PlacementError::QuantizedKvRequiresFlashAttn`) naming the quantized
 cache, pinned by two new tests (23 total green).
 
+**MTP draft measured 2026-11-05 (unsloth transfer arc, measurement record
+`docs/research/private-inference-unsloth-mtp-measurement-2026-11-05.md`):**
+the pre-registered paired experiment on the qwen4exp/mtp fork engine
+(tip 6fcaa16, HIP gfx1102) adjudicates a **GAIN** — the P2 agent-turn
+median runs 16.52% faster with the shared-Q8_0 MTP draft (13.00 → 16.57
+tok/s decode, 1.275x; draft acceptance 0.59–0.75), inside the
+pre-declared 10–37% band and beyond the ±8% noise band, with the
+consistency anchor holding exactly (13.00 = the P0 floor). Two
+production constraints surfaced by the measurement itself: the
+spec-verify workspace needs 1–2 GB of VRAM headroom the 8 GB card does
+not have at ctx 65536 (typed ROCm OOM backtrace; the pair ran at ctx
+32768, a recorded c′-class deviation), and the temperature-0 identity
+instrument is confounded at reduced ctx (within-leg divergence at the
+same 29-char depth as cross-leg — parity unresolved, not parity-miss).
+The wrapper's draft surface (`6a1adb7699`) emits the spec flags with
+Lean-proven routing-to-guard soundness (`332b6a538f`); the workspace
+term in the VRAM arithmetic and the ctx policy are the named follow-ups
+before MTP routes by default.
+
 ## 12. Open items for the operator
 
 1. ~~**P0 approval**~~ — **COMPLETE 2026-11-04** (matrix ran, all four legs
