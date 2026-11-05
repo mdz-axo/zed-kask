@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 
 use hkask_private_inference::local_leg::gguf;
+use hkask_private_inference::local_leg::model_brief::ModelBrief;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, VramSource, compile_placement, probe_hardware,
 };
@@ -72,16 +73,15 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
     // The measured GPU placement (work order phase 4): dense/attention/KV on
     // the dGPU, routed experts resident in RAM. `cpu_moe` is already true.
     policy.n_gpu_layers = 999;
-    // This model's dense class carries per-layer token embedding tables
-    // (the PLE class): without the pin the guard correctly refuses — the
-    // dense class alone exceeds the 8.57 GB budget. The launcher sets the
-    // pin for models that carry them; it stays model-specific, never a
-    // policy default (an unmatched pattern would emit a dead flag).
-    policy.pin_to_cpu = Some("per_layer_token_embd".into());
+    // The model brief carries the PLE pin; the policy carries machine-level
+    // knobs only.
+
+    let brief = ModelBrief::load("qwen3-8-flash-next")
+        .expect("model brief loads (the launcher pins per-model)");
 
     // Shard 1 is the metadata-only header shard; llama.cpp discovers the
     // split set from the `-00001-of-00004` naming convention.
-    let plan = compile_placement(paths[0].clone(), &meta, &hw, &policy, &manifest)
+    let plan = compile_placement(paths[0].clone(), &meta, &hw, &brief, &policy, &manifest)
         .expect("the real meta + detected VRAM must pass the guards");
     let rendered = plan.to_string();
     println!("LAUNCH_PLAN: {rendered}");

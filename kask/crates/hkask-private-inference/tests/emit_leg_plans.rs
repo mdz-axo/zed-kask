@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::manifest::decode;
+use hkask_private_inference::local_leg::model_brief::ModelBrief;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, compile_placement, probe_hardware,
 };
@@ -58,22 +59,7 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
     // refusal is a printed finding for the record, not a test failure —
     // the matrix adapts with a recorded deviation, never silently.
     let model = paths[0].clone();
-    // Model-aware PLE pin: set only when the parsed model actually carries
-    // per-layer token embedding tensors. An unmatched pattern would emit a
-    // dead `--override-tensor` on models without them (observed live on the
-    // Flint emission 2026-11-04 — its dense class is 1.86 GiB with no PLE
-    // tensors). When the model carries the class, pinning keeps the
-    // offloadable dense + KV inside the 8 GB dGPU budget — the un-pinned
-    // plan is correctly refused by `vram_dense_fit` (observed live).
-    let ple_pin: Option<String> = if meta
-        .tensors
-        .iter()
-        .any(|t| !t.is_expert && t.name.contains("per_layer_token_embd"))
-    {
-        Some("per_layer_token_embd".into())
-    } else {
-        None
-    };
+    let brief = ModelBrief::load("qwen3-8-flash-next").expect("model brief");
     for (leg, flash_attn, n_gpu_layers) in [
         ("a-cpu-control [build/bin]", true, 0u32),
         ("b-dgpu-vulkan-fa-on [build-vulkan/bin]", true, 999),
@@ -83,10 +69,7 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
         let mut policy = PlacementPolicy::default();
         policy.flash_attn = flash_attn;
         policy.n_gpu_layers = n_gpu_layers;
-        if n_gpu_layers > 0 {
-            policy.pin_to_cpu = ple_pin.clone();
-        }
-        match compile_placement(model.clone(), &meta, &hw, &policy, &manifest) {
+        match compile_placement(model.clone(), &meta, &hw, &brief, &policy, &manifest) {
             Ok(plan) => println!("[{leg}] {plan}"),
             Err(err) => println!("[{leg}] REFUSED: {err}"),
         }

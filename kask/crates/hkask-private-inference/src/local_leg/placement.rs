@@ -13,6 +13,7 @@ use crate::local_leg::launch::LaunchPlan;
 use crate::local_leg::manifest::{
     ConstraintEnv, EngineSurfaceManifest, Evaluation, constraint_name, evaluate_constraint,
 };
+use crate::local_leg::model_brief::ModelBrief;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlacementError {
@@ -179,11 +180,6 @@ pub struct PlacementPolicy {
     /// emitted when a GPU tier exists (`n_gpu_layers > 0`) — inert and
     /// omitted on a GPU-less build.
     pub cpu_moe: bool,
-    /// Tensor-name substring pinned to CPU while layers offload to the GPU
-    /// (the PLE n-gram table: `per_layer_token_embd`). Emitted as
-    /// `--override-tensor <pattern>=CPU`; the pinned bytes are excluded
-    /// from the VRAM budget the `vram_dense_fit` guard checks.
-    pub pin_to_cpu: Option<String>,
     pub n_gpu_layers: u32,
     pub threads: u32,
     pub host: String,
@@ -199,17 +195,6 @@ impl Default for PlacementPolicy {
             kv_cache_type: "q8_0".into(),
             flash_attn: true,
             cpu_moe: true,
-            // Model-specific in the caller, never defaulted: an unmatched
-            // pattern would emit a dead `--override-tensor` on models
-            // without the tensors it names (Flint, Gemma 4). The PLE pin
-            // is set by the launcher for models that carry per-layer
-            // embeddings (baseline record §4).
-            pin_to_cpu: None,
-            // Measured 2026-11-04 (baseline record §4/§5): the GPU tier
-            // serves this machine 13.0–15.0 tok/s (HIP) / 10.1–11.5
-            // (Vulkan) vs 7.4–8.3 CPU-only — the §11 recommendation
-            // from the matrix, not an estimate. Fail-closed: a machine
-            // without detectable VRAM is refused by `vram_dense_fit`.
             n_gpu_layers: 999,
             threads: 12,
             host: "127.0.0.1".into(),
@@ -221,10 +206,16 @@ impl Default for PlacementPolicy {
 /// Compile a launch plan. Every manifest constraint is evaluated against
 /// the plan's own env. Streaming-mode launches are unroutable in v1 — the
 /// slot fields stay `None` (plan §6, the variety-deficit attenuation).
+///
+/// The model brief supplies the model-level policy (PLE pin pattern,
+/// expert counts); the hardware probe supplies the machine-level budget;
+/// the engine manifest supplies the flag spellings. The compiler
+/// composes all three.
 pub fn compile_placement(
     model_path: PathBuf,
     meta: &GgufMeta,
     hw: &HardwareInventory,
+    brief: &ModelBrief,
     policy: &PlacementPolicy,
     manifest: &EngineSurfaceManifest,
 ) -> Result<LaunchPlan, PlacementError> {
@@ -243,17 +234,18 @@ pub fn compile_placement(
         .saturating_mul(u64::from(policy.context_length));
 
     // Dense bytes the pin keeps on CPU — excluded from the VRAM budget.
-    let pinned_cpu_bytes = policy
-        .pin_to_cpu
-        .as_deref()
-        .map(|pattern| {
-            meta.tensors
-                .iter()
-                .filter(|t| !t.is_expert && t.name.contains(pattern))
-                .map(|t| t.approx_bytes)
-                .fold(0u64, |acc, bytes| acc.saturating_add(bytes))
-        })
-        .unwrap_or(0);
+    // The pattern comes from the model brief (M9), not the policy: the
+    // brief carries per-model tensor names (Qwen3.8 has a PLE table,
+    // Gemma 4 doesn't), the policy carries machine-level knobs.
+    let pinned_cpu_bytes = if brief.placement.ple_pin_pattern.is_empty() {
+        0
+    } else {
+        meta.tensors
+            .iter()
+            .filter(|t| !t.is_expert && t.name.contains(&brief.placement.ple_pin_pattern))
+            .map(|t| t.approx_bytes)
+            .fold(0u64, |acc, bytes| acc.saturating_add(bytes))
+    };
 
     let vocabulary = &manifest.flags;
     let mut args: Vec<String> = vec![vocabulary.model.clone(), model_path.display().to_string()];
@@ -274,9 +266,9 @@ pub fn compile_placement(
         if policy.cpu_moe {
             args.push(vocabulary.cpu_moe.clone());
         }
-        if let Some(pattern) = &policy.pin_to_cpu {
+        if !brief.placement.ple_pin_pattern.is_empty() {
             args.push(vocabulary.override_tensor.clone());
-            args.push(format!("{pattern}=CPU"));
+            args.push(format!("{}=CPU", brief.placement.ple_pin_pattern));
         }
     }
     args.push(vocabulary.threads.clone());
@@ -332,6 +324,12 @@ mod tests {
 
     const MANIFEST_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");
+    const BRIEF_TOML: &str =
+        include_str!("../../../../registry/model-briefs/qwen3-8-flash-next.toml");
+
+    fn test_brief() -> ModelBrief {
+        ModelBrief::decode(BRIEF_TOML).expect("Qwen brief decodes")
+    }
 
     #[test]
     fn quantized_kv_cache_with_fa_off_is_refused_at_emit_time() {
@@ -348,6 +346,7 @@ mod tests {
                 vram: None,
                 provenance: "test",
             },
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -374,6 +373,7 @@ mod tests {
                 vram: None,
                 provenance: "test",
             },
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -416,6 +416,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &test_hw(),
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -445,6 +446,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &hw,
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -465,6 +467,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &test_hw(),
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -481,6 +484,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &test_hw(), // vram: None
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -503,6 +507,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &test_hw(),
+            &test_brief(),
             &policy,
             &manifest,
         )
@@ -527,6 +532,7 @@ mod tests {
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
             &hw,
+            &test_brief(),
             &policy,
             &manifest,
         )
