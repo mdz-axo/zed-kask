@@ -74,17 +74,17 @@ pane, in any pane height; the close path's state teardown matches the open path'
 **Anchor:** study §1 (mechanism analysis); GPUI discipline rules 1–2 and 5 (study §7).
 
 **Touchpoints:**
-- `crates/media_panel/src/media_viewer.rs:4576-4591` — workspace content container
-  (add `overflow_hidden` — done in S1, `828b9c09f7`, with the
+- `crates/media_panel/src/media_viewer.rs:4898-4913` — workspace content
+  container (add `overflow_hidden` — done in S1, `828b9c09f7`, with the
   `media-viewer-content` test hook)
-- `crates/media_panel/src/media_viewer.rs:2454-2459` vs `:2384-2443` —
+- `crates/media_panel/src/media_viewer.rs:2481` vs `:2410-2470` —
   `close_transcript_workspace` teardown symmetry (add `selection_mode = false`,
   list-state reset; the `selection_mode` half landed in S1, `828b9c09f7`)
 - `crates/hkask-media-widget/src/media_widget.rs:1049-1063` — where the unconditional
   `min_h(240px)` floor lived (sub-item S1b: move floor ownership to embedders —
   done in S1, `828b9c09f7`; the site now documents the move)
-- viewer tests module (`media_viewer.rs` `mod tests`, layout-test precedents at
-  ~:9448+) — the new pin test's home
+- viewer tests module (`media_viewer.rs` `mod tests` :9865; layout-test
+  precedents in `mod viewer_layout_tests` :14736) — the new pin test's home
 
 **Design:**
 - (a) Pin test FIRST (red before the fix): render the workspace in a short pane,
@@ -123,16 +123,16 @@ cancels, Delete cuts; the two-click range stays as the fallback gesture.
 **Anchor:** study §6 P1-2; Reduct's verified select-to-act pattern; Shneiderman
 direct manipulation; MeetScript low-effort-dominance.
 
-**Touchpoints:** `handle_word_selection` (`media_viewer.rs:3282`), word blocks
-(`render_workspace_block:6277`), label editor (`open_label_editor:3860`,
-`confirm_label_edit:3892`), strike path (`strike_selected_range:3447`,
-`create_workspace_strike:3468`), gate (`highlight_range_gate:7871`).
+**Touchpoints:** `handle_word_selection` (`media_viewer.rs:3313`), word blocks
+(`render_workspace_block:6669`), label editor (`open_label_editor:3942`,
+`confirm_label_edit:3978`), strike path (`strike_selected_range:3529`,
+`create_workspace_strike:3550`), gate (`highlight_range_gate:8322`).
 
 **Design:** drag = pointer down on a word + move + up (threshold ~3px to stay
 compatible with click-to-seek), range = anchor→last hovered word, union across block
 boundaries (same union math as the two-click anchor). Popover renders pinned above
-the list (the label-editor pin pattern, `media_viewer.rs:5945-5951`) and hosts actions
-that reuse existing dispatchers — no new server calls.
+the list (the label-editor pin pattern, `media_viewer.rs:6315-6327`) and hosts
+actions that reuse existing dispatchers — no new server calls.
 
 **Acceptance:**
 1. Interaction test: drag across three words selects exactly the union range
@@ -157,9 +157,9 @@ match count; jump scrolls the block into view.
 **Anchor:** study §6 P1-3; boundary note — cross-recording search stays a
 Steer/`educt_search_transcripts` concern, not this surface.
 
-**Touchpoints:** header items (`render_workspace_header_item:6009+`), pane blocks
-(`build_pane_blocks:8646`), reveal machinery (`follow_marked_block_into_view:4240`),
-field-wise mark composition (`resolved_highlight_runs:7942` — match styling composes
+**Touchpoints:** header items (`render_workspace_header_item:6401+`), pane blocks
+(`build_pane_blocks:9097`), reveal machinery (`follow_marked_block_into_view:4563`),
+field-wise mark composition (`resolved_highlight_runs:8393` — match styling composes
 with highlight/cut marks).
 
 **Design:** client-side lexical search over pane blocks (the open transcript is
@@ -222,8 +222,8 @@ corrections stay layers over immutable source words.
 
 **Touchpoints:** popover (S2 dependency); server tools unchanged
 (`educt_store_layer`, `educt_realign_transcript`, `educt_apply_corrections`);
-single edit admission (`begin_edit` rejects overlap, `media_viewer.rs:1191`);
-alignment note machinery (five-state gate, `transcript_alignment_note:7653`).
+single edit admission (`begin_edit` rejects overlap, `media_viewer.rs:1217`);
+alignment note machinery (five-state gate, `transcript_alignment_note:8084`).
 
 **Design:** the correction editor is the label-editor pattern with a replacement
 field; dispatch chain under the existing edit admission; success reloads the
@@ -258,10 +258,10 @@ and render then flow through the existing EDL path.
 **Anchor:** study §6 P2-6; Reduct's verified reel pattern (drag in, reorder,
 strike-through-in-reel edits the video).
 
-**Touchpoints:** `compose_reel_params:8546`, `union_word_ranges:8093` (gains an
-explicit order parameter), `compose_workspace_reel:3584` (store_layer → render_edl
-chain), reel section (`render_workspace_reel_section:6669`), highlights/cuts
-sections (`:6436`, `:6586`), `pane_reel_compose` provenance identity.
+**Touchpoints:** `compose_reel_params:8997`, `union_word_ranges:8544` (gains an
+explicit order parameter), `compose_workspace_reel:3666` (store_layer → render_edl
+chain), reel section (`render_workspace_reel_section:7102`), highlights/cuts
+sections (`:6869`, `:7019`), `pane_reel_compose` provenance identity.
 
 **Design:** composer state = ordered `Vec<ClipSpec>` (highlight identity + word
 range + include flag + in-reel strike sub-ranges); op builder = ordered, per-clip
@@ -301,7 +301,7 @@ karaoke timestamp tags; ASWF OpenTimelineIO.
 **Touchpoints:** server — `kask/mcp-servers/hkask-mcp-media` (extend `educt_export`
 formats: `webvtt`, `web_annotation`; OTIO serialization as a new export family over
 EDL layers); panel — export affordances in the highlights/reel sections and the
-inspector's Reel tab (`InspectorTab::ALL`, `media_viewer.rs:594`).
+inspector's Reel tab (`InspectorTab::ALL`, `media_viewer.rs:595`).
 
 **Design:** serializers are pure functions over stored layers/transcripts —
 deterministic, fixture-pinned byte-for-byte (no Python anywhere — `.rules`); OTIO

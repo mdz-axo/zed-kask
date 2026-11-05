@@ -812,6 +812,15 @@ pub struct MediaViewer {
     /// so a release there cancels the pending drag rather than selecting
     /// from a stale position.
     drag_last_word: Option<usize>,
+    /// S2: the selection popover — a completed word range awaiting its
+    /// action (Highlight / Cut / Copy time / Include in reel), opened by
+    /// drag-select and the two-click range. Not modal: a fresh anchor or a
+    /// newer completed range replaces/dismisses it, seek clicks leave it
+    /// be, and the label editor (its Highlight arm) supersedes it.
+    selection_popover: Option<(usize, usize)>,
+    /// The selection popover's focus handle, created lazily on first open
+    /// (pure tests construct the viewer without a GPUI context).
+    selection_popover_focus: Option<gpui::FocusHandle>,
     /// S4-3: the open label editor — a completed range awaiting its label
     /// (create) or a researcher highlight being renamed. Word clicks are
     /// inert while it is open; Enter confirms, Escape cancels.
@@ -917,6 +926,8 @@ impl MediaViewer {
             selection_anchor: None,
             word_drag_anchor: None,
             drag_last_word: None,
+            selection_popover: None,
+            selection_popover_focus: None,
             highlight_edit: None,
             label_input_focus: None,
             reel_selection: HashSet::new(),
@@ -2402,6 +2413,7 @@ impl MediaViewer {
         self.current_word = None;
         self.selection_mode = false;
         self.selection_anchor = None;
+        self.selection_popover = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
         // A fresh workspace starts on the word surface with no visual-event
@@ -2472,6 +2484,7 @@ impl MediaViewer {
         self.current_word = None;
         self.selection_mode = false;
         self.selection_anchor = None;
+        self.selection_popover = None;
         self.highlight_edit = None;
         self.transcript_follow_task.take();
         self.transcript_surface = TranscriptSurface::Words;
@@ -2499,6 +2512,7 @@ impl MediaViewer {
         }
         self.transcript_surface = surface;
         self.selection_anchor = None;
+        self.selection_popover = None;
         self.highlight_edit = None;
         self.event_selection_anchor = None;
         self.event_selection_span = None;
@@ -3086,9 +3100,11 @@ impl MediaViewer {
                     .filter(|highlight| highlight.researcher_supplied)
                     .map(|highlight| (highlight.start_word, highlight.end_word))
                     .collect();
-                // A fresh workspace invalidates any open label editor —
-                // its annotation ids belong to the previous view.
+                // A fresh workspace invalidates any open label editor and
+                // selection popover — their annotation ids and word ranges
+                // belong to the previous view.
                 self.highlight_edit = None;
+                self.selection_popover = None;
                 self.transcript = Some(state);
                 self.current_word = None;
                 self.transcript_request.complete(epoch, Ok(()));
@@ -3306,7 +3322,7 @@ impl MediaViewer {
         match self.selection_anchor {
             None => WordClickOutcome::AnchorSet(clicked),
             Some(anchor) if anchor == clicked => WordClickOutcome::AnchorCleared,
-            Some(anchor) => WordClickOutcome::OpenLabelEditor {
+            Some(anchor) => WordClickOutcome::CompleteRange {
                 start_word: anchor.min(clicked),
                 end_word: anchor.max(clicked),
             },
@@ -3316,7 +3332,8 @@ impl MediaViewer {
     /// A word was clicked in the workspace: dispatch by the selection
     /// state machine — seek outside select mode, build ranges inside it,
     /// ignore clicks while the label editor is open. Range completion
-    /// opens the label editor, gated on index-identical views (D5: the
+    /// opens the selection popover (whose Highlight action opens the label
+    /// editor), gated on index-identical views (D5: the
     /// panel never re-implements the server's projection; re-anchored
     /// views cannot source-map a hand highlight in v1).
     fn word_clicked(
@@ -3331,6 +3348,11 @@ impl MediaViewer {
                 self.seek_workspace_transcript(start_ms, cx);
             }
             WordClickOutcome::AnchorSet(word) => {
+                // A fresh anchor dismisses the tray — the operator is
+                // building a new selection, so the pending range's actions
+                // will not run. (Seek clicks keep it: seeking is preview,
+                // the pending range still stands.)
+                self.selection_popover = None;
                 self.selection_anchor = Some(word);
                 self.status = Some(
                     "Click the last word to finish selecting, then create a highlight or cut."
@@ -3347,7 +3369,7 @@ impl MediaViewer {
                 self.status = Some("Label editor open — Enter confirms, Escape cancels.".into());
                 cx.notify();
             }
-            WordClickOutcome::OpenLabelEditor {
+            WordClickOutcome::CompleteRange {
                 start_word,
                 end_word,
             } => {
@@ -3362,17 +3384,7 @@ impl MediaViewer {
                     cx.notify();
                     return;
                 }
-                self.open_label_editor(
-                    HighlightEdit {
-                        kind: HighlightEditKind::Create {
-                            start_word,
-                            end_word,
-                        },
-                        buffer: LabelBuffer::default(),
-                    },
-                    window,
-                    cx,
-                );
+                self.open_selection_popover(start_word, end_word, window, cx);
             }
         }
     }
@@ -3387,7 +3399,7 @@ impl MediaViewer {
         if anchor == release {
             return WordDragOutcome::Click;
         }
-        WordDragOutcome::OpenLabelEditor {
+        WordDragOutcome::CompleteRange {
             start_word: anchor.min(release),
             end_word: anchor.max(release),
         }
@@ -3397,10 +3409,10 @@ impl MediaViewer {
     /// consume the pending drag, then dispatch by [`WordDragOutcome`] —
     /// same-word releases and editor-open presses are inert (the click
     /// path seeks; the editor is modal to its range), and a cross-word
-    /// release opens the label editor over the ordered union range under
-    /// the same index-identical gate as the two-click flow (D5). A release
-    /// with no pending anchor or no hovered word is a no-op: the press was
-    /// not over a word, or the release landed on a word gap.
+    /// release opens the selection popover over the ordered union range
+    /// under the same index-identical gate as the two-click flow (D5). A
+    /// release with no pending anchor or no hovered word is a no-op: the
+    /// press was not over a word, or the release landed on a word gap.
     fn word_drag_released(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (anchor, release) = (self.word_drag_anchor.take(), self.drag_last_word);
         let (Some(anchor), Some(release)) = (anchor, release) else {
@@ -3412,7 +3424,7 @@ impl MediaViewer {
                 self.status = Some("Label editor open — Enter confirms, Escape cancels.".into());
                 cx.notify();
             }
-            WordDragOutcome::OpenLabelEditor {
+            WordDragOutcome::CompleteRange {
                 start_word,
                 end_word,
             } => {
@@ -3426,17 +3438,7 @@ impl MediaViewer {
                     cx.notify();
                     return;
                 }
-                self.open_label_editor(
-                    HighlightEdit {
-                        kind: HighlightEditKind::Create {
-                            start_word,
-                            end_word,
-                        },
-                        buffer: LabelBuffer::default(),
-                    },
-                    window,
-                    cx,
-                );
+                self.open_selection_popover(start_word, end_word, window, cx);
             }
         }
     }
@@ -3960,6 +3962,10 @@ impl MediaViewer {
             }
         });
         self.highlight_edit = Some(edit);
+        // The editor supersedes any open selection popover (S2): opening it
+        // from the tray's Highlight action or a row's Rename never leaves a
+        // stale tray rendered beside the modal editor.
+        self.selection_popover = None;
         focus.focus(window, cx);
         cx.notify();
     }
@@ -4060,6 +4066,153 @@ impl MediaViewer {
                     cx.notify();
                 }
             }
+        }
+    }
+
+    // ── Selection popover (S2: the completed range's action tray) ─────────
+
+    /// Open the selection popover (S2) over the completed range — the
+    /// selection's action tray (Highlight / Cut / Copy time / Include in
+    /// reel), pinned above the list like the label editor. The tray takes
+    /// focus so its keys work without clicking first: Enter highlights,
+    /// Delete cuts, Escape dismisses. Not modal — a newer completed range
+    /// replaces this one, a fresh anchor dismisses it, and seek clicks
+    /// leave it be (seeking is preview, the pending range stands).
+    fn open_selection_popover(
+        &mut self,
+        start_word: usize,
+        end_word: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus = self
+            .selection_popover_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        // The tray owns the completed range; no anchor lingers.
+        self.selection_anchor = None;
+        self.selection_popover = Some((start_word, end_word));
+        self.status = Some(
+            "Selection ready — Highlight, Cut, Copy time, or Include in reel. Delete cuts; Escape dismisses."
+                .into(),
+        );
+        focus.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Dismiss the selection popover without acting (the tray's Escape).
+    fn dismiss_selection_popover(&mut self, cx: &mut Context<Self>) {
+        if self.selection_popover.take().is_some() {
+            self.status = Some("Selection dismissed.".into());
+            cx.notify();
+        }
+    }
+
+    /// Route the selection popover's keys: Enter opens the label editor
+    /// (the low-effort highlight path), Delete cuts the range, Escape
+    /// dismisses. Bound on the tray itself, so the keys only fire while
+    /// it holds focus — the label input's Delete stays text editing
+    /// (forward-delete), which is exactly why this binding is not on the
+    /// input.
+    fn handle_selection_popover_key(
+        &mut self,
+        keystroke: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match keystroke.key.as_str() {
+            "escape" => self.dismiss_selection_popover(cx),
+            "enter" => self.popover_highlight(window, cx),
+            "delete" | "backspace" => self.popover_cut(cx),
+            _ => {}
+        }
+    }
+
+    /// The tray's Highlight action: close the tray and open the label
+    /// editor over the same range — the naming step.
+    fn popover_highlight(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        self.open_label_editor(
+            HighlightEdit {
+                kind: HighlightEditKind::Create {
+                    start_word,
+                    end_word,
+                },
+                buffer: LabelBuffer::default(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// The tray's Cut action (the Delete key shares it): strike the range —
+    /// a cut carries no label, so the tray ends here.
+    fn popover_cut(&mut self, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        self.strike_selected_range(start_word, end_word, cx);
+    }
+
+    /// The tray's Copy time action: put the selection's time span on the
+    /// clipboard in the panel's marks vocabulary ("in 2.0s out 5.9s" — the
+    /// same readout the trim marks label uses, so one vocabulary serves
+    /// the panel). A view without word timings degrades honestly instead
+    /// of copying a made-up span.
+    fn popover_copy_time(&mut self, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        let span = self.transcript.as_ref().and_then(|state| {
+            let words = state.words.as_deref()?;
+            let first = words.get(start_word)?;
+            let last = words.get(end_word)?;
+            Some((first.start_ms, last.end_ms))
+        });
+        let Some((start_ms, end_ms)) = span else {
+            self.status = Some("No word timings on this view — nothing to copy.".into());
+            cx.notify();
+            return;
+        };
+        let copied = format!(
+            "in {:.1}s out {:.1}s",
+            start_ms as f64 / 1000.0,
+            end_ms as f64 / 1000.0
+        );
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
+        self.status = Some(format!("Copied {copied}."));
+        cx.notify();
+    }
+
+    /// The tray's Include in reel action. Over a researcher highlight's
+    /// exact range it flips reel membership (the highlights row's toggle,
+    /// no dispatch); over a fresh range it dispatches the existing create
+    /// path with the default label — the reload includes every researcher
+    /// highlight, so the one click carries the range into the reel (the
+    /// low-effort path: selection → reel). A bare membership insert for a
+    /// range with no highlight would be wiped at the next reload (the
+    /// reload rebuilds membership from the highlights), which is exactly
+    /// why the fresh arm creates.
+    fn popover_include_in_reel(&mut self, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        let range = (start_word, end_word);
+        if self.reel_selection.remove(&range) {
+            self.status = Some("Removed from the reel.".into());
+            cx.notify();
+        } else if self.transcript.as_ref().is_some_and(|state| {
+            state.highlights.iter().any(|highlight| {
+                highlight.researcher_supplied && (highlight.start_word, highlight.end_word) == range
+            })
+        }) {
+            self.reel_selection.insert(range);
+            self.status = Some("Added to the reel.".into());
+            cx.notify();
+        } else {
+            self.create_workspace_highlight(start_word, end_word, resolve_create_label(""), cx);
         }
     }
 
@@ -4211,6 +4364,96 @@ impl MediaViewer {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.cancel_label_edit(cx);
+                    })),
+            )
+            .into_any_element()
+    }
+
+    /// The selection popover (S2): the completed range's action tray —
+    /// Highlight / Cut / Copy time / Include in reel — pinned above the
+    /// list (the label-editor pin pattern) so the actions never virtualize
+    /// away. The tray holds focus while open; its keys (Enter highlights,
+    /// Delete cuts, Escape dismisses) bind here, never on the label input
+    /// (Delete there is text editing). An associated fn so the caller can
+    /// hold the workspace state's immutable borrow.
+    fn render_selection_popover(
+        excerpt: &str,
+        include_label: &str,
+        focus: &gpui::FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        div()
+            .id("media-transcript-selection-popover")
+            .track_focus(focus)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_selection_popover_key(&event.keystroke, window, cx);
+                cx.stop_propagation();
+            }))
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .debug_selector(|| "media-transcript-selection-popover".into())
+            .child(
+                Label::new(SharedString::from(format!("Selection — {excerpt}")))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                div()
+                    .id("media-transcript-popover-highlight")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Highlight"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.popover_highlight(window, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-popover-cut")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Cut"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.popover_cut(cx);
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-popover-copy-time")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Copy time"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.popover_copy_time(cx);
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-popover-include")
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(include_label))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.popover_include_in_reel(cx);
                     })),
             )
             .into_any_element()
@@ -5970,6 +6213,11 @@ impl MediaViewer {
             .label_input_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
+        // The selection popover's focus handle — the same lazy idiom.
+        let selection_popover_focus = self
+            .selection_popover_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         let state = self
             .transcript
             .as_ref()
@@ -5977,6 +6225,20 @@ impl MediaViewer {
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
+        // The open selection popover (S2) pins beside it — the completed
+        // range's action tray. The render carries the excerpt and the
+        // include toggle's CURRENT label ("Include in reel" vs "Remove
+        // from reel" over an included highlight's exact range); the
+        // actions read the range from the tray state, not from the render.
+        let pending_popover = self.selection_popover.map(|(start_word, end_word)| {
+            let excerpt = transcript_range_excerpt(state, start_word, end_word);
+            let include_label = if self.reel_selection.contains(&(start_word, end_word)) {
+                "Remove from reel"
+            } else {
+                "Include in reel"
+            };
+            (excerpt, include_label)
+        });
         // The whole sub-surface content (header rows, surface body rows,
         // annotation sections) renders as ONE virtualized list (S3d):
         // everything scrolls together exactly as the workspace always
@@ -6056,6 +6318,15 @@ impl MediaViewer {
                 &label_input_focus,
                 cx,
             )));
+        }
+        if let Some((excerpt, include_label)) = pending_popover {
+            workspace =
+                workspace.child(v_flex().px_3().pt_3().child(Self::render_selection_popover(
+                    &excerpt,
+                    include_label,
+                    &selection_popover_focus,
+                    cx,
+                )));
         }
         workspace = workspace.child(workspace_list);
         let inspector = self.inspector_open.then(|| self.render_inspector(cx));
@@ -7858,9 +8129,10 @@ enum WordClickOutcome {
     /// The label editor is open — the click is inert (the editor is modal
     /// to its range).
     EditorOpen,
-    /// The click completed a range — open the label editor over
-    /// [start, end] (the alignment gate runs before the editor opens).
-    OpenLabelEditor { start_word: usize, end_word: usize },
+    /// The click completed a range — open the selection popover over
+    /// [start, end] (the alignment gate runs before the popover opens; the
+    /// popover's Highlight action opens the label editor).
+    CompleteRange { start_word: usize, end_word: usize },
 }
 
 /// The press-and-release drag outcome (S2) — the one-gesture selection
@@ -7876,9 +8148,10 @@ enum WordDragOutcome {
     /// seeks (InteractiveText fires its click only for same-range
     /// down/up, so no selection is pending).
     Click,
-    /// Press and release span words — open the label editor over
-    /// [start, end] (the alignment gate runs before the editor opens).
-    OpenLabelEditor { start_word: usize, end_word: usize },
+    /// Press and release spanned words — open the selection popover over
+    /// [start, end] (the alignment gate runs before the popover opens; the
+    /// popover's Highlight action opens the label editor).
+    CompleteRange { start_word: usize, end_word: usize },
 }
 
 /// The label editor's open target (S4-3): a completed two-click range
@@ -12558,7 +12831,9 @@ mod tests {
 
     /// dcterms:identifier: `MediaViewer::handle_word_selection`
     /// expect: Seek outside select mode; anchor → clear on repeat; anchor →
-    /// ordered range on the second click — never an inverted range.
+    /// ordered range on the second click — never an inverted range. The
+    /// completed range opens the selection popover; Highlight on the
+    /// popover opens the label editor.
     /// [P1] Motivating: creation must be deliberate and range-ordered.
     #[test]
     fn word_selection_state_machine() {
@@ -12582,7 +12857,7 @@ mod tests {
         viewer.selection_anchor = Some(9);
         assert_eq!(
             viewer.handle_word_selection(3),
-            WordClickOutcome::OpenLabelEditor {
+            WordClickOutcome::CompleteRange {
                 start_word: 3,
                 end_word: 9
             }
@@ -12591,7 +12866,7 @@ mod tests {
         viewer.selection_anchor = Some(3);
         assert_eq!(
             viewer.handle_word_selection(9),
-            WordClickOutcome::OpenLabelEditor {
+            WordClickOutcome::CompleteRange {
                 start_word: 3,
                 end_word: 9
             }
@@ -12615,26 +12890,27 @@ mod tests {
     }
 
     /// dcterms:identifier: `MediaViewer::handle_word_drag`
-    /// expect: press-and-release across words opens the editor on the
-    /// ordered union range in EITHER interaction mode (drag is the
-    /// one-gesture selection path — seek mode keeps click-to-seek);
-    /// same-word release stays a plain click; the open label editor
-    /// makes drags inert.
+    /// expect: press-and-release across words completes the ordered union
+    /// range in EITHER interaction mode (drag is the one-gesture selection
+    /// path — seek mode keeps click-to-seek); same-word release stays a
+    /// plain click; the open label editor makes drags inert. The completed
+    /// range opens the selection popover; Highlight on the popover opens
+    /// the label editor.
     #[test]
     fn word_drag_state_machine() {
         let mut viewer = MediaViewer::new();
         viewer.selection_mode = false;
         assert_eq!(
             viewer.handle_word_drag(2, 5),
-            WordDragOutcome::OpenLabelEditor {
+            WordDragOutcome::CompleteRange {
                 start_word: 2,
                 end_word: 5
             },
-            "drag-select selects outside Select text mode"
+            "drag-select completes a range outside Select text mode"
         );
         assert_eq!(
             viewer.handle_word_drag(9, 3),
-            WordDragOutcome::OpenLabelEditor {
+            WordDragOutcome::CompleteRange {
                 start_word: 3,
                 end_word: 9
             },
@@ -12657,6 +12933,279 @@ mod tests {
             WordDragOutcome::Inert,
             "drags are inert while the label editor is open"
         );
+    }
+
+    /// dcterms:identifier: `MediaViewer::popover_cut`
+    /// expect: The tray's Cut consumes the popover and dispatches the
+    /// existing strike path; an in-flight edit surfaces the admission
+    /// refusal instead of dispatching.
+    /// [P1] Motivating: Delete/Cut on a pending selection must reach the
+    /// strike dispatcher, never a silent no-op.
+    #[gpui::test]
+    fn popover_cut_dispatches_the_strike_path(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-cut".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: None,
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.selection_popover = Some((3, 9));
+            viewer.edit_request.state = ResourceState::Loading;
+            viewer.popover_cut(cx);
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the cut consumes the tray"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("Another media edit")),
+                "the strike arm surfaced the admission refusal: {:?}",
+                viewer.status
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::popover_include_in_reel`
+    /// expect: Over a researcher highlight's exact range the tray flips
+    /// reel membership (the highlights row's toggle, no dispatch); over a
+    /// fresh range it dispatches the existing create path — an in-flight
+    /// edit surfaces the admission refusal and the range never enters the
+    /// selection directly (a bare membership insert would be wiped at the
+    /// next reload; a fresh range rides the create + reload include).
+    /// [P1] Motivating: selection → reel is one click (the low-effort
+    /// path), and membership state stays honest.
+    #[gpui::test]
+    fn popover_include_toggles_reel_membership(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-include".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: None,
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: vec![PaneHighlight {
+                    start_word: 3,
+                    end_word: 9,
+                    label: "thesis".into(),
+                    note: String::new(),
+                    annotation_id: "ann-1".into(),
+                    researcher_supplied: true,
+                }],
+                strikes: Vec::new(),
+            });
+
+            // Included → the tray removes the range (the row toggle).
+            viewer.reel_selection.insert((3, 9));
+            viewer.selection_popover = Some((3, 9));
+            viewer.popover_include_in_reel(cx);
+            assert!(
+                !viewer.reel_selection.contains(&(3, 9)),
+                "the include toggle removes an included range"
+            );
+            assert!(viewer.selection_popover.is_none());
+
+            // Excluded highlight → the tray re-adds the range.
+            viewer.selection_popover = Some((3, 9));
+            viewer.popover_include_in_reel(cx);
+            assert!(
+                viewer.reel_selection.contains(&(3, 9)),
+                "the include toggle re-adds the highlight's range"
+            );
+            assert!(viewer.selection_popover.is_none());
+
+            // A fresh range dispatches the create path — an in-flight edit
+            // surfaces the refusal, and the range never enters the
+            // selection directly.
+            viewer.edit_request.state = ResourceState::Loading;
+            viewer.selection_popover = Some((20, 22));
+            viewer.popover_include_in_reel(cx);
+            assert!(
+                !viewer.reel_selection.contains(&(20, 22)),
+                "a fresh range rides the create dispatch, never a bare membership insert"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("Another media edit")),
+                "the create arm surfaced the admission refusal: {:?}",
+                viewer.status
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::popover_copy_time`
+    /// expect: Copy time consumes the tray and writes the selection's
+    /// time span to the clipboard in the panel's marks vocabulary
+    /// ("in 0.3s out 0.5s" — the same readout the trim marks label
+    /// uses); a view without word timings degrades honestly instead of
+    /// copying a made-up span.
+    /// [P1] Motivating: the copied span must be the exact selection, and
+    /// degradation must surface, never fabricate.
+    #[gpui::test]
+    fn popover_copy_time_writes_the_span(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-copy".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(vec![
+                    PaneWord {
+                        word: "the".into(),
+                        start_ms: 200,
+                        end_ms: 290,
+                    },
+                    PaneWord {
+                        word: "span".into(),
+                        start_ms: 300,
+                        end_ms: 390,
+                    },
+                    PaneWord {
+                        word: "to".into(),
+                        start_ms: 400,
+                        end_ms: 470,
+                    },
+                    PaneWord {
+                        word: "copy".into(),
+                        start_ms: 480,
+                        end_ms: 500,
+                    },
+                ]),
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.selection_popover = Some((1, 3));
+            viewer.popover_copy_time(cx);
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .expect("the span is on the clipboard");
+            assert_eq!(copied, "in 0.3s out 0.5s");
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the copy consumes the tray"
+            );
+        });
+
+        // No word timings on the view: honest degradation, nothing new
+        // copied (the clipboard keeps the earlier span — the degraded arm
+        // writes nothing rather than a made-up span).
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript.as_mut().unwrap().words = None;
+            viewer.selection_popover = Some((1, 3));
+            viewer.popover_copy_time(cx);
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("No word timings")),
+                "the degraded copy surfaces honestly: {:?}",
+                viewer.status
+            );
+            let copied = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .expect("the clipboard still holds the earlier span");
+            assert_eq!(
+                copied, "in 0.3s out 0.5s",
+                "the degraded arm writes nothing new"
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::close_transcript_workspace`
+    /// expect: The selection popover tears down with the surface — the
+    /// close path, a fresh open, and a surface switch all reset it
+    /// (teardown symmetry: the tray belongs to the word surface it was
+    /// opened on).
+    /// [P1] Motivating: teardown asymmetries are latent traps for later
+    /// surfaces (the S1 hygiene rule).
+    #[gpui::test]
+    fn selection_popover_resets_with_the_surface(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-teardown".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: None,
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.selection_popover = Some((3, 9));
+            viewer.close_transcript_workspace(cx);
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the close path resets the tray"
+            );
+
+            viewer.selection_popover = Some((3, 9));
+            viewer.open_transcript("t-popover-reopen".into(), cx);
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the open path resets the tray"
+            );
+
+            // Re-establish the word surface's state (close/open cleared
+            // it) — the surface switch must reset the tray too.
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-teardown".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: None,
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.selection_popover = Some((3, 9));
+            viewer.toggle_transcript_surface(TranscriptSurface::Events, cx);
+            assert!(
+                viewer.selection_popover.is_none(),
+                "leaving the word surface resets the tray"
+            );
+        });
     }
 
     /// dcterms:identifier: `highlight_create_params`
@@ -14628,6 +15177,242 @@ mod viewer_layout_tests {
                  (window height {window_height:?}): widget {widget:?} vs content {content:?}"
             );
         }
+    }
+
+    /// The selection popover (S2) opens for BOTH selection gestures on the
+    /// completed range — press-and-release drag and the two-click fallback —
+    /// pinned above the list like the label editor (never virtualized
+    /// away), carrying the plan's S2 acceptance 1-2. A fresh completion
+    /// replaces the tray's range; the completed range owns the pane (no
+    /// anchor lingers).
+    #[gpui::test]
+    fn selection_popover_opens_for_drag_and_two_click_ranges(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-gestures".into(),
+                media_path: "/generated/popover.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..30)
+                        .map(|index| PaneWord {
+                            word: format!("popover-word-{index}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        use gpui::VisualContext as _;
+        // Drag completion (S2 core → tray): press on word 2, hover word 5,
+        // release — the ordered union range, never inverted.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.word_drag_anchor = Some(2);
+            viewer.drag_last_word = Some(5);
+            viewer.word_drag_released(window, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.selection_popover,
+                Some((2, 5)),
+                "the drag completion opens the tray on the ordered union range"
+            );
+        });
+        assert!(
+            cx.debug_bounds("media-transcript-selection-popover")
+                .is_some(),
+            "the selection popover renders pinned above the list"
+        );
+
+        // Two-click completion (the fallback gesture): anchor then last
+        // word in select mode — the same range semantics, the same tray.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.selection_mode = true;
+            viewer.word_clicked(10, 1_000, window, cx);
+            viewer.word_clicked(14, 1_400, window, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.selection_popover,
+                Some((10, 14)),
+                "the two-click completion opens the tray on the same union range"
+            );
+            assert!(
+                viewer.selection_anchor.is_none(),
+                "an open tray owns the completed range; no anchor lingers"
+            );
+        });
+    }
+
+    /// The tray's keyboard shortcuts (S2): Enter opens the label editor over
+    /// the tray's range, Delete cuts through the strike path, Escape
+    /// dismisses — the plan's S2 objective's Enter/Delete keys. The tray
+    /// holds focus while open, so the keys bind on it and never on the
+    /// label input (Delete there is text editing).
+    #[gpui::test]
+    fn selection_popover_keys_highlight_cut_and_dismiss(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        let blank_modifiers = || gpui::Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
+            platform: false,
+            function: false,
+        };
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-popover-keys".into(),
+                media_path: "/generated/popover-keys.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..30)
+                        .map(|index| PaneWord {
+                            word: format!("keys-word-{index}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        use gpui::VisualContext as _;
+        // Enter routes to Highlight: the label editor opens over the tray's
+        // range and the tray closes (the editor supersedes it).
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.selection_popover = Some((3, 9));
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "enter".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                matches!(
+                    &viewer.highlight_edit,
+                    Some(HighlightEdit {
+                        kind: HighlightEditKind::Create {
+                            start_word: 3,
+                            end_word: 9
+                        },
+                        ..
+                    })
+                ),
+                "Enter opens the label editor over the tray's range"
+            );
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the editor supersedes the tray"
+            );
+        });
+
+        // Delete routes to the strike path — the admission refusal surfaces
+        // (an in-flight edit), proving the cut arm was taken.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.highlight_edit = None;
+            viewer.selection_popover = Some((3, 9));
+            viewer.edit_request.state = ResourceState::Loading;
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "delete".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.selection_popover.is_none(),
+                "the cut consumes the tray"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("Another media edit")),
+                "Delete reached the strike path and surfaced the admission refusal: {:?}",
+                viewer.status
+            );
+        });
+
+        // Escape dismisses without acting.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.edit_request.state = ResourceState::Idle;
+            viewer.selection_popover = Some((3, 9));
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "escape".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.selection_popover.is_none(),
+                "Escape dismisses the tray"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("dismissed")),
+                "the dismissal surfaces: {:?}",
+                viewer.status
+            );
+        });
     }
 
     /// A failed player must not turn the transcript workspace into a dead
