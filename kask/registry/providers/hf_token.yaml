@@ -1,0 +1,83 @@
+# Provider profile — HuggingFace (the hf_token adoption). Structural
+# contract pinned by kask/scripts/check-provider-profiles.sh; semantic
+# reading owned by the provider-audit skill.
+#
+# Reinstated 2026-11-04 under the credential key `hf_token` — the profile
+# layer's id is the data-services credential key, per the gate's tree
+# derivation. The 2026-10-17 retirement of the training-era adoption is
+# archived at huggingface.yaml; this profile is the new, narrower live
+# contract: the private-inference core service's acquisition module
+# fetches model weights from the Hub (HTTP Range resume + LFS sha256
+# verification) on the zed side. No MCP child ever receives the token.
+id: hf_token
+name: HuggingFace
+status: active
+roles:
+  # Revived 2026-11-04 with a live consumer (the acquisition module). The
+  # archived huggingface.yaml lists this role as retired without a consumer.
+  - model-weights-host
+keychain:
+  slot: kask://credentials/hf_token
+  env_var: HF_TOKEN
+consumed_capabilities:
+  - capability: model-weights fetches over huggingface.co with HTTP Range
+      resume and LFS sha256 verification — public repos anonymously; the
+      token unlocks gated repos, and a gated repo requested without it is
+      a typed authorization error naming HF_TOKEN (fail-closed, never a
+      silent empty result)
+    source: kask/crates/hkask-private-inference/src/acquisition.rs
+  - capability: Data Services settings row ("HuggingFace (model-weights
+      host)") with zed-side resolution through the data-services keychain
+      chain — the acquisition module never reads credentials itself
+    source: kask/crates/kask_bridge/src/inference_providers.rs (DATA_SERVICES)
+deliberate_non_consumption:
+  - capability: MCP child injection
+    reason: >-
+      no MCP child receives HF_TOKEN — pinned by RETIRED_TRAINING_CREDENTIALS
+      in kask/crates/kask_bridge/src/mcp_servers.rs, which asserts
+      child-grant absence (not credential retirement; the token is live
+      zed-side).
+  - capability: training-artifact publish and the HKASK_HF_* dataset/model repos
+    reason: >-
+      retired with the training server 2026-10-17 — model training is
+      outside the co-researcher mandate; the reinstatement is read-only
+      weights acquisition and the retired role stays retired.
+  - capability: hosted inference against the Hub (Inference Endpoints/Providers)
+    reason: >-
+      the private-inference leg runs GGUF inference locally; the Hub is
+      consumed only as a weights source.
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at
+  # kask/crates/hkask-bridge-ontology/sources/dpv/)
+  extracted_at: "2026-11-05"
+  trains_on_customer_data: >-
+    no training clause in the privacy policy re-read (huggingface.co/privacy,
+    effective 2023-03-28, extracted 2026-11-05) — the §2 use purposes do not
+    include model training on user content. An explicit
+    train-on-private-content statement was not located — the same evidence
+    gap the archived 2026-10-13 audit recorded, unchanged by this re-read.
+  retention_published: >-
+    yes — privacy policy §4.B "Data retention" (extracted 2026-11-05): "We
+    retain your Information for as long as necessary to deliver the Services,
+    to comply with any applicable legal requirements, to maintain security
+    and prevent incidents and, in general, to pursue our legitimate
+    interests."
+status_surface:
+  status_page: >-
+    https://status.huggingface.co live (HTTP 200, "All services are online",
+    last updated 2026-11-03; extracted 2026-11-05) — per-service uptime ~100%
+    (Hub 99.989% over one 90-day window; git hosting and serving 99.997%).
+    Degradations relevant to the weights-download role: slower downloads in
+    the Asia-Pacific region (Sep 22 and Sep 25, 2026, CDN).
+  sla: none found (re-probed 2026-11-05).
+pricing:
+  machine_readable: >-
+    pricing published (huggingface.co/pricing, HTTP 200, extracted
+    2026-11-05) — PRO $9/month, Hub storage $8-12/TB/month by volume tier,
+    Spaces/Jobs GPU and Inference Endpoints hourly tables; no
+    machine-readable pricing source found this run.
+first_audit_pending: false
+# B3/B4/B5 fields read and dated this pass (2026-11-05). The full inbound
+# B1-B6 / outbound O1-O4 provider-audit pass for this adoption is owed at
+# the next scheduled audit run — this profile is the structural-contract
+# make-good for the 2026-11-04 reinstatement, not a completed audit.
