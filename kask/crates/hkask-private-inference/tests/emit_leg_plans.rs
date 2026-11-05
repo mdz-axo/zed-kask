@@ -12,8 +12,6 @@
 //!   cargo test -p hkask-private-inference --test emit_leg_plans -- --ignored --nocapture
 //! ```
 
-use std::path::PathBuf;
-
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::manifest::decode;
 use hkask_private_inference::local_leg::model_brief::ModelBrief;
@@ -21,23 +19,18 @@ use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, compile_placement, probe_hardware,
 };
 
+mod common;
+
 const MANIFEST_TOML: &str =
     include_str!("../../../registry/private-inference/llama-cpp-mainline.toml");
 
 #[test]
 #[ignore]
 fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
-    let Some(dir) = std::env::var_os("HKASK_P0_GGUF_DIR") else {
+    let Some(paths) = common::p0_shard_paths() else {
         eprintln!("HKASK_P0_GGUF_DIR unset; skipping plan emission");
         return;
     };
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("read HKASK_P0_GGUF_DIR")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "gguf"))
-        .collect();
-    assert!(!paths.is_empty(), "no .gguf shards in {dir:?}");
-    paths.sort();
     let meta = gguf::parse(&paths).expect("complete shard set parses — strict byte guard");
     const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
     println!(

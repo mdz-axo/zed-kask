@@ -12,13 +12,13 @@
 //!   cargo test -p hkask-private-inference --test live_gpu_plan -- --ignored --nocapture
 //! ```
 
-use std::path::PathBuf;
-
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::model_brief::ModelBrief;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, VramSource, compile_placement, probe_hardware,
 };
+
+mod common;
 
 const MANIFEST_TOML: &str =
     include_str!("../../../registry/private-inference/llama-cpp-mainline.toml");
@@ -30,7 +30,7 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
         eprintln!("HKASK_P0_LIVE_PLAN unset; skipping the live GPU plan compile");
         return;
     }
-    let Some(dir) = std::env::var_os("HKASK_P0_GGUF_DIR") else {
+    let Some(paths) = common::p0_shard_paths() else {
         panic!(
             "HKASK_P0_LIVE_PLAN set but HKASK_P0_GGUF_DIR unset: \
                 the plan compile needs the real tensor accounting"
@@ -50,14 +50,6 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
         card_path.display(),
         hw.available_ram_bytes
     );
-
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("read HKASK_P0_GGUF_DIR")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "gguf"))
-        .collect();
-    assert!(!paths.is_empty(), "no .gguf shards in {dir:?}");
-    paths.sort();
 
     let meta = gguf::parse(&paths).expect("complete shard set parses (strict guard)");
     println!(

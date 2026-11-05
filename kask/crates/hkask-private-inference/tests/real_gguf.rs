@@ -14,20 +14,15 @@ use std::path::PathBuf;
 
 use hkask_private_inference::local_leg::gguf::{self, GgufError};
 
+mod common;
+
 #[test]
 #[ignore]
 fn parses_real_qwen38_flash_next_shard_headers() {
-    let Some(dir) = std::env::var_os("HKASK_P0_GGUF_DIR") else {
+    let Some(paths) = common::p0_shard_paths() else {
         eprintln!("HKASK_P0_GGUF_DIR unset; skipping the live shard parse");
         return;
     };
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
-        .expect("read HKASK_P0_GGUF_DIR")
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|ext| ext == "gguf"))
-        .collect();
-    assert!(!paths.is_empty(), "no .gguf shards in {dir:?}");
-    paths.sort();
 
     let full = gguf::parse(&paths);
     let meta = match full {
