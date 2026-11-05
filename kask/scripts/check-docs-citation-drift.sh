@@ -81,9 +81,8 @@ fi
 
 # ── Phase A+B: census with order-preserving continuation inheritance ──────
 resolve() {
-  local p=$1 d b hits n bhits bn
+  local p=$1 b hits n bhits bn
   [ -f "$p" ] && { printf '%s\n' "$p"; return; }
-  d=$(dirname "$doc"); [ -f "$d/$p" ] && { printf '%s\n' "$d/$p"; return; }
   hits=$(grep -x ".*/$p" "$TMP/rsfiles.txt" || true)
   n=$(printf '%s\n' "$hits" | grep -c . || true)
   [ "$n" -eq 1 ] && { printf '%s\n' "$hits"; return; }
@@ -184,6 +183,8 @@ done < <(tr '\t' '\037' < "$TMP/citations.tsv")
 # never as "0 shifted-region warnings" (the .rules broken-feedback-loop
 # class: an unreachable baseline once failed every per-file diff with the
 # error suppressed and passed every cite against an empty hunk table).
+# The summary prints $drift_summary bare — a future branch that forgets
+# to assign it leaves a visibly empty field, never a masked zero.
 drift_warn=0
 drift_summary=""
 if [ -f "$BASELINE" ]; then
@@ -255,5 +256,5 @@ if [ "$REFRESH" -eq 1 ]; then
 fi
 
 echo "----"
-echo "citation drift: $mismatch @sym mismatches (failures), ${drift_summary:-$drift_warn shifted-region warnings}, $ambig ambiguous-name warnings, $orphan orphaned continuation forms, over ${#DOCS[@]} docs"
+echo "citation drift: $mismatch @sym mismatches (failures), $drift_summary, $ambig ambiguous-name warnings, $orphan orphaned continuation forms, over ${#DOCS[@]} docs"
 [ "$mismatch" -eq 0 ]
