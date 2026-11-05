@@ -29,7 +29,12 @@
 #     citation-drift-audit-hash.txt) — the "re-anchor at consultation"
 #     class, listed but not failed, matching the existing gates' warning
 #     tier (line-drift, ambiguous-name). Also warns on ambiguous bare
-#     basenames and orphaned continuation forms.
+#     basenames and orphaned continuation forms. A skipped drift tier
+#     (missing or unreachable audit hash, export mode) is surfaced as a
+#     SKIPPED status in the summary line — it never prints as a clean 0
+#     (observed live 2026-11-04: a baseline naming a commit lost to the
+#     2026-10-27 history collapse left every per-file diff failing with
+#     the error swallowed by 2>/dev/null, and the tier false-cleaned).
 #
 # --refresh writes the current HEAD hash into the baseline after a deep
 # audit (or any re-anchoring pass) — the ratchet: each run checks drift
@@ -174,7 +179,13 @@ while IFS=$'\037' read -r doc docline file line sym form; do
 done < <(tr '\t' '\037' < "$TMP/citations.tsv")
 
 # ── Phase E: drift-window warnings against the audit hash ─────────────────
+# drift_summary replaces the shifted-region count in the summary line
+# whenever the tier does not run, so a degraded ratchet reads as SKIPPED,
+# never as "0 shifted-region warnings" (the .rules broken-feedback-loop
+# class: an unreachable baseline once failed every per-file diff with the
+# error suppressed and passed every cite against an empty hunk table).
 drift_warn=0
+drift_summary=""
 if [ -f "$BASELINE" ]; then
   BASE=$(head -1 "$BASELINE")
   if ! git rev-parse --git-dir >/dev/null 2>&1; then
@@ -182,6 +193,14 @@ if [ -f "$BASELINE" ]; then
     # degrades (surfaced, never silent); the @sym gate phase above ran
     # in full.
     echo "warn: citation-drift: export mode (no .git) — the drift-window warning tier is skipped; the @sym gate phase ran in full."
+    drift_summary="drift-window tier SKIPPED (export mode, no .git)"
+  elif ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null 2>&1; then
+    # Dangling baseline: the diff loop below would fail per file with
+    # the error swallowed by 2>/dev/null, pass every cite against an
+    # empty hunk table, and report a masked zero — surface the dead
+    # instrument instead of running it.
+    echo "warn: citation-drift: audit hash ${BASE:-<empty>} at $BASELINE is not a reachable commit — the drift-window tier is skipped and the summary must say so (run '$0 --refresh' after a deep audit to pin a reachable audit point)." >&2
+    drift_summary="drift-window tier SKIPPED (audit hash ${BASE:-<empty>} not reachable)"
   else
   : > "$TMP/hunks.tsv"
   while IFS= read -r f; do
@@ -215,20 +234,26 @@ if [ -f "$BASELINE" ]; then
       echo "warn: citation-drift: $doc cites $file:$line — in a region shifted/edited since the audit hash (re-anchor at consultation)"
     fi
   done < <(tr '\t' '\037' < "$TMP/citations.tsv")
+  drift_summary="$drift_warn shifted-region warnings"
   fi
 else
   echo "warn: citation-drift: no audit hash at $BASELINE — run '$0 --refresh' after a deep audit to pin the audit point; the drift-warning phase is skipped until then."
+  drift_summary="drift-window tier SKIPPED (no audit hash pinned)"
 fi
 
 ambig=$(grep -c 'UNRESOLVED' "$TMP/unresolved.log" 2>/dev/null || true)
 orphan=$(grep -c 'CONT-NO-PATH' "$TMP/unresolved.log" 2>/dev/null || true)
 
 if [ "$REFRESH" -eq 1 ]; then
+  if ! git rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+    echo "FAIL: --refresh needs a git repository to name the audit commit — run it from the repo, never from an export (writing an empty baseline would silently kill the tier)." >&2
+    exit 2
+  fi
   git rev-parse HEAD > "$BASELINE"
   echo "OK: audit hash refreshed to $(git rev-parse HEAD). Commit it with the audit that earned it."
   exit 0
 fi
 
 echo "----"
-echo "citation drift: $mismatch @sym mismatches (failures), $drift_warn shifted-region warnings, $ambig ambiguous-name warnings, $orphan orphaned continuation forms, over ${#DOCS[@]} docs"
+echo "citation drift: $mismatch @sym mismatches (failures), ${drift_summary:-$drift_warn shifted-region warnings}, $ambig ambiguous-name warnings, $orphan orphaned continuation forms, over ${#DOCS[@]} docs"
 [ "$mismatch" -eq 0 ]

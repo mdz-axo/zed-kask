@@ -15,6 +15,12 @@
 #   5. Plain citation in a region SHIFTED since the audit hash → warning,
 #      not failure (exit 0 when no @sym mismatch).
 #   6. --refresh writes the current HEAD hash into the baseline.
+#   7. Dangling baseline (unreachable audit hash) → the tier skips with a
+#      surfaced SKIPPED status in the summary — never a masked clean 0
+#      (the live defect: a baseline naming a commit lost to history
+#      collapse false-cleaned the tier for days).
+#   8. Export mode (no .git) → the same surfaced-skip contract in the
+#      summary, which the pre-push hook prints on every push.
 #
 # Exit codes: 0 = every case behaved as expected, 1 = a case misbehaved.
 set -uo pipefail
@@ -24,7 +30,12 @@ GATE="$KASK_ROOT/scripts/check-docs-citation-drift.sh"
 [ -f "$GATE" ] || { echo "FAIL: gate not found at $GATE"; exit 1; }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+# NOGIT lives OUTSIDE the fixture repo: the export-mode case must not see
+# a parent .git through directory discovery (a nogit under $WORK found
+# the fixture repo and took the wrong branch — the live specimen for the
+# "validate the instrument against the real command form" rule).
+NOGIT="$(mktemp -d)"
+trap 'rm -rf "$WORK" "$NOGIT"' EXIT
 git init -q "$WORK"
 git -C "$WORK" config user.email selftest@local
 git -C "$WORK" config user.name selftest
@@ -123,6 +134,34 @@ echo "$out" | grep -qE 'citation drift: 0 @sym mismatches \(failures\), [1-9]' \
 out=$( cd "$WORK" && DOCS_ROOT="docs/good" bash "$GATE" --refresh 2>&1 )
 echo "$out" | grep -q 'audit hash refreshed' \
   || { echo "FAIL: --refresh did not report"; FAILED=1; }
+
+# Case 7: dangling baseline (unreachable audit hash) → surfaced SKIPPED in
+# the summary, never a masked clean 0. The bogus hash must not exist in the
+# fixture repo, so the reachability check fails the way a history-collapse
+# orphan does in the real repo.
+echo 0000000000000000000000000000000000000009 > "$WORK/kask/scripts/citation-drift-audit-hash.txt"
+doc_with dangling '`src/widget.rs:4`'
+out=$(run_gate dangling); rc=$?
+expect 0 "$rc" "dangling baseline warns, not fails"
+echo "$out" | grep -q 'is not a reachable commit' \
+  || { echo "FAIL: dangling case missing the unreachable-baseline warn"; FAILED=1; }
+echo "$out" | grep -q 'drift-window tier SKIPPED (audit hash' \
+  || { echo "FAIL: dangling case summary did not surface the skip"; FAILED=1; }
+echo "$out" | grep -qE '[0-9]+ shifted-region warnings' \
+  && { echo "FAIL: dangling case printed a shifted-region count over a dead tier"; FAILED=1; }
+
+# Case 8: export mode (no .git) → the skip surfaces in the summary too, so
+# a hook-side run can never read as a clean 0 either. The shifted fixture doc
+# carries no @sym cite (its plain cite must not redden the @sym phase).
+mkdir -p "$NOGIT/src" "$NOGIT/docs/shifted"
+cp "$WORK/src/widget.rs" "$NOGIT/src/widget.rs"
+cp "$WORK/docs/shifted/doc.md" "$NOGIT/docs/shifted/doc.md"
+out=$( REPO_ROOT="$NOGIT" DOCS_ROOT="docs/shifted" bash "$GATE" 2>&1 ); rc=$?
+expect 0 "$rc" "export mode exits 0"
+echo "$out" | grep -q 'drift-window tier SKIPPED (export mode, no .git)' \
+  || { echo "FAIL: export case summary did not surface the skip"; FAILED=1; }
+echo "$out" | grep -qE '[0-9]+ shifted-region warnings' \
+  && { echo "FAIL: export case printed a shifted-region count over a skipped tier"; FAILED=1; }
 
 [ "$FAILED" -eq 0 ] && echo "PASS: all citation-drift self-test cases behaved as expected."
 exit "$FAILED"
