@@ -59,12 +59,12 @@ and the list state — a latent asymmetry the reel-composer work must not inheri
 
 **Resolution (2026-11-04, S1, commit `828b9c09f7`):** both proposed tiers landed the
 same day. The workspace content container clips (`overflow_hidden()`,
-`crates/media_panel/src/media_viewer.rs:4911`) and gained the `media-viewer-content`
+`crates/media_panel/src/media_viewer.rs:5119`) and gained the `media-viewer-content`
 layout-test hook; the 240px usable-height floor moved to the content-flow embedder
 (`crates/hkask-viz-core/src/hkask_viz_core.rs:383`), and the widget site now documents
 the move (`crates/hkask-media-widget/src/media_widget.rs:1049-1063`);
 `close_transcript_workspace` now resets `selection_mode`
-(`crates/media_panel/src/media_viewer.rs:2485`), pinned by
+(`crates/media_panel/src/media_viewer.rs:2519`), pinned by
 `closing_transcript_leaves_widget_inside_pane`. The pre-fix observations above —
 the widget-root floor (`media_widget.rs:1040`), the unclipped content container
 (`media_viewer.rs:4575-4580`), the workspace-root view (`:4587`), and the

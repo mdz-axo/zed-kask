@@ -4408,7 +4408,6 @@ impl MediaViewer {
             return;
         };
         let on_focus = cx.on_focus(&focus, window, |viewer, _window, cx| {
-            eprintln!("PROBE: on_focus FIRED, follow={}", viewer.follow_viewport);
             if viewer.follow_viewport {
                 viewer.follow_viewport = false;
                 viewer.transcript_search_suspended_follow = true;
@@ -14096,10 +14095,8 @@ mod tests {
             "a struck match keeps its line-through"
         );
 
-        let runs = resolved_highlight_runs(vec![
-            (range.clone(), match_style),
-            (range.clone(), current_style),
-        ]);
+        let runs =
+            resolved_highlight_runs(vec![(range.clone(), match_style), (range, current_style)]);
         let merged = runs.first().expect("the marked range resolves");
         assert_eq!(
             merged.1.background_color,
@@ -16286,31 +16283,30 @@ mod viewer_layout_tests {
         cx.run_until_parked();
 
         use gpui::VisualContext as _;
-        // Focus the search input (its click handler's path: ensure the
-        // focus listeners, then focus). The registration's activation is
-        // deferred to the effect cycle's end, so it parks BETWEEN ensure and
-        // focus — the focus dispatch happens at the next draw, and the
-        // listener must be live by then.
+        // The test platform's windows start INACTIVE: the focus-change event
+        // carries empty focus paths for an inactive window
+        // (`current_window_active` gates them), so the listeners would never
+        // fire. Activate first — the production window is active the moment
+        // the operator clicks anything.
+        cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        // Focus the search input (its click handler's path: ensure the focus
+        // listeners, then focus). The registration's activation is deferred
+        // to the effect cycle's end, so it parks BETWEEN ensure and focus;
+        // the focus dispatch happens at the next draw, so each focus drive
+        // also notifies — in the test harness only effect-driven draws run
+        // (window.refresh alone leaves the window dirty with no frame).
         cx.update_window_entity(&viewer, |viewer, window, cx| {
             viewer.ensure_transcript_search_focus_listeners(window, cx);
         });
         cx.run_until_parked();
-        eprintln!(
-            "PROBE: input bounds pre-focus: {:?}",
-            cx.debug_bounds("media-transcript-search-input")
-        );
-        eprintln!(
-            "PROBE: subs registered: {}",
-            viewer.read_with(cx, |viewer, _| viewer
-                .transcript_search_focus_subscriptions
-                .len())
-        );
         cx.update_window_entity(&viewer, |viewer, window, cx| {
             let focus = viewer
                 .transcript_search_focus
                 .clone()
                 .expect("rendering the header created the focus handle");
             window.focus(&focus, cx);
+            cx.notify();
         });
         cx.run_until_parked();
         viewer.update(cx, |viewer, _| {
@@ -16328,6 +16324,7 @@ mod viewer_layout_tests {
                 .get_or_insert_with(|| cx.focus_handle())
                 .clone();
             window.focus(&focus, cx);
+            cx.notify();
         });
         cx.run_until_parked();
         viewer.update(cx, |viewer, _| {
@@ -16345,6 +16342,7 @@ mod viewer_layout_tests {
                 .clone()
                 .expect("the search focus handle exists");
             window.focus(&focus, cx);
+            cx.notify();
         });
         cx.run_until_parked();
         viewer.update(cx, |viewer, _| {
@@ -16359,6 +16357,7 @@ mod viewer_layout_tests {
                 .clone()
                 .expect("the label focus handle exists");
             window.focus(&focus, cx);
+            cx.notify();
         });
         cx.run_until_parked();
         viewer.update(cx, |viewer, _| {
