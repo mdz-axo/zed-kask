@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! `hkask-private-inference` — the private-inference core shared service.
 //!
 //! PI ruling (2026-11-04, recorded as the dated amendment on the D-3 plan):
