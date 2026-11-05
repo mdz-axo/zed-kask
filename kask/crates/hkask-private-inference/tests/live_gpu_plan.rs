@@ -12,8 +12,8 @@
 //!   cargo test -p hkask-private-inference --test live_gpu_plan -- --ignored --nocapture
 //! ```
 
+use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::gguf;
-use hkask_private_inference::local_leg::model_brief::ModelBrief;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, VramSource, compile_placement, probe_hardware,
 };
@@ -67,10 +67,11 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
     // the dGPU, routed experts resident in RAM. `cpu_moe` is already true.
     policy.n_gpu_layers = 999;
     // The model brief carries the PLE pin; the policy carries machine-level
-    // knobs only.
-
-    let brief = ModelBrief::load("qwen3-8-flash-next")
-        .expect("model brief loads (the launcher pins per-model)");
+    // knobs only. The shipped fleet is the brief home — never a
+    // CWD-relative file read.
+    let brief = fleet::shipped_model("qwen3-8-flash-next")
+        .expect("the shipped fleet carries the Qwen brief")
+        .brief;
 
     // Shard 1 is the metadata-only header shard; llama.cpp discovers the
     // split set from the `-00001-of-00004` naming convention.

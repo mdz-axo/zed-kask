@@ -1,0 +1,325 @@
+# L1 engine-surface manifest — the Unsloth prebuilt engine: their own
+# llama.cpp fork, shipped for the gfx110X class, carrying the MTP draft
+# surface (unsloth transfer plan T4, the pre-registered paired experiment).
+#
+# Every spelling below was verified live 2026-11-04 against the installed
+# binary's --help (UNSLOTH_PREBUILT_INFO.json provenance: release
+# b11160-mix-a6922cc, source commit a3c12db9dfc9a5bdf93df199ec370e9faf117c69
+# from unslothai/llama.cpp, asset sha256
+# 0bc43f5b5f14f5df1cdb9e07e39015cc44e3e1ec18e1de4b93638ac5f202361c,
+# ROCM gfx110X build at ~/.unsloth/llama.cpp/build/bin/llama-server).
+#
+# This surface exists for the paired MTP experiment: both legs run this
+# one engine, differing only by the draft flags (isolation). The mainline
+# surface (llama-cpp-mainline.toml) stays the production pin and spells
+# NO draft vocabulary — its pinned binary is not on disk to verify
+# against, and an unverified spelling is never claimed.
+
+surface_id = "llama-cpp-unsloth-prebuilt-mtp"
+engine_version_pin = "0.5.0-dev unsloth prebuilt, commit a3c12db9 — release b11160-mix-a6922cc (ROCM gfx110X)"
+
+# The structured pin the startup probe enforces (the probe parses the
+# binary's --version line: "version: 0.5.0-dev (build 11160, commit
+# a3c12db9d)", verified live 2026-11-04).
+[version_pin]
+commit = "a3c12db9"
+version = "0.5.0-dev"
+
+# The endpoints the supervisor polls (llama-server's standard surface;
+# exercised at the experiment run).
+[probe]
+health_path = "/health"
+models_path = "/v1/models"
+
+# --- flags: intent -> concrete spellings for THIS pinned build. Verified
+# live 2026-11-04 against the installed binary's --help. ---
+
+[flags]
+binary = "llama-server"
+model = "--model"
+n_gpu_layers = "-ngl"
+cpu_moe = "--cpu-moe"
+override_tensor = "--override-tensor"
+kv_cache_type = ["--cache-type-k", "--cache-type-v"]
+ctx_size = "--ctx-size"
+flash_attn = "--flash-attn"
+host = "--host"
+port = "--port"
+threads = "--threads"
+alias = "--alias"
+api_key_file = "--api-key-file"
+# The speculative-decoding draft flags (verified live 2026-11-04:
+# "--spec-draft-model, -md, --model-draft FNAME";
+# "--spec-type none,draft-simple,draft-eagle3,draft-mtp,draft-dflash,draft-dspark,ngram-simple,...";
+# "--spec-draft-n-max N"; "--spec-draft-ngl, -ngld, --gpu-layers-draft").
+# The mainline surface omits all four — absence is the honest
+# no-verified-spelling state, and a draft ask against it is a typed
+# refusal (fail-closed, never a silently omitted draft).
+model_draft = "--spec-draft-model"
+spec_type = "--spec-type"
+spec_draft_n_max = "--spec-draft-n-max"
+spec_draft_ngl = "--spec-draft-ngl"
+
+# --- constraints (the same closed set as the mainline surface: the guard
+# arithmetic is engine-independent; the parameters are the drift layer). ---
+
+[[constraints]]
+kind = "available_ram_headroom"
+headroom_factor = 0.15
+
+[[constraints]]
+kind = "vram_dense_fit"
+
+[[constraints]]
+kind = "expert_slot_floor"
+floor_mult = 3
+
+[[constraints]]
+kind = "mutually_exclusive"
+a = "--mlock"
+b = "--moe-stream"
+
+[[constraints]]
+kind = "expr"
+form = "(<= context_length 262144)"
+
+# --- fixtures: the admission gate — every constraint evaluates against
+# every fixture env. The first nine carry the mainline's engine-independent
+# admission shapes verbatim; the last four gate the draft extension
+# (draft bytes enter the resident sum under !mmap, and the VRAM channel
+# only when the draft is GPU-placed). ---
+
+[[fixtures]]
+name = "healthy_cpu_plan"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["--model", "/p0/qwen38.gguf", "--ctx-size", "65536"]
+
+[[fixtures]]
+name = "anonymous_over_available_ram"
+expected_denials = ["available_ram_headroom"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 64000000000
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["--model", "/p0/qwen38.gguf", "--ctx-size", "65536", "--mlock"]
+
+[[fixtures]]
+name = "gpu_offload_without_declared_vram"
+expected_denials = ["vram_dense_fit"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["-ngl", "999", "--cpu-moe"]
+
+[[fixtures]]
+name = "mlock_makes_weights_count_resident"
+expected_denials = ["available_ram_headroom"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = false
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["--mlock"]
+
+[[fixtures]]
+name = "context_beyond_native_ceiling"
+expected_denials = ["expr"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 2450000000
+compute_bytes_estimate = 4294967296
+context_length = 300000
+planned_flags = ["--ctx-size", "300000"]
+
+[[fixtures]]
+name = "streaming_slots_at_floor"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8589934592
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+slot_count = 48
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--moe-stream"]
+
+[[fixtures]]
+name = "streaming_slots_below_floor"
+expected_denials = ["expert_slot_floor"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8589934592
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+slot_count = 20
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--moe-stream"]
+
+[[fixtures]]
+name = "moe_metadata_alone_is_not_streaming"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["--model", "/p0/qwen38.gguf", "--ctx-size", "65536"]
+
+[[fixtures]]
+name = "gpu_offload_refused_without_ple_pin"
+expected_denials = ["vram_dense_fit"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8573157376
+model_mmap = true
+expert_bytes = 46000000000
+dense_bytes = 33537241600
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--cpu-moe"]
+
+# The draft fixtures (the extension this surface exists for):
+# 59_831_832_208 = expert 50e9 + dense 5e9 + kv 536_870_912 +
+# compute 4_294_967_296 — under the 61.2 GB budget with room to spare;
+# adding the 2.79 GB draft crosses it (draft bytes are resident
+# weights under !mmap, exactly like the main model's).
+
+[[fixtures]]
+name = "gpu_offload_allowed_with_ple_pinned_to_cpu"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8573157376
+model_mmap = true
+expert_bytes = 46000000000
+dense_bytes = 33537241600
+pinned_cpu_bytes = 28800138432
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+n_expert_used = 10
+planned_flags = ["-ngl", "999", "--cpu-moe", "--override-tensor", "per_layer_token_embd=CPU"]
+
+[[fixtures]]
+name = "mlock_plan_with_draft_over_ram_headroom"
+expected_denials = ["available_ram_headroom"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = false
+expert_bytes = 50000000000
+dense_bytes = 5000000000
+draft_bytes = 2786568256
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["--mlock", "--spec-draft-model", "/p0/mtp-draft.gguf"]
+
+[[fixtures]]
+name = "mlock_plan_without_draft_under_ram_headroom"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = false
+model_mmap = false
+expert_bytes = 50000000000
+dense_bytes = 5000000000
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["--mlock"]
+
+[[fixtures]]
+name = "gpu_draft_over_vram_budget"
+expected_denials = ["vram_dense_fit"]
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8589934592
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+draft_bytes = 2786568256
+draft_on_gpu = true
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["-ngl", "999", "--spec-draft-ngl", "999"]
+
+[[fixtures]]
+name = "cpu_routed_draft_is_outside_the_vram_channel"
+expected_denials = []
+[fixtures.env]
+available_ram_bytes = 72000000000
+total_ram_bytes = 96000000000
+gpu_offload = true
+vram_bytes_declared = 8589934592
+model_mmap = true
+expert_bytes = 72000000000
+dense_bytes = 6900000000
+draft_bytes = 2786568256
+draft_on_gpu = false
+kv_bytes_estimate = 536870912
+compute_bytes_estimate = 4294967296
+context_length = 65536
+planned_flags = ["-ngl", "999", "--spec-draft-ngl", "0"]

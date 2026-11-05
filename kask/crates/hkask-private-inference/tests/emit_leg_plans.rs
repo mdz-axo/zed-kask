@@ -12,9 +12,9 @@
 //!   cargo test -p hkask-private-inference --test emit_leg_plans -- --ignored --nocapture
 //! ```
 
+use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::manifest::decode;
-use hkask_private_inference::local_leg::model_brief::ModelBrief;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, compile_placement, probe_hardware,
 };
@@ -53,7 +53,11 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
     // refusal is a printed finding for the record, not a test failure —
     // the matrix adapts with a recorded deviation, never silently.
     let model = paths[0].clone();
-    let brief = ModelBrief::load("qwen3-8-flash-next").expect("model brief");
+    // The shipped fleet is the brief home (compile-time embed, the
+    // manifest-shipping precedent) — never a CWD-relative file read.
+    let brief = fleet::shipped_model("qwen3-8-flash-next")
+        .expect("the shipped fleet carries the Qwen brief")
+        .brief;
     for (leg, flash_attn, n_gpu_layers) in [
         ("a-cpu-control [build/bin]", true, 0u32),
         ("b-dgpu-vulkan-fa-on [build-vulkan/bin]", true, 999),
@@ -64,6 +68,35 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
         policy.flash_attn = flash_attn;
         policy.n_gpu_layers = n_gpu_layers;
         match compile_placement(model.clone(), &meta, &hw, &brief, &policy, &manifest) {
+            Ok(plan) => println!("[{leg}] {plan}"),
+            Err(err) => println!("[{leg}] REFUSED: {err}"),
+        }
+    }
+
+    // The MTP paired experiment legs (unsloth transfer plan, T4): both on
+    // the unsloth prebuilt engine (release b11160-mix-a6922cc, commit
+    // a3c12db9 — the binary at ~/.unsloth/llama.cpp/build/bin), differing
+    // only by the draft flags (the isolation design). The draft module is
+    // the brief's MTP/ sibling of the shard dir (downloaded 2026-11-04,
+    // sha256 5ff54097406a905cf3a724c709124ceb0e3e10235ee862298969e91c96fa96e6
+    // — matches the HF LFS oid); a missing module is a printed refusal.
+    const UNSLOTH_PREBUILT_TOML: &str =
+        include_str!("../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
+    let prebuilt = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest decodes");
+    let baseline_policy = PlacementPolicy::default();
+    let mut mtp_policy = PlacementPolicy::default();
+    mtp_policy.draft = true;
+    for (leg, policy) in [
+        (
+            "e-prebuilt-baseline [~/.unsloth/llama.cpp/build/bin]",
+            &baseline_policy,
+        ),
+        (
+            "f-prebuilt-mtp [~/.unsloth/llama.cpp/build/bin]",
+            &mtp_policy,
+        ),
+    ] {
+        match compile_placement(model.clone(), &meta, &hw, &brief, policy, &prebuilt) {
             Ok(plan) => println!("[{leg}] {plan}"),
             Err(err) => println!("[{leg}] REFUSED: {err}"),
         }

@@ -94,6 +94,16 @@ pub struct FlagVocabulary {
     /// 0600 file, never a command-line arg (`/proc/<pid>/cmdline` leak) and
     /// never an env var (the pinned build exposes none for the key).
     pub api_key_file: String,
+    /// The speculative-decoding draft flags. None on surfaces that spell
+    /// no draft intent — the mainline pin's binary is not on disk to
+    /// verify the spellings against, and an unverified spelling is never
+    /// claimed (the unsloth prebuilt surface declares its verified set).
+    /// A draft ask against a vocabulary-less surface is a typed refusal
+    /// at compile time — never a silently omitted draft.
+    pub model_draft: Option<String>,
+    pub spec_type: Option<String>,
+    pub spec_draft_n_max: Option<String>,
+    pub spec_draft_ngl: Option<String>,
 }
 
 /// The closed vocabulary of constraint kinds. New kinds upstream semantics
@@ -160,6 +170,16 @@ pub struct ConstraintEnv {
     pub context_length: u32,
     pub slot_count: Option<u32>,
     pub n_expert_used: Option<u32>,
+    /// The draft module's byte size — resident weights under !mmap
+    /// (exactly like the main model's), and inside the VRAM channel
+    /// only when the draft is GPU-placed.
+    #[serde(default)]
+    pub draft_bytes: u64,
+    /// Whether the plan places the draft module on the GPU (the
+    /// compiler's routing decision — CPU `-ngld 0` when the VRAM
+    /// arithmetic leaves no room).
+    #[serde(default)]
+    pub draft_on_gpu: bool,
     pub planned_flags: Vec<String>,
 }
 
@@ -280,6 +300,7 @@ pub fn evaluate_constraint(
                 anonymous
                     .checked_add(env.expert_bytes)
                     .and_then(|b| b.checked_add(env.dense_bytes))
+                    .and_then(|b| b.checked_add(env.draft_bytes))
                     .ok_or_else(|| ManifestError::Constraint {
                         constraint: name.into(),
                         reason: "resident byte sum overflowed u64".into(),
@@ -318,17 +339,32 @@ pub fn evaluate_constraint(
                         env.pinned_cpu_bytes, env.dense_bytes
                     ),
                 })?;
-            let resident = offloadable
+            let mut resident = offloadable
                 .checked_add(env.kv_bytes_estimate)
                 .ok_or_else(|| ManifestError::Constraint {
                     constraint: "vram_dense_fit".into(),
                     reason: "dense+kv byte sum overflowed u64".into(),
                 })?;
+            // A GPU-placed draft rides the VRAM budget; a CPU-routed one
+            // (the compiler's -ngld 0) stays outside the channel.
+            if env.draft_on_gpu {
+                resident = resident.checked_add(env.draft_bytes).ok_or_else(|| {
+                    ManifestError::Constraint {
+                        constraint: "vram_dense_fit".into(),
+                        reason: "dense+kv+draft byte sum overflowed u64".into(),
+                    }
+                })?;
+            }
             if resident <= vram {
                 Ok(Evaluation::Allow)
             } else {
+                let draft_part = if env.draft_on_gpu {
+                    format!(" + draft {}", env.draft_bytes)
+                } else {
+                    String::new()
+                };
                 Ok(Evaluation::Deny(format!(
-                    "offloadable dense {offloadable} (dense {dense} − pinned {pinned}) + kv {kv} bytes exceed the declared VRAM budget {vram}",
+                    "offloadable dense {offloadable} (dense {dense} − pinned {pinned}) + kv {kv}{draft_part} bytes exceed the declared VRAM budget {vram}",
                     dense = env.dense_bytes,
                     pinned = env.pinned_cpu_bytes,
                     kv = env.kv_bytes_estimate
@@ -422,6 +458,42 @@ pub fn run_fixtures(manifest: &EngineSurfaceManifest) -> Result<(), ManifestErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const UNSLOTH_PREBUILT_TOML: &str =
+        include_str!("../../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
+
+    #[test]
+    fn the_unsloth_prebuilt_surface_decodes_and_its_fixtures_gate_it() {
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest decodes");
+        manifest.validate().expect("prebuilt manifest validates");
+        run_fixtures(&manifest).expect("every fixture gates every constraint");
+        assert_eq!(manifest.version_pin.commit, "a3c12db9");
+        assert_eq!(
+            manifest.flags.model_draft.as_deref(),
+            Some("--spec-draft-model")
+        );
+        assert_eq!(manifest.flags.spec_type.as_deref(), Some("--spec-type"));
+        assert_eq!(
+            manifest.flags.spec_draft_n_max.as_deref(),
+            Some("--spec-draft-n-max")
+        );
+        assert_eq!(
+            manifest.flags.spec_draft_ngl.as_deref(),
+            Some("--spec-draft-ngl")
+        );
+    }
+
+    #[test]
+    fn the_mainline_surface_spells_no_draft_vocabulary() {
+        // The honest absence: the mainline pin's binary is not on disk to
+        // verify draft spellings against, so the surface claims none — a
+        // draft ask against it is a typed refusal at compile_placement.
+        let manifest = decode(MANIFEST_TOML).expect("mainline manifest decodes");
+        assert!(manifest.flags.model_draft.is_none());
+        assert!(manifest.flags.spec_type.is_none());
+        assert!(manifest.flags.spec_draft_n_max.is_none());
+        assert!(manifest.flags.spec_draft_ngl.is_none());
+    }
 
     const MANIFEST_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");

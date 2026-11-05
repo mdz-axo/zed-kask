@@ -13,7 +13,7 @@ use crate::local_leg::launch::LaunchPlan;
 use crate::local_leg::manifest::{
     ConstraintEnv, EngineSurfaceManifest, Evaluation, constraint_name, evaluate_constraint,
 };
-use crate::local_leg::model_brief::ModelBrief;
+use crate::local_leg::model_brief::{DraftSpec, ModelBrief};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlacementError {
@@ -27,6 +27,18 @@ pub enum PlacementError {
         "quantized kv_cache_type `{0}` requires flash_attn to be enabled (engine constraint D1, observed live 2026-11-04)"
     )]
     QuantizedKvRequiresFlashAttn(String),
+    #[error(
+        "draft emission asked but the model brief `{0}` declares no [draft] spec — the draft is per-model data, never invented by the compiler"
+    )]
+    DraftBriefMissing(String),
+    #[error(
+        "draft emission asked but the engine surface `{0}` spells no speculative-draft vocabulary — the draft flags were never verified against this pin"
+    )]
+    DraftVocabularyMissing(String),
+    #[error(
+        "draft module `{path}` not found — a draft plan requires the brief's module file on disk (fail-closed at emit, the truncated-shard discipline)"
+    )]
+    DraftModuleMissing { path: String },
 }
 
 /// Hardware inventory. `available_ram_bytes` is the number the guards use
@@ -275,6 +287,12 @@ pub struct PlacementPolicy {
     /// omitted on a GPU-less build.
     pub cpu_moe: bool,
     pub n_gpu_layers: u32,
+    /// Ask for the model's speculative-draft module (the brief's
+    /// `[draft]` table): the compiler resolves the module file, routes
+    /// it (GPU when the VRAM arithmetic leaves room, else CPU `-ngld 0`)
+    /// and emits the spec flags. Absent (false) on every plan that does
+    /// not ask — no behavior change without the ask.
+    pub draft: bool,
     pub threads: u32,
     pub host: String,
     pub port: u16,
@@ -290,6 +308,7 @@ impl Default for PlacementPolicy {
             flash_attn: true,
             cpu_moe: true,
             n_gpu_layers: 999,
+            draft: false,
             threads: 12,
             host: "127.0.0.1".into(),
             port: 8010,
@@ -342,6 +361,78 @@ pub fn compile_placement(
     };
 
     let vocabulary = &manifest.flags;
+
+    // The speculative draft (the unsloth transfer, T4): the brief supplies
+    // the per-model data (module file, spec type, draft depth, bytes),
+    // the policy supplies the ask, the surface supplies the verified
+    // spellings. The module file must exist at emit — the truncated-shard
+    // discipline: a draft plan only emits on a complete on-disk set.
+    struct DraftPlan<'a> {
+        spec: &'a DraftSpec,
+        path: PathBuf,
+        on_gpu: bool,
+        model_draft: String,
+        spec_type: String,
+        draft_n_max: String,
+        draft_ngl: String,
+    }
+    let draft = if !policy.draft {
+        None
+    } else {
+        let spec = brief
+            .draft
+            .as_ref()
+            .ok_or_else(|| PlacementError::DraftBriefMissing(brief.model_id.clone()))?;
+        // The surface must spell every draft flag — a partial vocabulary
+        // is a typed refusal, never a silently omitted draft.
+        let (Some(model_draft), Some(spec_type), Some(draft_n_max), Some(draft_ngl)) = (
+            vocabulary.model_draft.as_deref(),
+            vocabulary.spec_type.as_deref(),
+            vocabulary.spec_draft_n_max.as_deref(),
+            vocabulary.spec_draft_ngl.as_deref(),
+        ) else {
+            return Err(PlacementError::DraftVocabularyMissing(
+                manifest.surface_id.clone(),
+            ));
+        };
+        let path = model_path
+            .parent()
+            .ok_or_else(|| PlacementError::DraftModuleMissing {
+                path: model_path.display().to_string(),
+            })?
+            .join(&spec.module_file);
+        if !path.is_file() {
+            return Err(PlacementError::DraftModuleMissing {
+                path: path.display().to_string(),
+            });
+        }
+        // Draft placement: the GPU only when the VRAM arithmetic leaves
+        // room after the offloadable dense set, the KV estimate and the
+        // compute buffer (the estimate class — it can only over-refuse).
+        // Else the draft rides the CPU (-ngld 0) — the placement the
+        // pre-registered MTP experiment expects on this machine (the
+        // measured card leaves ~1.18 GB free against a 2.79 GB draft).
+        let on_gpu = match (hw.vram.as_ref(), policy.n_gpu_layers > 0) {
+            (Some(vram), true) => {
+                let offloadable = meta.dense_bytes.saturating_sub(pinned_cpu_bytes);
+                let used = offloadable
+                    .saturating_add(kv_bytes_estimate)
+                    .saturating_add(policy.compute_buffer_bytes);
+                vram.bytes().saturating_sub(used) >= spec.draft_bytes
+            }
+            _ => false,
+        };
+        Some(DraftPlan {
+            spec,
+            path,
+            on_gpu,
+            model_draft: model_draft.into(),
+            spec_type: spec_type.into(),
+            draft_n_max: draft_n_max.into(),
+            draft_ngl: draft_ngl.into(),
+        })
+    };
+
     let mut args: Vec<String> = vec![vocabulary.model.clone(), model_path.display().to_string()];
     args.push(vocabulary.ctx_size.clone());
     args.push(policy.context_length.to_string());
@@ -364,6 +455,22 @@ pub fn compile_placement(
             args.push(vocabulary.override_tensor.clone());
             args.push(format!("{}=CPU", brief.placement.ple_pin_pattern));
         }
+    }
+    if let Some(draft) = &draft {
+        args.push(draft.model_draft.clone());
+        args.push(draft.path.display().to_string());
+        args.push(draft.spec_type.clone());
+        args.push(draft.spec.spec_type.clone());
+        args.push(draft.draft_n_max.clone());
+        args.push(draft.spec.draft_n_max.to_string());
+        args.push(draft.draft_ngl.clone());
+        // The draft's own offload tier: the GPU tier's layer count when
+        // the arithmetic placed it there, else explicitly CPU-pinned.
+        args.push(if draft.on_gpu {
+            policy.n_gpu_layers.to_string()
+        } else {
+            "0".to_string()
+        });
     }
     args.push(vocabulary.threads.clone());
     args.push(policy.threads.to_string());
@@ -390,6 +497,8 @@ pub fn compile_placement(
         context_length: policy.context_length,
         slot_count: None,
         n_expert_used: meta.expert_used_count(),
+        draft_bytes: draft.as_ref().map_or(0, |d| d.spec.draft_bytes),
+        draft_on_gpu: draft.as_ref().is_some_and(|d| d.on_gpu),
         planned_flags: args.clone(),
     };
 
@@ -725,6 +834,147 @@ mod tests {
         assert!(
             matches!(err, PlacementError::Probe(_)),
             "malformed node must surface as a typed probe error, got: {err}"
+        );
+    }
+
+    const UNSLOTH_PREBUILT_TOML: &str =
+        include_str!("../../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
+    const GEMMA_BRIEF_TOML: &str =
+        include_str!("../../../../registry/model-briefs/gemma-4-31b.toml");
+
+    fn test_gpu_hw(vram_bytes: u64) -> HardwareInventory {
+        HardwareInventory {
+            total_ram_bytes: 96_000_000_000,
+            available_ram_bytes: 72_000_000_000,
+            vram: Some(VramSource::Declared { bytes: vram_bytes }),
+            provenance: "test fixture",
+        }
+    }
+
+    fn draft_dir() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mtp = dir.path().join("MTP");
+        std::fs::create_dir_all(&mtp).expect("draft dir");
+        std::fs::write(
+            mtp.join("mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"),
+            b"draft-module-bytes",
+        )
+        .expect("draft file");
+        let model = dir.path().join("model.gguf");
+        (dir, model)
+    }
+
+    fn draft_policy() -> PlacementPolicy {
+        let mut policy = PlacementPolicy::default();
+        policy.draft = true;
+        policy
+    }
+
+    #[test]
+    fn draft_plan_emits_spec_flags_and_pins_to_cpu_when_vram_is_tight() {
+        // The live-machine shape: dense 6.9 GB + kv 0.5 GB + compute 4 GiB
+        // against an 8.57 GB card leaves no room for the 2.79 GB draft —
+        // the estimate over-refuses (by design) and the draft rides CPU.
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let (_dir, model_path) = draft_dir();
+        let plan = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(8_573_157_376),
+            &test_brief(),
+            &draft_policy(),
+            &manifest,
+        )
+        .expect("tight-VRAM draft plan compiles with a CPU-pinned draft");
+        let rendered = plan.to_string();
+        assert!(rendered.contains("--spec-draft-model"));
+        assert!(rendered.contains("MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"));
+        assert!(rendered.contains("--spec-type draft-mtp"));
+        assert!(rendered.contains("--spec-draft-n-max 2"));
+        assert!(rendered.contains("--spec-draft-ngl 0"));
+    }
+
+    #[test]
+    fn draft_rides_the_gpu_when_vram_headroom_allows() {
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let (_dir, model_path) = draft_dir();
+        let plan = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(20_000_000_000),
+            &test_brief(),
+            &draft_policy(),
+            &manifest,
+        )
+        .expect("roomy-VRAM draft plan compiles with a GPU draft");
+        let rendered = plan.to_string();
+        assert!(rendered.contains("--spec-draft-ngl 999"));
+        // The GPU-placed draft's bytes enter the VRAM channel: the guard
+        // re-derives the same sum (offloadable + kv + draft ≤ vram).
+        assert!(rendered.contains("--spec-draft-model"));
+    }
+
+    #[test]
+    fn missing_draft_module_is_a_typed_refusal() {
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let model_path = dir.path().join("model.gguf");
+        let err = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(8_573_157_376),
+            &test_brief(),
+            &draft_policy(),
+            &manifest,
+        )
+        .expect_err("a draft plan without the module on disk must fail closed");
+        assert!(
+            matches!(err, PlacementError::DraftModuleMissing { .. }),
+            "refusal must be the typed missing-module error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn draft_on_a_surface_without_vocabulary_is_refused() {
+        // The mainline surface spells no draft vocabulary — its pinned
+        // binary is not on disk to verify against, so the honest state
+        // is absence, and a draft ask is a typed refusal.
+        let manifest = decode(MANIFEST_TOML).expect("mainline manifest");
+        let (_dir, model_path) = draft_dir();
+        let err = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(8_573_157_376),
+            &test_brief(),
+            &draft_policy(),
+            &manifest,
+        )
+        .expect_err("the mainline surface must refuse the draft ask");
+        assert!(
+            matches!(err, PlacementError::DraftVocabularyMissing(ref s) if s == "llama-cpp-mainline-cpu-p0"),
+            "refusal must name the vocabulary-less surface, got: {err}"
+        );
+    }
+
+    #[test]
+    fn draft_asked_without_a_brief_spec_is_refused() {
+        // The Gemma brief has no [draft] table — the compiler never
+        // invents a draft for a model that ships none.
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let brief = ModelBrief::decode(GEMMA_BRIEF_TOML).expect("Gemma brief decodes");
+        let (_dir, model_path) = draft_dir();
+        let err = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(8_573_157_376),
+            &brief,
+            &draft_policy(),
+            &manifest,
+        )
+        .expect_err("a draft ask against a brief without [draft] must fail closed");
+        assert!(
+            matches!(err, PlacementError::DraftBriefMissing(ref id) if id == "gemma-4-31b"),
+            "refusal must name the brief without a draft spec, got: {err}"
         );
     }
 }

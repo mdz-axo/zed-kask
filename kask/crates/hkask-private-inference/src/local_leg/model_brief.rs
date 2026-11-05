@@ -25,14 +25,6 @@ pub enum ModelBriefError {
     /// types, unknown fields).
     #[error("model brief decode failed: {source}")]
     Decode { source: toml::de::Error },
-
-    /// The registry brief file is missing or unreadable.
-    #[error("model brief `{model_id}` could not be read at {path}: {source}")]
-    Load {
-        model_id: String,
-        path: String,
-        source: std::io::Error,
-    },
 }
 
 /// A per-model brief. Every field is a declared, sourced number with
@@ -50,6 +42,9 @@ pub struct ModelBrief {
     pub placement: PlacementMetadata,
     /// Recommended settings (the [recommendations] table).
     pub recommendations: Recommendations,
+    /// Speculative-draft spec (the optional `[draft]` table) — None on
+    /// models that ship no draft module.
+    pub draft: Option<DraftSpec>,
 }
 
 /// Model metadata (the [model] table).
@@ -92,22 +87,36 @@ pub struct Recommendations {
     pub context_length: u32,
 }
 
+/// Speculative-decoding draft spec (the optional `[draft]` table) —
+/// per-model data: which draft module ships with the model, which
+/// speculative mode it serves, the recommended draft depth, and the
+/// module's byte size (the guard and placement arithmetic consume it).
+/// Absent on models that ship no draft module — the policy's draft ask
+/// against a brief without this table is a typed refusal, never an
+/// invented draft.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftSpec {
+    /// The draft module's path RELATIVE to the model GGUF's directory
+    /// (the same-dir convention: `MTP/<file>` inside the shard dir).
+    pub module_file: String,
+    /// The speculative mode the draft serves (e.g. "draft-mtp") — the
+    /// engine's `--spec-type` value, spelled here because the mode is a
+    /// property of the draft module, not the machine.
+    pub spec_type: String,
+    /// The recommended `--spec-draft-n-max` (unsloth's guidance: start
+    /// at 2, tune 1-6 per hardware).
+    pub draft_n_max: u32,
+    /// The draft module's file size in bytes — the guard and placement
+    /// arithmetic consume it.
+    pub draft_bytes: u64,
+}
+
 impl ModelBrief {
     /// Decode a model brief from TOML. One decode home — every
     /// consumer routes through here.
     pub fn decode(toml_text: &str) -> Result<Self, ModelBriefError> {
         toml::from_str(toml_text).map_err(|source| ModelBriefError::Decode { source })
-    }
-
-    /// Load a model brief from the registry by model ID.
-    pub fn load(model_id: &str) -> Result<Self, ModelBriefError> {
-        let path = format!("kask/registry/model-briefs/{model_id}.toml");
-        let text = std::fs::read_to_string(&path).map_err(|source| ModelBriefError::Load {
-            model_id: model_id.to_string(),
-            path,
-            source,
-        })?;
-        Self::decode(&text)
     }
 
     /// Whether this model is sparse (MoE with routed experts).
@@ -136,6 +145,17 @@ mod tests {
         assert_eq!(brief.placement.ple_pin_pattern, "per_layer_token_embd");
         assert_eq!(brief.recommendations.kv_cache_type, "q8_0");
         assert!(brief.recommendations.flash_attn);
+        let draft = brief
+            .draft
+            .as_ref()
+            .expect("qwen brief carries a draft spec");
+        assert_eq!(
+            draft.module_file,
+            "MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+        );
+        assert_eq!(draft.spec_type, "draft-mtp");
+        assert_eq!(draft.draft_n_max, 2);
+        assert_eq!(draft.draft_bytes, 2_786_568_256);
     }
 
     #[test]
@@ -143,5 +163,6 @@ mod tests {
         let brief = ModelBrief::decode(GEMMA_BRIEF_TOML).expect("Gemma brief decodes");
         assert!(!brief.is_moe());
         assert_eq!(brief.placement.ple_pin_pattern, "");
+        assert!(brief.draft.is_none());
     }
 }
