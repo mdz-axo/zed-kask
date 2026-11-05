@@ -281,6 +281,13 @@ not smoothed. The GPU tier lands in-band and above it: Vulkan 10.1–11.5, HIP
 **13.0–15.0 tok/s** (agent-turn 18.4–21.5 s). Full method + raw numbers and the
 engagement evidence: baseline record §4.
 
+**D1 implemented 2026-11-04 (finding accepted):** the engine constraint
+(quantized V cache requires flash-attn) is now enforced at emit time in
+`compile_placement` — the combination `kv_cache_type: q8_0` +
+`flash_attn: false` is refused with a typed error
+(`PlacementError::QuantizedKvRequiresFlashAttn`) naming the quantized
+cache, pinned by two new tests (23 total green).
+
 ## 12. Open items for the operator
 
 1. **P0 approval** — the ~79 GB download is the only spend; everything else in P1 is

@@ -22,6 +22,10 @@ pub enum PlacementError {
     GuardDenied { constraint: String, reason: String },
     #[error("constraint evaluation failed: {0}")]
     Constraint(#[from] crate::local_leg::manifest::ManifestError),
+    #[error(
+        "quantized kv_cache_type `{0}` requires flash_attn to be enabled (engine constraint D1, observed live 2026-11-04)"
+    )]
+    QuantizedKvRequiresFlashAttn(String),
 }
 
 /// Hardware inventory. `available_ram_bytes` is the number the guards use
@@ -224,6 +228,16 @@ pub fn compile_placement(
     policy: &PlacementPolicy,
     manifest: &EngineSurfaceManifest,
 ) -> Result<LaunchPlan, PlacementError> {
+    // D1 (engine constraint, observed live 2026-11-04): a quantized V
+    // cache requires flash_attn to be enabled. Refuse at emit time with
+    // a typed error rather than letting the engine refuse at load.
+    let quantized_kv = !matches!(policy.kv_cache_type.as_str(), "f16" | "f32");
+    if quantized_kv && !policy.flash_attn {
+        return Err(PlacementError::QuantizedKvRequiresFlashAttn(
+            policy.kv_cache_type.clone(),
+        ));
+    }
+
     let kv_bytes_estimate = policy
         .kv_bytes_per_token
         .saturating_mul(u64::from(policy.context_length));
@@ -319,6 +333,54 @@ mod tests {
     const MANIFEST_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-mainline.toml");
 
+    #[test]
+    fn quantized_kv_cache_with_fa_off_is_refused_at_emit_time() {
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        let mut policy = PlacementPolicy::default();
+        policy.flash_attn = false;
+        // kv_cache_type defaults to q8_0 — quantized.
+        let err = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &GgufMeta::default(),
+            &HardwareInventory {
+                total_ram_bytes: 96_000_000_000,
+                available_ram_bytes: 72_000_000_000,
+                vram: None,
+                provenance: "test",
+            },
+            &policy,
+            &manifest,
+        )
+        .expect_err("D1: quantized KV requires fa-on");
+        assert!(
+            matches!(err, PlacementError::QuantizedKvRequiresFlashAttn(ref kv) if kv == "q8_0"),
+            "refusal must name the quantized kv_cache_type, got: {err}"
+        );
+    }
+
+    #[test]
+    fn f16_kv_cache_with_fa_off_is_allowed() {
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        let mut policy = PlacementPolicy::default();
+        policy.flash_attn = false;
+        policy.kv_cache_type = "f16".into();
+        policy.n_gpu_layers = 0; // CPU shape: D1 checks the fa/KV pair, not VRAM
+        let plan = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &GgufMeta::default(),
+            &HardwareInventory {
+                total_ram_bytes: 96_000_000_000,
+                available_ram_bytes: 72_000_000_000,
+                vram: None,
+                provenance: "test",
+            },
+            &policy,
+            &manifest,
+        )
+        .expect("f16 KV with fa-off is a legal plan");
+        assert!(plan.to_string().contains("--flash-attn off"));
+    }
+
     fn test_meta() -> GgufMeta {
         let mut meta = GgufMeta::default();
         meta.expert_bytes = 72_000_000_000;
@@ -398,6 +460,7 @@ mod tests {
         let mut policy = PlacementPolicy::default();
         policy.n_gpu_layers = 0; // CPU control shape: the off spelling, not the GPU tier
         policy.flash_attn = false;
+        policy.kv_cache_type = "f16".into(); // D1: quantized KV would be refused at fa-off
         let plan = compile_placement(
             PathBuf::from("/models/test.gguf"),
             &test_meta(),
