@@ -7,7 +7,9 @@ use hkask_types::HMemOntology;
 use hkask_types::id::{HMemId, WebID};
 use hkask_types::time::now_rfc3339;
 use hkask_types::visibility::AccessControl;
-use hkask_types::{Confidence, Dimension, InfrastructureError, NotFound, Visibility};
+use hkask_types::{
+    Confidence, Dimension, InferenceProvenance, InfrastructureError, NotFound, Visibility,
+};
 use serde_json::Value;
 use std::sync::Arc;
 use thiserror::Error;
@@ -187,6 +189,15 @@ pub struct HMem {
     /// How the value was obtained (the extraction ceiling). Defaults to
     /// `model_inference` — see [`Provenance`].
     pub provenance: Provenance,
+    /// FR-4's private-inference mark — WHERE this content was produced,
+    /// not how the value was obtained (that is [`Provenance`]). A thread
+    /// routed to private inference marks its content here so FR-4's
+    /// per-surface filters can exclude it from non-private recall and
+    /// public export paths. Defaults to `PublicProvider` (the unmarked
+    /// default); only the ingest paths that hold the producing thread's
+    /// routing state stamp `PrivateInference` — never a model-facing
+    /// surface. See [`InferenceProvenance`] for the axis distinction.
+    pub inference_provenance: InferenceProvenance,
 }
 impl HMem {
     /// Create a new HMem with required fields.
@@ -209,6 +220,7 @@ impl HMem {
             recalled_at: now,
             ontology: None,
             provenance: Provenance::default(),
+            inference_provenance: InferenceProvenance::default(),
         }
     }
     /// Set confidence on a HMem.
@@ -270,6 +282,17 @@ impl HMem {
         self.provenance = p;
         self
     }
+
+    /// Set the private-inference mark on a HMem (FR-4). Like the extraction
+    /// tier, the mark is enforced by the write paths, not here: only an
+    /// ingest path that holds the producing thread's routing state stamps
+    /// `PrivateInference`; model-facing surfaces never accept a mark claim
+    /// (a private-claiming builder call from a public thread would be the
+    /// P11 violation, not the protection).
+    pub fn with_inference_provenance(mut self, p: InferenceProvenance) -> Self {
+        self.inference_provenance = p;
+        self
+    }
 }
 /// HMem store — backed by a provider-agnostic DatabaseDriver.
 #[derive(Clone)]
@@ -299,7 +322,7 @@ impl HMemStore {
     }
 }
 
-const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology, provenance";
+const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology, provenance, inference_provenance";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -362,6 +385,13 @@ impl HMemStore {
                     .as_text()
                     .ok()
                     .map_or(Provenance::ModelInference, |s| Provenance::parse_stored(s)),
+                inference_provenance: row
+                    .get(12)?
+                    .as_text()
+                    .ok()
+                    .map_or(InferenceProvenance::PublicProvider, |s| {
+                        InferenceProvenance::parse_stored(s)
+                    }),
             };
         Self::row_to_triple(hrow)
     }
@@ -410,7 +440,7 @@ impl HMemStore {
         };
         self.exec(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"
             ),
             &[
                 DbValue::Text(h_mem.id.to_string()),
@@ -429,6 +459,7 @@ impl HMemStore {
                 DbValue::Text(h_mem.access.owner_webid.to_string()),
                 ontology,
                 DbValue::Text(h_mem.provenance.as_str().into()),
+                DbValue::Text(h_mem.inference_provenance.as_str().into()),
             ],
         )?;
         Ok(())
@@ -444,14 +475,14 @@ impl HMemStore {
             .map(HMemOntology::to_json_string)
             .transpose()?;
         connection.execute(
-            &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+            &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"),
             rusqlite::params![
                 h_mem.id.to_string(), h_mem.entity, h_mem.attribute,
                 serde_json::to_string(&h_mem.value)?, h_mem.observed_at.to_rfc3339(),
                 h_mem.recalled_at.to_rfc3339(), h_mem.confidence.value(),
                 h_mem.access.perspective.as_ref().map(ToString::to_string),
                 h_mem.access.visibility.to_string(), h_mem.access.owner_webid.to_string(),
-                ontology, h_mem.provenance.as_str(),
+                ontology, h_mem.provenance.as_str(), h_mem.inference_provenance.as_str(),
             ],
         ).map_err(|error| HMemError::Infra(InfrastructureError::database(error.to_string())))?;
         Ok(())
@@ -1036,7 +1067,7 @@ impl HMemStore {
         // Read the old version's metadata to carry into the replacement —
         // before the delete, because the row is gone afterwards.
         let row = tx.query_row(
-            "SELECT entity, attribute, perspective, visibility, owner_webid, ontology, provenance FROM hmems WHERE id = ?1",
+            "SELECT entity, attribute, perspective, visibility, owner_webid, ontology, provenance, inference_provenance FROM hmems WHERE id = ?1",
             rusqlite::params![id.to_string()],
             |row| {
                 Ok((
@@ -1047,10 +1078,20 @@ impl HMemStore {
                     row.get::<_, String>(4)?,
                     row.get::<_, Option<String>>(5)?,
                     row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
                 ))
             },
         ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        let (entity, attribute, perspective, visibility, owner_webid, ontology, provenance) = row;
+        let (
+            entity,
+            attribute,
+            perspective,
+            visibility,
+            owner_webid,
+            ontology,
+            provenance,
+            inference_provenance,
+        ) = row;
         // Delete the old version — the forgetting spec keeps no superseded
         // state (operator ruling 2026-09-04: memories are forgotten or
         // deleted, never "expired").
@@ -1062,7 +1103,7 @@ impl HMemStore {
         let new_id = HMemId::new();
         tx.execute(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"
             ),
             rusqlite::params![
                 new_id.to_string(),
@@ -1080,6 +1121,13 @@ impl HMemStore {
                 // elevates (the ceiling: only the write path that holds
                 // the tool outcome stamps tool_observed).
                 provenance,
+                // The private-inference mark carries through an update too —
+                // and for a stronger reason (FR-4): a confidence update that
+                // stripped the mark would let private content flow into
+                // non-private recall and public exports the moment the
+                // per-surface filters land. The mark moves only through the
+                // ingest paths that hold the thread's routing state.
+                inference_provenance,
             ],
         )
         .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
@@ -1405,6 +1453,7 @@ impl HMemStore {
             recalled_at,
             ontology: row.ontology,
             provenance: row.provenance,
+            inference_provenance: row.inference_provenance,
         })
     }
 }
@@ -1422,6 +1471,7 @@ struct HMemRow {
     owner_webid: WebID,
     ontology: Option<HMemOntology>,
     provenance: Provenance,
+    inference_provenance: InferenceProvenance,
 }
 
 #[cfg(test)]
@@ -1481,6 +1531,77 @@ mod tests {
             Provenance::ModelInference
         );
         assert_eq!(Provenance::parse_stored(""), Provenance::ModelInference);
+    }
+
+    /// FR-4's mark round-trips through the store, and the default is the
+    /// unmarked leg: an `HMem::new` reads back `PublicProvider`, while an
+    /// ingest path's `PrivateInference` stamp survives the round trip.
+    #[test]
+    fn inference_mark_round_trips_and_defaults_to_public_provider() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let unmarked = HMem::new(
+            "company:A",
+            "lesson",
+            serde_json::json!("mix shift"),
+            WebID::new(),
+        );
+        let marked = HMem::new(
+            "curator:goal:1",
+            "current",
+            serde_json::json!({"achieved": true}),
+            WebID::new(),
+        )
+        .with_inference_provenance(InferenceProvenance::PrivateInference);
+        assert_eq!(
+            unmarked.inference_provenance,
+            InferenceProvenance::PublicProvider
+        );
+        store.insert(&unmarked)?;
+        store.insert(&marked)?;
+        assert_eq!(
+            store
+                .get_by_id(&unmarked.id)?
+                .expect("stored")
+                .inference_provenance,
+            InferenceProvenance::PublicProvider
+        );
+        assert_eq!(
+            store
+                .get_by_id(&marked.id)?
+                .expect("stored")
+                .inference_provenance,
+            InferenceProvenance::PrivateInference
+        );
+        Ok(())
+    }
+
+    /// A value/confidence update carries the private-inference mark through
+    /// (FR-4): `update` mints a replacement row, and a replacement that
+    /// dropped the mark would let private content flow into non-private
+    /// recall and public exports the moment the per-surface filters land.
+    #[test]
+    fn update_carries_the_inference_mark_through() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        let marked = HMem::new(
+            "company:A",
+            "lesson",
+            serde_json::json!("stale read"),
+            WebID::new(),
+        )
+        .with_inference_provenance(InferenceProvenance::PrivateInference);
+        store.insert(&marked)?;
+        store.update(&marked.id, serde_json::json!("refreshed"), 0.4)?;
+        let replaced = store
+            .query_by_entity("company:A")?
+            .into_iter()
+            .find(|h_mem| h_mem.value == serde_json::json!("refreshed"))
+            .expect("replacement row");
+        assert_eq!(
+            replaced.inference_provenance,
+            InferenceProvenance::PrivateInference,
+            "the replacement row must keep the private-inference mark"
+        );
+        Ok(())
     }
 
     /// Approved slice 1: identities and deletion commit together; a partially

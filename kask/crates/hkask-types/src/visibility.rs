@@ -121,6 +121,36 @@ impl InferenceProvenance {
             _ => None,
         }
     }
+
+    /// Parse a stored mark. A value outside the closed set reads as
+    /// `PrivateInference` with a warn — privacy fails CLOSED (V7, the limit
+    /// as positive): a corrupted mark must never read as public and flow
+    /// into a public recall or export path. This is the deliberate mirror
+    /// of the extraction `Provenance`'s fail-safe-down direction
+    /// (`hkask-storage`): there an unknown tier lowers reliance, here an
+    /// unknown mark raises exclusion. The direction differs because the
+    /// harm differs — a false tool-observed elevates trust, a false
+    /// public_provider breaches privacy.
+    ///
+    /// The legacy default is a different question and lives in the schema,
+    /// not here: rows written before this mark existed were all produced on
+    /// public providers (private inference did not exist yet), so the
+    /// column's `DEFAULT 'public_provider'` backfill is honest history, not
+    /// a fail-open. Only a value that is present-but-unknown (corruption,
+    /// future enum drift) takes the fail-closed branch.
+    pub fn parse_stored(text: &str) -> Self {
+        match Self::parse_str(text) {
+            Some(provenance) => provenance,
+            None => {
+                tracing::warn!(
+                    target: "reg.storage",
+                    mark = text,
+                    "unknown inference-provenance mark — reading as private_inference (privacy fails closed)"
+                );
+                InferenceProvenance::PrivateInference
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for InferenceProvenance {
@@ -165,6 +195,31 @@ mod tests {
         assert_eq!(json, r#""private_inference""#);
         let parsed: InferenceProvenance = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, marked);
+    }
+
+    #[test]
+    fn unknown_stored_marks_read_private_not_public() {
+        // A corrupted or future mark never reads as public — privacy
+        // fails closed (the mirror of the extraction provenance's
+        // fail-safe-down, and the reason this lives on the type: every
+        // store that reads the mark must share one fail direction).
+        assert_eq!(
+            InferenceProvenance::parse_stored(""),
+            InferenceProvenance::PrivateInference
+        );
+        assert_eq!(
+            InferenceProvenance::parse_stored("future_variant"),
+            InferenceProvenance::PrivateInference
+        );
+        // Known marks parse exactly — the warn branch never fires on them.
+        assert_eq!(
+            InferenceProvenance::parse_stored("public_provider"),
+            InferenceProvenance::PublicProvider
+        );
+        assert_eq!(
+            InferenceProvenance::parse_stored("private_inference"),
+            InferenceProvenance::PrivateInference
+        );
     }
 }
 

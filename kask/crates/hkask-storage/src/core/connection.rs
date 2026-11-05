@@ -365,6 +365,7 @@ impl Database {
         conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
         Self::migrate_embeddings_passage_text(conn)?;
         Self::migrate_hmems_provenance(conn)?;
+        Self::migrate_hmems_inference_provenance(conn)?;
         Self::migrate_hmems_forgetting_spec(conn)?;
         Self::migrate_embeddings_drop_vector(conn)?;
         Ok(())
@@ -434,6 +435,36 @@ impl Database {
             tracing::info!(
                 target: "reg.storage",
                 "Migration: added provenance column to hmems table (legacy rows read as model_inference)"
+            );
+        }
+        Ok(())
+    }
+
+    /// Migrate existing `hmems` tables: add the `inference_provenance`
+    /// column (FR-4's private-inference mark, D-2 2026-10-30; the landed
+    /// `InferenceProvenance` type's storage leg) if it doesn't exist — the
+    /// `provenance`-migration pattern. The column default backfills legacy
+    /// rows as `public_provider`: rows written before this mark existed
+    /// were all produced on public providers (private inference did not
+    /// exist yet), so the backfill is honest history, not a fail-open. A
+    /// value that is present-but-unknown at read time fails closed via
+    /// `InferenceProvenance::parse_stored` (never public).
+    fn migrate_hmems_inference_provenance(
+        conn: &rusqlite::Connection,
+    ) -> Result<(), DatabaseError> {
+        let mut stmt = conn.prepare("PRAGMA table_info(hmems)")?;
+        let has_column = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let has_column = has_column
+            .filter_map(|r| r.ok())
+            .any(|name| name == "inference_provenance");
+        drop(stmt);
+        if !has_column {
+            conn.execute_batch(
+                "ALTER TABLE hmems ADD COLUMN inference_provenance TEXT NOT NULL DEFAULT 'public_provider';",
+            )?;
+            tracing::info!(
+                target: "reg.storage",
+                "Migration: added inference_provenance column to hmems table (legacy rows read as public_provider — the pre-private-inference honest default)"
             );
         }
         Ok(())
@@ -1084,6 +1115,32 @@ mod tests {
     }
 
     #[test]
+    fn inference_provenance_migration_backfills_legacy_rows_as_public() -> anyhow::Result<()> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        create_hmem_migration_fixture(&connection)?;
+        Database::migrate_hmems_inference_provenance(&connection)?;
+        // Legacy rows backfill as public_provider — the honest history:
+        // rows written before the mark existed were all produced on public
+        // providers (never a fail-open — an unknown stored value fails
+        // closed at read time via InferenceProvenance::parse_stored).
+        let retained: String = connection.query_row(
+            "SELECT inference_provenance FROM hmems WHERE id = 'retained'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(retained, "public_provider");
+        // Idempotent: a second pass neither duplicates nor alters the column.
+        Database::migrate_hmems_inference_provenance(&connection)?;
+        let column_count: i64 = connection.query_row(
+            "SELECT count(*) FROM pragma_table_info('hmems') WHERE name = 'inference_provenance'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(column_count, 1);
+        Ok(())
+    }
+
+    #[test]
     fn forgetting_migration_purges_rows_on_encrypted_open_and_is_idempotent() -> anyhow::Result<()>
     {
         let directory = tempfile::tempdir()?;
@@ -1105,11 +1162,17 @@ mod tests {
                 .prepare("PRAGMA table_info(hmems)")?
                 .query_map([], |row| row.get::<_, String>(1))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            assert_eq!(columns.len(), 12);
+            assert_eq!(columns.len(), 13);
             assert!(!columns.iter().any(|column| column == "valid_to"));
             assert!(
                 columns.iter().any(|column| column == "provenance"),
                 "the provenance migration must have added the column"
+            );
+            assert!(
+                columns
+                    .iter()
+                    .any(|column| column == "inference_provenance"),
+                "the inference-provenance migration must have added the column (FR-4)"
             );
             let count: i64 =
                 connection.query_row("SELECT count(*) FROM hmems", [], |row| row.get(0))?;
