@@ -38,7 +38,8 @@ use acp_thread::AgentThreadEntry;
 use agent_client_protocol::schema::v2::ToolCallId;
 use gpui::{
     Context, Entity, HighlightStyle, InteractiveText, KeyDownEvent, Keystroke, ListAlignment,
-    ListOffset, ListState, Render, SharedString, StrikethroughStyle, StyledText, Task, Window,
+    ListOffset, ListState, MouseButton, Render, SharedString, StrikethroughStyle, StyledText, Task,
+    Window,
 };
 use hkask_mcp_media::{
     tools::jobs::parse_job_list_response,
@@ -799,6 +800,18 @@ pub struct MediaViewer {
     /// The first click of a pending two-click selection (a global working
     /// word index).
     selection_anchor: Option<usize>,
+    /// S2: the press word of an in-progress drag selection (a global
+    /// working word index) — armed by a press over a word, cleared by any
+    /// in-surface press that is not over one, and consumed by the release.
+    /// Press-and-release across words is the one-gesture selection path,
+    /// active in both interaction modes; a same-word release stays a
+    /// plain click (the click path seeks).
+    word_drag_anchor: Option<usize>,
+    /// S2: the word under the pointer (a global working word index),
+    /// tracked by exact hover: None over word gaps and outside the text,
+    /// so a release there cancels the pending drag rather than selecting
+    /// from a stale position.
+    drag_last_word: Option<usize>,
     /// S4-3: the open label editor — a completed range awaiting its label
     /// (create) or a researcher highlight being renamed. Word clicks are
     /// inert while it is open; Enter confirms, Escape cancels.
@@ -902,6 +915,8 @@ impl MediaViewer {
             transcript_listing_request: RequestLifecycle::new(),
             selection_mode: false,
             selection_anchor: None,
+            word_drag_anchor: None,
+            drag_last_word: None,
             highlight_edit: None,
             label_input_focus: None,
             reel_selection: HashSet::new(),
@@ -3337,6 +3352,70 @@ impl MediaViewer {
                 end_word,
             } => {
                 self.selection_anchor = None;
+                let alignment = self
+                    .transcript
+                    .as_ref()
+                    .map(|state| state.alignment.as_str())
+                    .unwrap_or_default();
+                if let Err(reason) = highlight_range_gate(alignment) {
+                    self.status = Some(reason.into());
+                    cx.notify();
+                    return;
+                }
+                self.open_label_editor(
+                    HighlightEdit {
+                        kind: HighlightEditKind::Create {
+                            start_word,
+                            end_word,
+                        },
+                        buffer: LabelBuffer::default(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+        }
+    }
+
+    /// The press-and-release drag outcome (S2) — pure so the state machine
+    /// is pin-testable, mirroring [`handle_word_selection`]: the alignment
+    /// gate applies at the opening site (`word_drag_released`), not here.
+    fn handle_word_drag(&self, anchor: usize, release: usize) -> WordDragOutcome {
+        if self.highlight_edit.is_some() {
+            return WordDragOutcome::Inert;
+        }
+        if anchor == release {
+            return WordDragOutcome::Click;
+        }
+        WordDragOutcome::OpenLabelEditor {
+            start_word: anchor.min(release),
+            end_word: anchor.max(release),
+        }
+    }
+
+    /// A press-and-release completed over the transcript surface (S2):
+    /// consume the pending drag, then dispatch by [`WordDragOutcome`] —
+    /// same-word releases and editor-open presses are inert (the click
+    /// path seeks; the editor is modal to its range), and a cross-word
+    /// release opens the label editor over the ordered union range under
+    /// the same index-identical gate as the two-click flow (D5). A release
+    /// with no pending anchor or no hovered word is a no-op: the press was
+    /// not over a word, or the release landed on a word gap.
+    fn word_drag_released(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (anchor, release) = (self.word_drag_anchor.take(), self.drag_last_word);
+        let (Some(anchor), Some(release)) = (anchor, release) else {
+            return;
+        };
+        match self.handle_word_drag(anchor, release) {
+            WordDragOutcome::Click => {}
+            WordDragOutcome::Inert => {
+                self.status = Some("Label editor open — Enter confirms, Escape cancels.".into());
+                cx.notify();
+            }
+            WordDragOutcome::OpenLabelEditor {
+                start_word,
+                end_word,
+            } => {
                 let alignment = self
                     .transcript
                     .as_ref()
@@ -5941,7 +6020,36 @@ impl MediaViewer {
             .flex_1()
             .min_h_0()
             .p_3();
-        let mut workspace = v_flex().id("media-viewer-transcript").flex_1().min_h_0();
+        let mut workspace = v_flex()
+            .id("media-viewer-transcript")
+            .flex_1()
+            .min_h_0()
+            // S2: press-and-release drag selection over the word surface.
+            // The surface root spans every block plus the toolbar, so a
+            // press anywhere in the surface resets or arms the pending
+            // drag from the exact word hover (None outside words cancels a
+            // stale drag — including one left mid-drag on the toolbar),
+            // and a release anywhere in the surface completes it:
+            // cross-word releases open the label editor on the union
+            // range, same-word releases stay plain clicks
+            // (InteractiveText seeks through its own click).
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event, _window, cx| {
+                    this.word_drag_anchor = if this.highlight_edit.is_some() {
+                        None
+                    } else {
+                        this.drag_last_word
+                    };
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    this.word_drag_released(window, cx);
+                }),
+            );
         if let Some(edit) = pending_editor {
             workspace = workspace.child(v_flex().px_3().pt_3().child(Self::render_label_editor(
                 &edit,
@@ -6367,6 +6475,22 @@ impl MediaViewer {
         {
             highlights.push((block.word_char_ranges[local].clone(), highlight_style));
         }
+        // The in-progress drag's anchor and release-target words carry
+        // the same mark (S2): live feedback for the press-and-release
+        // selection — the target mark vanishes over word gaps, showing
+        // why a release there selects nothing.
+        let drag_anchor = self.word_drag_anchor;
+        let drag_target = self.drag_last_word.filter(|_| drag_anchor.is_some());
+        for drag_mark in [drag_anchor, drag_target] {
+            if let Some(word) = drag_mark
+                && let Some(local) = block
+                    .word_starts
+                    .iter()
+                    .position(|(index, _)| *index == word)
+            {
+                highlights.push((block.word_char_ranges[local].clone(), highlight_style));
+            }
+        }
         // Highlight overlays (S4): researcher/model ranges painted in
         // deterministic label colors — only on index-identical views
         // (D5: the panel never re-implements the server's projection).
@@ -6396,11 +6520,36 @@ impl MediaViewer {
         }
         let word_starts = block.word_starts.clone();
         let entity = cx.entity().downgrade();
+        // S2: exact hover tracking for the press-and-release selection —
+        // map the hovered character to its word; characters outside the
+        // word ranges (gaps) read as None so a release there cancels the
+        // pending drag instead of selecting from a stale position. The
+        // state tracks always (the press needs the current word); the
+        // repaint fires only while a drag is pending.
+        let hover_entity = entity.clone();
+        let hover_ranges = block.word_char_ranges.clone();
         let interactive = InteractiveText::new(
             SharedString::from(format!("media-transcript-paragraph-{block_index}")),
             StyledText::new(block.text.clone())
                 .with_highlights(resolved_highlight_runs(highlights)),
         )
+        .on_hover(move |hovered, _event, _window, cx| {
+            let hovered_word = hovered.and_then(|char_ix| {
+                hover_ranges
+                    .iter()
+                    .position(|range| range.contains(&char_ix))
+            });
+            hover_entity
+                .update(cx, |viewer, cx| {
+                    if viewer.drag_last_word != hovered_word {
+                        viewer.drag_last_word = hovered_word;
+                        if viewer.word_drag_anchor.is_some() {
+                            cx.notify();
+                        }
+                    }
+                })
+                .ok();
+        })
         .on_click(
             block.word_char_ranges.clone(),
             move |range_index, window, cx| {
@@ -7710,6 +7859,24 @@ enum WordClickOutcome {
     /// to its range).
     EditorOpen,
     /// The click completed a range — open the label editor over
+    /// [start, end] (the alignment gate runs before the editor opens).
+    OpenLabelEditor { start_word: usize, end_word: usize },
+}
+
+/// The press-and-release drag outcome (S2) — the one-gesture selection
+/// path, active in both interaction modes. Mirrors
+/// [`WordClickOutcome`]'s pure, pin-testable shape; the alignment gate
+/// applies at the opening site (`word_drag_released`), not here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum WordDragOutcome {
+    /// The label editor is open — the drag is inert (the editor is modal
+    /// to its range).
+    Inert,
+    /// Press and release landed on the same word — the plain click path
+    /// seeks (InteractiveText fires its click only for same-range
+    /// down/up, so no selection is pending).
+    Click,
+    /// Press and release span words — open the label editor over
     /// [start, end] (the alignment gate runs before the editor opens).
     OpenLabelEditor { start_word: usize, end_word: usize },
 }
@@ -12444,6 +12611,51 @@ mod tests {
         assert_eq!(
             viewer.handle_word_selection(5),
             WordClickOutcome::EditorOpen
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::handle_word_drag`
+    /// expect: press-and-release across words opens the editor on the
+    /// ordered union range in EITHER interaction mode (drag is the
+    /// one-gesture selection path — seek mode keeps click-to-seek);
+    /// same-word release stays a plain click; the open label editor
+    /// makes drags inert.
+    #[test]
+    fn word_drag_state_machine() {
+        let mut viewer = MediaViewer::new();
+        viewer.selection_mode = false;
+        assert_eq!(
+            viewer.handle_word_drag(2, 5),
+            WordDragOutcome::OpenLabelEditor {
+                start_word: 2,
+                end_word: 5
+            },
+            "drag-select selects outside Select text mode"
+        );
+        assert_eq!(
+            viewer.handle_word_drag(9, 3),
+            WordDragOutcome::OpenLabelEditor {
+                start_word: 3,
+                end_word: 9
+            },
+            "the range is the ordered union, never inverted"
+        );
+        assert_eq!(
+            viewer.handle_word_drag(4, 4),
+            WordDragOutcome::Click,
+            "same-word press/release is a plain click (the click path seeks)"
+        );
+        viewer.highlight_edit = Some(HighlightEdit {
+            kind: HighlightEditKind::Create {
+                start_word: 0,
+                end_word: 1,
+            },
+            buffer: LabelBuffer::default(),
+        });
+        assert_eq!(
+            viewer.handle_word_drag(2, 5),
+            WordDragOutcome::Inert,
+            "drags are inert while the label editor is open"
         );
     }
 
