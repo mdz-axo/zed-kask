@@ -13,6 +13,27 @@
 //! are versioned data; the compiler is the stable Rust decision core.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Model-brief decode and registry-load failures — per-variant, never a
+/// blanket String (the string-errors gate; the `KeystoreError` pattern:
+/// every failure state a caller can distinguish maps to exactly one
+/// variant).
+#[derive(Debug, Error)]
+pub enum ModelBriefError {
+    /// The TOML does not match the brief shape (missing tables, wrong
+    /// types, unknown fields).
+    #[error("model brief decode failed: {source}")]
+    Decode { source: toml::de::Error },
+
+    /// The registry brief file is missing or unreadable.
+    #[error("model brief `{model_id}` could not be read at {path}: {source}")]
+    Load {
+        model_id: String,
+        path: String,
+        source: std::io::Error,
+    },
+}
 
 /// A per-model brief. Every field is a declared, sourced number with
 /// provenance (the source GGUF repo and verification date).
@@ -74,15 +95,18 @@ pub struct Recommendations {
 impl ModelBrief {
     /// Decode a model brief from TOML. One decode home — every
     /// consumer routes through here.
-    pub fn decode(toml_text: &str) -> Result<Self, String> {
-        toml::from_str(toml_text).map_err(|e| e.to_string())
+    pub fn decode(toml_text: &str) -> Result<Self, ModelBriefError> {
+        toml::from_str(toml_text).map_err(|source| ModelBriefError::Decode { source })
     }
 
     /// Load a model brief from the registry by model ID.
-    pub fn load(model_id: &str) -> Result<Self, String> {
+    pub fn load(model_id: &str) -> Result<Self, ModelBriefError> {
         let path = format!("kask/registry/model-briefs/{model_id}.toml");
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("model brief `{model_id}` not found at {path}: {e}"))?;
+        let text = std::fs::read_to_string(&path).map_err(|source| ModelBriefError::Load {
+            model_id: model_id.to_string(),
+            path,
+            source,
+        })?;
         Self::decode(&text)
     }
 

@@ -205,6 +205,27 @@ impl VideoPlayer {
         }
     }
 
+    /// Total appended audio time — chunks that reached the output player,
+    /// consumed or not. The drain-proof form of `audio_queue_len`: an
+    /// instantaneous queue length races the output device's drain speed
+    /// (a CI virtual device drains the queue between ticks; a real device
+    /// drains at 1x), while the appended total only grows.
+    #[cfg(test)]
+    #[must_use]
+    pub fn audio_appended(&self) -> Duration {
+        #[cfg(feature = "video")]
+        {
+            self.decoder
+                .as_ref()
+                .and_then(VideoDecoderInner::audio_appended)
+                .unwrap_or(Duration::ZERO)
+        }
+        #[cfg(not(feature = "video"))]
+        {
+            Duration::ZERO
+        }
+    }
+
     /// Start playback. Transitions from any state (including Stopped after
     /// `open`) to Playing — video clock and audio output together. The
     /// clock rebases: audio-master when audio is live, wall time otherwise.
@@ -1218,6 +1239,16 @@ mod ffmpeg_impl {
             self.audio.as_ref().map(|audio| audio.player.len())
         }
 
+        /// Total appended audio time — chunks that reached the output
+        /// player, consumed or not. The drain-proof form of
+        /// `audio_queue_len`: an instantaneous queue length races the
+        /// output device's drain speed.
+        #[cfg(test)]
+        #[must_use]
+        pub fn audio_appended(&self) -> Option<Duration> {
+            self.audio.as_ref().map(AudioPipeline::appended_total)
+        }
+
         pub fn duration(&self) -> Duration {
             Duration::from_millis(self.duration_ms)
         }
@@ -1483,6 +1514,13 @@ mod ffmpeg_impl {
                 consumed += self.player.get_pos();
             }
             consumed
+        }
+
+        /// Total appended audio time — every chunk that reached the
+        /// output player, consumed or not.
+        #[cfg(test)]
+        fn appended_total(&self) -> Duration {
+            self.appended_durations.iter().sum()
         }
 
         fn reset_after_seek(&mut self, target: Duration) {
@@ -2244,8 +2282,8 @@ mod tests {
             "audio pipeline must survive playback ticks"
         );
         assert!(
-            player.audio_queue_len() > 0,
-            "audio samples must be queued on the output player after seeking into the stream"
+            player.audio_appended() > Duration::ZERO,
+            "audio samples must reach the output player after seeking into the stream"
         );
         let consumption_deadline = std::time::Instant::now() + Duration::from_millis(500);
         while player.position() <= position_after_ticks
