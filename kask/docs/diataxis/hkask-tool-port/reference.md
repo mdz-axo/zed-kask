@@ -47,7 +47,7 @@ comparison was a value against itself
 | `DEFAULT_RUNAWAY_CALL_CEILING` | `kask/crates/hkask-regulation/src/energy.rs:26`                                              |
 | `CyberneticsLoop::charge_call_metered` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:675`                          |
 | Delegated worktree-tool narrowing ∩ parent grant | `kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961` + `kask/crates/kask_bridge/src/delegation_grants.rs:67` |
-| Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:43` (`BuiltinMcpServer.credentials`)         |
+| Per-server credential allowlist | `kask/crates/kask_bridge/src/mcp_servers.rs:40` (`BuiltinMcpServer.credentials`)         |
 
 
 The crate's `src/` directory holds exactly two files: `hkask_tool_port.rs`
@@ -210,7 +210,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-005
 verified_date: 2026-10-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961 (create_worktree_thread narrowing gate); kask/crates/kask_bridge/src/delegation_grants.rs:16,67 (grant mint + worktree_tools intersection); kask/crates/kask_bridge/src/mcp_servers.rs:43 (credential allowlist)
+verified_against: kask/crates/hkask-tool-port/src/tool_port.rs:68-83 (invoke does not authorize); kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961 (create_worktree_thread narrowing gate); kask/crates/kask_bridge/src/delegation_grants.rs:16,67 (grant mint + worktree_tools intersection); kask/crates/kask_bridge/src/mcp_servers.rs:40 (credential allowlist)
 status: VERIFIED
 -->
 
@@ -240,7 +240,7 @@ caller being checked. Two boundaries satisfy that:
 | Boundary                                                        | Location                                                       | Note                                        |
 | --------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
 | Delegated worktree-tool narrowing intersected with the parent-held grant (both fail-closed) | `kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961` `create_worktree_thread` dispatch + `kask/crates/kask_bridge/src/delegation_grants.rs:67` (`worktree_tools`) | The child's request may narrow, never enlarge, the parent's grant (`delegation_grants.rs:16`, minted from `kask.mcp.delegated_tools`, checked at dispatch; a grant without `host/create_worktree_thread` yields no ceiling). A missing narrowing is a protocol violation, never an implicit grant-all; an empty narrowed list deliberately creates an inference-only child. Pinned by `grants_are_stable_until_changed_and_revoked` (`delegation_grants.rs:92`) and `worktree_authority_denies_before_enqueue` (`inference_ipc_server.rs:1697`) |
-| Per-server MCP env / credential allowlists                      | `kask/crates/kask_bridge/src/mcp_servers.rs:43`              | Scopes credentials per server (`BuiltinMcpServer.credentials`; `None` means no filtering, `Some(&[])` preferred for new servers) |
+| Per-server MCP env / credential allowlists                      | `kask/crates/kask_bridge/src/mcp_servers.rs:40-43`              | Scopes credentials per server (`BuiltinMcpServer.credentials`; `None` means no filtering, `Some(&[])` preferred for new servers) |
 
 There is no third gate. A FIDES `Source`→`Sink` information-flow check used
 to be listed here; it was deleted — see
