@@ -128,6 +128,20 @@ direct manipulation; MeetScript low-effort-dominance.
 `confirm_label_edit:3978`), strike path (`strike_selected_range:3529`,
 `create_workspace_strike:3550`), gate (`highlight_range_gate:8322`).
 
+**Landed:** S2 complete 2026-11-04 — the drag core in `df72da1487`
+(WordDragOutcome machine, live anchor/target marks, both interaction modes),
+the popover remainder in `8773678abd` (selection popover pinned above the
+list: Highlight / Cut / Copy time / Include in reel; Enter/Delete/Escape on
+the tray, never the label input where Delete is text editing; Include flips
+membership over an existing highlight's exact range or creates with the
+default label over a fresh range — the reload includes it; teardown symmetry
+on close/open/surface-switch/reload). Pins: `word_drag_state_machine`,
+`selection_popover_opens_for_drag_and_two_click_ranges`,
+`selection_popover_keys_highlight_cut_and_dismiss`,
+`popover_cut_dispatches_the_strike_path`,
+`popover_include_toggles_reel_membership`,
+`popover_copy_time_writes_the_span`, `selection_popover_resets_with_the_surface`.
+
 **Design:** drag = pointer down on a word + move + up (threshold ~3px to stay
 compatible with click-to-seek), range = anchor→last hovered word, union across block
 boundaries (same union math as the two-click anchor). Popover renders pinned above
