@@ -410,8 +410,12 @@ pub fn compile_placement(
         // room after the offloadable dense set, the KV estimate and the
         // compute buffer (the estimate class — it can only over-refuse).
         // Else the draft rides the CPU (-ngld 0) — the placement the
-        // pre-registered MTP experiment expects on this machine (the
-        // measured card leaves ~1.18 GB free against a 2.79 GB draft).
+        // measured MTP pair ran (2026-11-05: the card leaves ~1.2 GB
+        // free against a 2.79 GB draft). KNOWN GAP: this arithmetic
+        // reserves the draft module's bytes but NOT the spec-verify
+        // workspace (unsloth's guidance: 1-2 GB extra headroom) — the
+        // measured pair required ctx 32768 on the 8 GB card for exactly
+        // that reason; the named follow-up adds the reserved term.
         let on_gpu = match (hw.vram.as_ref(), policy.n_gpu_layers > 0) {
             (Some(vram), true) => {
                 let offloadable = meta.dense_bytes.saturating_sub(pinned_cpu_bytes);

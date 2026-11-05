@@ -73,13 +73,17 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
         }
     }
 
-    // The MTP paired experiment legs (unsloth transfer plan, T4): both on
-    // the unsloth prebuilt engine (release b11160-mix-a6922cc, commit
-    // a3c12db9 — the binary at ~/.unsloth/llama.cpp/build/bin), differing
-    // only by the draft flags (the isolation design). The draft module is
-    // the brief's MTP/ sibling of the shard dir (downloaded 2026-11-04,
-    // sha256 5ff54097406a905cf3a724c709124ceb0e3e10235ee862298969e91c96fa96e6
+    // The unsloth-prebuilt surface's emission legs (unsloth transfer T4):
+    // both print from the one engine, differing only by the draft flags
+    // (the isolation design). The draft module is the brief's MTP/
+    // sibling of the shard dir (downloaded 2026-11-04, sha256
+    // 5ff54097406a905cf3a724c709124ceb0e3e10235ee862298969e91c96fa96e6
     // — matches the HF LFS oid); a missing module is a printed refusal.
+    // Measured history (2026-11-05, the measurement record
+    // docs/research/private-inference-unsloth-mtp-measurement-2026-11-05.md):
+    // this prebuilt engine drifted (5.34 tok/s) and its draft path
+    // crashed at the first speculative inference; the adjudicated pair
+    // ran on the qwen4exp/mtp fork engine (tip 6fcaa16) at ctx 32768.
     const UNSLOTH_PREBUILT_TOML: &str =
         include_str!("../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
     let prebuilt = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest decodes");

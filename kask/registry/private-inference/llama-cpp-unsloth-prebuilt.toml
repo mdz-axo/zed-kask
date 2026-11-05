@@ -9,11 +9,15 @@
 # 0bc43f5b5f14f5df1cdb9e07e39015cc44e3e1ec18e1de4b93638ac5f202361c,
 # ROCM gfx110X build at ~/.unsloth/llama.cpp/build/bin/llama-server).
 #
-# This surface exists for the paired MTP experiment: both legs run this
-# one engine, differing only by the draft flags (isolation). The mainline
-# surface (llama-cpp-mainline.toml) stays the production pin and spells
-# NO draft vocabulary — its pinned binary is not on disk to verify
-# against, and an unverified spelling is never claimed.
+# This surface pins the unsloth prebuilt engine's verified spellings —
+# the FIRST MTP experiment engine. Measured history (2026-11-05, the
+# measurement record): the prebuilt drifted (5.34 tok/s decode against
+# the 13.0-15.0 P0 class) and its draft path crashed at the first
+# speculative inference; the adjudicated pair completed on the
+# qwen4exp/mtp fork engine. The mainline surface
+# (llama-cpp-mainline.toml) stays the production pin and spells NO draft
+# vocabulary — its pinned binary is not on disk to verify against, and
+# an unverified spelling is never claimed.
 
 surface_id = "llama-cpp-unsloth-prebuilt-mtp"
 engine_version_pin = "0.5.0-dev unsloth prebuilt, commit a3c12db9 — release b11160-mix-a6922cc (ROCM gfx110X)"
@@ -26,7 +30,8 @@ commit = "a3c12db9"
 version = "0.5.0-dev"
 
 # The endpoints the supervisor polls (llama-server's standard surface;
-# exercised at the experiment run).
+# the health path exercised live at the experiment legs' readiness
+# polls, 2026-11-04/05).
 [probe]
 health_path = "/health"
 models_path = "/v1/models"
