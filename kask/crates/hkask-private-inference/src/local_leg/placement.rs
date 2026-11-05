@@ -63,6 +63,60 @@ impl VramSource {
     }
 }
 
+/// The GPU backend the placement compiler can target on this machine.
+/// Auto-detected by `probe_backend()`: the first backend whose build
+/// exists on disk wins. The compiler emits the binary path from this
+/// enum, never a hardcoded HIP/Vulkan — the measured HIP > Vulkan > CPU
+/// order (baseline record §4/§5, 2026-11-04).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuBackend {
+    /// ROCm/HIP backend (gfx1102-class AMD dGPU).
+    Hip { binary: PathBuf },
+    /// Vulkan backend (any GPU with a Vulkan 1.2 driver).
+    Vulkan { binary: PathBuf },
+    /// No GPU backend: CPU-only.
+    None,
+}
+
+impl GpuBackend {
+    /// The llama-server binary this backend launches.
+    pub fn binary(&self) -> Option<&Path> {
+        match self {
+            Self::Hip { binary } | Self::Vulkan { binary } => Some(binary),
+            Self::None => None,
+        }
+    }
+}
+
+/// The llama.cpp build tree root — the same root the P0 hand-launcher
+/// prefixed binaries from, now a data constant the probe walks.
+pub const LLAMA_CPP_ROOT: &str = "~/models/llama.cpp";
+
+/// Probe which GPU backend this machine can serve from. Walks the
+/// llama.cpp build tree looking for `llama-server` in `build-hip/`
+/// (ROCm) then `build-vulkan/` (Vulkan). First hit wins — the measured
+/// preference order. The probe is deliberately simple: it answers
+/// "which build exists on disk?" — the same question the P0
+/// hand-launcher answered by prefixing the binary.
+///
+/// On a machine without either build, the answer is `GpuBackend::None`
+/// and the compiler emits a CPU-only plan.
+pub fn probe_backend() -> GpuBackend {
+    let root = PathBuf::from(LLAMA_CPP_ROOT);
+
+    let hip = root.join("build-hip/bin/llama-server");
+    if hip.exists() {
+        return GpuBackend::Hip { binary: hip };
+    }
+
+    let vulkan = root.join("build-vulkan/bin/llama-server");
+    if vulkan.exists() {
+        return GpuBackend::Vulkan { binary: vulkan };
+    }
+
+    GpuBackend::None
+}
+
 /// The live sysfs root the VRAM probe walks.
 pub const SYSFS_DRM_ROOT: &str = "/sys/class/drm";
 
@@ -125,8 +179,35 @@ fn is_drm_card_node(name: &str) -> bool {
 }
 
 /// Live VRAM probe over the machine's drm sysfs tree.
+/// Multi-vendor VRAM probe. Tries the amdgpu sysfs path first (this
+/// machine’s primary), then the NVIDIA sysfs path
+/// (`/proc/driver/nvidia/gpus/*/information`). Neither finding a
+/// device is `Ok(None)` — CPU-only, fail-closed.
+///
+/// Apple Silicon (unified memory) has no discrete VRAM: the CPU
+/// fallback is correct there (the KV cache is guarded as anonymous
+/// RAM, same as CPU-only).
 pub fn probe_vram() -> Result<Option<VramSource>, PlacementError> {
-    probe_vram_at(Path::new(SYSFS_DRM_ROOT))
+    // amdgpu first: this is the primary path on this machine (gfx1102).
+    if let Some(vram) = probe_vram_at(Path::new(SYSFS_DRM_ROOT))? {
+        return Ok(Some(vram));
+    }
+    // NVIDIA fallback: read the first GPU’s total VRAM from the sysfs
+    // tree. The format is `MemTotal: 8192 MiB` (no subprocess needed).
+    let nvidia_info = Path::new("/proc/driver/nvidia/gpus/0/information");
+    if let Ok(text) = std::fs::read_to_string(nvidia_info) {
+        for line in text.lines() {
+            if let Some(rest) = line.trim().strip_prefix("Memory Total:") {
+                let trimmed = rest.trim().trim_end_matches(" MiB");
+                if let Ok(bytes_mib) = trimmed.parse::<u64>() {
+                    return Ok(Some(VramSource::Declared {
+                        bytes: bytes_mib.saturating_mul(1024 * 1024),
+                    }));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Read the machine's RAM inventory from /proc/meminfo and its dGPU VRAM
