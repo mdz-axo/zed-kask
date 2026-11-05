@@ -59,16 +59,36 @@ and the list state — a latent asymmetry the reel-composer work must not inheri
 
 **Resolution (2026-11-04, S1, commit `828b9c09f7`):** both proposed tiers landed the
 same day. The workspace content container clips (`overflow_hidden()`,
-`crates/media_panel/src/media_viewer.rs:4589`) and gained the `media-viewer-content`
+`crates/media_panel/src/media_viewer.rs:4668`) and gained the `media-viewer-content`
 layout-test hook; the 240px usable-height floor moved to the content-flow embedder
 (`crates/hkask-viz-core/src/hkask_viz_core.rs:383`), and the widget site now documents
-the move (`crates/hkask-media-widget/src/media_widget.rs:1033-1042`);
+the move (`crates/hkask-media-widget/src/media_widget.rs:1049-1063`);
 `close_transcript_workspace` now resets `selection_mode`
-(`crates/media_panel/src/media_viewer.rs:2454-2459`), pinned by
+(`crates/media_panel/src/media_viewer.rs:2469`), pinned by
 `closing_transcript_leaves_widget_inside_pane`. The pre-fix observations above —
 the widget-root floor (`media_widget.rs:1040`), the unclipped content container
 (`media_viewer.rs:4575-4580`), the workspace-root view (`:4587`), and the
 `selection_mode` asymmetry — describe the state the fix landed against.
+
+**Follow-up (2026-11-04, same defect family):** the workspace player still lost its
+transport — play/stop buttons and the seek slider — at moderate pane heights
+(operator report: the slider is absent in the workspace player while the same
+chat-thread player keeps it). The §7.2 discipline was violated INSIDE the widget:
+the video area carried `min_h(px(120.))` (and the image area `min_h(px(100.))`), so
+once the content area fell below the column's min-content (~154px: floored video +
+transport + gap + border), the transport painted past the clipped bottom — measured
+at a 56px host: transport laid out at y=125..159, entirely outside the box, so the
+slider read as missing rather than cut. Both floors are removed (`min_h_0`, the
+video and image arms of `crates/hkask-media-widget/src/media_widget.rs`):
+definite-height panes shrink the media area to the space left after the transport
+(the transport is pinned inside the box at every host height), and the content-flow
+embedding needs no floor — the decoded frame's aspect derivation against the
+definite flow width holds the video open (measured 798x449 for a 320x180 frame at
+an 800px width; only the transient pre-decode placeholder shrinks to text height).
+Pinned by `transport_stays_visible_at_every_host_height`,
+`flow_embedding_keeps_decoded_video_open`, and
+`flow_placeholder_does_not_collapse_the_player` (widget `layout_tests`); the §7.2
+rule is now held by the widget itself.
 
 ## 2. The landed surface (verified against the tree)
 
@@ -192,9 +212,10 @@ have not demanded them).
    shrinking panes they fight the `min_h_0` discipline and must either yield or be
    clipped.
 3. Ship a `debug_selector` on every interactive region and a `debug_bounds` layout
-   test for every transition between surfaces (the pattern exists: `media-widget`,
-   `media-video-area`, `simple-slider-track`; the close-transcript transition lacks
-   one — that absence is how §1 shipped).
+   test for every transition between surfaces (the pattern now covers `media-widget`,
+   `media-video-area`, `media-transport`, `media-viewer-content` and
+   `simple-slider-track`; the close-transcript transition's missing selector was
+   the gap that let §1 ship).
 4. Absolute children only under an explicit `relative()` anchor
    (`simple_slider.rs:107` is the positive example).
 5. State teardown symmetry: every state an open path resets, the matching close path

@@ -147,6 +147,10 @@ impl gpui::Render for TransportBar {
         let entity_stop = entity.clone();
 
         div()
+            // Test-support hook: exposes the transport's laid-out bounds to
+            // layout ground-truth tests (noop in release builds) — the row
+            // whose visibility the short-pane pins assert.
+            .debug_selector(|| "media-transport".into())
             .flex()
             .flex_row()
             .gap_2()

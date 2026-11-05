@@ -80,7 +80,7 @@ pane, in any pane height; the close path's state teardown matches the open path'
 - `crates/media_panel/src/media_viewer.rs:2454-2459` vs `:2384-2443` —
   `close_transcript_workspace` teardown symmetry (add `selection_mode = false`,
   list-state reset; the `selection_mode` half landed in S1, `828b9c09f7`)
-- `crates/hkask-media-widget/src/media_widget.rs:1033-1042` — where the unconditional
+- `crates/hkask-media-widget/src/media_widget.rs:1049-1063` — where the unconditional
   `min_h(240px)` floor lived (sub-item S1b: move floor ownership to embedders —
   done in S1, `828b9c09f7`; the site now documents the move)
 - viewer tests module (`media_viewer.rs` `mod tests`, layout-test precedents at
@@ -186,11 +186,11 @@ works on audio and video; position and marks labels stay correct.
 **Anchor:** study §6 P1-4; Reduct 1.25×, Descript — table stakes in every reference
 product.
 
-**Touchpoints:** transport render (`media_widget.rs` ~:947-1090 region), audio
+**Touchpoints:** transport render (`media_widget.rs` ~:894-1100 region), audio
 (`audio_player.rs` — verify rodio `Sink` speed support at slice start),
 video pacing (`start_playback_loop` per reference.md → `media_widget.rs:575`;
 `DECODE_POLL_INTERVAL`/`DISPLAY_POLL_INTERVAL`, `video_decoder.rs:51,54`),
-position accessor (`transport_position_secs:1071`).
+position accessor (`transport_position_secs:1100`).
 
 **Design:** speed state on the widget; audio via rodio sink rate; video via
 deadline scaling (frame due-time divided by rate) in the pacing loop; the pacing

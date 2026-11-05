@@ -12,7 +12,7 @@ use futures::AsyncReadExt as _;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, ImageSource, InteractiveElement,
     IntoElement, ObjectFit, ParentElement, RenderImage, SharedString, Styled, StyledImage,
-    Subscription, Task, Window, div, img, px,
+    Subscription, Task, Window, div, img,
 };
 use gpui_util::ResultExt as _;
 use hkask_bridge_ontology::omc::explain_tool_for;
@@ -928,7 +928,11 @@ impl gpui::Render for MediaWidget {
                 let src = SharedString::from(self.reference.src());
                 match self.reference.kind() {
                     MediaKind::Image | MediaKind::Svg => {
-                        let mut container = div().flex_1().min_h(px(100.0));
+                        // Same floor discipline as the video area below: usable-
+                        // height floors belong to the embedding site
+                        // (block_renderer holds the content-flow floor);
+                        // definite-height panes shrink this area freely.
+                        let mut container = div().flex_1().min_h_0();
                         if let Some(image) = self.image_data.clone() {
                             container = container.child(
                                 img(ImageSource::from(image))
@@ -984,8 +988,20 @@ impl gpui::Render for MediaWidget {
                             // bounds to layout ground-truth tests (noop in
                             // release builds).
                             .debug_selector(|| "media-video-area".into())
+                            // min_h_0, never a min_h floor: usable-height
+                            // floors belong to the embedding site
+                            // (block_renderer holds the content-flow floor),
+                            // and a definite-height pane shrinks the widget
+                            // freely — operator report 2026-11-04: a 120px
+                            // floor here pushed the transport (play/stop +
+                            // seek slider) past the pane's clipped bottom, so
+                            // the workspace player lost its slider entirely
+                            // while the same shared widget kept it in the
+                            // chat flow. In content flow the decoded frame's
+                            // aspect derivation against the definite width
+                            // (img.rs) holds the video open without a floor.
                             .flex_1()
-                            .min_h(px(120.0))
+                            .min_h_0()
                             .bg(theme.colors().editor_background);
 
                         if let Some(frame) = frame {
@@ -2313,6 +2329,177 @@ mod layout_tests {
             "the 21:9 frame element must derive its width from the video area \
              (contain-fit), not its natural 2560px width: frame {frame_bounds:?} vs \
              video area {video_bounds:?}"
+        );
+    }
+
+    /// The content-flow embedding contract host (block_renderer's wrapper):
+    /// a scroll container gives its content INDEFINITE height (rows are
+    /// content-sized, the viewport scrolls) — the chat's contract, where a
+    /// bare auto div would instead be stretched by the window and measure
+    /// definite-pane semantics. block_renderer holds the player open with
+    /// min_h(240) (hkask_viz_core.rs:383); the widget survives on
+    /// content-driven sizing alone (the frame's aspect derivation).
+    struct FlowHost {
+        widget: Entity<MediaWidget>,
+    }
+
+    impl gpui::Render for FlowHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            // The chat's content-flow contract: a scroll container gives its
+            // content INDEFINITE height (rows are content-sized, the viewport
+            // scrolls) — the first probe draft used a bare `div().w_full()`
+            // root, which the window stretched to a definite 600px and
+            // measured definite-pane semantics instead. block_renderer's
+            // wrapper holds the player open with min_h(240)
+            // (hkask_viz_core.rs:383).
+            div()
+                .id("media-flow-host-scroll")
+                .size_full()
+                .overflow_y_scroll()
+                .child(
+                    div()
+                        .w_full()
+                        .child(div().size_full().min_h(px(240.)).child(self.widget.clone())),
+                )
+        }
+    }
+
+    /// A hermetic video widget: `with_storage` initializes the player +
+    /// transport without touching disk; `frame` optionally injects a
+    /// synthetic decoded frame (the decoder output's stand-in).
+    fn hermetic_video_widget(frame: Option<(u32, u32)>, cx: &mut App) -> Entity<MediaWidget> {
+        let body = r#"{"kind":"video","src":"/hermetic/probe.mp4"}"#;
+        let block = MediaBlockBody::parse(body).expect("valid media block");
+        let media_ref = block.to_media_ref().expect("video media ref");
+        cx.new(|cx| {
+            let mut widget =
+                MediaWidget::with_storage(media_ref, Arc::new(PathMediaStorage::default()), cx);
+            if let Some((width, height)) = frame {
+                let buffer =
+                    image::ImageBuffer::from_pixel(width, height, image::Rgba([16, 16, 16, 255]));
+                let frame = image::Frame::new(buffer);
+                widget.current_frame =
+                    Some(Arc::new(RenderImage::new(SmallVec::from_elem(frame, 1))));
+            }
+            widget
+        })
+    }
+
+    /// THE operator-defect pin (2026-11-04): the workspace player lost its
+    /// transport — play/stop buttons and the seek slider — because the
+    /// video area's 120px min-height floor pushed the transport row past
+    /// the pane's clipped bottom (pre-fix measurement at a 56px host:
+    /// transport laid out at y=125..159, fully outside the box, while the
+    /// same shared widget kept its slider in the chat flow). The floor is
+    /// gone; the invariant: the transport stays INSIDE the player box at
+    /// every definite host height, at its natural height, and the video
+    /// area yields to it rather than pushing it out.
+    #[gpui::test]
+    fn transport_stays_visible_at_every_host_height(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            let widget = hermetic_video_widget(Some((320, 180)), cx);
+            WidgetHost { widget }
+        });
+        for host_height in [px(240.), px(150.), px(56.)] {
+            cx.simulate_resize(size(px(320.), host_height));
+            cx.run_until_parked();
+            let video_area = cx
+                .debug_bounds("media-video-area")
+                .expect("video area lays out");
+            let transport = cx
+                .debug_bounds("media-transport")
+                .expect("transport lays out");
+            let widget_bounds = cx.debug_bounds("media-widget").expect("widget lays out");
+            assert!(
+                transport.bottom() <= widget_bounds.bottom() + px(1.),
+                "the transport (play/stop + seek slider) must stay inside the \
+                 player box at host height {host_height:?}: transport {transport:?} \
+                 vs widget {widget_bounds:?}"
+            );
+            assert!(
+                transport.size.height >= px(24.),
+                "the transport row must render at its natural height, never \
+                 crushed ({host_height:?}): {transport:?}"
+            );
+            assert!(
+                transport.top() >= video_area.bottom() - px(1.),
+                "the video area yields to the transport — the transport sits \
+                 below it, never displaced by it ({host_height:?}): video \
+                 {video_area:?} transport {transport:?}"
+            );
+        }
+
+        // The floor's absence IS the fix: at the shortest host the video
+        // area yields to 16px (pre-fix it held 120px and pushed the
+        // transport 103px past the box).
+        cx.simulate_resize(size(px(320.), px(56.)));
+        cx.run_until_parked();
+        let video_area = cx
+            .debug_bounds("media-video-area")
+            .expect("video area lays out at the shortest host");
+        assert!(
+            video_area.size.height < px(20.),
+            "the video area must yield below its former 120px floor at short \
+             hosts — it no longer floors: {video_area:?}"
+        );
+    }
+
+    /// The legitimate-case pin for the floor removal: the content-flow
+    /// embedding must keep a DECODED video usable without the removed floor
+    /// — gpui's img aspect derivation against the definite flow width holds
+    /// the video open (measured 798x449 for a 320x180 frame at an 800px
+    /// window: width x 9/16).
+    #[gpui::test]
+    fn flow_embedding_keeps_decoded_video_open(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            let widget = hermetic_video_widget(Some((320, 180)), cx);
+            FlowHost { widget }
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+        let video_area = cx
+            .debug_bounds("media-video-area")
+            .expect("video area lays out in flow");
+        assert!(
+            (px(440.)..px(460.)).contains(&video_area.size.height),
+            "the decoded frame's aspect derivation must hold the flow video \
+             open (798px width x 9/16 for a 320x180 frame): {video_area:?}"
+        );
+    }
+
+    /// The pre-decode placeholder in flow is the floor removal's only cost:
+    /// it shrinks to its text height instead of 120px, but never collapses
+    /// the player to zero, and the transport stays inside the
+    /// content-sized widget.
+    #[gpui::test]
+    fn flow_placeholder_does_not_collapse_the_player(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            let widget = hermetic_video_widget(None, cx);
+            FlowHost { widget }
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+        let video_area = cx
+            .debug_bounds("media-video-area")
+            .expect("video area lays out in flow");
+        let transport = cx
+            .debug_bounds("media-transport")
+            .expect("transport lays out in flow");
+        let widget_bounds = cx
+            .debug_bounds("media-widget")
+            .expect("widget lays out in flow");
+        assert!(
+            (px(10.)..px(100.)).contains(&video_area.size.height),
+            "the placeholder video area is text-sized — never collapsed to \
+             zero, never floored back at 120px: {video_area:?}"
+        );
+        assert!(
+            transport.bottom() <= widget_bounds.bottom() + px(1.),
+            "the transport must stay inside the content-sized flow player: \
+             {transport:?} vs {widget_bounds:?}"
         );
     }
 
