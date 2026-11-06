@@ -1302,6 +1302,11 @@ impl ThreadView {
                         }
                     },
                 ));
+                // zed-kask: D100 (Seam A) — the thread-header privacy toggle
+                // renders from the native thread's mark state; a mark flip
+                // (`Thread::set_private_inference` → `cx.notify`) must
+                // re-render the bar so the lock reflects the live routing.
+                subscriptions.push(cx.observe(&native_thread, |_, _, cx| cx.notify()));
             }
         }
 
@@ -5556,6 +5561,10 @@ impl ThreadView {
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
                                     .children(self.render_thinking_control(cx))
+                                    // zed-kask: D100 (Seam A) — the PI's
+                                    // mark/unmark surface for private-inference
+                                    // routing.
+                                    .children(self.render_private_inference_control(cx))
                                     .children(self.render_compact_control(cx)),
                             )
                             .child(
@@ -6448,6 +6457,64 @@ impl ThreadView {
                 .style(SplitButtonStyle::Transparent)
                 .into_any_element(),
         )
+    }
+
+    /// zed-kask: D100 (Seam A) — the thread-header privacy toggle: the PI's
+    /// mark/unmark surface for private-inference routing (FR-3). Both
+    /// directions live here — a PI-owned surface — never on an
+    /// agent-callable tool (the rejected-module register, D-3 §4:
+    /// unmarking widens exposure, so it cannot be agent-callable). The
+    /// tooltip text IS the routing-decision surfacing FR-3(c) requires at
+    /// the thread surface; pins: `private_inference_toggle_label_renders_the_routing_decision`.
+    /// The label pair is a pure function so the decision text is unit-pinned
+    /// (see `private_inference_toggle_label`).
+    fn render_private_inference_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?;
+        let marked = thread.read(cx).is_private_inference();
+        let (icon, icon_color, tooltip_label) = Self::private_inference_toggle_label(marked);
+
+        Some(
+            IconButton::new("private-inference-toggle", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(icon_color)
+                .tooltip(Tooltip::text(tooltip_label))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    let Some(thread) = this.as_native_thread(cx) else {
+                        return;
+                    };
+                    thread.update(cx, |thread, cx| {
+                        let marked = thread.is_private_inference();
+                        thread.set_private_inference(!marked, cx);
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// D100 — the toggle's icon/color/tooltip pair. Pure so the routing-
+    /// decision text (FR-3(c)'s unit pin) is asserted without a window:
+    /// both directions name the PI-owned policy home and the boundary.
+    fn private_inference_toggle_label(marked: bool) -> (IconName, Color, SharedString) {
+        if marked {
+            (
+                IconName::Lock,
+                Color::Accent,
+                SharedString::from(
+                    "Private inference: on — this thread routes only to the private \
+                     inference leg (kask.private_inference); its content never \
+                     reaches a public provider. Click to route on public providers.",
+                ),
+            )
+        } else {
+            (
+                IconName::LockOff,
+                Color::Muted,
+                SharedString::from(
+                    "Private inference: off — click to route this thread only to \
+                     the private inference leg (kask.private_inference).",
+                ),
+            )
+        }
     }
 
     fn render_effort_selector(
@@ -15622,4 +15689,48 @@ pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
             .log_err();
     })
     .detach();
+}
+
+#[cfg(test)]
+mod private_inference_toggle_tests {
+    use super::*;
+
+    /// zed-kask: D100 (Seam A) — FR-3(c): the routing-decision text renders
+    /// at the thread surface. Both toggle directions name the PI-owned
+    /// policy home (`kask.private_inference`) and the boundary, so the
+    /// operator sees the routing decision — never a mystery lock.
+    #[test]
+    fn private_inference_toggle_label_renders_the_routing_decision() {
+        let (marked_icon, marked_color, marked_label) =
+            ThreadView::private_inference_toggle_label(true);
+        assert!(matches!(marked_icon, IconName::Lock));
+        assert!(matches!(marked_color, Color::Accent));
+        let marked_text = marked_label.as_ref();
+        assert!(
+            marked_text.contains("routes only to the private inference leg"),
+            "the marked tooltip names the routing decision: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("kask.private_inference"),
+            "the marked tooltip names the PI-owned policy home: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("never reaches a public provider"),
+            "the marked tooltip names the privacy boundary: {marked_text}"
+        );
+
+        let (unmarked_icon, unmarked_color, unmarked_label) =
+            ThreadView::private_inference_toggle_label(false);
+        assert!(matches!(unmarked_icon, IconName::LockOff));
+        assert!(matches!(unmarked_color, Color::Muted));
+        let unmarked_text = unmarked_label.as_ref();
+        assert!(
+            unmarked_text.contains("private inference leg"),
+            "the unmarked tooltip names what marking does: {unmarked_text}"
+        );
+        assert!(
+            unmarked_text.contains("kask.private_inference"),
+            "the unmarked tooltip names the PI-owned policy home: {unmarked_text}"
+        );
+    }
 }

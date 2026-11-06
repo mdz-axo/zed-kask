@@ -88,6 +88,16 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// zed-kask: D100 (Seam A) — this thread is privacy-marked for private
+    /// inference routing (FR-3, private-inference requirements D-2): its
+    /// inference resolves only to the private leg (`kask.private_inference`),
+    /// and content it produces carries the private-inference provenance mark
+    /// at ingest (FR-4). Serialized in the D28 metadata blob; a legacy blob
+    /// without the field reads as unmarked — threads written before D100
+    /// existed were never marked, so the default is honest history, not a
+    /// fail-open (the routing gate fails closed on load).
+    #[serde(default)]
+    pub private_inference_marked: bool,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -138,6 +148,11 @@ pub struct SharedThread {
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
     pub delegation_authority: Option<crate::DelegationAuthority>,
+    /// zed-kask: D100 (Seam A) — the privacy mark travels with the shared
+    /// content, so an imported private-marked thread re-arms its routing
+    /// gate on load instead of silently running on a public provider.
+    #[serde(default)]
+    pub private_inference_marked: bool,
     pub version: String,
 }
 
@@ -151,6 +166,7 @@ impl SharedThread {
             updated_at: thread.updated_at,
             model: thread.model.clone(),
             delegation_authority: thread.delegation_authority.clone(),
+            private_inference_marked: thread.private_inference_marked,
             version: Self::VERSION.to_string(),
         }
     }
@@ -175,6 +191,7 @@ impl SharedThread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
             delegation_authority: self.delegation_authority,
+            private_inference_marked: self.private_inference_marked,
         }
     }
 
@@ -362,6 +379,9 @@ impl DbThread {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
             delegation_authority: None,
+            // zed-kask: D100 — the agent-1 legacy format predates the
+            // privacy mark; an upgraded thread starts unmarked.
+            private_inference_marked: false,
         })
     }
 }
@@ -1193,6 +1213,7 @@ mod tests {
             delegation_authority: Some(crate::DelegationAuthority::from_mcp_tools(&[
                 "a/read".into()
             ])),
+            private_inference_marked: false,
             version: SharedThread::VERSION.to_string(),
         };
 
@@ -1357,6 +1378,7 @@ mod tests {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
             delegation_authority: None,
+            private_inference_marked: false,
         }
     }
 

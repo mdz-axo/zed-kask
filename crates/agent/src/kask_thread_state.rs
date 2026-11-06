@@ -23,6 +23,10 @@
 //! | `cached_system_prompt` | — | System prompt digest caching |
 //! | `cached_filtered_context` | — | Filtered context caching |
 //! | `active_skill` | D59 | Attribute tool failures to the running skill |
+//! | `private_inference` | D100 | Thread privacy mark: routing gate (FR-3) + the ingest |
+//! | | | provenance signal (FR-4). PI-surface-set (the thread-header toggle), |
+//! | | | never agent-callable; subagents inherit it (content flows through |
+//! | | | them); the routing policy home is `kask.private_inference` settings |
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -70,6 +74,13 @@ pub(crate) struct KaskThreadState {
     // D59 — the most recently activated skill in this thread; tool failures
     // while it is set are recorded against it without the model reporting.
     active_skill: Rc<RefCell<Option<SharedString>>>,
+
+    // D100 (Seam A) — the thread privacy mark. PI-surface-set only (the
+    // thread-header toggle; the rejected-module register rules out an
+    // agent-callable unmark tool — unmarking widens exposure). Never a
+    // default-read: `false` is the honest pre-D100 history, and the routing
+    // gates read the explicit flag, never an inference from other state.
+    private_inference: bool,
 }
 
 impl KaskThreadState {
@@ -84,6 +95,7 @@ impl KaskThreadState {
             cached_system_prompt: None,
             cached_filtered_context: None,
             active_skill: Rc::new(RefCell::new(None)),
+            private_inference: false,
         }
     }
 
@@ -305,6 +317,27 @@ impl KaskThreadState {
         self.agent_id = agent_id;
     }
 
+    // ── Private-inference routing mark (D100) ───────────────────────
+
+    /// Whether this thread is privacy-marked for private inference
+    /// routing (D100/FR-3): its inference resolves only to the private
+    /// leg, and content it produces carries the private-inference
+    /// provenance mark at ingest (FR-4). Curator and Z-K threads carry
+    /// the identical mark — the enforcement reads this flag, never the
+    /// agent identity (PI ruling 2026-10-30).
+    pub fn is_private_inference(&self) -> bool {
+        self.private_inference
+    }
+
+    /// Set the privacy-mark flag (D100). The thread-level setter
+    /// (`Thread::set_private_inference`) owns the routing consequences
+    /// (clearing a held public model); this is the raw flag home. The
+    /// persisted restore (`Thread::from_db`) and subagent inheritance
+    /// (`inherit_from`) are the other legitimate callers.
+    pub(crate) fn set_private_inference(&mut self, private: bool) {
+        self.private_inference = private;
+    }
+
     // ── Tool retry cap (.rules) ──────────────────────────────────────
 
     /// Get a handle to the retry tracker for cloning into async blocks.
@@ -364,13 +397,16 @@ impl KaskThreadState {
     // ── Subagent inheritance (D6/D34) ────────────────────────────────
 
     /// Inherit state from a parent thread's KaskThreadState (for subagents).
-    /// Only `agent_id` is inherited — curator-spawned subagents route their
-    /// turns to the curator's sovereign DB. All other state starts fresh.
-    /// The parent's identity is always set (identity by construction), so the
-    /// child's is too.
+    /// `agent_id` routes the child's turns to the parent's sovereign store;
+    /// `private_inference` (D100) keeps the child inside the parent's routing
+    /// boundary — a private thread's subagent content is private-thread
+    /// content, so it must not fall back to a public provider the parent is
+    /// barred from. All other state starts fresh. The parent's identity is
+    /// always set (identity by construction), so the child's is too.
     pub fn inherit_from(parent: &KaskThreadState) -> Self {
         let mut state = Self::new();
         state.agent_id = parent.agent_id.clone();
+        state.private_inference = parent.private_inference;
         state
     }
 }
@@ -879,5 +915,27 @@ mod tests {
                 provider: LanguageModelProviderName::new("OpenRouter"),
             }
         ));
+    }
+
+    /// zed-kask: D100 (Seam A) — the privacy mark: threads start unmarked
+    /// (the honest pre-D100 history), and subagents inherit the mark —
+    /// a private thread's subagent content is private-thread content, so
+    /// the child must sit inside the parent's routing boundary.
+    #[test]
+    fn inherit_from_carries_the_privacy_mark() {
+        let mut parent = KaskThreadState::new();
+        assert!(!parent.is_private_inference(), "threads start unmarked");
+        parent.set_private_inference(true);
+        let child = KaskThreadState::inherit_from(&parent);
+        assert!(
+            child.is_private_inference(),
+            "a private thread's subagent inherits the mark"
+        );
+
+        let unmarked_child = KaskThreadState::inherit_from(&KaskThreadState::new());
+        assert!(
+            !unmarked_child.is_private_inference(),
+            "a public thread's subagent starts unmarked"
+        );
     }
 }

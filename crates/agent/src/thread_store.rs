@@ -172,6 +172,7 @@ mod tests {
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Default::default(),
             delegation_authority: None,
+            private_inference_marked: false,
         }
     }
 

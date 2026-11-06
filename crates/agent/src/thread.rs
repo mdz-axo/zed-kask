@@ -216,6 +216,90 @@ impl std::fmt::Display for NoModelConfiguredError {
 
 impl std::error::Error for NoModelConfiguredError {}
 
+// zed-kask: D100 (Seam A) — private-inference routing enforcement (FR-3,
+// private-inference requirements D-2). The thread's model IS the dispatch
+// decision, so the enforcement lives at the model-resolution points: the
+// storage gates (`set_model`, `set_summarization_model`, `from_db`'s
+// restore sanitize) and the request gate (`run_turn_internal`). The
+// policy home is the landed `kask.private_inference` settings section —
+// PI-owned, thread-unwritable (P4); a marked thread never widens its own
+// routing.
+
+/// The `kask.private_inference` routing policy read from settings content:
+/// the configured private-leg provider id. `None` when the section is
+/// absent — the fail-closed direction (no model counts as private-leg, so
+/// a marked thread can never resolve a model until the PI configures the
+/// leg).
+pub(crate) fn private_inference_provider_id(cx: &App) -> Option<Arc<str>> {
+    let provider_id = cx
+        .global::<settings::SettingsStore>()
+        .merged_settings()
+        .kask
+        .as_ref()
+        .and_then(|kask| kask.private_inference.as_ref())
+        .and_then(|pi| pi.provider_id.clone())?;
+    let provider_id = provider_id.trim();
+    if provider_id.is_empty() {
+        return None;
+    }
+    Some(Arc::from(provider_id))
+}
+
+/// D100 — the private-leg predicate: a model is private-leg iff its
+/// provider id equals the configured `kask.private_inference.provider_id`.
+/// With no configured leg, no model is private-leg (fail-closed).
+pub(crate) fn is_private_leg_model(model: &LanguageModel, cx: &App) -> bool {
+    match private_inference_provider_id(cx) {
+        Some(private_provider) => *model.provider_id.0 == *private_provider,
+        None => false,
+    }
+}
+
+/// D100 — returned when a privacy-marked thread would resolve or dispatch
+/// inference to a model outside the private inference leg. The request
+/// fails with this typed error; it never falls back to a public provider
+/// (FR-3(b)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateRoutingError {
+    /// The refused model's provider.
+    pub provider_id: Arc<str>,
+    /// The refused model's id.
+    pub model_id: Arc<str>,
+}
+
+impl std::fmt::Display for PrivateRoutingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "private thread refused public model {}/{}: a privacy-marked \
+             thread routes only to the private inference leg \
+             (kask.private_inference)",
+            self.provider_id, self.model_id
+        )
+    }
+}
+
+impl std::error::Error for PrivateRoutingError {}
+
+/// D100 — returned when a privacy-marked thread has no resolvable
+/// private-leg model (the private leg unavailable): the turn fails with
+/// this typed error instead of falling back to a public default (FR-3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrivateModelUnavailableError;
+
+impl std::fmt::Display for PrivateModelUnavailableError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "private thread has no private inference model available \
+             (kask.private_inference) — select a private-leg model; \
+             no public provider serves a privacy-marked thread"
+        )
+    }
+}
+
+impl std::error::Error for PrivateModelUnavailableError {}
+
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
@@ -1417,6 +1501,9 @@ pub(crate) struct StreamingSaveKey {
     thinking_effort: Option<String>,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
     sandbox_grants: crate::db::DbSandboxGrants,
+    /// zed-kask: D100 — a mark flip mid-stream is a routing change: it
+    /// must persist promptly, not at stream end.
+    private_inference_marked: bool,
 }
 
 pub struct Thread {
@@ -1998,6 +2085,33 @@ impl Thread {
                 .map_or(ThreadModel::Unset, ThreadModel::Ready),
         };
 
+        // zed-kask: D100 (Seam A) — restore the persisted privacy mark (the
+        // D28 metadata blob), then the storage gate's restore leg: a marked
+        // thread never loads holding a public-leg model (a mark applied
+        // after a public model was selected, a blob from before the gates
+        // existed, or a hand-edited blob). The public model is dropped to
+        // `Unset`; the request path fails typed until a private-leg model
+        // is selected — never a public fallback. Pinned by
+        // `private_mark_round_trips_through_db` and
+        // `a_marked_thread_never_loads_holding_a_public_model`.
+        let mut kask = crate::kask_thread_state::KaskThreadState::new();
+        if db_thread.private_inference_marked {
+            kask.set_private_inference(true);
+        }
+        let model = if kask.is_private_inference()
+            && matches!(&model, ThreadModel::Ready(m) if !is_private_leg_model(m, cx))
+        {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} dropped restored public model at load — \
+                 the mark allows only the private inference leg",
+                id
+            );
+            ThreadModel::Unset
+        } else {
+            model
+        };
+
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_model()));
 
@@ -2056,7 +2170,7 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
-            kask: crate::kask_thread_state::KaskThreadState::new(),
+            kask,
         }
     }
 
@@ -2157,6 +2271,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            private_inference_marked: self.kask.is_private_inference(),
         };
 
         cx.background_spawn(async move {
@@ -2183,6 +2298,7 @@ impl Thread {
             thinking_effort: self.thinking_effort.clone(),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            private_inference_marked: self.kask.is_private_inference(),
         }
     }
 
@@ -2311,6 +2427,24 @@ impl Thread {
     }
 
     pub fn set_model(&mut self, model: LanguageModel, cx: &mut Context<Self>) {
+        // zed-kask: D100 (Seam A) — the storage gate: a privacy-marked
+        // thread can never hold a model outside the private inference leg.
+        // The public model is refused — not stored, no `ModelChanged` — and
+        // the attempt is logged; the turn path then fails typed
+        // (`PrivateModelUnavailableError`) rather than dispatching. Pinned
+        // by `private_thread_refuses_a_public_model_at_the_storage_gate`.
+        if self.kask.is_private_inference() && !is_private_leg_model(&model, cx) {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused public model {}/{} — only the private \
+                 inference leg (kask.private_inference) serves a marked thread",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            cx.notify();
+            return;
+        }
         let old_usage = self.latest_token_usage();
         self.model = ThreadModel::Ready(model.clone());
         let new_caps = Self::prompt_capabilities(self.model.as_model());
@@ -2332,6 +2466,71 @@ impl Thread {
         }
 
         cx.notify()
+    }
+
+    /// zed-kask: D100 (Seam A) — mark or unmark this thread for private
+    /// inference routing (FR-3). The PI's surface (the thread-header
+    /// toggle) calls this; no agent-callable tool does (the rejected
+    /// unmark-tool register, D-3 §4 — unmarking widens exposure, so it
+    /// lives on PI-owned surfaces). Marking clears any held non-private-leg
+    /// model and summarization model — the storage gate could not have
+    /// admitted them on a marked thread, and the request path then fails
+    /// typed (`PrivateModelUnavailableError`) until a private-leg model is
+    /// selected: never a public fallback. Curator sessions mark and route
+    /// identically (PI ruling 2026-10-30 — the enforcement reads this flag,
+    /// never the agent identity). Pinned by
+    /// `marking_a_thread_clears_a_held_public_model` and
+    /// `unmark_restores_public_model_selection`.
+    pub fn set_private_inference(&mut self, private: bool, cx: &mut Context<Self>) {
+        if self.kask.is_private_inference() == private {
+            return;
+        }
+        self.kask.set_private_inference(private);
+
+        if private {
+            if let Some(model) = self.model().cloned()
+                && !is_private_leg_model(&model, cx)
+            {
+                let old_usage = self.latest_token_usage();
+                self.model = ThreadModel::Unset;
+                self.prompt_capabilities_tx
+                    .send(Self::prompt_capabilities(None))
+                    .log_err();
+                let new_usage = self.latest_token_usage();
+                if old_usage != new_usage {
+                    cx.emit(TokenUsageUpdated(new_usage));
+                }
+                cx.emit(ModelChanged);
+                log::warn!(
+                    target: "agent.thread",
+                    "private thread {} cleared public model {}/{} at mark time",
+                    self.id,
+                    model.provider_id.0,
+                    model.id.0
+                );
+            }
+            if let Some(model) = self.summarization_model.clone()
+                && !is_private_leg_model(&model, cx)
+            {
+                self.summarization_model = None;
+                log::warn!(
+                    target: "agent.thread",
+                    "private thread {} cleared public summarization model {}/{} \
+                     at mark time",
+                    self.id,
+                    model.provider_id.0,
+                    model.id.0
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// zed-kask: D100 (Seam A) — whether this thread is privacy-marked for
+    /// private-inference routing. The thread-header toggle renders from
+    /// this; the ingest seams read it to stamp FR-4's provenance mark.
+    pub fn is_private_inference(&self) -> bool {
+        self.kask.is_private_inference()
     }
 
     /// Re-selects this thread's model from its provider when that provider's
@@ -2367,6 +2566,27 @@ impl Thread {
         model: Option<LanguageModel>,
         cx: &mut Context<Self>,
     ) {
+        // zed-kask: D100 (Seam A) — the storage gate covers the
+        // summarization slot too: title generation and summarization
+        // dispatch thread content through this model, so a marked thread
+        // must never hold a public summarization model (FR-3's falsifier is
+        // any private-thread content reaching a public provider — this
+        // path included). Pinned by
+        // `private_thread_refuses_a_public_summarization_model`.
+        if let Some(model) = model.as_ref()
+            && self.kask.is_private_inference()
+            && !is_private_leg_model(model, cx)
+        {
+            log::warn!(
+                target: "agent.thread",
+                "private thread {} refused public summarization model {}/{}",
+                self.id,
+                model.provider_id.0,
+                model.id.0
+            );
+            cx.notify();
+            return;
+        }
         self.summarization_model = model.clone();
 
         for subagent in &self.running_subagents {
@@ -2925,6 +3145,15 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        // zed-kask: D100 (Seam A) — the turn-entry gate: a privacy-marked
+        // thread with no model fails with the private-leg named error, not
+        // the generic no-model error (FR-3(b): the operator must see the
+        // boundary, not a missing configuration). The request gate inside
+        // run_turn_internal is the belt for paths that bypass this entry.
+        // Pinned by `private_thread_turn_entry_fails_typed_with_no_model`.
+        if self.kask.is_private_inference() && self.model().is_none() {
+            return Err(anyhow!(PrivateModelUnavailableError));
+        }
         let model = self
             .model()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
@@ -3516,10 +3745,33 @@ impl Thread {
             // or changes profile) take effect between tool-call rounds.
             // If a refusal fallback is active, use that model instead.
             let (model, provider, mut request) = this.update(cx, |this, cx| {
-                let model = refusal_fallback_model
+                let candidate = refusal_fallback_model
                     .clone()
-                    .or_else(|| this.model().cloned())
-                    .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
+                    .or_else(|| this.model().cloned());
+                // zed-kask: D100 (Seam A) — the request gate: the last
+                // enforcement point before a provider request leaves the
+                // thread. A marked thread dispatches only to the private
+                // leg; with no private-leg model the turn fails typed
+                // (`PrivateModelUnavailableError`) — never a public
+                // default. The refused-model arm is defense-in-depth: the
+                // storage gates and the mark-time clear make a held public
+                // model unreachable through public API; it stays so a
+                // bypass (a future resolution path, a hand-edited blob)
+                // fails closed here instead of dispatching. Pinned by
+                // `private_thread_turn_fails_typed_with_no_public_dispatch`.
+                let model = match (this.kask.is_private_inference(), candidate) {
+                    (true, Some(model)) if !is_private_leg_model(&model, cx) => {
+                        return Err(anyhow!(PrivateRoutingError {
+                            provider_id: model.provider_id.0.into(),
+                            model_id: model.id.0.into(),
+                        }));
+                    }
+                    (true, None) => {
+                        return Err(anyhow!(PrivateModelUnavailableError));
+                    }
+                    (_, Some(model)) => model,
+                    (_, None) => return Err(anyhow!(NoModelConfiguredError)),
+                };
                 let provider = LanguageModelRegistry::read_global(cx).provider_for_model(&model);
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
@@ -6531,6 +6783,16 @@ impl Thread {
         // zed-kask: D8 — try_read_global: a harness that never wires the
         // registry global must not panic here; the thread's own model is
         // the documented fallback either way.
+        // zed-kask: D100 (Seam A) — a privacy-marked thread compacts only
+        // on the private leg: the registry's global compaction model (a
+        // settings-set model that is public by default) is refused
+        // wholesale; the thread's own — gate-enforced private — model is
+        // the only compaction model a marked thread may use (FR-3's
+        // falsifier is any private-thread content reaching a public
+        // provider, and compaction dispatches thread content).
+        if self.kask.is_private_inference() {
+            return self.model().cloned();
+        }
         LanguageModelRegistry::try_read_global(cx)
             .and_then(|registry| registry.compaction_model())
             .or_else(|| self.model().cloned())
@@ -14423,6 +14685,355 @@ mod tests {
         assert!(
             saw_raw_output,
             "raw_output must be sent to UI even when replay deserialization fails"
+        );
+    }
+
+    // ── zed-kask: D100 (Seam A) pins — private-inference routing ─────
+    //
+    // FR-3's oracle (private-inference requirements D-2, 2026-10-30): the
+    // global falsifier is private-thread content reaching any public
+    // provider, observed in any test or live session. These pins hold the
+    // storage gate (model + summarization slots), the mark-time clear, the
+    // turn-entry typed error, the D28 persistence round-trip, the
+    // shared-thread round-trip, and the Curator parity ruling.
+
+    /// Set `kask.private_inference.provider_id` in the test's user settings
+    /// — the PI-owned policy home the gates read live. An id matching no
+    /// registered provider makes every model public (fail-closed); an id
+    /// matching the fake provider makes the fake private-leg.
+    fn set_private_inference_provider(cx: &mut TestAppContext, provider_id: &str) {
+        use gpui::UpdateGlobal as _;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .private_inference
+                        .get_or_insert_default()
+                        .provider_id = Some(provider_id.to_string());
+                });
+            });
+        });
+    }
+
+    /// Falsifier (a), storage-gate leg: a privacy-marked thread can never
+    /// hold a public model. Setting one before marking is accepted; the
+    /// mark clears it; every set afterwards is refused; unmarking restores
+    /// free selection.
+    #[gpui::test]
+    async fn private_thread_refuses_a_public_model_at_the_storage_gate(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "private-local");
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "an unmarked thread accepts the public model"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.model().is_none(),
+                    "marking clears a held public model — a marked thread \
+                     never holds one (the held model would be a dispatch \
+                     decision)"
+                );
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_none(),
+                    "the storage gate refuses the public model on a marked thread"
+                );
+                thread.set_private_inference(false, cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "unmarking restores free selection (the PI toggle)"
+                );
+            });
+        });
+    }
+
+    /// Falsifier (a), positive control: a marked thread turns on the
+    /// configured private leg — the gate must not over-block the PI's
+    /// stated use.
+    #[gpui::test]
+    async fn private_thread_turns_on_the_configured_private_leg(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "fake");
+        let model = fake.model("fake");
+
+        let events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.set_private_inference(true, cx);
+                    thread.set_model(model.clone(), cx);
+                    assert!(
+                        thread.model().is_some(),
+                        "the private-leg model is accepted on a marked thread"
+                    );
+                    thread.send(ClientUserMessageId::new(), vec!["hello"], cx)
+                })
+            })
+            .expect("a marked thread with a private-leg model sends");
+        cx.run_until_parked();
+
+        let request = fake
+            .pending_completions_for(&model)
+            .pop()
+            .expect("the turn dispatched to the private-leg provider");
+        fake.send_text(&model, &request, "private reply");
+        fake.end_stream(&model, &request);
+        cx.run_until_parked();
+        drop(events);
+    }
+
+    /// FR-3(b): the unavailability path returns the typed, named error and
+    /// never a public fallback. A marked thread with no private-leg model
+    /// refuses the turn at entry with `PrivateModelUnavailableError` — the
+    /// registry's default (public) model is never consulted.
+    #[gpui::test]
+    async fn private_thread_turn_entry_fails_typed_with_no_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "private-local");
+
+        let send_result = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_private_inference(true, cx);
+                thread.send(ClientUserMessageId::new(), vec!["hello"], cx)
+            })
+        });
+        let error = match send_result {
+            Ok(_) => panic!("a marked thread with no private model must refuse at entry"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("private inference model available"),
+            "the typed error names the private leg: {message}"
+        );
+        assert!(
+            message.contains("no public provider serves a privacy-marked thread"),
+            "the typed error names the no-fallback boundary: {message}"
+        );
+        assert!(
+            fake.pending_completions().is_empty(),
+            "zero requests reached any provider — the registry default was \
+             never a fallback"
+        );
+    }
+
+    /// The summarization slot carries thread content (titles, summaries),
+    /// so the storage gate covers it: a marked thread never holds a public
+    /// summarization model.
+    #[gpui::test]
+    async fn private_thread_refuses_a_public_summarization_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "private-local");
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(model.clone()), cx);
+                assert!(
+                    thread.summarization_model().is_some(),
+                    "an unmarked thread sets a summarization model"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.summarization_model().is_none(),
+                    "marking clears a public summarization model — titles \
+                     never dispatch to a public provider"
+                );
+                thread.set_summarization_model(Some(model.clone()), cx);
+                assert!(
+                    thread.summarization_model().is_none(),
+                    "the storage gate refuses a public summarization model \
+                     on a marked thread"
+                );
+            });
+        });
+    }
+
+    /// PI ruling 2026-10-30: Curator sessions mark and route identically to
+    /// native agent threads — the enforcement reads the mark, never the
+    /// agent identity. A Curator thread walks the same refusal/acceptance
+    /// as the Z-K pin above.
+    #[gpui::test]
+    async fn curator_thread_marks_and_routes_identically(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "private-local");
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_agent_id(crate::CURATOR_AGENT_ID.clone(), cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "the curator thread holds the model while unmarked"
+                );
+                thread.set_private_inference(true, cx);
+                assert!(
+                    thread.model().is_none(),
+                    "a marked Curator thread is cleared of a public model — \
+                     Curator routing is identical to native agent threads"
+                );
+            });
+        });
+
+        // The same Curator thread accepts the private-leg model once the
+        // policy allows it.
+        set_private_inference_provider(cx, "fake");
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "a marked Curator thread runs on the private leg"
+                );
+            });
+        });
+    }
+
+    /// D28: the mark persists across restart — the metadata blob carries
+    /// it, `from_db` restores it, and the shared-thread format round-trips
+    /// it (an imported marked thread re-arms its gate on load).
+    #[gpui::test]
+    async fn private_mark_round_trips_through_db(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _fake) = setup_thread_for_test(cx).await;
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs, [], cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+        });
+        let db_thread = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.to_db(cx)))
+            .await;
+        assert!(
+            db_thread.private_inference_marked,
+            "to_db carries the mark in the D28 metadata blob"
+        );
+
+        // The shared-thread format (thread export/import) carries it too.
+        let shared = crate::db::SharedThread::from_db_thread(&db_thread);
+        assert!(
+            shared.private_inference_marked,
+            "the shared format carries the mark"
+        );
+        let marked_db = shared.to_db_thread();
+        assert!(
+            marked_db.private_inference_marked,
+            "re-importing the shared thread restores the mark"
+        );
+
+        let restored = cx.new(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+            Thread::from_db(
+                acp_v2::SessionId::new("d100-roundtrip"),
+                db_thread,
+                project.clone(),
+                project_context,
+                context_server_registry,
+                templates,
+                cx,
+            )
+        });
+        cx.update(|cx| {
+            assert!(
+                restored.read(cx).is_private_inference(),
+                "from_db restores the mark"
+            );
+        });
+    }
+
+    /// The restore leg of the storage gate: a marked thread never LOADS
+    /// holding a public model — a blob whose mark was applied after a
+    /// public model was saved (or hand-edited) is sanitized to `Unset`, and
+    /// the next turn fails typed rather than dispatching.
+    #[gpui::test]
+    async fn a_marked_thread_never_loads_holding_a_public_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        set_private_inference_provider(cx, "private-local");
+        let model = fake.model("fake");
+
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        let templates = Templates::new();
+        let project = Project::test(fs, [], cx).await;
+
+        // A blob from before the gates: public model saved, mark applied
+        // afterwards (the pre-D100 shape, or a hand edit).
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+        });
+        let mut db_thread = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.to_db(cx)))
+            .await;
+        db_thread.private_inference_marked = true;
+        assert!(
+            db_thread.model.is_some(),
+            "the blob carries the public model"
+        );
+
+        let restored = cx.new(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+            Thread::from_db(
+                acp_v2::SessionId::new("d100-sanitize"),
+                db_thread,
+                project.clone(),
+                project_context,
+                context_server_registry,
+                templates,
+                cx,
+            )
+        });
+        cx.update(|cx| {
+            assert!(
+                restored.read(cx).model().is_none(),
+                "the restore sanitize drops the public model — a marked \
+                 thread never loads holding one"
+            );
+        });
+    }
+
+    /// FR-3(c): the refusal text renders — a unit pin that the typed errors
+    /// name the refused model and the policy home, so the operator sees the
+    /// boundary, not a generic failure.
+    #[test]
+    fn private_routing_errors_name_the_boundary() {
+        let refused = PrivateRoutingError {
+            provider_id: Arc::from("public-provider"),
+            model_id: Arc::from("model-x"),
+        };
+        let text = refused.to_string();
+        assert!(
+            text.contains("public-provider/model-x"),
+            "the refusal names the refused model: {text}"
+        );
+        assert!(
+            text.contains("kask.private_inference"),
+            "the refusal names the PI-owned policy home: {text}"
+        );
+
+        let unavailable = PrivateModelUnavailableError.to_string();
+        assert!(
+            unavailable.contains("kask.private_inference"),
+            "the unavailability error names the policy home: {unavailable}"
+        );
+        assert!(
+            unavailable.contains("no public provider"),
+            "the unavailability error names the no-fallback boundary: {unavailable}"
         );
     }
 
