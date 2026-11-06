@@ -118,6 +118,17 @@ resident_gate=$(instrument_check "$resident_dir" resident)
 streaming_gate=$(instrument_check "$streaming_dir" streaming)
 echo "# instrument_gate: resident=$resident_gate streaming=$streaming_gate" >&2
 
+# The known-positive discipline, dir-level (the review's F9): a leg that
+# discovered ZERO classes is a broken input (wrong dir, missing bodies) —
+# never a green gate over nothing. A measured-band verdict over an empty
+# TSV would read as success; refuse it before any gate adjudication.
+resident_rows=$(awk -F'\t' '$1 == "resident"' "$out_tsv" | wc -l)
+streaming_rows=$(awk -F'\t' '$1 == "streaming"' "$out_tsv" | wc -l)
+if [ "$resident_rows" -eq 0 ] || [ "$streaming_rows" -eq 0 ]; then
+    echo "VERDICT no_classes_discovered — resident=$resident_rows streaming=$streaming_rows gate rows; a leg dir carries no measured bodies (wrong dir?); no band, never a measured verdict over an empty record" >&2
+    exit 5
+fi
+
 if [ "$resident_gate" != green ] || [ "$streaming_gate" != green ]; then
     echo "VERDICT instrument_${resident_gate}_${streaming_gate} — no cross-leg identity claim (the D-G discipline)" >&2
     exit 4

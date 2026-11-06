@@ -109,14 +109,21 @@ compiler's; experiment legs are hand-launched and measured by the harness):
 
 ## 6. The parity harness + the band arithmetic
 
-`kask/scripts/p2-parity-llama.sh` (the p0-bench-llama.sh shape: endpoint-driven,
-records raw bodies/logs/timings per leg) plus a comparison step over the saved
-bodies — the named-field discipline (jq), the adjudication arithmetic through
-`lisp_eval` receipts (the MTP record's frozen-arithmetic pattern). The band
-records: per class — byte-identical (yes/no), first-divergence character depth,
-divergence token rate (divergent positions / completion tokens), and the
-long-generation leg's envelope. The band is the measured record; the adjudication
-vocabulary (pre-declared):
+The landed pair (named by `631d4468b2`): `kask/scripts/p2-parity-longleg.sh`
+(the p0-bench-llama.sh shape: endpoint-driven against a hand-launched server,
+records raw bodies/logs/timings per leg; the 1024-token long leg — three reps
+plus a discarded warmup) and `kask/scripts/p2-parity-compare.sh` (the
+comparison step over the saved bodies — the named-field discipline (jq), both
+generated fields (`content` AND `reasoning_content`, the landed verdict's
+thinking-model form), the adjudication arithmetic through `lisp_eval`
+receipts at record time (the MTP record's frozen-arithmetic pattern)). The
+frozen prompt and SYS line both extract from the ONE home
+(p0-bench-llama.sh — `extract-frozen-p2-prompt.sh` + the longleg's sed; never
+a second copy to drift). The band records: per class — byte-identical
+(yes/no), first-divergence depth (bytes, post-decode), divergence rate
+(divergent positions / completion tokens — computed by the receipts from the
+recorded columns), and the long-generation leg's envelope. The band is the
+measured record; the adjudication vocabulary (pre-declared):
 
 - **Parity holds** — byte-identical completions on every class AND the long leg,
   instrument gate green.

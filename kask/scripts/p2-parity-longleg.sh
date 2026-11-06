@@ -40,12 +40,19 @@ json_escape() {
     printf '%s' "$s"
 }
 
-# The system prompt: the same byte-frozen SYS line as the p0 suite (verified
-# one-line copy — the compare step refuses legs whose request bodies drift
-# from the shared definition).
-SYS="You are a senior Rust systems engineer working inside a private, local-only assistant environment. Answer with precision and brevity. When reviewing code, name concrete, actionable improvements; never speculate about code you cannot see."
-
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The system prompt: extracted from the ONE frozen home (p0-bench-llama.sh)
+# with the same discipline as the P2 prompt — never a second copy to drift
+# (the review's F10: the compare step compares completions, not request
+# bodies, so a copied line could drift with no instrument catching it).
+# Fail-closed on a changed suite, exactly like the prompt extraction.
+SYS=$(sed -n 's/^SYS="\(.*\)"$/\1/p' "$SCRIPTS_DIR/p0-bench-llama.sh" | head -1)
+if [ -z "${SYS:-}" ]; then
+    echo "FATAL: the p0 suite's SYS line not found in $SCRIPTS_DIR/p0-bench-llama.sh — the frozen suite changed; re-freeze explicitly, never substitute" >&2
+    exit 3
+fi
+
 P2_FULL=$(bash "$SCRIPTS_DIR/extract-frozen-p2-prompt.sh") || {
     echo "FATAL: the frozen P2 prompt could not be extracted — do not substitute bytes" >&2
     exit 3
