@@ -416,6 +416,23 @@ struct TranscriptPaneState {
     layers: Vec<PaneLayerRow>,
     highlights: Vec<PaneHighlight>,
     strikes: Vec<PaneStrike>,
+    /// The live correction layer's edits (S5): the working view names the
+    /// layer by `correction_layer_id`, and a new correction merges over
+    /// these — disjoint edits carried verbatim, overlaps superseded — so
+    /// the newest correction layer never silently reverts an earlier fix
+    /// (the silent-revert guard).
+    correction_edits: Vec<PaneCorrectionEdit>,
+}
+
+/// One stored correction edit of the live correction layer (S5) — the
+/// merged prior corrections a new correction must carry. Source word
+/// indices, the server's `CorrectionEdit` wire shape.
+#[derive(Clone, Debug, PartialEq)]
+struct PaneCorrectionEdit {
+    start_word: usize,
+    end_word: usize,
+    replacement: String,
+    reason: String,
 }
 
 /// A rendered paragraph block of the workspace (S3b-2): its text, the char
@@ -3416,7 +3433,7 @@ impl MediaViewer {
                     .as_ref()
                     .map(|state| state.alignment.as_str())
                     .unwrap_or_default();
-                if let Err(reason) = highlight_range_gate(alignment) {
+                if let Err(reason) = selection_tray_mode(alignment) {
                     self.status = Some(reason.into());
                     cx.notify();
                     return;
@@ -3470,7 +3487,7 @@ impl MediaViewer {
                     .as_ref()
                     .map(|state| state.alignment.as_str())
                     .unwrap_or_default();
-                if let Err(reason) = highlight_range_gate(alignment) {
+                if let Err(reason) = selection_tray_mode(alignment) {
                     self.status = Some(reason.into());
                     cx.notify();
                     return;
@@ -3556,6 +3573,235 @@ impl MediaViewer {
             .log_err();
         })
         .detach();
+    }
+
+    /// Apply a researcher correction over the selected working range (the
+    /// transcript-layer S5): resolve the selection's SOURCE range (identity
+    /// on original/aligned views; `educt_locate` basis "source" on a
+    /// re_anchored view — the server-side translation through the
+    /// re-anchored index map, the D5 v2 consumer), merge the new edit over
+    /// the live correction layer's edits (disjoint priors carried verbatim,
+    /// overlaps superseded and surfaced — the silent-revert guard), store
+    /// the merged layer, chain `educt_realign_transcript` naming it (an
+    /// honest no-op when the layer is one-for-one), and reload the
+    /// workspace — one edit admission over the whole chain.
+    fn dispatch_workspace_correction(
+        &mut self,
+        start_word: usize,
+        end_word: usize,
+        replacement: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let transcript_id = state.transcript_id.clone();
+        let alignment = state.alignment.clone();
+        let prior_edits = state.correction_edits.clone();
+        // The selection's rendered form — the locate contract quotes the
+        // rendered words exactly, and both sides join word text with single
+        // spaces (`rendered_transcript`).
+        let quote = state
+            .words
+            .as_deref()
+            .and_then(|words| words.get(start_word..=end_word))
+            .map(|slice| {
+                slice
+                    .iter()
+                    .map(|word| word.word.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
+        let epoch = match self.begin_edit("educt_store_layer") {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                self.status = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+        self.edit_progress = Some("Applying correction…".into());
+        let Some(invoker) = hkask_tool_invoker::shared_tool_invoker() else {
+            self.apply_workspace_correction_result(
+                epoch,
+                transcript_id,
+                Err("Tool invoker not wired — panel cannot correct transcripts.".into()),
+                cx,
+            );
+            return;
+        };
+        cx.notify();
+        let locate_needed = alignment == "re_anchored";
+        let locate_params =
+            correction_locate_params(&transcript_id, quote.as_deref().unwrap_or_default());
+        cx.spawn(async move |this, cx| {
+            fn finish(
+                this: &gpui::WeakEntity<MediaViewer>,
+                epoch: u64,
+                transcript_id: &str,
+                result: Result<usize, String>,
+                cx: &mut gpui::AsyncApp,
+            ) {
+                this.update(cx, |viewer, cx| {
+                    viewer.apply_workspace_correction_result(
+                        epoch,
+                        transcript_id.to_string(),
+                        result,
+                        cx,
+                    )
+                })
+                .log_err();
+            }
+            // 1. The source range: identity on index-identical views; the
+            //    server's own translation on re_anchored views.
+            let (source_start, source_end) = if locate_needed {
+                let locate_text = match invoker
+                    .invoke_tool(MEDIA_SERVER, "educt_locate", locate_params)
+                    .await
+                {
+                    Ok(text) => text,
+                    Err(error) => {
+                        finish(
+                            &this,
+                            epoch,
+                            &transcript_id,
+                            Err(format!("educt_locate failed: {}", error.message())),
+                            cx,
+                        );
+                        return;
+                    }
+                };
+                match parse_correction_source_range(&locate_text, start_word, end_word) {
+                    Ok(range) => range,
+                    Err(error) => {
+                        finish(&this, epoch, &transcript_id, Err(error), cx);
+                        return;
+                    }
+                }
+            } else {
+                (start_word, end_word)
+            };
+            // 2. Merge over the live layer's edits — the server's own
+            //    supersession semantics, never a fork.
+            let new_edit = PaneCorrectionEdit {
+                start_word: source_start,
+                end_word: source_end,
+                replacement,
+                reason: CORRECTION_REASON.to_string(),
+            };
+            let prior: Vec<hkask_mcp_media::transcript_layers::CorrectionEdit> =
+                prior_edits.iter().map(server_correction_edit).collect();
+            let (merged, superseded) = hkask_mcp_media::transcript_retranscribe::merge_over_prior(
+                &prior,
+                server_correction_edit(&new_edit),
+            );
+            let merged_pane: Vec<PaneCorrectionEdit> =
+                merged.iter().map(pane_correction_edit).collect();
+            let superseded = superseded.len();
+            // 3. Store the merged correction layer.
+            let store_params = match correction_store_params(
+                &transcript_id,
+                &merged_pane,
+                &hkask_types::time::now_rfc3339(),
+            ) {
+                Ok(params) => params,
+                Err(error) => {
+                    finish(&this, epoch, &transcript_id, Err(error), cx);
+                    return;
+                }
+            };
+            let store_text = match invoker
+                .invoke_tool(MEDIA_SERVER, "educt_store_layer", store_params)
+                .await
+            {
+                Ok(text) => text,
+                Err(error) => {
+                    finish(
+                        &this,
+                        epoch,
+                        &transcript_id,
+                        Err(format!("educt_store_layer failed: {}", error.message())),
+                        cx,
+                    );
+                    return;
+                }
+            };
+            let stored_id = hkask_types::tool_response::parse_tool_response(&store_text)
+                .and_then(|value| {
+                    value
+                        .pointer("/stored/id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                })
+                .ok_or_else(|| "educt_store_layer returned no stored layer id.".to_string());
+            let stored_id = match stored_id {
+                Ok(id) => id,
+                Err(error) => {
+                    finish(&this, epoch, &transcript_id, Err(error), cx);
+                    return;
+                }
+            };
+            // 4. Realign names the stored layer — an honest no-op when the
+            //    merged layer is one-for-one; the re-anchoring decision
+            //    otherwise (the reload reads the true state).
+            let realign_params = correction_realign_params(&transcript_id, &stored_id);
+            if let Err(error) = invoker
+                .invoke_tool(MEDIA_SERVER, "educt_realign_transcript", realign_params)
+                .await
+            {
+                finish(
+                    &this,
+                    epoch,
+                    &transcript_id,
+                    Err(format!(
+                        "educt_realign_transcript failed: {}",
+                        error.message()
+                    )),
+                    cx,
+                );
+                return;
+            }
+            finish(&this, epoch, &transcript_id, Ok(superseded), cx);
+        })
+        .detach();
+    }
+
+    /// The correction chain's completion (S5): commit once and reload the
+    /// workspace so the corrected working view lands; failures surface
+    /// visibly and clear progress. The superseded count rides the success
+    /// status — overlapping prior corrections are superseded visibly,
+    /// never silently (the merge's contract).
+    fn apply_workspace_correction_result(
+        &mut self,
+        epoch: u64,
+        transcript_id: String,
+        result: Result<usize, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.edit_request.owns(epoch) {
+            return;
+        }
+        self.edit_progress = None;
+        match result {
+            Ok(superseded) => {
+                self.status = Some(if superseded == 0 {
+                    "Correction applied — the transcript reloads with it.".to_string()
+                } else {
+                    format!(
+                        "Correction applied — superseded {superseded} overlapping prior \
+                         correction(s) — the transcript reloads with it."
+                    )
+                });
+                self.edit_request.complete(epoch, Ok(()));
+                self.load_transcript_with(transcript_id, cx);
+            }
+            Err(error) => {
+                self.status = Some(error);
+                self.edit_request
+                    .complete(epoch, Err("transcript correction failed".to_string()));
+            }
+        }
+        cx.notify();
     }
 
     /// Strike the pending range instead of labeling it (R2): close the
@@ -3988,7 +4234,12 @@ impl MediaViewer {
             .clone();
         self.status = Some(match &edit.kind {
             HighlightEditKind::Create { .. } => {
-                "Name the highlight, or choose Cut selection. Enter confirms; Escape cancels."
+                "Name this highlight, or choose Cut selection. Enter confirms; Escape cancels."
+                    .into()
+            }
+            HighlightEditKind::Correction { .. } => {
+                "Type the corrected text for the selection — Enter applies it as a \
+                 correction layer; Escape cancels."
                     .into()
             }
             HighlightEditKind::EventTag { .. } => {
@@ -4030,6 +4281,33 @@ impl MediaViewer {
             } => {
                 let label = resolve_create_label(edit.buffer.text().as_str());
                 self.create_workspace_highlight(*start_word, *end_word, label, cx);
+            }
+            HighlightEditKind::Correction {
+                start_word,
+                end_word,
+            } => {
+                // A correction replaces text; an empty or blank
+                // replacement is a deletion, which belongs to Cut — the
+                // panel-side gate the server's correction-pass guard
+                // mirrors (store validation checks bounds and
+                // disjointness only).
+                let replacement = edit.buffer.text();
+                if replacement.trim().is_empty() {
+                    self.highlight_edit = Some(edit);
+                    self.status = Some(
+                        "A correction needs replacement text — deletions belong to Cut; \
+                         Escape cancels."
+                            .into(),
+                    );
+                    cx.notify();
+                    return;
+                }
+                self.dispatch_workspace_correction(
+                    *start_word,
+                    *end_word,
+                    replacement.trim().to_string(),
+                    cx,
+                );
             }
             HighlightEditKind::EventTag { start_sec, end_sec } => {
                 let label = edit.buffer.label();
@@ -4129,10 +4407,22 @@ impl MediaViewer {
         // The tray owns the completed range; no anchor lingers.
         self.selection_anchor = None;
         self.selection_popover = Some((start_word, end_word));
-        self.status = Some(
-            "Selection ready — Highlight, Cut, Copy time, or Include in reel. Delete cuts; Escape dismisses."
+        // The tray's hint names its mode's actions (S5): the full tray on
+        // index-identical views, the correction tray on re_anchored views.
+        let mode = self
+            .transcript
+            .as_ref()
+            .and_then(|state| selection_tray_mode(&state.alignment).ok());
+        self.status = Some(match mode {
+            Some(SelectionTrayMode::CorrectOnly) => {
+                "Selection ready — this corrected view supports Suggest correction and \
+                 Copy time. Enter corrects; Escape dismisses."
+                    .into()
+            }
+            _ => "Selection ready — Highlight, Cut, Copy time, Suggest correction, or \
+                  Include in reel. Delete cuts; Escape dismisses."
                 .into(),
-        );
+        });
         focus.focus(window, cx);
         cx.notify();
     }
@@ -4145,32 +4435,87 @@ impl MediaViewer {
         }
     }
 
-    /// Route the selection popover's keys: Enter opens the label editor
-    /// (the low-effort highlight path), Delete cuts the range, Escape
-    /// dismisses. Bound on the tray itself, so the keys only fire while
-    /// it holds focus — the label input's Delete stays text editing
-    /// (forward-delete), which is exactly why this binding is not on the
-    /// input.
+    /// Whether the open view serves the correction tray (S5) — the
+    /// index-identical-only actions refuse on such views.
+    fn selection_tray_is_correct_only(&self) -> bool {
+        self.transcript.as_ref().is_some_and(|state| {
+            selection_tray_mode(&state.alignment) == Ok(SelectionTrayMode::CorrectOnly)
+        })
+    }
+
+    /// Route the selection popover's keys by the view's tray mode: Enter
+    /// opens the low-effort editor (the label editor on the full tray,
+    /// the correction editor on the correction tray), Delete cuts on the
+    /// full tray only, Escape dismisses. Bound on the tray itself, so
+    /// the keys only fire while it holds focus — the label input's
+    /// Delete stays text editing (forward-delete), which is exactly why
+    /// this binding is not on the input.
     fn handle_selection_popover_key(
         &mut self,
         keystroke: &Keystroke,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mode = self
+            .transcript
+            .as_ref()
+            .and_then(|state| selection_tray_mode(&state.alignment).ok());
         match keystroke.key.as_str() {
             "escape" => self.dismiss_selection_popover(cx),
-            "enter" => self.popover_highlight(window, cx),
-            "delete" | "backspace" => self.popover_cut(cx),
+            "enter" => match mode {
+                Some(SelectionTrayMode::CorrectOnly) => self.popover_correct(window, cx),
+                _ => self.popover_highlight(window, cx),
+            },
+            // Delete cuts on the full tray only — the correction tray has
+            // nothing to cut (cut needs an index-identical view).
+            "delete" | "backspace" => {
+                if mode != Some(SelectionTrayMode::CorrectOnly) {
+                    self.popover_cut(cx);
+                }
+            }
             _ => {}
         }
     }
 
+    /// The tray's Suggest correction action (S5): close the tray and open
+    /// the correction editor — the label-editor pattern — over the same
+    /// range, the replacement step. Available on every timed view:
+    /// original/aligned selections are source-identical, re_anchored
+    /// selections translate at dispatch through educt_locate.
+    fn popover_correct(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        self.open_label_editor(
+            HighlightEdit {
+                kind: HighlightEditKind::Correction {
+                    start_word,
+                    end_word,
+                },
+                buffer: LabelBuffer::default(),
+            },
+            window,
+            cx,
+        );
+    }
+
     /// The tray's Highlight action: close the tray and open the label
-    /// editor over the same range — the naming step.
+    /// editor over the same range — the naming step. Index-identical
+    /// views only: highlight anchors source words through the annotation
+    /// tools without a translation, so a re_anchored view refuses (a
+    /// stale tray or a mis-routed key must never anchor working
+    /// indices — the 2026-10-25 overshoot trap).
     fn popover_highlight(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        if self.selection_tray_is_correct_only() {
+            self.status = Some(
+                "Highlight needs an index-identical view — Suggest correction instead.".into(),
+            );
+            cx.notify();
+            return;
+        }
         self.open_label_editor(
             HighlightEdit {
                 kind: HighlightEditKind::Create {
@@ -4185,11 +4530,18 @@ impl MediaViewer {
     }
 
     /// The tray's Cut action (the Delete key shares it): strike the range —
-    /// a cut carries no label, so the tray ends here.
+    /// a cut carries no label, so the tray ends here. Index-identical
+    /// views only (the popover_highlight guard's reason).
     fn popover_cut(&mut self, cx: &mut Context<Self>) {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        if self.selection_tray_is_correct_only() {
+            self.status =
+                Some("Cut needs an index-identical view — Suggest correction instead.".into());
+            cx.notify();
+            return;
+        }
         self.strike_selected_range(start_word, end_word, cx);
     }
 
@@ -4236,6 +4588,15 @@ impl MediaViewer {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        if self.selection_tray_is_correct_only() {
+            self.status = Some(
+                "Include in reel needs an index-identical view — Suggest correction \
+                 instead."
+                    .into(),
+            );
+            cx.notify();
+            return;
+        }
         let range = (start_word, end_word);
         if self.reel_selection.remove(&range) {
             self.status = Some("Removed from the reel.".into());
@@ -4441,6 +4802,9 @@ impl MediaViewer {
                 "Create",
                 "Highlight name",
             ),
+            HighlightEditKind::Correction { .. } => {
+                ("Correct selection".to_string(), "Apply", "Corrected text")
+            }
             HighlightEditKind::EventTag { .. } => {
                 ("Name this event tag".to_string(), "Create tag", "Tag name")
             }
@@ -4559,7 +4923,9 @@ impl MediaViewer {
                         })),
                 )
             }
-            HighlightEditKind::EventTag { .. } | HighlightEditKind::Rename { .. } => editor,
+            HighlightEditKind::Correction { .. }
+            | HighlightEditKind::EventTag { .. }
+            | HighlightEditKind::Rename { .. } => editor,
         };
         editor
             .child(
@@ -4580,15 +4946,19 @@ impl MediaViewer {
     }
 
     /// The selection popover (S2): the completed range's action tray —
-    /// Highlight / Cut / Copy time / Include in reel — pinned above the
-    /// list (the label-editor pin pattern) so the actions never virtualize
-    /// away. The tray holds focus while open; its keys (Enter highlights,
-    /// Delete cuts, Escape dismisses) bind here, never on the label input
-    /// (Delete there is text editing). An associated fn so the caller can
-    /// hold the workspace state's immutable borrow.
+    /// Highlight / Cut / Copy time / Suggest correction / Include in reel
+    /// on the full tray; Suggest correction + Copy time on the correction
+    /// tray (re_anchored views, S5) — pinned above the list (the
+    /// label-editor pin pattern) so the actions never virtualize away.
+    /// The tray holds focus while open; its keys bind here by the same
+    /// mode (Enter opens the mode's editor, Delete cuts on the full tray
+    /// only, Escape dismisses), never on the label input (Delete there is
+    /// text editing). An associated fn so the caller can hold the
+    /// workspace state's immutable borrow.
     fn render_selection_popover(
         excerpt: &str,
         include_label: &str,
+        correct_only: bool,
         focus: &gpui::FocusHandle,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -4610,34 +4980,36 @@ impl MediaViewer {
                     .size(LabelSize::XSmall)
                     .color(ui::Color::Muted),
             )
-            .child(
-                div()
-                    .id("media-transcript-popover-highlight")
-                    .cursor_pointer()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from("Highlight"))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Default),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.popover_highlight(window, cx);
-                    })),
-            )
-            .child(
-                div()
-                    .id("media-transcript-popover-cut")
-                    .cursor_pointer()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from("Cut"))
-                            .size(LabelSize::XSmall)
-                            .color(ui::Color::Error),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.popover_cut(cx);
-                    })),
-            )
+            .when(!correct_only, |tray| {
+                tray.child(
+                    div()
+                        .id("media-transcript-popover-highlight")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Highlight"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.popover_highlight(window, cx);
+                        })),
+                )
+                .child(
+                    div()
+                        .id("media-transcript-popover-cut")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("Cut"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Error),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.popover_cut(cx);
+                        })),
+                )
+            })
             .child(
                 div()
                     .id("media-transcript-popover-copy-time")
@@ -4654,18 +5026,34 @@ impl MediaViewer {
             )
             .child(
                 div()
-                    .id("media-transcript-popover-include")
+                    .id("media-transcript-popover-correct")
                     .cursor_pointer()
                     .hover(|el| el.bg(cx.theme().colors().element_hover))
                     .child(
-                        Label::new(SharedString::from(include_label))
+                        Label::new(SharedString::from("Suggest correction"))
                             .size(LabelSize::XSmall)
                             .color(ui::Color::Default),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.popover_include_in_reel(cx);
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.popover_correct(window, cx);
                     })),
             )
+            .when(!correct_only, |tray| {
+                tray.child(
+                    div()
+                        .id("media-transcript-popover-include")
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from(include_label))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.popover_include_in_reel(cx);
+                        })),
+                )
+            })
             .into_any_element()
     }
 
@@ -6455,7 +6843,11 @@ impl MediaViewer {
             } else {
                 "Include in reel"
             };
-            (excerpt, include_label)
+            // The tray's action set follows the view's mode (S5): the
+            // correction-only set on re_anchored views.
+            let correct_only =
+                selection_tray_mode(&state.alignment) == Ok(SelectionTrayMode::CorrectOnly);
+            (excerpt, include_label, correct_only)
         });
         // The whole sub-surface content (header rows, surface body rows,
         // annotation sections) renders as ONE virtualized list (S3d):
@@ -6537,11 +6929,12 @@ impl MediaViewer {
                 cx,
             )));
         }
-        if let Some((excerpt, include_label)) = pending_popover {
+        if let Some((excerpt, include_label, correct_only)) = pending_popover {
             workspace =
                 workspace.child(v_flex().px_3().pt_3().child(Self::render_selection_popover(
                     &excerpt,
                     include_label,
+                    correct_only,
                     &selection_popover_focus,
                     cx,
                 )));
@@ -8498,12 +8891,19 @@ enum WordDragOutcome {
 /// The label editor's open target (S4-3): a completed two-click range
 /// awaiting its label, a researcher highlight being renamed (the range and
 /// note pass through `educt_annotation_update` unchanged — only the label
-/// is replaced), or a completed visual-transcript span awaiting its tag
-/// name (S5 criterion 2 — dispatched through `layers_store`, kind
-/// `researcher`, model `"user"`).
+/// is replaced), a completed visual-transcript span awaiting its tag name
+/// (S5 criterion 2 — dispatched through `layers_store`, kind
+/// `researcher`, model `"user"`), or a completed selection awaiting its
+/// correction text (the transcript-layer S5 — dispatched through
+/// `educt_store_layer`, kind correction, then chained
+/// `educt_realign_transcript`).
 #[derive(Clone, Debug)]
 enum HighlightEditKind {
     Create {
+        start_word: usize,
+        end_word: usize,
+    },
+    Correction {
         start_word: usize,
         end_word: usize,
     },
@@ -8669,16 +9069,29 @@ fn typed_char(keystroke: &Keystroke) -> Option<char> {
     })
 }
 
-/// The completion gate for hand highlights (D5): only index-identical
-/// views can source-map a hand-created range — the panel never
-/// re-implements the server's projection. Returns the visible reason
-/// when the view blocks creation (S4 AC3's five states).
-fn highlight_range_gate(alignment: &str) -> Result<(), &'static str> {
+/// The completed selection's tray mode (D5 v2, the transcript-layer S5):
+/// which action set a completed word range may offer on this view.
+/// Original/aligned views are index-identical to the source, so every
+/// tray action is available; a re_anchored view opens the CORRECTION
+/// tray — the one action set whose dispatch translates the working
+/// selection to source indices through the server (`educt_locate` basis
+/// "source"), never a panel-side projection. The unselectable views keep
+/// the visible refusal (the panel never re-implements the server's
+/// projection — D5: index-identical-only actions stay unavailable on
+/// corrected views rather than anchoring working indices to source-word
+/// tools).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionTrayMode {
+    /// Highlight / Cut / Copy time / Suggest correction / Include in reel.
+    Full,
+    /// Suggest correction + Copy time — the translation-backed set.
+    CorrectOnly,
+}
+
+fn selection_tray_mode(alignment: &str) -> Result<SelectionTrayMode, &'static str> {
     match alignment {
-        "original" | "aligned" => Ok(()),
-        "re_anchored" => Err(
-            "Direct selection is unavailable for this corrected transcript. Review existing ranges or re-transcribe the section for precise timing.",
-        ),
+        "original" | "aligned" => Ok(SelectionTrayMode::Full),
+        "re_anchored" => Ok(SelectionTrayMode::CorrectOnly),
         "unaligned" => Err(
             "Direct selection needs a timing-aligned transcript. Re-transcribe or realign this correction first.",
         ),
@@ -8687,6 +9100,122 @@ fn highlight_range_gate(alignment: &str) -> Result<(), &'static str> {
         }
         _ => Err("Direct selection is unavailable for this transcript."),
     }
+}
+
+/// The authoring-path reason every researcher correction carries (S5) —
+/// the correction edit's bookkeeping trail, naming where the layer came
+/// from (the layer's own provenance names the authoring path: model
+/// "user" + the researcher_correction template).
+const CORRECTION_REASON: &str = "researcher correction from the transcript workspace selection";
+
+/// Convert a pane correction edit to the server's wire type — one home
+/// for the field mapping, so the merge and the store request cannot
+/// disagree.
+fn server_correction_edit(
+    edit: &PaneCorrectionEdit,
+) -> hkask_mcp_media::transcript_layers::CorrectionEdit {
+    hkask_mcp_media::transcript_layers::CorrectionEdit {
+        start_word: edit.start_word,
+        end_word: edit.end_word,
+        replacement: edit.replacement.clone(),
+        reason: edit.reason.clone(),
+    }
+}
+
+/// Convert the server's wire edit back to the pane type (the merge
+/// output).
+fn pane_correction_edit(
+    edit: &hkask_mcp_media::transcript_layers::CorrectionEdit,
+) -> PaneCorrectionEdit {
+    PaneCorrectionEdit {
+        start_word: edit.start_word,
+        end_word: edit.end_word,
+        replacement: edit.replacement.clone(),
+        reason: edit.reason.clone(),
+    }
+}
+
+/// The correction store request (S5): the server's own layer types
+/// serialize the layer — the schema cannot drift from the contract —
+/// under the researcher authoring path. `created_at` is injected so the
+/// fixture pins the wire shape byte-for-byte.
+fn correction_store_params(
+    transcript_id: &str,
+    edits: &[PaneCorrectionEdit],
+    created_at: &str,
+) -> Result<serde_json::Value, String> {
+    let layer = hkask_mcp_media::transcript_layers::TranscriptLayer::Correction(
+        hkask_mcp_media::transcript_layers::CorrectionLayer {
+            provenance: hkask_mcp_media::transcript_layers::LayerProvenance {
+                model: "user".to_string(),
+                prompt_template: "researcher_correction".to_string(),
+                created_at: created_at.to_string(),
+            },
+            edits: edits.iter().map(server_correction_edit).collect(),
+        },
+    );
+    let layer_value = serde_json::to_value(&layer)
+        .map_err(|error| format!("the correction layer failed to serialize: {error}"))?;
+    Ok(serde_json::json!({
+        "transcript_id": transcript_id,
+        "layer": layer_value,
+    }))
+}
+
+/// The realign request (S5): names the stored correction layer.
+fn correction_realign_params(transcript_id: &str, layer_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "transcript_id": transcript_id,
+        "layer_id": layer_id,
+    })
+}
+
+/// The locate request (S5): the selection's rendered quote under the
+/// source basis — the server converts through the re-anchored index map.
+fn correction_locate_params(transcript_id: &str, quote: &str) -> serde_json::Value {
+    serde_json::json!({
+        "transcript_id": transcript_id,
+        "text": quote,
+        "basis": "source",
+    })
+}
+
+/// Parse the locate response for the selection's SOURCE range: the
+/// candidate whose WORKING range is exactly the selection — locate
+/// returns every match with its working range alongside the converted
+/// source range, so the translation is deterministic, never a guess.
+fn parse_correction_source_range(
+    response: &str,
+    start_word: usize,
+    end_word: usize,
+) -> Result<(usize, usize), String> {
+    let value = hkask_types::tool_response::parse_tool_response(response)
+        .ok_or_else(|| "educt_locate returned no parsable data.".to_string())?;
+    let ranges = value
+        .get("ranges")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "educt_locate returned no ranges array.".to_string())?;
+    let candidate = ranges
+        .iter()
+        .find(|range| {
+            range.get("working_start_word").and_then(Value::as_u64) == Some(start_word as u64)
+                && range.get("working_end_word").and_then(Value::as_u64) == Some(end_word as u64)
+        })
+        .ok_or_else(|| {
+            "The selection no longer matches the transcript — reload the workspace and reselect."
+                .to_string()
+        })?;
+    let source_start = candidate
+        .get("start_word")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| "the located range has no source start_word.".to_string())?;
+    let source_end = candidate
+        .get("end_word")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| "the located range has no source end_word.".to_string())?;
+    Ok((source_start, source_end))
 }
 
 /// The create-confirm label (S4-3): the typed text, or the default label
@@ -9930,6 +10459,71 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
     // may predate the server field, so its absence parses as None; when
     // present, the view parses strictly.
     let review = object.get("review").map(parse_pane_review).transpose()?;
+    // The live correction layer's edits (S5): the working view names the
+    // layer by correction_layer_id; an absent id parses as no prior
+    // edits; a named layer missing from the records rejects the payload
+    // rather than silently dropping prior corrections (the silent-revert
+    // guard).
+    let correction_layer_id = working
+        .get("correction_layer_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string);
+    let correction_edits = match &correction_layer_id {
+        None => Vec::new(),
+        Some(live_id) => {
+            let record = layers_array
+                .iter()
+                .find(|layer| layer.get("id").and_then(Value::as_str) == Some(live_id.as_str()))
+                .ok_or_else(|| {
+                    format!(
+                        "the working view names correction layer {live_id}, but the \
+                         layers list has no such record."
+                    )
+                })?;
+            let layer_object = record
+                .get("layer")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "the correction layer record has no layer object.".to_string())?;
+            if layer_object.get("kind").and_then(Value::as_str) != Some("correction") {
+                return Err(format!("layer {live_id} is not a correction layer."));
+            }
+            let edits = layer_object
+                .get("edits")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "the correction layer has no edits array.".to_string())?;
+            edits
+                .iter()
+                .map(|edit| {
+                    let object = edit
+                        .as_object()
+                        .ok_or_else(|| "correction edit is not an object.".to_string())?;
+                    Ok(PaneCorrectionEdit {
+                        start_word: object
+                            .get("start_word")
+                            .and_then(Value::as_u64)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .ok_or_else(|| "correction edit has no start_word.".to_string())?,
+                        end_word: object
+                            .get("end_word")
+                            .and_then(Value::as_u64)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .ok_or_else(|| "correction edit has no end_word.".to_string())?,
+                        replacement: object
+                            .get("replacement")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| "correction edit has no replacement.".to_string())?
+                            .to_string(),
+                        reason: object
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| "correction edit has no reason.".to_string())?
+                            .to_string(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }
+    };
     Ok(TranscriptPaneState {
         transcript_id,
         media_path,
@@ -9944,6 +10538,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         layers,
         highlights,
         strikes,
+        correction_edits,
     })
 }
 
@@ -11805,6 +12400,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
 
             // Create confirm: the editor closes and the unwired invoker
@@ -11882,6 +12478,57 @@ mod tests {
             );
             assert_eq!(viewer.edit_request.state, ResourceState::Idle);
 
+            // S5: the correction editor rides the same admission contract
+            // — an in-flight edit refuses a correction confirm and keeps
+            // the typed buffer for retry.
+            viewer.edit_request.state = ResourceState::Loading;
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Correction {
+                    start_word: 3,
+                    end_word: 9,
+                },
+                buffer: LabelBuffer::from_str("fixed words"),
+            });
+            viewer.confirm_label_edit(cx);
+            assert!(
+                viewer.highlight_edit.is_some(),
+                "a refused correction keeps the typed buffer"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("already in progress")
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Loading);
+            viewer.edit_request.state = ResourceState::Idle;
+
+            // A blank replacement refuses without dispatching — a
+            // correction replaces text; deletions belong to Cut.
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Correction {
+                    start_word: 3,
+                    end_word: 9,
+                },
+                buffer: LabelBuffer::from_str("   "),
+            });
+            viewer.confirm_label_edit(cx);
+            assert!(
+                viewer.highlight_edit.is_some(),
+                "the blank correction stays open"
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .unwrap()
+                    .contains("needs replacement text"),
+                "status: {:?}",
+                viewer.status
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
+
             // A valid rename dispatches with the note preserved (the
             // unwired invoker names the rename path).
             viewer.highlight_edit = Some(HighlightEdit {
@@ -11942,6 +12589,7 @@ mod tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         }
     }
 
@@ -13345,6 +13993,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.edit_request.state = ResourceState::Loading;
@@ -13398,6 +14047,7 @@ mod tests {
                     researcher_supplied: true,
                 }],
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
 
             // Included → the tray removes the range (the row toggle).
@@ -13487,6 +14137,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.selection_popover = Some((1, 3));
             viewer.popover_copy_time(cx);
@@ -13553,6 +14204,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.close_transcript_workspace(cx);
@@ -13584,6 +14236,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.toggle_transcript_surface(TranscriptSurface::Events, cx);
@@ -13778,22 +14431,373 @@ mod tests {
         assert_eq!(object["note"], serde_json::json!("kept note"));
     }
 
-    /// dcterms:identifier: `highlight_range_gate`
-    /// expect: Every alignment state answers the gate — the two
-    /// index-identical views pass, every other state blocks with a
-    /// visible reason (S4 AC3).
+    // ── S5: in-panel layered transcription correction ─────────────────────
+    //
+    // The correction flow rides S2's selection tray, the label-editor
+    // machinery, and the edit admission; the pins below cover the tray's
+    // mode contract (the re_anchored correction path, D5 v2), the wire
+    // schema (built from the server's own layer types), the strict parse
+    // of the live correction layer's edits, and the full scripted dispatch
+    // chain on both view kinds.
+
+    /// dcterms:identifier: `selection_tray_mode`
+    /// expect: Every alignment answers the tray gate — original/aligned
+    /// views open the full action tray, a re_anchored view opens the
+    /// correction tray (the locate-translated path, D5 v2), and the
+    /// unselectable states keep the visible refusal. [P1] Motivating: the
+    /// D5 v1 blanket refusal hid the one action that can translate
+    /// selections on corrected transcripts; the unaligned/untimed
+    /// refusals stay honest (no timed words to select over).
     #[test]
-    fn highlight_range_gate_covers_every_alignment() {
-        assert!(highlight_range_gate("original").is_ok());
-        assert!(highlight_range_gate("aligned").is_ok());
-        for alignment in ["re_anchored", "unaligned", "untimed", "unexpected"] {
-            let reason = highlight_range_gate(alignment).expect_err("blocked");
+    fn selection_tray_mode_covers_every_alignment() {
+        assert!(matches!(
+            selection_tray_mode("original"),
+            Ok(SelectionTrayMode::Full)
+        ));
+        assert!(matches!(
+            selection_tray_mode("aligned"),
+            Ok(SelectionTrayMode::Full)
+        ));
+        assert!(matches!(
+            selection_tray_mode("re_anchored"),
+            Ok(SelectionTrayMode::CorrectOnly)
+        ));
+        for alignment in ["unaligned", "untimed", "unexpected"] {
+            let reason = selection_tray_mode(alignment).expect_err("blocked");
             assert!(
                 reason.starts_with("Direct selection"),
                 "{alignment}: {reason}"
             );
             assert!(!reason.contains("index-identical"), "{alignment}: {reason}");
         }
+    }
+
+    /// dcterms:identifier: `correction_store_params`
+    /// expect: The correction store request carries the server's layer
+    /// contract verbatim — kind correction, researcher provenance (model
+    /// "user", the researcher_correction authoring path), and the merged
+    /// edits over SOURCE word ranges; the realign request names the stored
+    /// layer; the locate request declares basis "source". [P1]
+    /// Motivating: a hand-rolled layer JSON drifts from the server's serde
+    /// types silently — building it from the server's own types and
+    /// pinning the wire shape keeps the schema pinned byte-for-byte.
+    #[test]
+    fn correction_params_carry_the_exact_contract() {
+        let edits = vec![PaneCorrectionEdit {
+            start_word: 3,
+            end_word: 5,
+            replacement: "fixed words".into(),
+            reason: CORRECTION_REASON.to_string(),
+        }];
+        let store = correction_store_params("t-1", &edits, "2026-11-06T00:00:00Z")
+            .expect("the server layer types serialize");
+        assert_eq!(store["transcript_id"], "t-1");
+        assert_eq!(store["layer"]["kind"], "correction");
+        assert_eq!(store["layer"]["provenance"]["model"], "user");
+        assert_eq!(
+            store["layer"]["provenance"]["prompt_template"],
+            "researcher_correction"
+        );
+        assert_eq!(
+            store["layer"]["provenance"]["created_at"],
+            "2026-11-06T00:00:00Z"
+        );
+        assert_eq!(store["layer"]["edits"][0]["start_word"], 3);
+        assert_eq!(store["layer"]["edits"][0]["end_word"], 5);
+        assert_eq!(store["layer"]["edits"][0]["replacement"], "fixed words");
+        assert_eq!(store["layer"]["edits"][0]["reason"], CORRECTION_REASON);
+        let realign = correction_realign_params("t-1", "layer-9");
+        assert_eq!(realign["transcript_id"], "t-1");
+        assert_eq!(realign["layer_id"], "layer-9");
+        let locate = correction_locate_params("t-1", "misheard words");
+        assert_eq!(locate["transcript_id"], "t-1");
+        assert_eq!(locate["text"], "misheard words");
+        assert_eq!(locate["basis"], "source");
+    }
+
+    /// dcterms:identifier: `parse_transcript_payload`
+    /// expect: The live correction layer's edits parse strictly — the
+    /// working view names it by correction_layer_id; an absent id parses as
+    /// no prior edits; a named layer missing from the records rejects the
+    /// payload rather than silently dropping prior corrections. [P1]
+    /// Motivating: a dropped prior edit would silently revert an earlier
+    /// correction at the next merge (the silent-revert guard).
+    #[test]
+    fn correction_layer_edits_parse_strictly() {
+        let payload = serde_json::json!({
+            "summary": {"id": "t-1", "media_path": "/m", "words_count": 3, "has_word_timings": true},
+            "working_transcript": {"text": "a b c", "alignment": "aligned", "correction_layer_id": "layer-c1", "words": [
+                {"word": "a", "start_ms": 0, "end_ms": 100},
+                {"word": "b", "start_ms": 100, "end_ms": 200},
+                {"word": "c", "start_ms": 200, "end_ms": 300}
+            ]},
+            "layers": [
+                {"id": "layer-c1", "created_at": "c1", "layer": {
+                    "kind": "correction",
+                    "provenance": {"model": "user", "prompt_template": "researcher_correction", "created_at": "c1"},
+                    "edits": [{"start_word": 1, "end_word": 1, "replacement": "bee", "reason": "fix"}]
+                }}
+            ],
+            "exports": [], "renders": []
+        });
+        let state = parse_transcript_payload(&payload).expect("parses");
+        assert_eq!(
+            state.correction_edits,
+            vec![PaneCorrectionEdit {
+                start_word: 1,
+                end_word: 1,
+                replacement: "bee".into(),
+                reason: "fix".into(),
+            }]
+        );
+
+        // No live correction → no prior edits.
+        let uncorrected = serde_json::json!({
+            "summary": {"id": "t-2", "media_path": "/m", "words_count": 1, "has_word_timings": true},
+            "working_transcript": {"text": "a", "alignment": "original", "words": [
+                {"word": "a", "start_ms": 0, "end_ms": 100}
+            ]},
+            "layers": [],
+            "exports": [], "renders": []
+        });
+        assert!(
+            parse_transcript_payload(&uncorrected)
+                .expect("parses")
+                .correction_edits
+                .is_empty()
+        );
+
+        // A named layer missing from the records rejects the payload —
+        // never a silent drop of prior corrections.
+        let mut orphan = payload;
+        orphan["working_transcript"]["correction_layer_id"] = serde_json::json!("layer-gone");
+        assert!(parse_transcript_payload(&orphan).is_err());
+    }
+
+    /// The reloaded view Pin D's chain answers `educt_get_transcript` with:
+    /// the original transcript corrected one-for-one over words [0..=1].
+    const CORRECTED_VIEW_PAYLOAD: &str = r#"{"summary": {"id": "t-correct", "media_path": "/m", "words_count": 3, "has_word_timings": true}, "working_transcript": {"text": "measured words here", "alignment": "aligned", "correction_layer_id": "layer-new", "words": [{"word": "measured", "start_ms": 0, "end_ms": 500}, {"word": "words", "start_ms": 500, "end_ms": 900}, {"word": "here", "start_ms": 900, "end_ms": 1300}]}, "layers": [{"id": "layer-new", "created_at": "c1", "layer": {"kind": "correction", "provenance": {"model": "user", "prompt_template": "researcher_correction", "created_at": "c1"}, "edits": [{"start_word": 0, "end_word": 1, "replacement": "measured words", "reason": "researcher correction from the transcript workspace selection"}]}}], "exports": [], "renders": []}"#;
+
+    /// dcterms:identifier: `MediaViewer::dispatch_workspace_correction`
+    /// expect: Confirming a correction over working words [a..b] stores a
+    /// merged correction layer through educt_store_layer (working indices
+    /// equal source indices on an original view), chains
+    /// educt_realign_transcript naming the stored layer, and the reloaded
+    /// working view shows the replacement at [a..b] — the request touches
+    /// only the layer, never the source bundle. [P1] Motivating: the
+    /// acceptance is the correction landing in the working view (the
+    /// layered discipline: source words are never mutated).
+    #[gpui::test]
+    fn correction_appears_in_the_working_view(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let (calls, _restore) = install_scripted_invoker(vec![
+            r#"{"stored": {"id": "layer-new"}}"#.to_string(),
+            r#"{"alignment": "aligned", "note": "correction is already one-for-one aligned; no re-anchoring needed", "applied_layer": {"id": "layer-new"}}"#.to_string(),
+            CORRECTED_VIEW_PAYLOAD.to_string(),
+        ]);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let mut state = pane_state("t-correct");
+            state.words = Some(vec![
+                PaneWord {
+                    word: "misheard".into(),
+                    start_ms: 0,
+                    end_ms: 400,
+                },
+                PaneWord {
+                    word: "wrods".into(),
+                    start_ms: 400,
+                    end_ms: 800,
+                },
+                PaneWord {
+                    word: "here".into(),
+                    start_ms: 800,
+                    end_ms: 1200,
+                },
+            ]);
+            viewer.transcript = Some(state);
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Correction {
+                    start_word: 0,
+                    end_word: 1,
+                },
+                buffer: LabelBuffer::from_str("measured words"),
+            });
+            viewer.confirm_label_edit(cx);
+        });
+        cx.run_until_parked();
+
+        let recorded = calls.lock().unwrap().clone();
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|(tool, _)| tool.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "educt_store_layer",
+                "educt_realign_transcript",
+                "educt_get_transcript"
+            ],
+            "store → realign → reload, in order"
+        );
+        // The store request: the layer anchors the selection's range (the
+        // source-identical indices of an original view) with the typed
+        // replacement, under the researcher authoring path.
+        assert_eq!(recorded[0].1["transcript_id"], "t-correct");
+        assert_eq!(recorded[0].1["layer"]["kind"], "correction");
+        assert_eq!(recorded[0].1["layer"]["edits"][0]["start_word"], 0);
+        assert_eq!(recorded[0].1["layer"]["edits"][0]["end_word"], 1);
+        assert_eq!(
+            recorded[0].1["layer"]["edits"][0]["replacement"],
+            "measured words"
+        );
+        // The realign names the stored layer.
+        assert_eq!(recorded[1].1["layer_id"], "layer-new");
+        // The reload landed: the working view carries the correction.
+        viewer.update(cx, |viewer, _| {
+            let state = viewer.transcript.as_ref().expect("reloaded");
+            let words = state.words.as_deref().expect("timed view");
+            assert_eq!(words[0].word, "measured");
+            assert_eq!(words[1].word, "words");
+            assert_eq!(words[2].word, "here");
+            assert_eq!(state.alignment, "aligned");
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("Correction applied")),
+                "the completion surfaces: {:?}",
+                viewer.status
+            );
+        });
+    }
+
+    /// The reloaded view Pin E's chain answers `educt_get_transcript` with:
+    /// the re_anchored working view after the second correction.
+    const REANCHORED_VIEW_PAYLOAD: &str = r#"{"summary": {"id": "t-reanchored", "media_path": "/m", "words_count": 9, "has_word_timings": true}, "working_transcript": {"text": "kept words here", "alignment": "re_anchored", "correction_layer_id": "layer-second", "words": [{"word": "kept", "start_ms": 0, "end_ms": 100}, {"word": "words", "start_ms": 100, "end_ms": 200}, {"word": "here", "start_ms": 200, "end_ms": 300}]}, "layers": [{"id": "layer-second", "created_at": "c2", "layer": {"kind": "correction", "provenance": {"model": "user", "prompt_template": "researcher_correction", "created_at": "c2"}, "edits": [{"start_word": 40, "end_word": 41, "replacement": "words here", "reason": "researcher correction from the transcript workspace selection"}]}}], "exports": [], "renders": []}"#;
+
+    /// dcterms:identifier: `MediaViewer::dispatch_workspace_correction`
+    /// expect: On a re_anchored view the dispatch translates the working
+    /// selection to SOURCE word indices through educt_locate basis
+    /// "source" (disambiguated by the candidate's working range — the
+    /// `.rules` retranscribe trap), carries disjoint prior corrections
+    /// verbatim, supersedes the overlapping one visibly, and chains
+    /// educt_realign_transcript; the reloaded view reads re_anchored. [P1]
+    /// Motivating: a correction anchored to working indices on a
+    /// cardinality-changed view lands shifted by the cumulative delta
+    /// (observed 2026-10-25) — the source range must come from the
+    /// server's own index map.
+    #[gpui::test]
+    fn reanchored_correction_translates_and_chains_realign(cx: &mut gpui::TestAppContext) {
+        let _invoker_lock = INVOKER_TEST_LOCK.lock().unwrap();
+        let (calls, _restore) = install_scripted_invoker(vec![
+            r#"{"status": "located", "ranges": [{"start_word": 40, "end_word": 41, "start_ms": 100, "end_ms": 300, "working_start_word": 1, "working_end_word": 2}], "count": 1, "index_basis": "source", "working_view": "realigned_working", "source_word_count": 9, "working_word_count": 9, "cardinality_changed": false}"#.to_string(),
+            r#"{"stored": {"id": "layer-second"}}"#.to_string(),
+            r#"{"alignment": "re_anchored", "reanchored": {"correction_layer_id": "layer-second"}}"#.to_string(),
+            REANCHORED_VIEW_PAYLOAD.to_string(),
+        ]);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            let mut state = pane_state("t-reanchored");
+            state.alignment = "re_anchored".into();
+            state.words = Some(vec![
+                PaneWord {
+                    word: "kept".into(),
+                    start_ms: 0,
+                    end_ms: 100,
+                },
+                PaneWord {
+                    word: "wrods".into(),
+                    start_ms: 100,
+                    end_ms: 200,
+                },
+                PaneWord {
+                    word: "heer".into(),
+                    start_ms: 200,
+                    end_ms: 300,
+                },
+            ]);
+            state.correction_edits = vec![
+                // A disjoint prior correction rides verbatim.
+                PaneCorrectionEdit {
+                    start_word: 7,
+                    end_word: 7,
+                    replacement: "prior-kept".into(),
+                    reason: "prior".into(),
+                },
+                // A prior correction overlapping the translated source
+                // range is superseded visibly.
+                PaneCorrectionEdit {
+                    start_word: 41,
+                    end_word: 43,
+                    replacement: "prior-overlap".into(),
+                    reason: "prior".into(),
+                },
+            ];
+            viewer.transcript = Some(state);
+            viewer.highlight_edit = Some(HighlightEdit {
+                kind: HighlightEditKind::Correction {
+                    start_word: 1,
+                    end_word: 2,
+                },
+                buffer: LabelBuffer::from_str("words here"),
+            });
+            viewer.confirm_label_edit(cx);
+        });
+        cx.run_until_parked();
+
+        let recorded = calls.lock().unwrap().clone();
+        assert_eq!(
+            recorded
+                .iter()
+                .map(|(tool, _)| tool.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "educt_locate",
+                "educt_store_layer",
+                "educt_realign_transcript",
+                "educt_get_transcript"
+            ],
+            "locate → store → realign → reload, in order"
+        );
+        // The locate request quotes the selection's rendered form and
+        // declares the source basis.
+        assert_eq!(recorded[0].1["text"], "wrods heer");
+        assert_eq!(recorded[0].1["basis"], "source");
+        // THE TRAP PIN: the new edit anchors the TRANSLATED source range,
+        // never the working range (1..=2) — and the disjoint prior edit
+        // rides verbatim while the overlapping one is superseded.
+        let edits = &recorded[1].1["layer"]["edits"];
+        let edits = edits.as_array().expect("edits array");
+        assert_eq!(edits.len(), 2, "kept prior + new edit: {edits:?}");
+        assert_eq!(
+            edits[0]["start_word"], 7,
+            "the disjoint prior rides verbatim"
+        );
+        assert_eq!(edits[0]["replacement"], "prior-kept");
+        assert_eq!(
+            edits[1]["start_word"], 40,
+            "the new edit anchors the SOURCE range"
+        );
+        assert_eq!(edits[1]["end_word"], 41);
+        assert_eq!(edits[1]["replacement"], "words here");
+        assert_eq!(recorded[2].1["layer_id"], "layer-second");
+        viewer.update(cx, |viewer, _| {
+            let state = viewer.transcript.as_ref().expect("reloaded");
+            assert_eq!(state.alignment, "re_anchored");
+            assert_eq!(
+                transcript_alignment_note(&state.alignment),
+                Some("Estimated timings · review only")
+            );
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("superseded 1")),
+                "the overlapping prior's supersession is surfaced: {:?}",
+                viewer.status
+            );
+        });
     }
 
     /// dcterms:identifier: `LabelBuffer`
@@ -13915,6 +14919,7 @@ mod tests {
                 end_word: 4,
                 annotation_id: "strike-4".into(),
             }],
+            correction_edits: Vec::new(),
         };
         let toggled: HashSet<(usize, usize)> = [(0, 3), (2, 5), (6, 7)].into_iter().collect();
 
@@ -13956,6 +14961,7 @@ mod tests {
         assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Mixed).is_none());
         let no_strikes = TranscriptPaneState {
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
             ..state
         };
         assert!(compose_reel_params(&no_strikes, &toggled, ReelComposeMode::Reduce).is_none());
@@ -14320,6 +15326,7 @@ mod tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         };
         let blocks = build_pane_blocks(&state);
         assert_eq!(blocks.len(), 5, "four breaks split 50 words into 5 blocks");
@@ -14416,6 +15423,7 @@ mod tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         };
         let blocks = build_pane_blocks(&state);
         assert_eq!(blocks.len(), 2);
@@ -14470,6 +15478,7 @@ mod tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             };
             viewer.apply_transcript_result(new_request, Ok(state.clone()), cx);
             viewer.apply_transcript_result(old_request, Err("stale error".into()), cx);
@@ -14552,6 +15561,7 @@ mod tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         });
         viewer
     }
@@ -15518,6 +16528,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             // The open path's post-state (T3): open_transcript selects the
             // Workspace and yields the inspector's share to the reading
@@ -15581,6 +16592,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -15709,6 +16721,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             }
         }
 
@@ -15788,6 +16801,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Workspace;
             viewer.inspector_open = false;
@@ -15881,6 +16895,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Workspace;
             viewer.inspector_open = false;
@@ -15991,6 +17006,200 @@ mod viewer_layout_tests {
         });
     }
 
+    /// dcterms:identifier: `MediaViewer::word_drag_released`
+    /// expect: A completed drag on a re_anchored view opens the CORRECTION
+    /// tray (S5, D5 v2) — Enter opens the correction editor, Delete stays
+    /// inert (cut needs an index-identical view), the index-identical-only
+    /// actions refuse with the honest reason even when reached directly,
+    /// and Escape dismisses. [P1] Motivating: the Dunning recording is
+    /// re_anchored — the in-panel correction path needs a selection
+    /// surface there, and working indices must never anchor source-word
+    /// tools (the 2026-10-25 overshoot trap).
+    #[gpui::test]
+    fn reanchored_selection_tray_corrects_only(cx: &mut gpui::TestAppContext) {
+        init_layout_test_globals(cx);
+        // No dispatch in this pin's flow: the tray opens, Enter opens the
+        // editor, Delete is inert, and the index-identical-only actions
+        // refuse at the view gate — before the edit admission and its
+        // invoker read — so it needs neither the lock nor a scripted
+        // invoker.
+        let blank_modifiers = || gpui::Modifiers {
+            control: false,
+            alt: false,
+            shift: false,
+            platform: false,
+            function: false,
+        };
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-reanchored-tray".into(),
+                media_path: "/m.wav".into(),
+                gallery_asset_id: None,
+                alignment: "re_anchored".into(),
+                alignment_note: None,
+                words: Some(
+                    ["alpha", "bravo", "charlie"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, word)| PaneWord {
+                            word: word.into(),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: String::new(),
+                paragraph_breaks: None,
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+                correction_edits: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        use gpui::VisualContext as _;
+        // A completed drag opens the correction tray on a re_anchored view
+        // (the S2 gate refused selection here).
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.word_drag_anchor = Some(0);
+            viewer.drag_last_word = Some(2);
+            viewer.word_drag_released(window, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(viewer.selection_popover, Some((0, 2)), "the tray opens");
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("Suggest correction")),
+                "the correction tray's hint: {:?}",
+                viewer.status
+            );
+        });
+
+        // Enter opens the correction editor over the tray's range.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "enter".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                matches!(
+                    &viewer.highlight_edit,
+                    Some(HighlightEdit {
+                        kind: HighlightEditKind::Correction {
+                            start_word: 0,
+                            end_word: 2
+                        },
+                        ..
+                    })
+                ),
+                "Enter opens the correction editor: {:?}",
+                viewer.highlight_edit
+            );
+            assert!(viewer.selection_popover.is_none());
+            viewer.highlight_edit = None;
+            viewer.selection_popover = Some((0, 2));
+        });
+
+        // Delete stays inert on the correction tray — cut needs an
+        // index-identical view.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "delete".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                viewer.selection_popover,
+                Some((0, 2)),
+                "Delete is inert on the correction tray"
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
+        });
+
+        // The index-identical-only actions refuse with the honest reason
+        // even when reached directly — a stale tray or a mis-routed key
+        // must never anchor working indices to source-word tools.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.popover_highlight(window, cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("index-identical")),
+                "the highlight refusal names the view gate: {:?}",
+                viewer.status
+            );
+            assert!(viewer.highlight_edit.is_none());
+            viewer.selection_popover = Some((0, 2));
+        });
+        cx.update_window_entity(&viewer, |viewer, _window, cx| {
+            viewer.popover_cut(cx);
+            viewer.selection_popover = Some((0, 2));
+            viewer.popover_include_in_reel(cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("index-identical")),
+                "the cut/include refusals name the view gate: {:?}",
+                viewer.status
+            );
+            assert_eq!(viewer.edit_request.state, ResourceState::Idle);
+        });
+
+        // Escape dismisses.
+        cx.update_window_entity(&viewer, |viewer, window, cx| {
+            viewer.handle_selection_popover_key(
+                &Keystroke {
+                    modifiers: blank_modifiers(),
+                    key: "escape".into(),
+                    key_char: None,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(viewer.selection_popover.is_none(), "Escape dismisses");
+        });
+    }
+
     /// A words pane state for the search tests: `total` words in 5-word
     /// blocks, "dunning" at each index in `matches_at`.
     fn search_pane_state(total: usize, dunning_at: &[usize]) -> TranscriptPaneState {
@@ -16020,6 +17229,7 @@ mod viewer_layout_tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         }
     }
 
@@ -16368,6 +17578,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -16455,6 +17666,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -16524,6 +17736,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -17010,6 +18223,7 @@ mod viewer_layout_tests {
                 layers: Vec::new(),
                 highlights: Vec::new(),
                 strikes: Vec::new(),
+                correction_edits: Vec::new(),
             });
             viewer.visual_events = Some(VisualEventsState {
                 status: "completed".into(),
@@ -17161,6 +18375,7 @@ mod viewer_layout_tests {
             layers: Vec::new(),
             highlights: Vec::new(),
             strikes: Vec::new(),
+            correction_edits: Vec::new(),
         });
         viewer.visual_events = Some(state);
         viewer.transcript_surface = TranscriptSurface::Events;
