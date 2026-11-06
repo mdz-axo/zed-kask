@@ -187,6 +187,9 @@ mod tests {
             provider_id: "pi-test".into(),
             host: "127.0.0.2".into(),
             port: 9020,
+            local_provider_ids: KaskPrivateInferenceSettings::default().local_provider_ids,
+            private_thread_disabled_servers: KaskPrivateInferenceSettings::default()
+                .private_thread_disabled_servers,
         };
         assert_eq!(credential_url(&custom), "http://127.0.0.2:9020/v1");
         assert_eq!(

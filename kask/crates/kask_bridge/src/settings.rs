@@ -593,6 +593,14 @@ pub struct KaskPrivateInferenceSettings {
     pub host: String,
     /// The loopback port (default from `PlacementPolicy::default()`).
     pub port: u16,
+    /// zed-kask: D100 (operator ruling 2026-11-05) — additional local-leg
+    /// provider ids a privacy-marked thread may use on top of
+    /// `provider_id` (local by construction). Defaults to local ollama.
+    pub local_provider_ids: Vec<String>,
+    /// zed-kask: D100 — MCP servers whose tool surface is disabled on
+    /// privacy-marked threads (cloud-inference-dependent tools). Defaults
+    /// to the media server.
+    pub private_thread_disabled_servers: Vec<String>,
 }
 
 impl Default for KaskPrivateInferenceSettings {
@@ -602,6 +610,17 @@ impl Default for KaskPrivateInferenceSettings {
             provider_id: "private-local".to_string(),
             host: policy.host,
             port: policy.port,
+            // D100: the single-home defaults (settings_content's consts —
+            // never a second literal here).
+            local_provider_ids: settings_content::DEFAULT_LOCAL_PROVIDERS
+                .iter()
+                .map(|id| id.to_string())
+                .collect(),
+            private_thread_disabled_servers:
+                settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect(),
         }
     }
 }
@@ -613,6 +632,10 @@ impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings 
             provider_id: c.provider_id.unwrap_or(default.provider_id),
             host: c.host.unwrap_or(default.host),
             port: c.port.unwrap_or(default.port),
+            local_provider_ids: c.local_provider_ids.unwrap_or(default.local_provider_ids),
+            private_thread_disabled_servers: c
+                .private_thread_disabled_servers
+                .unwrap_or(default.private_thread_disabled_servers),
         }
     }
 }
@@ -1294,11 +1317,21 @@ mod tests {
             provider_id: Some("pi-test".into()),
             host: Some("127.0.0.2".into()),
             port: Some(9020),
+            local_provider_ids: Some(vec!["lm-studio-local".into()]),
+            private_thread_disabled_servers: Some(vec!["media".into()]),
         };
         let effective: KaskPrivateInferenceSettings = content.into();
         assert_eq!(effective.provider_id, "pi-test");
         assert_eq!(effective.host, "127.0.0.2");
         assert_eq!(effective.port, 9020);
+        assert_eq!(
+            effective.local_provider_ids,
+            vec!["lm-studio-local".to_string()]
+        );
+        assert_eq!(
+            effective.private_thread_disabled_servers,
+            vec!["media".to_string()]
+        );
     }
 
     // The artifacts root must flow through mcp_env() with the same priority

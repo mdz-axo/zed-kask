@@ -5494,6 +5494,103 @@ async fn test_context_server_tools_remain_cross_domain(cx: &mut TestAppContext) 
     fake.end_last(&model);
 }
 
+/// zed-kask: D100 (operator ruling 2026-11-05) — the private-thread tool
+/// perimeter: a privacy-marked thread refuses the tool surface of servers
+/// whose assisting inference cannot run locally (the media server by
+/// default) — its tools never enter the offered list — while every other
+/// server's tools remain available. Unmarking restores the full surface.
+/// Pinned end-to-end through the turn's offered tool names.
+#[gpui::test]
+async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&fs, cx).await;
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    // The fake provider serves as this test's local leg, so the marked
+    // thread keeps its model and turns actually run (the request-gate
+    // semantics are pinned separately in thread.rs).
+    cx.update(|cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .private_inference
+                    .get_or_insert_default()
+                    .local_provider_ids = Some(vec!["fake".to_string()]);
+            });
+        });
+    });
+
+    let _media_calls = setup_context_server(
+        "media",
+        vec![plain_mcp_tool("media_analyze")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Marked: the media server's tool is refused at the offer point; the
+    // other server's tool remains.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"media_analyze".to_string()),
+        "a private thread never offers the media server's tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a private thread keeps every other server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+
+    // Unmarked: the media tool returns — the refusal keys on the live
+    // mark, re-evaluated per turn.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"media_analyze".to_string()),
+        "an unmarked thread offers the media server's tool again: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
 /// Pin D6 (post-removal): the curator memory-edit tools are available to
 /// plain threads. The curator-thread gate that once excluded
 /// `memory_insert`/`memory_update`/`memory_resolve_contradiction` from

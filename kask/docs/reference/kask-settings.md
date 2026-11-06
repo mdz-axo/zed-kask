@@ -422,6 +422,8 @@ token's presence is the toggle.
 | `provider_id` | `String` | `"private-local"` | The `language_models.openai_compatible` settings key and the qualified-name prefix of the private models (e.g. `private-local/qwen3-8-flash-next`) |
 | `host` | `String` | `"127.0.0.1"` (from `PlacementPolicy::default()`) | The loopback host; the `Default` impl delegates to the placement policy so the settings row and the placement compiler can never disagree on the endpoint |
 | `port` | `u16` | `8010` (from `PlacementPolicy::default()`) | The loopback port; same delegation |
+| `local_provider_ids` | `Vec<String>` | `["ollama"]` (const home: `settings_content::DEFAULT_LOCAL_PROVIDERS`) | D100 (operator ruling 2026-11-05): additional local-leg provider ids a privacy-marked thread may run — local by construction, so a private thread accepts these providers' models (default: local ollama) and never a cloud provider's |
+| `private_thread_disabled_servers` | `Vec<String>` | `["media"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100 (ruling 2026-11-05): MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes), so the tool is refused rather than route private content to cloud models |
 
 The Register action on **Settings → Kask → Private Inference** runs the
 connect step: `kask_bridge::private_inference::apply_provider_entry`

@@ -3285,6 +3285,40 @@ fn strip_slash_command_prefix(text: &str) -> String {
         .unwrap_or_default()
 }
 
+/// zed-kask: D100 (operator ruling 2026-11-05) — mark every model outside
+/// the local private leg as disabled in the panel list, with the boundary
+/// as the reason. The agent-model id is `{provider}/{model}`
+/// (`LanguageModels::model_id`), so the provider is the prefix before the
+/// first `/`. Pinned by
+/// `private_thread_model_list_disables_non_local_models`.
+fn disable_non_local_models(
+    list: acp_thread::AgentModelList,
+    cx: &App,
+) -> acp_thread::AgentModelList {
+    let scope = |mut info: acp_thread::AgentModelInfo| {
+        let provider = info.id.as_str().split('/').next().unwrap_or_default();
+        if !crate::thread::is_private_leg_provider(provider, cx) {
+            info.disabled = Some(language_model::DisabledReason(
+                "private thread — only the local private inference leg serves \
+                 this thread (kask.private_inference)"
+                    .into(),
+            ));
+        }
+        info
+    };
+    match list {
+        acp_thread::AgentModelList::Flat(models) => {
+            acp_thread::AgentModelList::Flat(models.into_iter().map(scope).collect())
+        }
+        acp_thread::AgentModelList::Grouped(groups) => acp_thread::AgentModelList::Grouped(
+            groups
+                .into_iter()
+                .map(|(name, models)| (name, models.into_iter().map(scope).collect()))
+                .collect(),
+        ),
+    }
+}
+
 struct NativeAgentModelSelector {
     session_id: acp_v2::SessionId,
     connection: NativeAgentConnection,
@@ -3293,7 +3327,21 @@ struct NativeAgentModelSelector {
 impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
         log::debug!("NativeAgentConnection::list_models called");
-        let list = self.connection.0.read(cx).models.model_list.clone();
+        let mut list = self.connection.0.read(cx).models.model_list.clone();
+        // zed-kask: D100 (operator ruling 2026-11-05) — the panel scoping:
+        // on a privacy-marked thread, models outside the local private leg
+        // are disabled as options in the agent panel — listed but not
+        // selectable, each with the reason naming the boundary (the
+        // visible refusal, never a vanishing list). The storage gate
+        // (`Thread::set_model`) is the belt: a disabled entry cannot be
+        // confirmed, and even a direct set is refused. The list re-scopes
+        // on the next refresh event (the picker re-lists via
+        // `AgentModelSelector::watch`); the gate covers the window.
+        if let Some(session) = self.connection.0.read(cx).sessions.get(&self.session_id)
+            && session.thread.read(cx).is_private_inference()
+        {
+            list = disable_non_local_models(list, cx);
+        }
         Task::ready(if list.is_empty() {
             Err(anyhow::anyhow!("No models available"))
         } else {
@@ -13179,6 +13227,91 @@ mod internal_tests {
         // block, the safe behavior is to return it unchanged rather than
         // silently mangling unrelated user text.
         assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
+    }
+
+    /// zed-kask: D100 (operator ruling 2026-11-05) — the panel scoping: a
+    /// privacy-marked thread's model list carries every non-local model as
+    /// DISABLED with the boundary as the reason (never a vanishing list),
+    /// and unmarking restores the fully-selectable list. The storage gate
+    /// (`Thread::set_model`) is the belt; this pin holds the visible
+    /// refusal.
+    #[gpui::test]
+    async fn private_thread_model_list_disables_non_local_models(cx: &mut TestAppContext) {
+        use acp_thread::AgentModelSelector as _;
+        use gpui::UpdateGlobal as _;
+
+        init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // The fake provider ("fake") is NOT in the local-leg set: the
+        // default policy names ollama and the configured private leg.
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .private_inference
+                        .get_or_insert_default()
+                        .provider_id = Some("private-local".to_string());
+                });
+            });
+        });
+
+        let selector = NativeAgentModelSelector {
+            session_id: session_id.clone(),
+            connection: (*connection).clone(),
+        };
+
+        // Marked: every model entry (the fake provider's) is disabled with
+        // the boundary reason.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+        });
+        let list = cx
+            .update(|cx| selector.list_models(cx))
+            .await
+            .expect("the model list resolves");
+        let entries: Vec<&acp_thread::AgentModelInfo> = match &list {
+            acp_thread::AgentModelList::Flat(models) => models.iter().collect(),
+            acp_thread::AgentModelList::Grouped(groups) => {
+                assert!(!groups.is_empty(), "the grouped list is populated");
+                groups.values().flatten().collect()
+            }
+        };
+        assert!(!entries.is_empty(), "the list carries models to disable");
+        for info in &entries {
+            let reason = info
+                .disabled
+                .as_ref()
+                .expect("a non-local model is disabled on a private thread");
+            assert!(
+                reason.0.as_ref().contains("private thread"),
+                "the disabled reason names the boundary: {}",
+                reason.0
+            );
+        }
+
+        // Unmarked: the same list is fully selectable.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_private_inference(false, cx));
+        });
+        let list = cx
+            .update(|cx| selector.list_models(cx))
+            .await
+            .expect("the model list resolves");
+        let entries: Vec<&acp_thread::AgentModelInfo> = match &list {
+            acp_thread::AgentModelList::Flat(models) => models.iter().collect(),
+            acp_thread::AgentModelList::Grouped(groups) => groups.values().flatten().collect(),
+        };
+        for info in &entries {
+            assert!(
+                info.disabled.is_none(),
+                "an unmarked thread's model list is fully selectable"
+            );
+        }
     }
 
     fn set_draft_and_save(

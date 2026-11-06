@@ -225,34 +225,73 @@ impl std::error::Error for NoModelConfiguredError {}
 // PI-owned, thread-unwritable (P4); a marked thread never widens its own
 // routing.
 
-/// The `kask.private_inference` routing policy read from settings content:
-/// the configured private-leg provider id. `None` when the section is
-/// absent — the fail-closed direction (no model counts as private-leg, so
-/// a marked thread can never resolve a model until the PI configures the
-/// leg).
-pub(crate) fn private_inference_provider_id(cx: &App) -> Option<Arc<str>> {
-    let provider_id = cx
+/// zed-kask: D100 (operator ruling 2026-11-05) — the local-leg provider
+/// set a privacy-marked thread may run: the configured
+/// `kask.private_inference.provider_id` PLUS the settings-configured local
+/// providers (default: local ollama). Every member is local by
+/// construction — a marked thread runs models whose inference stays on
+/// this machine (the private leg or local ollama), never a cloud provider.
+/// With nothing configured, local ollama still serves (the default set);
+/// cloud providers are always refused (fail-closed).
+pub(crate) fn private_inference_local_providers(cx: &App) -> Vec<Arc<str>> {
+    let section = cx
         .global::<settings::SettingsStore>()
         .merged_settings()
         .kask
         .as_ref()
-        .and_then(|kask| kask.private_inference.as_ref())
-        .and_then(|pi| pi.provider_id.clone())?;
-    let provider_id = provider_id.trim();
-    if provider_id.is_empty() {
-        return None;
+        .and_then(|kask| kask.private_inference.as_ref());
+    match section {
+        Some(section) => section
+            .resolved_local_providers()
+            .into_iter()
+            .map(Arc::from)
+            .collect(),
+        None => settings::DEFAULT_LOCAL_PROVIDERS
+            .iter()
+            .map(|id| Arc::from(*id))
+            .collect(),
     }
-    Some(Arc::from(provider_id))
 }
 
 /// D100 — the private-leg predicate: a model is private-leg iff its
-/// provider id equals the configured `kask.private_inference.provider_id`.
-/// With no configured leg, no model is private-leg (fail-closed).
+/// provider is in the local-leg set (the configured private-inference
+/// provider or a local provider — ollama by default). Cloud providers are
+/// never in the set (fail-closed).
 pub(crate) fn is_private_leg_model(model: &LanguageModel, cx: &App) -> bool {
-    match private_inference_provider_id(cx) {
-        Some(private_provider) => *model.provider_id.0 == *private_provider,
-        None => false,
-    }
+    is_private_leg_provider(&model.provider_id.0, cx)
+}
+
+/// D100 — the provider-level form of the private-leg predicate, for
+/// surfaces that hold a provider id rather than a model (the agent
+/// panel's model list).
+pub(crate) fn is_private_leg_provider(provider_id: &str, cx: &App) -> bool {
+    private_inference_local_providers(cx)
+        .iter()
+        .any(|allowed| provider_id == allowed.as_ref())
+}
+
+/// D100 (operator ruling 2026-11-05) — is this MCP server's tool surface
+/// disabled on privacy-marked threads? The named default is the media
+/// server: its analysis passes (vision, STT, OCR) rely on cloud inference
+/// with no local path, so a private thread refuses the tool surface rather
+/// than let it route private content to cloud models. Pinned by
+/// `media_server_tools_are_absent_on_private_threads` and the
+/// settings-content resolution pin.
+pub(crate) fn server_disabled_on_private_threads(server_id: &str, cx: &App) -> bool {
+    let section = cx
+        .global::<settings::SettingsStore>()
+        .merged_settings()
+        .kask
+        .as_ref()
+        .and_then(|kask| kask.private_inference.as_ref());
+    let servers: Vec<String> = match section {
+        Some(section) => section.resolved_private_thread_disabled_servers(),
+        None => settings::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+            .iter()
+            .map(|id| id.to_string())
+            .collect(),
+    };
+    servers.iter().any(|s| s == server_id)
 }
 
 /// D100 — returned when a privacy-marked thread would resolve or dispatch
@@ -6338,6 +6377,21 @@ impl Thread {
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
+            // zed-kask: D100 (operator ruling 2026-11-05) — the
+            // private-thread tool perimeter: servers whose assisting
+            // inference cannot run locally are disabled on privacy-marked
+            // threads — the named default is the media server (its
+            // vision/STT/OCR passes rely on cloud inference with no local
+            // path). Refused at the offer point (the tool never enters the
+            // marked thread's tool map) and re-evaluated per turn
+            // (`refresh_turn_tools`), so a mark flip applies on the next
+            // turn without re-registration. Pinned by
+            // `media_server_tools_are_absent_on_private_threads`.
+            if self.kask.is_private_inference()
+                && server_disabled_on_private_threads(&server_id.0, cx)
+            {
+                continue;
+            }
             // zed-kask: D6 — the curator memory-edit tools (memory_insert,
             // memory_update, memory_resolve_contradiction) were gated to
             // curator threads until 2026-09-01. Removed by operator
@@ -15018,6 +15072,42 @@ mod tests {
                 "the restore sanitize drops the public model — a marked \
                  thread never loads holding one"
             );
+        });
+    }
+
+    /// D100 (operator ruling 2026-11-05): the local-leg SET — models on a
+    /// settings-listed local provider serve private threads even when the
+    /// private-inference provider id is not configured. `local_provider_ids`
+    /// names the fake provider; its models are private-leg.
+    #[gpui::test]
+    async fn local_provider_set_extends_the_private_leg(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .private_inference
+                        .get_or_insert_default()
+                        // No provider_id — only the local set names a leg.
+                        .local_provider_ids = Some(vec!["fake".to_string()]);
+                });
+            });
+        });
+        let model = fake.model("fake");
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_private_inference(true, cx);
+                thread.set_model(model.clone(), cx);
+                assert!(
+                    thread.model().is_some(),
+                    "a local-listed provider's models serve a private thread \
+                     (the local-leg set, not just the configured provider)"
+                );
+            });
         });
     }
 

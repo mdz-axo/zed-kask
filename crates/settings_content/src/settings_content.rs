@@ -1953,4 +1953,130 @@ pub struct KaskPrivateInferenceSettingsContent {
     /// The loopback port the private leg serves on. Absent uses the
     /// settings-layer default (matching the placement policy's port).
     pub port: Option<u16>,
+    /// zed-kask: D100 (operator ruling 2026-11-05) — additional local-leg
+    /// provider ids a privacy-marked thread may use, on top of the
+    /// configured `provider_id`. Local by construction (they only serve
+    /// models that run on this machine). Absent uses the
+    /// settings-layer default (`["ollama"]`): local ollama models serve
+    /// private threads.
+    #[serde(default)]
+    pub local_provider_ids: Option<Vec<String>>,
+    /// zed-kask: D100 (operator ruling 2026-11-05) — MCP servers whose
+    /// tool surface is DISABLED on privacy-marked threads: their
+    /// assisting inference cannot run locally, so the tool itself is
+    /// refused rather than let it route private content to cloud models
+    /// (the named default: the media server — its vision/STT/OCR passes
+    /// rely on cloud inference with no local path). Absent uses the
+    /// settings-layer default.
+    #[serde(default)]
+    pub private_thread_disabled_servers: Option<Vec<String>>,
+}
+
+/// zed-kask: D100 — the default local-leg provider set for privacy-marked
+/// threads: local ollama (operator ruling 2026-11-05 — "any of the local
+/// private inference models or local ollama models"). The single home
+/// every reader resolves through ([`KaskPrivateInferenceSettingsContent::
+/// resolved_local_providers`]); the kask-side settings row defaults from the
+/// same list.
+pub const DEFAULT_LOCAL_PROVIDERS: &[&str] = &["ollama"];
+
+/// zed-kask: D100 — the default set of MCP servers disabled on
+/// privacy-marked threads (operator ruling 2026-11-05): the media server —
+/// its analysis passes (vision, STT, OCR) rely on cloud inference in ways
+/// that cannot run locally, so a private thread refuses the tool surface
+/// rather than leak content to cloud models.
+pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media"];
+
+impl KaskPrivateInferenceSettingsContent {
+    /// zed-kask: D100 — resolve the local-leg provider set a privacy-marked
+    /// thread may run: the configured private-inference `provider_id` (when
+    /// set — an unconfigured leg has no registered models) plus
+    /// `local_provider_ids` (defaulting to [`DEFAULT_LOCAL_PROVIDERS`]).
+    /// The one resolution home the routing predicate and the settings row
+    /// share; entries are trimmed, empties and duplicates dropped.
+    pub fn resolved_local_providers(&self) -> Vec<String> {
+        let locals = self.local_provider_ids.clone().unwrap_or_else(|| {
+            DEFAULT_LOCAL_PROVIDERS
+                .iter()
+                .map(|id| id.to_string())
+                .collect()
+        });
+        let mut providers: Vec<String> = Vec::new();
+        for raw in self.provider_id.iter().chain(locals.iter()) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() && !providers.iter().any(|p| p == trimmed) {
+                providers.push(trimmed.to_string());
+            }
+        }
+        providers
+    }
+
+    /// zed-kask: D100 — resolve the MCP server set disabled on privacy-
+    /// marked threads (default:
+    /// [`DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`]). Trimmed, empties
+    /// and duplicates dropped; the one resolution home.
+    pub fn resolved_private_thread_disabled_servers(&self) -> Vec<String> {
+        let servers = self
+            .private_thread_disabled_servers
+            .clone()
+            .unwrap_or_else(|| {
+                DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect()
+            });
+        let mut out: Vec<String> = Vec::new();
+        for raw in servers {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() && !out.iter().any(|s| s == trimmed) {
+                out.push(trimmed.to_string());
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod private_inference_local_set_tests {
+    use super::*;
+
+    /// zed-kask: D100 — the local-leg set resolution (the one home the
+    /// routing predicate and the settings row share): absent locals use the
+    /// ollama default (operator ruling 2026-11-05 — local by construction);
+    /// the configured private provider joins the set; entries trim, empties
+    /// and duplicates drop.
+    #[test]
+    fn resolved_local_providers_defaults_to_ollama_and_merges() {
+        let absent = KaskPrivateInferenceSettingsContent::default();
+        assert_eq!(
+            absent.resolved_local_providers(),
+            vec!["ollama".to_string()],
+            "no configuration: local ollama serves private threads by default"
+        );
+
+        let configured = KaskPrivateInferenceSettingsContent {
+            provider_id: Some("private-local".to_string()),
+            local_provider_ids: Some(vec![
+                "  ollama  ".to_string(),
+                String::new(),
+                "private-local".to_string(),
+            ]),
+            ..Default::default()
+        };
+        assert_eq!(
+            configured.resolved_local_providers(),
+            vec!["private-local".to_string(), "ollama".to_string()],
+            "the configured provider leads; locals follow; trimmed and deduped"
+        );
+
+        let no_provider = KaskPrivateInferenceSettingsContent {
+            local_provider_ids: Some(vec!["lm-studio-local".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            no_provider.resolved_local_providers(),
+            vec!["lm-studio-local".to_string()],
+            "an unset provider contributes nothing (no leg registered)"
+        );
+    }
 }
