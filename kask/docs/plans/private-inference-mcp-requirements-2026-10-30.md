@@ -242,3 +242,30 @@ no `unwrap()` in production code; settings defaults in `Default` impls only; **n
 | FR-3 | R-2 (F2.2, F2.3), R-3 (F3.2) | Routing hook (Seam A) + settings policy | Cross-crate pin tests |
 | FR-4 | repo analysis (P2.1/P11) | Visibility extension + per-surface filters | Per-surface tests + 3 global falsifier tests |
 | FR-5 | R-3 (F3.1, F3.3) | `model_brief` tool + decision records | Unit + property + join pins |
+---
+
+## Amendment 2026-11-05 — the FR-4 boundary's primary shape is store separation (operator ruling)
+
+The PI ruled in-session (2026-11-05) that FR-4's primary boundary is a
+**separate private curator memory database**, not row filtering alone:
+content produced on privacy-marked threads writes to
+`agents/curator/curator-private.db` (write routing at the bridge's ingest
+seam, keyed on the producing thread's D100 mark — never caller-set); a
+private-marked context's recall federates both stores; a public context
+never touches the private store. The public DB — backups, exports, the
+curator MCP server's tools — is clean by construction.
+
+The `InferenceProvenance` mark (this doc's marking predicate, unchanged)
+remains the routing signal and the in-store belt, recorded on rows inside
+each store. Degrade-not-leak holds until a local embedding/classification
+model serves the private leg: private chunks and private queries never
+cross to the configured cloud models (stored/recalled keyword-only,
+surfaced). Landed as D100's store-split leg (commit `fe9ab1f696`; pins in
+the D100 DIVERGENCE.md register row). The FR-4 table's rows stand as
+written for the surfaces the mark reaches; the M5 plan
+(`kask/docs/plans/private-inference-m5-recall-export-filters-plan-2026-11-05.md`)
+records the read side, the per-call `_meta` channel, and the off-axis
+stated limits (corpus, media, goals — PI-approved).
+
+Recorded as a dated amendment, not a silent edit of the committed D-2
+text — the same form as the architecture plan's 2026-11-04 amendment.

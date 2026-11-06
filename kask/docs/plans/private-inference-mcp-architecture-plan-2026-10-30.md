@@ -355,3 +355,20 @@ construction, where the MCP design carried it in approval tokens. Consequences:
 Recorded as a dated amendment, not a silent edit of the committed D-2/D-3 text; the
 local-leg plan (`private-inference-local-leg-llama-wrapper-plan-2026-11-04.md`) §5
 carries the placement and the reuse map.
+
+---
+
+## Amendment 2026-11-05 — M5's storage shape: the store split (operator ruling)
+
+The PI's 2026-11-05 in-session ruling extends M5 with the store
+separation: a private curator memory DB (`agents/curator/curator-private.db`,
+the D6/D28 house pattern) receives privacy-marked turns at the bridge's
+ingest seam; the injector federates both stores on private-marked
+contexts only. The per-surface filters (§4 M5) stand as designed — the
+`InferenceProvenance` mark rides rows inside each store as the belt; the
+per-call `_meta` channel (the M5 plan's M5-A) carries the caller context
+to the tools. Landed: commit `fe9ab1f696` (the split) and `bc1170dcff`
+(the child-side `_meta` read side); the zed-side `_meta` write (M5 plan
+step 1) is the named follow-up. Degrade-not-leak until a local
+embedding/classification model serves (the V1 keyword-only degrade is
+surfaced, never silent).
