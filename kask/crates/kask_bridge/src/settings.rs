@@ -608,6 +608,13 @@ pub struct KaskPrivateInferenceSettings {
     /// cloud embedder never sees private content. Empty = the explicit
     /// opt-out (keyword-only degrade persists, surfaced).
     pub embedding_model: String,
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL classifier model: private-turn chunk tagging
+    /// runs through this model only; the configured cloud classifier never
+    /// sees private content. Empty = the explicit opt-out (structural tags
+    /// only, surfaced). The default is the operator's named pick
+    /// (`ollama/qwen3.5:4b`, deployed locally).
+    pub classifier_model: String,
 }
 
 impl Default for KaskPrivateInferenceSettings {
@@ -633,6 +640,10 @@ impl Default for KaskPrivateInferenceSettings {
             // — the same single-home rule as the cloud embedding default.
             embedding_model: hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL
                 .to_string(),
+            // D100 classifier lift: the same single-home rule — the
+            // operator's named local pick.
+            classifier_model: hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL
+                .to_string(),
         }
     }
 }
@@ -651,6 +662,8 @@ impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings 
             // `Some("")` is preserved — the explicit opt-out is distinct from
             // absent (the default local model).
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
+            // `Some("")` preserved here too — the structural-only opt-out.
+            classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
         }
     }
 }
@@ -1337,6 +1350,11 @@ mod tests {
         assert_eq!(effective.provider_id, default.provider_id);
         assert_eq!(effective.host, default.host);
         assert_eq!(effective.port, default.port);
+        assert_eq!(
+            effective.classifier_model,
+            hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL,
+            "absent classifier content uses the single-home default (the operator's named local pick)"
+        );
         // A present section with every field set overrides each one.
         let content = KaskPrivateInferenceSettingsContent {
             provider_id: Some("pi-test".into()),
@@ -1345,6 +1363,7 @@ mod tests {
             local_provider_ids: Some(vec!["lm-studio-local".into()]),
             private_thread_disabled_servers: Some(vec!["media".into()]),
             embedding_model: Some("ollama/custom-embed".into()),
+            classifier_model: Some("ollama/custom-classifier".into()),
         };
         let effective: KaskPrivateInferenceSettings = content.into();
         assert_eq!(effective.provider_id, "pi-test");
@@ -1359,6 +1378,7 @@ mod tests {
             vec!["media".to_string()]
         );
         assert_eq!(effective.embedding_model, "ollama/custom-embed");
+        assert_eq!(effective.classifier_model, "ollama/custom-classifier");
     }
 
     // D100 item 3 (operator 2026-11-05) — the private leg's local embedding
@@ -1379,6 +1399,25 @@ mod tests {
             absent.embedding_model,
             hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL,
             "an absent field uses the default local model"
+        );
+        // The classifier sibling (D100 classifier lift, 2026-11-06): the
+        // same absent-default / explicit-empty contract.
+        let classifier_default: KaskPrivateInferenceSettings =
+            KaskPrivateInferenceSettingsContent::default().into();
+        assert_eq!(
+            classifier_default.classifier_model,
+            hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL,
+            "an absent field uses the operator's named local pick"
+        );
+        let classifier_opted_out: KaskPrivateInferenceSettings =
+            KaskPrivateInferenceSettingsContent {
+                classifier_model: Some(String::new()),
+                ..Default::default()
+            }
+            .into();
+        assert_eq!(
+            classifier_opted_out.classifier_model, "",
+            "an explicitly empty string is the structural-only opt-out"
         );
         let opted_out: KaskPrivateInferenceSettings = KaskPrivateInferenceSettingsContent {
             embedding_model: Some(String::new()),

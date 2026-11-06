@@ -70,6 +70,14 @@ pub(crate) struct WriteContext<'a> {
     /// (`kask.models.classifier_model`). `None` = not configured — chunks
     /// get structural tags only (surfaced at wiring time, not per turn).
     pub classifier_model: Option<&'a str>,
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL classifier model
+    /// (`kask.private_inference.classifier_model`, default
+    /// `ollama/qwen3.5:4b`); `None` = the opt-out or a refused
+    /// cloud-prefixed value — private turns keep structural tags only,
+    /// surfaced per turn; the configured cloud classifier never sees
+    /// private content.
+    pub private_classifier_model: Option<&'a str>,
     /// Host-deployed template registry root the tagging prompt renders from
     /// (`kask.corpus.template_root` override → `{data_dir}/skills/registry`).
     /// Threaded from settings at wiring time — `HKASK_TEMPLATE_ROOT` only
@@ -312,15 +320,17 @@ pub(crate) async fn write_turn(
     // content never crosses to cloud models ("any tools assisting on
     // private threads need to be limited to private inference"). Private
     // chunks get the structural-only degradation, surfaced.
-    let content_tags = if private_turn {
-        tracing::warn!(
-            target: "reg.memory",
-            thread_id = %thread_id,
-            "private turn: classifier tagging skipped — the configured classifier is a cloud model; chunks get structural tags only (a local classifier lifts the degrade)"
-        );
-        None
-    } else {
-        tag_chunks_with_llm(ctx, &chunk_texts).await
+    let content_tags = match (private_turn, tagging_model_for_turn(ctx, private_turn)) {
+        (_, Some(model)) => tag_chunks_with_model(ctx, &chunk_texts, model).await,
+        (true, None) => {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                "private turn: classifier tagging skipped — no local private classifier model is wired (set kask.private_inference.classifier_model to lift the degrade); chunks get structural tags only — never the configured cloud classifier"
+            );
+            None
+        }
+        (false, None) => None,
     };
 
     // ── 4. Embed every chunk in one batched call ──────────────────────────
@@ -600,14 +610,31 @@ fn structural_ontology(thread_id: &str, turn_ms: u128, chunk_index: usize) -> HM
     }
 }
 
-/// Tag the turn's chunks with the classifier model via the app-wide inference
-/// port. Rendering and correlation are shared; structural ontology,
-/// degradation, and persistence remain bridge-owned.
-async fn tag_chunks_with_llm(
+/// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+/// tagging-model decision: a private turn tags through the private leg's
+/// LOCAL classifier model only (never the configured cloud classifier); a
+/// public turn keeps the configured model. `None` = structural-only — for a
+/// private turn the opt-out or a refused cloud-prefixed value (surfaced per
+/// turn by the caller); for a public turn the configured model's absence
+/// (surfaced once at wiring time, never per turn).
+fn tagging_model_for_turn<'a>(ctx: &WriteContext<'a>, private_turn: bool) -> Option<&'a str> {
+    if private_turn {
+        ctx.private_classifier_model
+    } else {
+        ctx.classifier_model
+    }
+}
+
+/// Tag the turn's chunks with the given classifier model via the app-wide
+/// inference port (the model string is the routing signal — the private
+/// leg passes its local model, public turns the configured one). Rendering
+/// and correlation are shared; structural ontology, degradation, and
+/// persistence remain bridge-owned.
+async fn tag_chunks_with_model(
     ctx: &WriteContext<'_>,
     chunk_texts: &[String],
+    model: &str,
 ) -> Option<Vec<PassageTag>> {
-    let classifier_model = ctx.classifier_model?;
     let port = crate::inference_chat::global_inference_port()?;
     let passages = chunk_texts
         .iter()
@@ -647,7 +674,7 @@ async fn tag_chunks_with_llm(
         timeout_hint_secs: None,
     };
     match port
-        .generate_with_model(&prompt, &parameters, Some(classifier_model), None)
+        .generate_with_model(&prompt, &parameters, Some(model), None)
         .await
     {
         Ok(result) => match parse_tagging_response(&request, &result.text) {
@@ -794,6 +821,7 @@ mod tests {
             private_embedding_port: None,
             private_embedding_model: "",
             classifier_model: Some("test-classifier"),
+            private_classifier_model: None,
             template_root: registry.path(),
             curator_webid: WebID::from_persona(b"curator"),
             tokio_handle: &tokio_handle,
@@ -802,7 +830,12 @@ mod tests {
             consolidation_cadence_secs: 0,
         };
 
-        let tags = tag_chunks_with_llm(&ctx, &["sentinel passage text one two".to_string()]).await;
+        let tags = tag_chunks_with_model(
+            &ctx,
+            &["sentinel passage text one two".to_string()],
+            ctx.classifier_model.expect("configured in this fixture"),
+        )
+        .await;
         crate::inference_chat::clear_global_inference_port();
 
         assert!(
@@ -826,6 +859,53 @@ mod tests {
         assert!(
             captured[0].contains("sentinel passage text"),
             "chunk text reaches the template"
+        );
+    }
+
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// tagging-model decision's table: a private turn takes the private
+    /// leg's LOCAL classifier model only (never the configured cloud
+    /// classifier); a public turn keeps the configured model; the private
+    /// absence is its own surfaced structural-only degrade.
+    #[tokio::test]
+    async fn tagging_model_for_turn_pins_the_provenance_table() {
+        let curator_store = CuratorStore::for_tests(None);
+        let private_curator_store = CuratorStore::for_tests(None);
+        let consolidation = std::sync::Arc::new(std::sync::RwLock::new(
+            build_curator_consolidation(0, &None),
+        ));
+        let tokio_handle = tokio::runtime::Handle::current();
+        let context = |private_classifier_model: Option<&'static str>| WriteContext {
+            curator_store: &curator_store,
+            private_curator_store: &private_curator_store,
+            embedding_port: None,
+            embedding_model: "",
+            private_embedding_port: None,
+            private_embedding_model: "",
+            classifier_model: Some("cloud/classifier"),
+            private_classifier_model,
+            template_root: std::path::Path::new("unused-in-this-decision-test"),
+            curator_webid: WebID::from_persona(b"curator"),
+            tokio_handle: &tokio_handle,
+            curator_consolidation: &consolidation,
+            private_curator_consolidation: &consolidation,
+            consolidation_cadence_secs: 0,
+        };
+
+        assert_eq!(
+            tagging_model_for_turn(&context(Some("ollama/qwen3.5:4b")), true),
+            Some("ollama/qwen3.5:4b"),
+            "a private turn tags through the private leg's local model"
+        );
+        assert_eq!(
+            tagging_model_for_turn(&context(Some("ollama/qwen3.5:4b")), false),
+            Some("cloud/classifier"),
+            "a public turn keeps the configured model unchanged"
+        );
+        assert_eq!(
+            tagging_model_for_turn(&context(None), true),
+            None,
+            "a private turn with the opt-out degrades to structural-only — never the cloud classifier"
         );
     }
 }

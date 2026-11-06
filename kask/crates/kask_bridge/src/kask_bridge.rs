@@ -63,7 +63,9 @@ pub use inference_chat::{
     LanguageModelInferencePort, NoModelInferencePort, global_inference_port,
     set_global_inference_port,
 };
-pub use inference_embedding::{LanguageModelEmbeddingPort, build_private_embedding_port};
+pub use inference_embedding::{
+    LanguageModelEmbeddingPort, build_private_embedding_port, resolve_private_classifier_model,
+};
 pub use inference_ipc_server::{
     InferenceIpcServer, WorktreeSpawner, set_worktree_spawner, swap_inference_ipc_ports,
 };

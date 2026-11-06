@@ -318,3 +318,15 @@ pub const DEFAULT_EMBEDDING_MODEL: &str = "OpenRouter/qwen/qwen3-embedding-8b";
 /// the descriptor's id (pinned in kask_bridge — the port's provider
 /// check rejects a mismatched prefix per call).
 pub const DEFAULT_PRIVATE_EMBEDDING_MODEL: &str = "ollama/qwen3-embedding:0.6b";
+
+/// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the private
+/// leg's LOCAL classifier model, served by the local ollama instance (the
+/// same loopback descriptor as the private embedding model). Private-turn
+/// chunk tagging runs through this model ONLY; the configured cloud
+/// classifier (`kask.models.classifier_model`) never sees private content
+/// (degrade-not-leak, lifted). The operator's named pick, deployed locally
+/// (3.4 GB); a non-empty value must be provider-qualified for a LOCAL
+/// provider — the wiring-time validation refuses a cloud-prefixed string
+/// and keeps the structural-only degrade. An explicitly empty setting is
+/// the opt-out (structural tags only, surfaced).
+pub const DEFAULT_PRIVATE_CLASSIFIER_MODEL: &str = "ollama/qwen3.5:4b";

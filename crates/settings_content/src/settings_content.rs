@@ -1980,6 +1980,15 @@ pub struct KaskPrivateInferenceSettingsContent {
     /// operator's opt-out (private content stays keyword-only, surfaced).
     #[serde(default)]
     pub embedding_model: Option<String>,
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL classifier model (provider-qualified for a
+    /// local provider, e.g. `"ollama/qwen3.5:4b"`). Private-turn chunk
+    /// tagging runs through this model only; the configured cloud
+    /// classifier never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (structural tags only, surfaced).
+    #[serde(default)]
+    pub classifier_model: Option<String>,
 }
 
 /// zed-kask: D100 — the default local-leg provider set for privacy-marked

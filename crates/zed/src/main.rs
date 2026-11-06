@@ -1877,6 +1877,25 @@ fn main() {
                             );
                         }
 
+                        // zed-kask: D100 classifier lift (operator ruling
+                        // 2026-11-06) — the private leg's LOCAL classifier
+                        // model: private-turn chunk tagging runs through
+                        // this model only; the configured cloud classifier
+                        // never sees private content. Validated at wiring
+                        // (`resolve_private_classifier_model`): the empty
+                        // opt-out and a refused cloud-prefixed string both
+                        // keep the structural-only degrade, surfaced by the
+                        // resolver.
+                        let private_classifier_model = kask_bridge::resolve_private_classifier_model(
+                            kask_settings.private_inference.classifier_model.trim(),
+                        );
+                        if private_classifier_model.is_some() {
+                            log::info!(
+                                "hKask private classifier leg wired — private-turn chunk tagging serves locally (model: {})",
+                                kask_settings.private_inference.classifier_model.trim()
+                            );
+                        }
+
                         // The host-deployed template registry root for
                         // in-process chunk tagging (curator memory ingest).
                         // Resolved by the same rule `mcp_env()` uses to
@@ -1901,6 +1920,7 @@ fn main() {
                             private_embedding_port,
                             private_embedding_model,
                             classifier_model,
+                            private_classifier_model,
                             template_root,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,

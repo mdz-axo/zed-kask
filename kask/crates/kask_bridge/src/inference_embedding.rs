@@ -81,6 +81,52 @@ pub fn build_private_embedding_port(
     ))
 }
 
+/// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — validate the
+/// private leg's LOCAL classifier model at wiring time, the same discipline
+/// `build_private_embedding_port` enforces for the private embedding model:
+/// empty is the explicit opt-out; a non-empty value must name the LOCAL
+/// provider (the `INFERENCE_PROVIDERS` ollama descriptor) — a cloud-prefixed
+/// string is refused (not wired) so private-turn tagging keeps the
+/// structural-only degrade instead of widening to a cloud model. Returns
+/// the trimmed model string; the model string IS the routing signal at the
+/// tagging call (`generate_with_model`).
+pub fn resolve_private_classifier_model(model: &str) -> Option<String> {
+    if model.is_empty() {
+        tracing::warn!(
+            target: "kask.private_inference",
+            "private classifier model is empty — private-turn chunks keep structural tags \
+             only (set kask.private_inference.classifier_model to lift the degrade)"
+        );
+        return None;
+    }
+    let credentials = crate::inference_providers::local_ollama_embedding_credentials();
+    let Some(credentials) = credentials else {
+        tracing::warn!(
+            target: "kask.private_inference",
+            "the ollama descriptor is absent from INFERENCE_PROVIDERS — the private \
+             classifier leg is not wired; private turns keep structural tags only"
+        );
+        return None;
+    };
+    let prefix_matches = model
+        .split_once('/')
+        .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case(credentials.provider.id));
+    if !prefix_matches {
+        tracing::warn!(
+            target: "kask.private_inference",
+            model = %model,
+            local_provider = %credentials.provider.id,
+            "the private classifier model does not name the local provider — the private \
+             classifier leg is not wired (set kask.private_inference.classifier_model to a \
+             {}/<model> string); private turns keep structural tags only and never widen \
+             to the cloud classifier",
+            credentials.provider.id
+        );
+        return None;
+    }
+    Some(model.trim().to_string())
+}
+
 #[cfg(test)]
 mod private_port_tests {
     use super::*;

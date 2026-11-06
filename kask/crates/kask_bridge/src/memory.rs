@@ -262,6 +262,15 @@ pub struct RealMemoryPort {
     /// inference port itself is read lazily per turn from the app-wide
     /// global (the memory port wires before the inference stack does).
     classifier_model: Option<String>,
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL classifier model
+    /// (`kask.private_inference.classifier_model`, default
+    /// `DEFAULT_PRIVATE_CLASSIFIER_MODEL` = `ollama/qwen3.5:4b`; validated
+    /// at wiring via `resolve_private_classifier_model`). `None` = the
+    /// explicit opt-out or a refused cloud-prefixed value — private turns
+    /// keep structural tags only, surfaced; the configured cloud classifier
+    /// never sees private content.
+    private_classifier_model: Option<String>,
     /// Host-deployed template registry root for write-time chunk tagging
     /// (`kask.corpus.template_root` override → `{data_dir}/skills/registry`).
     /// Threaded from settings at wiring time — `HKASK_TEMPLATE_ROOT` is only
@@ -336,6 +345,7 @@ impl RealMemoryPort {
         private_embedding_port: Option<LanguageModelEmbeddingPort>,
         private_embedding_model: String,
         classifier_model: Option<String>,
+        private_classifier_model: Option<String>,
         template_root: std::path::PathBuf,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
@@ -400,6 +410,7 @@ impl RealMemoryPort {
             external_passphrase: passphrase.to_string(),
             external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model,
+            private_classifier_model,
             template_root,
             curator_webid,
             curator_consolidation,
@@ -689,6 +700,7 @@ impl MemoryPort for RealMemoryPort {
                 private_embedding_port: self.private_embedding_port.as_ref(),
                 private_embedding_model: &self.private_embedding_model,
                 classifier_model: self.classifier_model.as_deref(),
+                private_classifier_model: self.private_classifier_model.as_deref(),
                 template_root: self.template_root.as_path(),
                 curator_webid: self.curator_webid,
                 tokio_handle: &self.tokio_handle,
@@ -1688,6 +1700,7 @@ pub(crate) mod tests {
             external_passphrase: String::new(),
             external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model: None,
+            private_classifier_model: None,
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
@@ -1736,6 +1749,7 @@ pub(crate) mod tests {
             private_embedding_port: port.private_embedding_port.as_ref(),
             private_embedding_model: &port.private_embedding_model,
             classifier_model: port.classifier_model.as_deref(),
+            private_classifier_model: port.private_classifier_model.as_deref(),
             template_root: port.template_root.as_path(),
             curator_webid: port.curator_webid,
             tokio_handle: &port.tokio_handle,
