@@ -1,0 +1,89 @@
+{# goal: Ground a direct weight-edit task: audit the target model's baseline behavior and sampling configuration against its vendor model card before any weight is touched. #}
+[inference]
+contract:
+  input:
+    model_name: string
+    model_card_notes: string
+    run_config: object
+    baseline_counts: object
+    benchmark_name: string
+  output:
+    baseline_observation: object
+    config_diffs: array
+    suspected_failure_mode: object
+    route_recommendation: object
+---
+
+You are grounding a direct weight-edit task. Before any weight of the target model is touched, establish what the model actually does under the current harness — measured, not assumed — and whether the sampling configuration itself explains the reported bug.
+
+## Doctrine
+
+Measure before you diagnose. In the anchor case, a Qwen reasoning model reported as "bad at math" was finishing almost no math answers at all: 85 of its first 96 practice answers ran to the token limit. The "math bug" was a completion bug. A baseline audit that counts answer classes — correct-and-complete, wrong-but-complete, non-terminating — is the ground every later step stands on; the baseline counts ARE the model's measured behavior.
+
+The vendor model card is part of the ground. The anchor ran its target in thinking mode — the exact condition the vendor card warns is prone to repetitive loops — at a lower temperature than the card recommends. A bug that disappears at the card's recommended settings is a settings bug, not a weight bug, and no weight edit should be attempted to fix it.
+
+## Target
+
+- **Model**: {{ model_name }}
+- **Benchmark family for practice problems**: {{ benchmark_name }}
+
+## Vendor model card notes
+
+{{ model_card_notes }}
+
+## Run configuration in force
+
+```json
+{{ run_config | tojson }}
+```
+
+## Baseline counts (measured by the harness)
+
+```json
+{{ baseline_counts | tojson }}
+```
+
+{% if not baseline_counts %}
+## Empty baseline guard
+
+`baseline_counts` is empty — no baseline was measured. Return early: the ground is absent.
+{% endif %}
+
+## Audit process
+
+1. **Classify every answer** in the baseline: `answers_correct_complete` (finished and right), `answers_wrong_complete` (finished and wrong — genuine reasoning errors), `answers_hit_limit` (ran to the token limit without finishing). Do not average them into one score — the classes route differently.
+2. **Diff every config field** in `run_config` against the vendor card's recommendation recorded in `model_card_notes`: mode, temperature, top-p, top-k, presence penalty, output token limit. Record each field where the run config departs from the card, and the card's stated warning.
+3. **Read the suspected failure mode from the classes, not the score**: a dominant `answers_hit_limit` class is a blocker (loops or stalls); a dominant `answers_wrong_complete` class is a capability gap; a mixed or thin baseline is under-evidenced and needs more practice answers before any route verdict.
+
+## Output requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "baseline_observation": {
+    "answers_total": 96,
+    "class_shares": {"correct_complete": 0.09, "wrong_complete": 0.04, "hit_limit": 0.87},
+    "what_the_model_actually_does": "…"
+  },
+  "config_diffs": [
+    {"field": "mode", "run": "thinking", "card_recommended": "non-thinking", "card_warning": "…"}
+  ],
+  "suspected_failure_mode": {
+    "mode": "looping",
+    "evidence": "…",
+    "confidence": "…"
+  },
+  "route_recommendation": {
+    "route": "blocker-removal-route",
+    "rationale": "…",
+    "config_first": true
+  }
+}
+```
+
+## Constraints
+
+- The counts come from the harness; the shares and the DME-1 route verdict are computed downstream in `lisp_eval` — never assert a route this template's outputs do not support.
+- Every config field the card contradicts appears in `config_diffs` — an unexamined config delta is the most common false "weight bug".
+- A baseline measured on fewer answers than the harness printed is a broken ground — record the mismatch, do not paper over it.

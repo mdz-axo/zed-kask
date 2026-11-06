@@ -1,0 +1,78 @@
+{# goal: Localize a diagnosed failure mode to weights: contrast internal activations across progressing and failing trajectories to isolate the direction, layer, and columns that causally precede the failure. #}
+[inference]
+contract:
+  input:
+    model_name: string
+    failure_mode: string
+    trajectory_contrast: object
+    localization_notes: string
+  output:
+    candidate_directions: array
+    causal_evidence: object
+    selected_site: object
+---
+
+You are localizing a diagnosed behavioral failure to specific weights. The route verdict said blocker — a failure mode the model falls into, not a capability it lacks. Now find where in the network that failure lives, by contrast, not by intuition.
+
+## Doctrine
+
+In the anchor case, the looping Qwen model was probed by comparing its internals across two trajectory classes: answers that progressed normally, and answers that fell into repetition. The comparison isolated a single internal direction — a consistent pattern across the model's numbers — that reliably appeared immediately before repetition started, written by the MLPs of two layers. The direction, not the layer, is the unit of the edit: the loop direction was subtracted from the output columns that write it, "much like removing a behavior by deleting a single direction."
+
+Localization by contrast has a causal evidence bar: the candidate direction must precede the failure onset, must be present in failing trajectories, and must be absent (or arrive late) in progressing ones. A direction that appears in both classes is a shared feature, not a cause.
+
+## Target
+
+- **Model**: {{ model_name }}
+- **Diagnosed failure mode**: {{ failure_mode }}
+
+## Trajectory contrast captures
+
+```json
+{{ trajectory_contrast | tojson }}
+```
+
+## Localization notes (sites compared, methods used)
+
+{{ localization_notes }}
+
+## Localization process
+
+1. **Align the two classes** on comparable prompts — same family, differing outcome. Contrast at matched positions (same layer, same module type), never across unrelated contexts.
+2. **Find the divergence point**: the earliest site where the failing trajectory's internals depart from the progressing one — where the failure direction is first written and read.
+3. **Confirm the direction**: the candidate must be consistent across failing examples (the same direction, not just any difference), and it must precede the failure's onset, not merely accompany it.
+4. **Enumerate the writing sites**: which layers, which module (MLP vs attention), how many output columns carry the direction. Fewer columns is a smaller, safer edit surface.
+
+## Output requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "candidate_directions": [
+    {
+      "description": "loop direction written by MLP outputs of two layers",
+      "present_in": "failing trajectories, immediately before repetition",
+      "absent_in": "progressing trajectories",
+      "writing_sites": [{"layer": 15, "module": "mlp", "columns": 64}]
+    }
+  ],
+  "causal_evidence": {
+    "divergence_point": "…",
+    "consistency_across_failing": "…",
+    "order_confirmed": "the candidate direction must precede failure onset"
+  },
+  "selected_site": {
+    "layers": [15, 19],
+    "module": "mlp",
+    "columns": 64,
+    "direction_source": "mean difference across the trajectory classes"
+  }
+}
+```
+
+## Constraints
+
+- The direction must be validated against both trajectory classes — an uncontrasted "suspicious activation" is not a localization.
+- Prefer the smallest writing surface that carries the whole direction: fewer layers, fewer columns.
+- A direction present in both classes is a shared feature, not a cause — discard it or re-derive the contrast.
+- Every claim in `causal_evidence` names the captures it came from.

@@ -10,7 +10,8 @@ kask/traces/
 *.wasm
 *.xcodeproj
 .DS_Store
-.agents
+.agents/*
+!.agents/skills/
 .blob_store
 .build
 .claude/settings.local.json

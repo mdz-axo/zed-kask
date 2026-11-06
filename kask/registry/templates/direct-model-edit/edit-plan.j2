@@ -1,0 +1,76 @@
+{# goal: Plan the minimal weight edit: choose the smallest parameter surface that removes the localized failure direction while preserving every other capability, under an explicit budget of edited weights and forward passes. #}
+[inference]
+contract:
+  input:
+    model_name: string
+    selected_site: object
+    total_weights: number
+    edited_weights: number
+    forward_pass_budget: number
+  output:
+    edit_spec: object
+    surface_check: object
+    preservation_plan: object
+---
+
+You are planning a direct weight edit — the surgical step between localization and verification. The route verdict said blocker; the localization isolated a direction at specific sites. Now decide exactly which weights change, by how much, and what must not move.
+
+## Doctrine
+
+The anchor edit was subtraction: a single loop direction, removed from 64 output columns in each of two MLP layers — 131,072 weights of roughly 800 million, about 0.016% of the model, chosen as the smallest surface that carries the whole direction. The operation follows from the diagnosis: removing the direction "is much like removing a behavior by deleting a single direction." Subtractive edits on a localized direction are the default; additive edits (grafting, amplifying) need a preservation plan, because they can create new behavior instead of removing old.
+
+The edit is not blind, and it is not a single guess. The anchor's edit came out of a budgeted search: propose the edit, test it against practice problems, keep what works. The budget of forward passes is part of the plan — and the plan reports every budget point tried, because gains can be non-smooth (the anchor's jump landed at the 50-pass budget, barely visible at 10 or 25).
+
+## Target
+
+- **Model**: {{ model_name }}
+- **Total weights**: {{ total_weights }}
+- **Proposed edit surface (weights)**: {{ edited_weights }}
+- **Forward-pass budget**: {{ forward_pass_budget }}
+
+## Selected site (from localization)
+
+```json
+{{ selected_site | tojson }}
+```
+
+## Planning process
+
+1. **Choose the operation**: subtractive removal of the localized direction from the site's output columns by default. Anything additive states what new behavior it risks creating.
+2. **Size the surface**: the fewest columns and layers that carry the whole direction. The DME-2 gate (downstream, in `lisp_eval`) caps the surface at 0.1% of total weights — plan under it, and record where the surface arithmetic came from.
+3. **Plan for preserving every other capability**: enumerate what must NOT change — unrelated benchmarks, style, refusal behavior — and the mechanism that protects each (site locality, direction specificity, magnitude scaling). The anchor's non-math benchmark moved only because the loop it removed was not math-specific; a plan that expects zero movement everywhere is hiding the mechanism.
+4. **Stage the verification**: which practice problems re-run, at which budget points, with which counts recorded (correct-complete / wrong-complete / hit-limit), and which sibling control model runs the same recipe.
+
+## Output requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "edit_spec": {
+    "operation": "subtract",
+    "layers": [15, 19],
+    "module": "mlp",
+    "columns": 64,
+    "direction": "mean difference across the trajectory classes",
+    "magnitude": "full removal of the direction from each selected output column"
+  },
+  "surface_check": {
+    "edited_weights": 131072,
+    "total_weights": 800000000,
+    "budget_source": "computed downstream by the DME-2 gate in lisp_eval, never asserted here"
+  },
+  "preservation_plan": {
+    "protected": ["IFEval", "refusal behavior", "style"],
+    "mechanism": "site-local subtraction of a direction orthogonal to the protected behaviors",
+    "control_sibling": {"name": "…", "nonfinish_rate": "…", "expected_delta": "approximately zero"}
+  }
+}
+```
+
+## Constraints
+
+- The `surface_check` numbers are recomputed by the DME-2 gate — never present them as already-passed.
+- The surface is the smallest that carries the whole direction — trimming further "to be safe" that leaves the direction half-removed is a worse plan, not a safer one.
+- Additive operations carry a stated risk of new behavior; subtractive ones carry a stated risk of removing shared features. Name yours.
+- The forward-pass budget is part of the plan, not an afterthought — and every budget point tried is reported.
