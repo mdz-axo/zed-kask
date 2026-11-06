@@ -1,9 +1,12 @@
 # Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)
 
 STATUS: **approved by the operator 2026-11-06; implemented the same day** —
-the query side (Phase 1). The write-side passage embeds of private-marked
-rows (§4) remain the named Phase 2 seam, not implemented. D100's row
-carries the landed record and the pin list.
+the query side (Phase 1) AND the write side (Phase 2, under the operator's
+"proceed with the proposed follow-ups" direction): the passage embeds of
+private-marked rows route by the row's provenance, the model-mismatch sweep
+skips private-marked candidates with a surfaced count, and the
+revision/repair paths preserve the mark. D100's row carries the landed
+record and the pin list.
 
 ## 1. The seam (IS — tree-verified 2026-11-06)
 

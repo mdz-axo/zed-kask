@@ -150,6 +150,16 @@ impl SemanticWrite<'_> {
         &self.passage
     }
 
+    /// zed-kask: D100 Phase 2 (2026-11-06) — the write's row provenance: the
+    /// publish path routes the passage embed by it (a private-marked row's
+    /// passage embeds through the private leg's local model only — the
+    /// model-string discipline). The write preserves the prepared row's
+    /// provenance verbatim (`prepare_semantic_change` carries every field
+    /// except id/value/confidence/timestamps).
+    pub fn inference_provenance(&self) -> hkask_types::InferenceProvenance {
+        self.h_mem.inference_provenance
+    }
+
     /// Commit the row and vector together, preserving the prior row on failure.
     pub fn publish(
         self,

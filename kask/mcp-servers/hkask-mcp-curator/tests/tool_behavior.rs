@@ -1212,6 +1212,66 @@ async fn private_call_federated_query_embeds_via_the_private_model() {
     );
 }
 
+/// D100 Phase 2 (operator direction 2026-11-06), the write-side routing
+/// falsifier: a PRIVATE-marked row's passage embed travels to the PRIVATE
+/// model only — `memory_insert` citing private-marked evidence records one
+/// private-model embed and zero configured-model embeds; a subsequent
+/// public insert on the same server embeds via the configured model,
+/// unchanged.
+#[tokio::test]
+async fn private_marked_rows_embed_their_passages_via_the_private_model() {
+    let recording = Arc::new(RecordingEmbedPort::default());
+    let (server, memory) = make_server_with_embedding_port(recording.clone());
+
+    // A private-marked evidence row (the shape a D100-marked thread's
+    // turn-completion ingest writes).
+    let private_evidence = hkask_storage::HMem::new(
+        "curator:thread:private-evidence",
+        "chatted",
+        serde_json::Value::String("a private source turn".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    let private_id = private_evidence.id.to_string();
+    memory
+        .store(private_evidence)
+        .expect("seed private evidence");
+
+    let response = insert_citing_seed(&server, private_id).await;
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "the private-evidence insert must land — got: {response}",
+    );
+    assert_eq!(
+        recording.embedded_models(),
+        vec!["test-private-model".to_string()],
+        "a private-marked row's passage embeds through the private model only — got: {:?}",
+        recording.embedded_models(),
+    );
+
+    // The public side, unchanged: an insert citing public evidence embeds
+    // via the configured model.
+    let public_seed_id = seed_h_mem(
+        &memory,
+        "curator:thread:public-evidence",
+        "chatted",
+        "a public source turn".to_string(),
+    );
+    let response = insert_citing_seed(&server, public_seed_id).await;
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "the public-evidence insert must land — got: {response}",
+    );
+    assert_eq!(
+        recording.embedded_models(),
+        vec!["test-private-model".to_string(), "test-model".to_string(),],
+        "the public insert embeds via the configured model, unchanged — got: {:?}",
+        recording.embedded_models(),
+    );
+}
+
 /// The no-field rule (P4), pinned at the schema surface: no tool
 /// request exposes a provenance field — the mark is parent-set
 /// (`_meta`), and a model-facing surface can never claim it.

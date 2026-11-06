@@ -114,18 +114,20 @@ fn call_admits(h_mem: &hkask_storage::HMem) -> bool {
         || h_mem.inference_provenance != hkask_types::InferenceProvenance::PrivateInference
 }
 
-/// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
-/// query-embed routing decision, the ONE home the semantic tools' embed
-/// sites resolve through. A private call context takes the private leg's
-/// LOCAL model or the surfaced degrade; a public call context takes the
-/// configured model or its surfaced error. The model string IS the routing
-/// signal (the stored-vector model-string gate's discipline): a private
-/// query vector lands in the local model's space, so the KNN gate excludes
-/// every cloud-model row and surfaces `excluded_model_mismatch` — the
-/// bridge's recorded posture ("the public store's KNN leg is unreachable
-/// from private contexts by construction"), made true at the child. The
-/// private leg never widens to the configured cloud embedder.
-fn routed_query_model(
+/// zed-kask: D100 (operator-approved 2026-11-06) — the provenance-routed
+/// model decision, the ONE home every private-leg model selection at the
+/// child resolves through: the query-embed sites AND (Phase 2, 2026-11-06)
+/// the write-side passage-embed sites. A private provenance takes the
+/// private leg's LOCAL model or the surfaced degrade/error; a public
+/// provenance takes the configured model or its surfaced error. The model
+/// string IS the routing signal (the stored-vector model-string gate's
+/// discipline): a private query vector lands in the local model's space,
+/// so the KNN gate excludes every cloud-model row and surfaces
+/// `model_mismatch_excluded` — the bridge's recorded posture ("the public
+/// store's KNN leg is unreachable from private contexts by construction"),
+/// made true at the child. The private leg never widens to the configured
+/// cloud embedder.
+fn routed_model_for_provenance(
     provenance: hkask_types::InferenceProvenance,
     private_model: Option<String>,
     configured_model: Option<String>,
@@ -453,7 +455,7 @@ impl CuratorServer {
         // private query vector lands in the local model's space, so the
         // KNN gate excludes cloud-model rows and surfaces
         // `excluded_model_mismatch` — never a widening to the cloud.
-        let embedding_model = routed_query_model(
+        let embedding_model = routed_model_for_provenance(
             hkask_mcp_server::current_call_provenance(),
             hkask_inference::model_constants::private_embedding_model(),
             curator_embedding_model(),
@@ -599,7 +601,7 @@ impl CuratorServer {
             // leg's LOCAL model only (each sealed source's model gate then
             // surfaces its per-source exclusion); unset/empty is the
             // surfaced degrade, never a widening to the cloud.
-            let embedding_model = routed_query_model(
+            let embedding_model = routed_model_for_provenance(
                 hkask_mcp_server::current_call_provenance(),
                 hkask_inference::model_constants::private_embedding_model(),
                 curator_embedding_model(),
@@ -1691,10 +1693,26 @@ pub(crate) fn curator_embedding_model() -> Option<String> {
 async fn semantic_embedding(
     inference_port: &dyn hkask_types::InferencePort,
     text: &str,
+    provenance: hkask_types::InferenceProvenance,
 ) -> Result<(Vec<f32>, String), McpToolError> {
-    let model = curator_embedding_model().ok_or_else(|| McpToolError::failed_precondition(
-        "embedding failed — no embedding model configured; set kask.models.embedding_model (HKASK_EMBEDDING_MODEL); memory was NOT stored",
-    ))?;
+    // zed-kask: D100 Phase 2 (operator direction 2026-11-06) — the passage
+    // embed routes by the ROW's provenance: a private-marked row's passage
+    // embeds through the private leg's LOCAL model only (the model string
+    // is the routing signal — the stored-vector model-string gate's
+    // discipline, so the vector joins the private-call KNN space); a public
+    // row keeps the configured model. Unset/empty private model fails the
+    // write visibly (the child's embed-at-publish contract: the row does
+    // NOT land without its embedding) — never a widening to the cloud.
+    let model = routed_model_for_provenance(
+        provenance,
+        hkask_inference::model_constants::private_embedding_model(),
+        curator_embedding_model(),
+    )
+    .map_err(|reason| {
+        McpToolError::failed_precondition(format!(
+            "embedding failed — memory was NOT stored: {reason}"
+        ))
+    })?;
     let batch = inference_port
         .embed_with_dimensions(
             &model,
@@ -1724,7 +1742,15 @@ async fn publish_semantic_write(
     inference_port: &dyn hkask_types::InferencePort,
     write: hkask_memory::memory_store::SemanticWrite<'_>,
 ) -> Result<hkask_storage::HMemId, McpToolError> {
-    let (vector, model) = semantic_embedding(inference_port, write.passage()).await?;
+    // zed-kask: D100 Phase 2 — the passage embed routes by the ROW's
+    // provenance: a private-marked row's passage never crosses to the
+    // configured cloud embedder.
+    let (vector, model) = semantic_embedding(
+        inference_port,
+        write.passage(),
+        write.inference_provenance(),
+    )
+    .await?;
     write
         .publish(&vector, &model)
         .map_err(|error| map_memory_store_error(error, "Failed to publish memory and embedding"))
@@ -1741,8 +1767,9 @@ pub(crate) async fn embed_for_semantic_recall(
     memory: &hkask_memory::MemoryStore,
     entity: &str,
     text: &str,
+    provenance: hkask_types::InferenceProvenance,
 ) -> bool {
-    let result = match semantic_embedding(inference_port, text).await {
+    let result = match semantic_embedding(inference_port, text, provenance).await {
         Ok((vector, model)) => memory
             .store_embedding(entity, &vector, &model, Some(text))
             .map(|_| ())
@@ -1804,12 +1831,12 @@ mod tests {
     /// error. The env plumbing and the recording-port falsifier live in
     /// tests/tool_behavior.rs.
     #[test]
-    fn routed_query_model_pins_the_provenance_table() {
+    fn routed_model_for_provenance_pins_the_provenance_table() {
         use hkask_types::InferenceProvenance;
 
         assert!(
             matches!(
-                super::routed_query_model(
+                super::routed_model_for_provenance(
                     InferenceProvenance::PrivateInference,
                     Some("ollama/qwen3-embedding:0.6b".to_string()),
                     None,
@@ -1820,7 +1847,7 @@ mod tests {
         );
         assert!(
             matches!(
-                super::routed_query_model(
+                super::routed_model_for_provenance(
                     InferenceProvenance::PrivateInference,
                     None,
                     Some("cloud/model".to_string()),
@@ -1831,7 +1858,7 @@ mod tests {
         );
         assert!(
             matches!(
-                super::routed_query_model(
+                super::routed_model_for_provenance(
                     InferenceProvenance::PublicProvider,
                     None,
                     Some("cloud/model".to_string()),
@@ -1842,7 +1869,7 @@ mod tests {
         );
         assert!(
             matches!(
-                super::routed_query_model(
+                super::routed_model_for_provenance(
                     InferenceProvenance::PublicProvider,
                     Some("ollama/x".to_string()),
                     None,

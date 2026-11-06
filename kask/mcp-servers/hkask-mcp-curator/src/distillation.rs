@@ -713,6 +713,7 @@ pub(crate) async fn distill_store(
                     memory,
                     &lesson.entity,
                     &lesson.recall_text,
+                    batch_inference_provenance,
                 )
                 .await
                 {
@@ -1218,6 +1219,11 @@ mod tests {
     fn ensure_embedding_model_env() {
         EMBEDDING_MODEL_ENV.call_once(|| {
             unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-embedding-model") };
+            // D100 Phase 2 (2026-11-06): private-marked rows embed through
+            // the private leg's model — the distillation pin's private-marked
+            // lesson needs it set alongside the configured model (the
+            // one-shot pattern; a later test cannot unset a sibling's write).
+            unsafe { std::env::set_var("HKASK_PRIVATE_EMBEDDING_MODEL", "test-private-model") };
         });
     }
 

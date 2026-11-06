@@ -908,4 +908,133 @@ mod tests {
             "a private turn with the opt-out degrades to structural-only — never the cloud classifier"
         );
     }
+
+    /// D100 classifier lift (operator ruling 2026-11-06), the end-to-end
+    /// routing pin: a private turn's chunk-tagging generate call carries the
+    /// PRIVATE classifier model (recorded at the port, after the sentinel
+    /// render succeeds); the public turn's carries the configured model,
+    /// unchanged. The stub errors after recording — the tag calls degrade,
+    /// the routing is the assertion. One port instance spans both legs so
+    /// the global-port window stays single.
+    #[tokio::test]
+    async fn private_turn_tag_generate_carries_the_private_classifier_model() {
+        use hkask_types::{InferenceError, InferencePort, InferenceResult};
+
+        let registry = tempfile::tempdir().expect("tempdir");
+        let template_dir = registry.path().join("templates").join("docproc");
+        std::fs::create_dir_all(&template_dir).expect("create template dir");
+        std::fs::write(
+            template_dir.join("tag-passages-batch.j2"),
+            "SENTINEL-ROOT {{ passages[0].text }}",
+        )
+        .expect("write sentinel template");
+
+        struct ModelRecordingPort {
+            models: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        impl InferencePort for ModelRecordingPort {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &hkask_types::template::LLMParameters,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async { Err(InferenceError::Generation("recording stub".to_string())) })
+            }
+            fn generate_with_model(
+                &self,
+                _prompt: &str,
+                _parameters: &hkask_types::template::LLMParameters,
+                model_override: Option<&str>,
+                _tools: Option<&[hkask_types::ChatToolDefinition]>,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<InferenceResult, InferenceError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                self.models
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(model_override.unwrap_or("<unspecified>").to_string());
+                Box::pin(async { Err(InferenceError::Generation("recording stub".to_string())) })
+            }
+        }
+
+        let models: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        crate::inference_chat::set_global_inference_port(std::sync::Arc::new(ModelRecordingPort {
+            models: models.clone(),
+        }));
+
+        let curator_store = CuratorStore::for_tests(None);
+        let consolidation = std::sync::Arc::new(std::sync::RwLock::new(
+            build_curator_consolidation(0, &None),
+        ));
+        let tokio_handle = tokio::runtime::Handle::current();
+        let ctx = WriteContext {
+            curator_store: &curator_store,
+            private_curator_store: &CuratorStore::for_tests(None),
+            embedding_port: None,
+            embedding_model: "test-model",
+            private_embedding_port: None,
+            private_embedding_model: "",
+            classifier_model: Some("test-classifier"),
+            private_classifier_model: Some("test-private-classifier"),
+            template_root: registry.path(),
+            curator_webid: WebID::from_persona(b"curator"),
+            tokio_handle: &tokio_handle,
+            curator_consolidation: &consolidation,
+            private_curator_consolidation: &consolidation,
+            consolidation_cadence_secs: 0,
+        };
+
+        // The private turn: the tag call carries the private model.
+        let private_record = TurnRecord {
+            thread_id: "private-classifier-thread".to_string(),
+            user_input: "a private question that must tag locally".to_string(),
+            agent_response: "a private answer".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        write_turn(&ctx, private_record)
+            .await
+            .expect("private turn ingest");
+
+        // The public turn, same server: the configured model.
+        let public_record = TurnRecord {
+            thread_id: "public-classifier-thread".to_string(),
+            user_input: "a public question".to_string(),
+            agent_response: "a public answer".to_string(),
+            model: "public-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
+        };
+        write_turn(&ctx, public_record)
+            .await
+            .expect("public turn ingest");
+        crate::inference_chat::clear_global_inference_port();
+
+        let recorded = models
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            *recorded,
+            vec![
+                "test-private-classifier".to_string(),
+                "test-classifier".to_string(),
+            ],
+            "the private turn tags through the private model, the public turn through the configured — got: {recorded:?}"
+        );
+    }
 }

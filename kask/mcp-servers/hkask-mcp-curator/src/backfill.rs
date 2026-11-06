@@ -102,7 +102,14 @@ pub(crate) async fn backfill_missing_passages(
                 }
             }
         } else {
-            embed_for_semantic_recall(inference_port, memory, &h_mem.entity, &embed_text).await
+            embed_for_semantic_recall(
+                inference_port,
+                memory,
+                &h_mem.entity,
+                &embed_text,
+                h_mem.inference_provenance,
+            )
+            .await
         };
         if embedded {
             embedded_count += 1;
@@ -172,8 +179,31 @@ pub(crate) async fn backfill_model_mismatched_rows(
         .all_embeddings_with_text()
         .map_err(|e| map_memory_store_error(e, "Failed to scan stored embeddings"))?;
 
+    // zed-kask: D100 Phase 2 (2026-11-06) — private-marked rows are NOT this
+    // sweep's constituency: their target model is the private leg's
+    // (HKASK_PRIVATE_EMBEDDING_MODEL), and re-embedding them here would cross
+    // private passages to the configured cloud embedder. Join each stored
+    // embedding to its source h_mem's provenance by (entity, passage); a
+    // private-marked candidate is skipped and the count surfaced. An
+    // orphaned embedding whose source row is gone keeps the sweep's existing
+    // public-lane behavior — the precision limit is named here, never
+    // silently widened.
+    let active_rows = memory
+        .h_mems_by_entity_prefix("")
+        .map_err(|e| map_memory_store_error(e, "Failed to scan active h_mems"))?;
+    let mut private_passages: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for h_mem in active_rows.iter() {
+        if h_mem.inference_provenance == hkask_types::InferenceProvenance::PrivateInference {
+            if let Some(passage) = hkask_memory::semantic_passage_for_h_mem(h_mem) {
+                private_passages.insert((h_mem.entity.clone(), passage));
+            }
+        }
+    }
+
     let mut candidates: Vec<(String, String, String)> = Vec::new();
     let mut unsupported: Vec<serde_json::Value> = Vec::new();
+    let mut skipped_private = 0usize;
     for (entity, _vector, passage, stored_model) in rows {
         if !model_is_mismatched(
             Some(stored_model.as_str()),
@@ -191,6 +221,10 @@ pub(crate) async fn backfill_model_mismatched_rows(
             }));
             continue;
         };
+        if private_passages.contains(&(entity.clone(), passage.clone())) {
+            skipped_private += 1;
+            continue;
+        }
         candidates.push((entity, passage, stored_model));
     }
 
@@ -202,6 +236,7 @@ pub(crate) async fn backfill_model_mismatched_rows(
             "actual_model": actual_model,
             "candidate_count": candidates.len(),
             "unsupported_count": unsupported.len(),
+            "skipped_private": skipped_private,
             "unsupported": unsupported,
             "candidates": candidates.iter().map(|(entity, _passage, stored_model)| json!({
                 "entity": entity,
@@ -222,7 +257,16 @@ pub(crate) async fn backfill_model_mismatched_rows(
         let embedded = if retired == 0 {
             false
         } else {
-            embed_for_semantic_recall(inference_port, memory, &entity, &passage).await
+            // Phase 2: the private-marked candidates were skipped above —
+            // this sweep's remaining constituency is the public lane.
+            embed_for_semantic_recall(
+                inference_port,
+                memory,
+                &entity,
+                &passage,
+                hkask_types::InferenceProvenance::PublicProvider,
+            )
+            .await
         };
         if embedded {
             re_embedded += 1;
@@ -246,11 +290,16 @@ pub(crate) async fn backfill_model_mismatched_rows(
         "re_embedded": re_embedded,
         "failed": failed,
         "unsupported_count": unsupported.len(),
+        "skipped_private": skipped_private,
         "unsupported": unsupported,
         "results": results,
         "guidance": "Stale-model rows are re-embedded under the current model \
                      (delete-then-store per exact passage; siblings survive). A row \
                      that fails between delete and store becomes a missing passage \
-                     the missing-mode backfill recovers."
+                     the missing-mode backfill recovers. Private-marked rows are \
+                     skipped (their target is the private leg's \
+                     kask.private_inference.embedding_model, never the configured \
+                     cloud model) — the skipped_private count is the surfaced \
+                     boundary."
     }))
 }
