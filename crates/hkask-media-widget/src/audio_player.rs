@@ -19,6 +19,8 @@ use symphonia_core::errors::Result as SymphoniaResult;
 use symphonia_core::formats::Packet;
 use symphonia_core::support_codec;
 
+use crate::transport::{media_elapsed, wall_deadline};
+
 /// Audio playback state and controls, backed by `rodio`.
 pub struct AudioPlayer {
     inner: Mutex<AudioInner>,
@@ -28,6 +30,10 @@ struct AudioInner {
     device_sink: Option<rodio::MixerDeviceSink>,
     player: Option<rodio::Player>,
     duration: Duration,
+    /// Playback rate. rodio's `Speed` wrapper reports positions in wall time
+    /// (media / rate) and expects wall-equivalent seek targets, so every
+    /// media-time read multiplies by it and the seek target divides by it.
+    speed: f32,
 }
 
 /// Supplies the mono/stereo channel metadata that Symphonia's MP4 demuxer
@@ -101,6 +107,7 @@ impl AudioPlayer {
                 device_sink: None,
                 player: None,
                 duration: Duration::ZERO,
+                speed: 1.0,
             }),
         }
     }
@@ -139,11 +146,25 @@ impl AudioPlayer {
         player.pause();
         player.append(source);
 
+        // A fresh Player starts at rodio's default rate — mirror it so the
+        // stored rate never describes a player that was already replaced.
+        inner.speed = 1.0;
         inner.player = Some(player);
         inner.duration = duration;
         drop(inner);
 
         Ok(())
+    }
+
+    /// Set the playback rate. rodio applies it live (re-read every ~5 ms), so
+    /// a mid-playback change takes effect without rebuilding the source.
+    /// The rate is resampling — pitch scales with it.
+    pub fn set_speed(&self, rate: f32) {
+        let mut inner = self.inner.lock();
+        inner.speed = rate;
+        if let Some(player) = &inner.player {
+            player.set_speed(rate);
+        }
     }
 
     pub fn pause(&self) {
@@ -175,7 +196,7 @@ impl AudioPlayer {
     pub fn seek(&self, position: Duration) {
         let inner = self.inner.lock();
         if let Some(player) = &inner.player
-            && let Err(error) = player.try_seek(position)
+            && let Err(error) = player.try_seek(wall_deadline(position, inner.speed))
         {
             log::warn!("hkask-media-widget: audio seek failed: {error}");
         }
@@ -198,7 +219,11 @@ impl AudioPlayer {
         inner
             .player
             .as_ref()
-            .map(|player| player.get_pos())
+            // get_pos() is wall-equivalent under rodio's Speed wrapper
+            // (media / rate) — scale back to media time so the transport
+            // position and the transcript click-to-seek clock stay in media
+            // seconds at any rate.
+            .map(|player| media_elapsed(player.get_pos(), inner.speed))
             .unwrap_or(Duration::ZERO)
     }
 }

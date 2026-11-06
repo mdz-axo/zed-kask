@@ -507,33 +507,45 @@ text wraps at the dock's definite width, pinned by
 shared media widget, preserving aspect ratio through the widget's contain fit.
 Playback timing is source-driven: source PTS and the audio-master clock decide
 when frames are due; a 4 ms decoder poll (`DECODE_POLL_INTERVAL`,
-`crates/hkask-media-widget/src/video_decoder.rs:51`) provides deadline headroom,
+`crates/hkask-media-widget/src/video_decoder.rs:53`) provides deadline headroom,
 while an 8 ms foreground poll (`DISPLAY_POLL_INTERVAL`,
-`crates/hkask-media-widget/src/video_decoder.rs:54`) follows GPUI's 120 Hz
+`crates/hkask-media-widget/src/video_decoder.rs:56`) follows GPUI's 120 Hz
 frame cadence and renders only on a new source frame or state change
 (`start_playback_loop`,
-`crates/hkask-media-widget/src/media_widget.rs:575`). The production benchmark
+`crates/hkask-media-widget/src/media_widget.rs:588`). The production benchmark
 requires one visible 30 fps player to present at least 89 of 90 source frames
 (`MIN_PRESENTED_FRAMES_AT_30_FPS`,
 `crates/hkask-media-benchmarks/benches/playback.rs:10,285`). Volume and
 mute are intentionally delegated to the operating system's default output
 device; the widget keeps unity application gain and provides no competing
-mixer (`crates/hkask-media-widget/src/audio_player.rs:137-138`). Audio
+mixer (`crates/hkask-media-widget/src/audio_player.rs:144-145`). Audio
 decode covers MP3, AAC/MP4, Ogg/Vorbis, FLAC, and Opus/MP4 through the
 rodio/symphonia stack (`decode_bytes`,
-`crates/hkask-media-widget/src/audio_player.rs:86-95`, one regression
+`crates/hkask-media-widget/src/audio_player.rs:92-101`, one regression
 fixture per format in `transcript_audio_regression_formats_decode`); a failed
 load renders as a compact dismissible status line rather than a full-pane
-takeover (`crates/hkask-media-widget/src/media_widget.rs:906`), and in the
+takeover (`crates/hkask-media-widget/src/media_widget.rs:939`), and in the
 transcript sub-surface the close affordance and recording name live in the
 header row above the workspace list — the first thing in view — and a failed
 player never dead-ends navigation or transcript text
 (`render_workspace_header_item`,
-crates/media_panel/src/media_viewer.rs:6619). Playback speed,
-zoom, and fullscreen controls are not implemented in `media_panel` or the
-widget as of the 2026-11-04 refresh (method: grep for `playback_speed`, `set_rate`,
-`fullscreen`, `zoom` over `crates/media_panel/src/` and
-`crates/hkask-media-widget/src/` — zero hits).
+crates/media_panel/src/media_viewer.rs:6619). Playback speed is a
+transport affordance on both media kinds (2026-11-06, S4): the transport's
+speed button cycles 0.5×/1×/1.25×/1.5×/2× (`SPEED_STEPS`/`next_speed`,
+`crates/hkask-media-widget/src/transport.rs:18,23`), and the widget applies
+the rate to the live player — rodio `Player::set_speed` on the audio path
+(`crates/hkask-media-widget/src/audio_player.rs:162`) and on the video
+decoder's audio pipeline, which is the audio-master clock, so the clock then
+advances at rate on its own; the audio-less wall-clock arm of the video
+position scales through the same pure conversions (`media_elapsed`/
+`wall_deadline`, `crates/hkask-media-widget/src/transport.rs:34,42`).
+Rodio reports positions in wall time under `Speed`, so every media-time read
+is scaled back per call and seeks convert to wall-equivalent targets —
+position, marks, and the transcript clock stay in media seconds at every
+rate (`crates/hkask-media-widget/src/audio_player.rs:196,217`). The rate is
+resampling, not time-stretch: pitch scales with it (2× doubles pitch).
+Zoom and fullscreen controls remain unimplemented in `media_panel` and the
+widget.
 
 ## The synced recording
 
@@ -591,4 +603,5 @@ section with the same open and delete affordances.
 | Researcher tags/notes create/replace/delete in the inspector pane | supplied (2026-10-27) |
 | Trim on audio through the same workspace marks | supplied (2026-10-27) |
 | Per-surface purpose copy | supplied (2026-10-27) |
-| Playback speed, zoom, fullscreen | absent |
+| Playback speed 0.5×–2× on both media kinds (resampling — pitch scales with rate) | supplied (2026-11-06, S4) |
+| Zoom, fullscreen | absent |

@@ -27,7 +27,7 @@ use crate::audio_player::AudioPlayer;
 use crate::media_ref::{
     MediaBlockBody, MediaKind, MediaRef, MediaStorage, PathMediaStorage, ResolvedMedia,
 };
-use crate::transport::{TransportBar, TransportEvent, TransportState};
+use crate::transport::{TransportBar, TransportEvent, TransportState, next_speed};
 use crate::video_decoder::{
     DISPLAY_POLL_INTERVAL, DecodedFrame, VideoPlaybackEvent, WidgetVideoPlayer,
 };
@@ -121,6 +121,12 @@ pub struct MediaWidget {
     // loads invalidate prior completions before they can open a player or start
     // hidden polling.
     video_load_generation: u64,
+    /// Transport playback rate (S4): the operator's chosen `SPEED_STEPS` value,
+    /// forwarded to whichever player is live. Resets to 1× on load — a fresh
+    /// load constructs fresh players (a rodio `Player` per audio load, a worker
+    // `VideoPlayer` per open), so the label must not outlive the player it
+    /// describes.
+    playback_speed: f32,
     error: Option<SharedString>,
     warning: Option<SharedString>,
     /// Ontology concept tag from the parsed block body (e.g. `omc:CreativeWork`).
@@ -301,6 +307,7 @@ impl MediaWidget {
             audio_load_task: None,
             video_load_task: None,
             video_load_generation: 0,
+            playback_speed: 1.0,
             error: None,
             warning: None,
             ontology: None,
@@ -363,6 +370,11 @@ impl MediaWidget {
     pub fn load(&mut self, cx: &mut Context<Self>) {
         self.error = None;
         self.warning = None;
+        // A load replaces the players (fresh rodio `Player` / worker
+        // `VideoPlayer`, both at rodio's default 1×) — reset the transport's
+        // rate with them so the label never reports a speed the live player
+        // left behind.
+        self.playback_speed = 1.0;
         match self.storage.resolve(&self.reference) {
             Ok(resolved) => self.load_resolved(resolved, cx),
             Err(error) => {
@@ -549,6 +561,7 @@ impl MediaWidget {
             position: Duration::ZERO,
             duration: Duration::ZERO,
             is_loading: self.audio_loading || self.video_loading,
+            speed: self.playback_speed,
         };
         if let Some(player) = &self.audio_player {
             state.is_playing = player.is_playing();
@@ -618,6 +631,7 @@ impl MediaWidget {
             position: Duration::ZERO,
             duration: Duration::ZERO,
             is_loading: self.audio_loading || self.video_loading,
+            speed: self.playback_speed,
         };
         let mut frame_decoded = false;
 
@@ -791,6 +805,18 @@ impl MediaWidget {
                 }
                 self.playback_task = None;
                 self.playback_loop_active = false;
+            }
+
+            TransportEvent::CycleSpeed => {
+                self.suspended = false;
+                let next = next_speed(self.playback_speed);
+                self.playback_speed = next;
+                if let Some(player) = &self.audio_player {
+                    player.set_speed(next);
+                }
+                if let Some(player) = &mut self.video_player {
+                    player.set_speed(next);
+                }
             }
         }
         self.sync_transport_state(cx);
@@ -2101,6 +2127,101 @@ pub(crate) mod tests {
         assert!(
             marks_label.starts_with("in "),
             "the toolbar reports both marks: {marks_label}"
+        );
+    }
+
+    /// expect: At 2× speed the audio position advances at twice wall-clock —
+    /// 1.6s of media time arrives in strictly less wall time than 1×
+    /// playback needs (≥1.6s), and the media-time rate stays ≥1.5× wall.
+    /// [P1] Motivating: the transport's speed control must actually speed the
+    /// audio clock, not just the label (Reduct/Descript table-stakes parity).
+    /// pre: the approved-root 3s audio fixture loads without error, the
+    /// transport cycles 1× → 1.25× → 1.5× → 2×.
+    /// post: after playing at 2×, the position delta reaches ≥1600ms with wall
+    /// elapsed <1.2s and delta ≥ 1.5× wall. The bounds discriminate on a
+    /// real-time-cadenced output device (the gate environment); a CI null sink
+    /// that drains faster than real time satisfies them vacuously — the
+    /// discrimination claim is scoped to the real-device gates.
+    /// Serializes on GLOBAL_TEST_LOCK like every sink-opening test.
+    #[allow(clippy::await_holding_lock)]
+    #[gpui::test]
+    async fn speed_two_x_advances_audio_position_at_double_wall_clock(cx: &mut TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = audio_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Audio,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        let load_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.audio_loading)
+            && std::time::Instant::now() < load_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        assert!(
+            widget.read_with(cx, |widget, _cx| widget.error.is_none()),
+            "the approved-root fixture loads: {:?}",
+            widget.read_with(cx, |widget, _cx| widget.error.clone())
+        );
+        // Cycle 1× → 1.25× → 1.5× → 2× — the transport's only speed entry point.
+        for _ in 0..3 {
+            cx.update(|cx| {
+                widget.update(cx, |widget, cx| {
+                    widget.handle_transport_event(&TransportEvent::CycleSpeed, cx)
+                })
+            });
+        }
+        assert_eq!(
+            widget.read_with(cx, |widget, _cx| widget.last_transport.map(|s| s.speed)),
+            Some(2.0),
+            "three cycles from 1× land on 2× and the transport state reports it"
+        );
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        let wall_start = std::time::Instant::now();
+        let position_start = widget.read_with(cx, |widget, _cx| {
+            widget
+                .audio_player
+                .as_ref()
+                .map_or(Duration::ZERO, |p| p.position())
+        });
+        let play_deadline = wall_start + Duration::from_secs(3);
+        while widget.read_with(cx, |widget, _cx| {
+            widget.audio_player.as_ref().map_or(true, |p| {
+                p.position().saturating_sub(position_start) < Duration::from_millis(1600)
+            })
+        }) && std::time::Instant::now() < play_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        let wall_elapsed = wall_start.elapsed();
+        let delta = widget.read_with(cx, |widget, _cx| {
+            widget
+                .audio_player
+                .as_ref()
+                .map_or(Duration::ZERO, |p| p.position())
+                .saturating_sub(position_start)
+        });
+        assert!(
+            delta >= Duration::from_millis(1600),
+            "2× playback advances the audio clock past 1.6s of media (got {delta:?})"
+        );
+        assert!(
+            wall_elapsed < Duration::from_millis(1200),
+            "2× playback reaches 1.6s of media in <1.2s wall (took {wall_elapsed:?}; 1× needs ≥1.6s)"
+        );
+        assert!(
+            delta >= wall_elapsed.mul_f32(1.5),
+            "media time advances at ≥1.5× wall clock (delta {delta:?} over {wall_elapsed:?})"
         );
     }
 

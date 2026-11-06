@@ -18,6 +18,8 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::transport::media_elapsed;
+
 /// One decoded video frame in BGRA byte order, row-major, 4 bytes/pixel.
 pub struct DecodedFrame {
     pub width: u32,
@@ -69,6 +71,10 @@ pub struct VideoPlayer {
     #[cfg(feature = "video")]
     audio_consumed_at_play: Option<Duration>,
     playing_since: Option<std::time::Instant>,
+    /// Playback rate: forwarded to the audio output (the master clock — the
+    /// audio then consumes at rate, so the clock advances at rate on its own)
+    /// and applied to the wall-clock fallback arm of `position()`.
+    speed: f32,
     duration: Duration,
     #[cfg(feature = "video")]
     decoder: Option<VideoDecoderInner>,
@@ -81,6 +87,7 @@ impl VideoPlayer {
             state: PlaybackState::Stopped,
             playing_since: None,
             position_at_play: Duration::ZERO,
+            speed: 1.0,
             #[cfg(feature = "video")]
             audio_consumed_at_play: None,
             duration: Duration::ZERO,
@@ -283,6 +290,25 @@ impl VideoPlayer {
         }
     }
 
+    /// Set the playback rate. Rebases the clock first so the position is
+    /// continuous across the change (the wall arm would otherwise re-scale its
+    /// whole elapsed history), then forwards the rate to the audio output —
+    /// from there the audio-master clock advances at rate on its own. The
+    /// rate persists across pause/seek; only a fresh open resets it.
+    pub fn set_speed(&mut self, rate: f32) {
+        self.position_at_play = self.position();
+        self.speed = rate;
+        if self.state == PlaybackState::Playing {
+            self.playing_since = Some(std::time::Instant::now());
+        }
+        #[cfg(feature = "video")]
+        {
+            if let Some(decoder) = &mut self.decoder {
+                decoder.set_speed(rate);
+            }
+        }
+    }
+
     /// Seek to a position. Rebases the clock and resets both streams; the
     /// audio queue is cleared so consumed audio restarts from zero — the
     /// audio-master clock rebases to the seek target. Audio resumes when
@@ -339,7 +365,7 @@ impl VideoPlayer {
             return self.position_at_play + consumed.saturating_sub(consumed_at_play);
         }
         match self.playing_since {
-            Some(since) => self.position_at_play + since.elapsed(),
+            Some(since) => self.position_at_play + media_elapsed(since.elapsed(), self.speed),
             None => self.position_at_play,
         }
     }
@@ -479,6 +505,9 @@ enum VideoCommand {
     Seek {
         position: Duration,
         generation: u64,
+    },
+    SetSpeed {
+        rate: f32,
     },
     Shutdown,
 }
@@ -698,6 +727,14 @@ impl WidgetVideoPlayer {
             position,
             generation,
         });
+    }
+
+    /// Set the playback rate on the live player. No generation guard: the
+    /// command applies to the worker's current player in channel order, and
+    /// the widget resets its own rate to 1× on every load, which is the only
+    /// path that replaces the worker player.
+    pub fn set_speed(&mut self, rate: f32) {
+        self.send(VideoCommand::SetSpeed { rate });
     }
 
     #[must_use]
@@ -999,6 +1036,7 @@ fn run_video_worker(
                     }
                 }
             }
+            Some(VideoCommand::SetSpeed { rate }) => player.set_speed(rate),
             Some(VideoCommand::Shutdown) => break,
             None => match player.advance_and_decode() {
                 Ok(frame) => {
@@ -1042,7 +1080,7 @@ fn run_video_worker(
 
 #[cfg(feature = "video")]
 mod ffmpeg_impl {
-    use super::{DecodeOutcome, DecodedFrame};
+    use super::{DecodeOutcome, DecodedFrame, media_elapsed};
     use std::path::Path;
     use std::time::Duration;
 
@@ -1119,6 +1157,9 @@ mod ffmpeg_impl {
         pending_samples: Vec<f32>,
         input_eof: bool,
         decoder_eof: bool,
+        /// Playback rate, mirroring the rodio Player's speed so `consumed()`
+        /// can convert its wall-equivalent `get_pos()` back to media time.
+        speed: f32,
         /// Media-time duration of each appended chunk, in append order. With
         /// rodio's `len()` (sources still queued) and `get_pos()` (position in
         /// the current source), this yields the consumed-audio time — the
@@ -1279,6 +1320,15 @@ mod ffmpeg_impl {
         pub fn pause_audio(&mut self) {
             if let Some(audio) = &mut self.audio {
                 audio.player.pause();
+            }
+        }
+
+        /// Forward the playback rate to the audio output. The master clock
+        /// then advances at rate on its own (consumed audio is reported in
+        /// wall time under rodio's Speed wrapper and scaled back per read).
+        pub fn set_speed(&mut self, rate: f32) {
+            if let Some(audio) = &mut self.audio {
+                audio.set_speed(rate);
             }
         }
 
@@ -1484,6 +1534,7 @@ mod ffmpeg_impl {
                 pending_samples: Vec::new(),
                 input_eof: false,
                 decoder_eof: false,
+                speed: 1.0,
                 appended_durations: std::collections::VecDeque::new(),
             })
         }
@@ -1511,9 +1562,20 @@ mod ffmpeg_impl {
             let completed = self.appended_durations.len().saturating_sub(queued_sources);
             let mut consumed: Duration = self.appended_durations.iter().take(completed).sum();
             if queued_sources > 0 {
-                consumed += self.player.get_pos();
+                // get_pos() is wall-equivalent under rodio's Speed wrapper
+                // (media / rate): scale back to media time so the master
+                // clock stays a media clock at any rate.
+                consumed += media_elapsed(self.player.get_pos(), self.speed);
             }
             consumed
+        }
+
+        /// Set the playback rate on the output player and mirror it for
+        /// `consumed()`. Speed survives seeks on the player (`clear()` keeps
+        /// its rate); only a fresh open resets it to 1.0.
+        fn set_speed(&mut self, rate: f32) {
+            self.speed = rate;
+            self.player.set_speed(rate);
         }
 
         /// Total appended audio time — every chunk that reached the

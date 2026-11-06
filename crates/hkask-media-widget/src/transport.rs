@@ -13,11 +13,42 @@ use theme::ActiveTheme;
 
 use crate::simple_slider::{SimpleSlider, SimpleSliderEvent};
 
+/// The playback-rate steps the transport cycles through (0.5×–2× — the
+/// Reduct/Descript reference set, plan S4).
+pub(crate) const SPEED_STEPS: [f32; 5] = [0.5, 1.0, 1.25, 1.5, 2.0];
+
+/// The next playback-rate step after `current`, wrapping 2× back to 0.5×.
+/// An unrecognized rate restarts at the cycle's first step rather than
+/// guessing a successor.
+pub(crate) fn next_speed(current: f32) -> f32 {
+    SPEED_STEPS
+        .iter()
+        .find(|step| **step > current)
+        .copied()
+        .unwrap_or(SPEED_STEPS[0])
+}
+
+/// Media time advanced by a wall-clock interval at the given playback rate:
+/// at speed `s`, media time advances `s`× per wall second (2× → media runs at
+/// twice wall time).
+pub(crate) fn media_elapsed(wall_elapsed: Duration, speed: f32) -> Duration {
+    wall_elapsed.mul_f32(speed)
+}
+
+/// The wall-clock time until a media interval comes due at the given playback
+/// rate — frame deadlines scale inversely with the rate (1.5× → 2/3 the
+/// interval). Also the wall-equivalent position rodio's `try_seek` expects
+/// under a `Speed` wrapper (media / rate).
+pub(crate) fn wall_deadline(media_interval: Duration, speed: f32) -> Duration {
+    media_interval.div_f32(speed)
+}
+
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
     TogglePlay,
     Seek(f32),
     Stop,
+    CycleSpeed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -26,6 +57,9 @@ pub struct TransportState {
     pub position: Duration,
     pub duration: Duration,
     pub is_loading: bool,
+    /// Active playback rate (a `SPEED_STEPS` value) — the speed button's
+    /// label source.
+    pub speed: f32,
 }
 
 pub struct TransportBar {
@@ -49,6 +83,7 @@ impl TransportBar {
                 position: Duration::ZERO,
                 duration: Duration::ZERO,
                 is_loading: false,
+                speed: 1.0,
             },
             seek_slider,
             is_dragging_seek: false,
@@ -133,6 +168,16 @@ fn play_label(state: &TransportState) -> &'static str {
     }
 }
 
+/// The speed button's label: whole rates drop the fraction ("1×", "2×"),
+/// fractional steps keep it ("0.5×", "1.25×", "1.5×").
+fn speed_label(speed: f32) -> SharedString {
+    if speed.fract() == 0.0 {
+        SharedString::from(format!("{}×", speed as i32))
+    } else {
+        SharedString::from(format!("{speed}×"))
+    }
+}
+
 impl gpui::Render for TransportBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_dragging_seek {
@@ -143,8 +188,10 @@ impl gpui::Render for TransportBar {
         let play_label = play_label(&self.state);
         let time_text = Self::format_position(self.state.position, self.state.duration);
         let duration_text = Self::format_duration(self.state.duration);
+        let speed_text = speed_label(self.state.speed);
         let entity = cx.entity().downgrade();
         let entity_stop = entity.clone();
+        let entity_speed = entity.clone();
 
         div()
             // Test-support hook: exposes the transport's laid-out bounds to
@@ -193,6 +240,19 @@ impl gpui::Render for TransportBar {
                     .text_color(cx.theme().colors().text_muted)
                     .child(duration_text),
             )
+            .child(
+                div()
+                    .id("speed")
+                    .cursor_pointer()
+                    .px_2()
+                    .text_sm()
+                    .child(speed_text)
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        if let Some(entity) = entity_speed.upgrade() {
+                            entity.update(cx, |_, cx| cx.emit(TransportEvent::CycleSpeed));
+                        }
+                    }),
+            )
     }
 }
 
@@ -225,7 +285,84 @@ mod tests {
             position: Duration::ZERO,
             duration: Duration::ZERO,
             is_loading: true,
+            speed: 1.0,
         };
         assert_eq!(play_label(&state), "Loading…");
+    }
+
+    /// dcterms:identifier: `wall_deadline` / `media_elapsed`
+    /// expect: Frame deadlines scale inversely with playback rate — at 1.5× a
+    /// media interval is due in 2/3 of the wall time — and media time
+    /// advances by the same factor per wall second.
+    /// [P1] Motivating: speed playback must keep the pacing math exact; the
+    /// transport's speed control is only honest if the clock actually scales.
+    /// pre: a positive rate from `SPEED_STEPS`.
+    /// post: `wall_deadline(1500ms, 1.5) == 1000ms` and
+    /// `media_elapsed(1s, 1.5) == 1500ms`; 1× is the exact identity.
+    #[test]
+    fn frame_deadlines_scale_with_rate() {
+        assert_eq!(
+            wall_deadline(Duration::from_millis(1500), 1.5),
+            Duration::from_secs(1),
+            "1.5×: a 1.5s media interval is due in 2/3 the wall time"
+        );
+        assert_eq!(
+            media_elapsed(Duration::from_secs(1), 1.5),
+            Duration::from_millis(1500)
+        );
+        assert_eq!(
+            media_elapsed(Duration::from_secs(2), 2.0),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            wall_deadline(Duration::from_secs(4), 2.0),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            wall_deadline(Duration::from_secs(1), 0.5),
+            Duration::from_secs(2)
+        );
+        // 1× is the bit-exact identity (mul_f32/div_f32 by 1.0).
+        assert_eq!(
+            media_elapsed(Duration::from_secs(3), 1.0),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            wall_deadline(Duration::from_secs(3), 1.0),
+            Duration::from_secs(3)
+        );
+    }
+
+    /// dcterms:identifier: `next_speed` / `SPEED_STEPS`
+    /// expect: The speed control cycles 0.5× → 1× → 1.25× → 1.5× → 2× and
+    /// wraps 2× back to 0.5×.
+    /// [P1] Motivating: the cycle is the speed affordance's whole UI contract.
+    /// pre: any rate the transport can report.
+    /// post: each step's successor is the next entry, wrapping at the end.
+    #[test]
+    fn speed_cycle_wraps_through_the_steps() {
+        assert_eq!(SPEED_STEPS, [0.5, 1.0, 1.25, 1.5, 2.0]);
+        assert_eq!(next_speed(0.5), 1.0);
+        assert_eq!(next_speed(1.0), 1.25);
+        assert_eq!(next_speed(1.25), 1.5);
+        assert_eq!(next_speed(1.5), 2.0);
+        assert_eq!(next_speed(2.0), 0.5);
+        // An unrecognized rate falls back to the cycle start, not a panic.
+        assert_eq!(next_speed(3.0), 0.5);
+    }
+
+    /// dcterms:identifier: `speed_label`
+    /// expect: Each cycle step renders a distinct compact label.
+    /// [P1] Motivating: the operator must see which rate is active.
+    /// pre: a rate from `SPEED_STEPS`.
+    /// post: whole rates drop the fraction ("1×", "2×"), others keep it
+    /// ("0.5×", "1.25×", "1.5×").
+    #[test]
+    fn speed_label_renders_each_step() {
+        assert_eq!(speed_label(0.5).as_ref(), "0.5×");
+        assert_eq!(speed_label(1.0).as_ref(), "1×");
+        assert_eq!(speed_label(1.25).as_ref(), "1.25×");
+        assert_eq!(speed_label(1.5).as_ref(), "1.5×");
+        assert_eq!(speed_label(2.0).as_ref(), "2×");
     }
 }
