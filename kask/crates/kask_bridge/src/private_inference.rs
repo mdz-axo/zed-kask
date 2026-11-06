@@ -190,6 +190,7 @@ mod tests {
             local_provider_ids: KaskPrivateInferenceSettings::default().local_provider_ids,
             private_thread_disabled_servers: KaskPrivateInferenceSettings::default()
                 .private_thread_disabled_servers,
+            embedding_model: KaskPrivateInferenceSettings::default().embedding_model,
         };
         assert_eq!(credential_url(&custom), "http://127.0.0.2:9020/v1");
         assert_eq!(

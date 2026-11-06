@@ -60,6 +60,12 @@ pub(crate) struct WriteContext<'a> {
     pub private_curator_store: &'a CuratorStore,
     pub embedding_port: Option<&'a LanguageModelEmbeddingPort>,
     pub embedding_model: &'a str,
+    /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's
+    /// LOCAL embedding port and model. Private turns embed through THIS
+    /// pair only; the configured cloud pair above never sees private
+    /// content. Absent/empty keeps the keyword-only degrade, surfaced.
+    pub private_embedding_port: Option<&'a LanguageModelEmbeddingPort>,
+    pub private_embedding_model: &'a str,
     /// The classifier model used for write-time chunk tagging
     /// (`kask.models.classifier_model`). `None` = not configured — chunks
     /// get structural tags only (surfaced at wiring time, not per turn).
@@ -98,6 +104,63 @@ pub(crate) struct IngestionReport {
 impl IngestionReport {
     pub(crate) fn degraded(&self) -> bool {
         self.failed > 0 || self.degraded > 0
+    }
+}
+
+/// Embed one batch of chunk texts through `port` at the store's width —
+/// the shared request/response ladder for the public (configured cloud)
+/// and private (local ollama) ingest legs. A count mismatch and every
+/// failure are surfaced as a warned `None` (chunks stored
+/// keyword-recallable only, never blocking the write).
+async fn embed_chunk_batch(
+    port: &LanguageModelEmbeddingPort,
+    model: &str,
+    texts: &[String],
+    dimensions: u32,
+    tokio_handle: &tokio::runtime::Handle,
+    thread_id: &str,
+) -> Option<Vec<Vec<f32>>> {
+    let expected = texts.len();
+    let texts = texts.to_vec();
+    let model = model.to_string();
+    let port = port.clone();
+    match tokio_handle
+        .spawn(async move {
+            port.embed_with_dimensions(&model, &texts, Some(dimensions))
+                .await
+                .map(|batch| batch.vectors)
+        })
+        .await
+    {
+        Ok(Ok(vectors)) if vectors.len() == expected => Some(vectors),
+        Ok(Ok(vectors)) => {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                expected = expected,
+                got = vectors.len(),
+                "Embedding count mismatch — chunks written without embeddings"
+            );
+            None
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                error = %e,
+                "Failed to embed turn chunks — semantic recall degraded to keyword-only"
+            );
+            None
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                thread_id = %thread_id,
+                error = %e,
+                "Embedding task panicked — chunks written without embeddings"
+            );
+            None
+        }
     }
 }
 
@@ -236,7 +299,7 @@ pub(crate) async fn write_turn(
         tag_chunks_with_llm(ctx, &chunk_texts).await
     };
 
-    // ── 4. Embed every chunk in one batched call ──────────────────────
+    // ── 4. Embed every chunk in one batched call ──────────────────────────
     // Skipped when no embedding port is available — h_mem writes are pure SQL
     // and don't need embeddings. Semantic recall degrades to keyword-only,
     // but the curator still has episodic memory of the turn.
@@ -245,65 +308,48 @@ pub(crate) async fn write_turn(
     // (the entity_ref invariant): KNN results join back to the h_mems, and
     // the stored passage_text lets the recall path pinpoint the matched
     // chunk instead of injecting the whole thread.
-    // zed-kask: D100 (operator ruling 2026-11-05): a PRIVATE turn never
-    // reaches the configured embedder — it is a cloud model, and private
-    // content never crosses to cloud models (degrade-not-leak). Stored
-    // without embeddings: keyword-recallable in the private store;
-    // semantic recall for private content lifts when a local embedding
-    // model serves the leg.
+    // zed-kask: D100 item 3 (operator 2026-11-05) — a PRIVATE turn embeds
+    // through the LOCAL ollama port ONLY (`kask.private_inference.embedding_model`);
+    // the configured cloud embedder never sees private content
+    // (degrade-not-leak, lifted). An unwired or failed local port keeps
+    // the keyword-only degrade, surfaced.
     let vectors: Option<Vec<Vec<f32>>> = if private_turn {
-        tracing::warn!(
-            target: "reg.memory",
-            thread_id = %thread_id,
-            "private turn: chunk embedding skipped — the configured embedder is a cloud model; stored keyword-recallable only (a local embedding model lifts the degrade)"
-        );
-        None
+        match (
+            ctx.private_embedding_port,
+            ctx.private_embedding_model.is_empty(),
+        ) {
+            (Some(port), false) => {
+                embed_chunk_batch(
+                    port,
+                    ctx.private_embedding_model,
+                    &chunk_texts,
+                    ctx.private_curator_store.embedding_dim() as u32,
+                    ctx.tokio_handle,
+                    &thread_id,
+                )
+                .await
+            }
+            _ => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    "private turn: the local embedding port is not wired — chunks stored keyword-recallable only (set kask.private_inference.embedding_model to lift the degrade; private content never widens to the configured cloud embedder)"
+                );
+                None
+            }
+        }
     } else {
-        match ctx.embedding_port.cloned() {
-            Some(embedding_port) => {
-                let embedding_model = ctx.embedding_model.to_string();
-                let dimensions = ctx.curator_store.embedding_dim() as u32;
-                let texts = chunk_texts.clone();
-                let vectors = ctx
-                    .tokio_handle
-                    .spawn(async move {
-                        embedding_port
-                            .embed_with_dimensions(&embedding_model, &texts, Some(dimensions))
-                            .await
-                            .map(|batch| batch.vectors)
-                    })
-                    .await;
-                match vectors {
-                    Ok(Ok(vectors)) if vectors.len() == chunk_texts.len() => Some(vectors),
-                    Ok(Ok(vectors)) => {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            thread_id = %thread_id,
-                            expected = chunk_texts.len(),
-                            got = vectors.len(),
-                            "Embedding count mismatch — chunks written without embeddings"
-                        );
-                        None
-                    }
-                    Ok(Err(e)) => {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            thread_id = %thread_id,
-                            error = %e,
-                            "Failed to embed turn chunks — semantic recall degraded to keyword-only"
-                        );
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "reg.memory",
-                            thread_id = %thread_id,
-                            error = %e,
-                            "Embedding task panicked — chunks written without embeddings"
-                        );
-                        None
-                    }
-                }
+        match ctx.embedding_port {
+            Some(port) => {
+                embed_chunk_batch(
+                    port,
+                    ctx.embedding_model,
+                    &chunk_texts,
+                    ctx.curator_store.embedding_dim() as u32,
+                    ctx.tokio_handle,
+                    &thread_id,
+                )
+                .await
             }
             None => {
                 tracing::warn!(
@@ -321,12 +367,30 @@ pub(crate) async fn write_turn(
         attempted: chunk_texts.len(),
         ..Default::default()
     };
-    let embedding_expected = ctx.embedding_port.is_some() && !private_turn;
+    // Embedding was expected when the turn's leg had a wired port+model:
+    // the configured cloud leg (public turns) or the local ollama leg
+    // (private turns — D100 item 3). An expected-but-failed embed counts
+    // per-chunk below; an unwired leg reports degraded up front.
+    let embedding_expected = if private_turn {
+        ctx.private_embedding_port.is_some() && !ctx.private_embedding_model.is_empty()
+    } else {
+        ctx.embedding_port.is_some()
+    };
     if !embedding_expected {
         report.degraded = report.attempted;
     }
     // FR-4 (D-2): hoisted once — the provenance stamps every chunk below.
     let inference_provenance = record.inference_provenance;
+    // The model string that produced `vectors` — the LEG's model, not the
+    // other leg's. The store's KNN model gate joins on this label: a
+    // private chunk embedded locally must carry the LOCAL model string or
+    // the private-context query (embedded with the same local model)
+    // would exclude it as a mismatch (D100 item 3).
+    let leg_embedding_model: &str = if private_turn {
+        ctx.private_embedding_model
+    } else {
+        ctx.embedding_model
+    };
     for (index, chunk_text) in chunk_texts.iter().enumerate() {
         let mut ontology = structural_ontology(&thread_id, turn_ms, index);
         if let Some(tags) = content_tags.as_ref().and_then(|tags| tags.get(index)) {
@@ -372,7 +436,7 @@ pub(crate) async fn write_turn(
                 match curator_store.store_embedding(
                     &entity,
                     vector,
-                    ctx.embedding_model,
+                    leg_embedding_model,
                     Some(chunk_text),
                 ) {
                     Ok(_embedding_id) => {
@@ -700,6 +764,8 @@ mod tests {
             private_curator_store: &CuratorStore::for_tests(None),
             embedding_port: None,
             embedding_model: "test-model",
+            private_embedding_port: None,
+            private_embedding_model: "",
             classifier_model: Some("test-classifier"),
             template_root: registry.path(),
             curator_webid: WebID::from_persona(b"curator"),

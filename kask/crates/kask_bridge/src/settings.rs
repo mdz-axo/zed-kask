@@ -601,6 +601,13 @@ pub struct KaskPrivateInferenceSettings {
     /// privacy-marked threads (cloud-inference-dependent tools). Defaults
     /// to the media server.
     pub private_thread_disabled_servers: Vec<String>,
+    /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's
+    /// LOCAL embedding model (provider-qualified for the local ollama
+    /// provider). Private-store chunks and private-context recall queries
+    /// embed through the local port bound to this model; the configured
+    /// cloud embedder never sees private content. Empty = the explicit
+    /// opt-out (keyword-only degrade persists, surfaced).
+    pub embedding_model: String,
 }
 
 impl Default for KaskPrivateInferenceSettings {
@@ -621,6 +628,11 @@ impl Default for KaskPrivateInferenceSettings {
                     .iter()
                     .map(|id| id.to_string())
                     .collect(),
+            // D100 item 3: the single literal lives in
+            // `hkask_inference::model_constants` (DEFAULT_PRIVATE_EMBEDDING_MODEL)
+            // — the same single-home rule as the cloud embedding default.
+            embedding_model: hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL
+                .to_string(),
         }
     }
 }
@@ -636,6 +648,9 @@ impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings 
             private_thread_disabled_servers: c
                 .private_thread_disabled_servers
                 .unwrap_or(default.private_thread_disabled_servers),
+            // `Some("")` is preserved — the explicit opt-out is distinct from
+            // absent (the default local model).
+            embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
         }
     }
 }
@@ -1319,6 +1334,7 @@ mod tests {
             port: Some(9020),
             local_provider_ids: Some(vec!["lm-studio-local".into()]),
             private_thread_disabled_servers: Some(vec!["media".into()]),
+            embedding_model: Some("ollama/custom-embed".into()),
         };
         let effective: KaskPrivateInferenceSettings = content.into();
         assert_eq!(effective.provider_id, "pi-test");
@@ -1331,6 +1347,37 @@ mod tests {
         assert_eq!(
             effective.private_thread_disabled_servers,
             vec!["media".to_string()]
+        );
+        assert_eq!(effective.embedding_model, "ollama/custom-embed");
+    }
+
+    // D100 item 3 (operator 2026-11-05) — the private leg's local embedding
+    // model: absent content uses the single-home default (the model_constants
+    // constant, never a second literal), a present value overrides it, and an
+    // EXPLICITLY EMPTY string is the operator's opt-out (distinct from absent
+    // — the keyword-only degrade persists instead of the default local model).
+    #[test]
+    fn private_embedding_model_defaults_overrides_and_opts_out() {
+        let default = KaskPrivateInferenceSettings::default();
+        assert_eq!(
+            default.embedding_model,
+            hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL
+        );
+        let absent: KaskPrivateInferenceSettings =
+            KaskPrivateInferenceSettingsContent::default().into();
+        assert_eq!(
+            absent.embedding_model,
+            hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL,
+            "an absent field uses the default local model"
+        );
+        let opted_out: KaskPrivateInferenceSettings = KaskPrivateInferenceSettingsContent {
+            embedding_model: Some(String::new()),
+            ..Default::default()
+        }
+        .into();
+        assert_eq!(
+            opted_out.embedding_model, "",
+            "an explicitly empty string is the operator's opt-out, not the default"
         );
     }
 

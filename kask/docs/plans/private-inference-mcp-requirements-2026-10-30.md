@@ -261,7 +261,18 @@ each store. Degrade-not-leak holds until a local embedding/classification
 model serves the private leg: private chunks and private queries never
 cross to the configured cloud models (stored/recalled keyword-only,
 surfaced). Landed as D100's store-split leg (commit `fe9ab1f696`; pins in
-the D100 DIVERGENCE.md register row). The FR-4 table's rows stand as
+the D100 DIVERGENCE.md register row). **The embedding half of that degrade
+LIFTED (2026-11-05, the operator's local-ollama directive — D100 item 3):**
+private chunks and private-context queries embed through a dedicated local
+port bound to the ollama descriptor (default
+`ollama/qwen3-embedding:0.6b`, the stores' 1024 width natively) — zero
+cloud calls, semantic recall live for private content on the host recall
+path; unwired (or the explicitly empty setting), the keyword-only degrade
+persists, surfaced. The classifier half remains degraded, and the curator
+MCP child's tool-side query embed still routes via the cloud IPC
+(`curator_semantic_search`/`consult`/`curator_federated_search` embed every
+query through the inference IPC regardless of call provenance) — the named
+follow-up, evidence-cited in the item-3 change record. The FR-4 table's rows stand as
 written for the surfaces the mark reaches; the M5 plan
 (`kask/docs/plans/private-inference-m5-recall-export-filters-plan-2026-11-05.md`)
 records the read side, the per-call `_meta` channel, and the off-axis

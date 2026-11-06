@@ -286,3 +286,16 @@ pub const DEFAULT_RERANK_MODEL: &str = "deepinfra/Qwen/Qwen3-Reranker-8B";
 /// one constant (plus re-embedding the stores; the search-side model gate
 /// filters and surfaces mismatched rows during the migration window).
 pub const DEFAULT_EMBEDDING_MODEL: &str = "OpenRouter/qwen/qwen3-embedding-8b";
+
+/// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's LOCAL
+/// embedding model, served by the local ollama instance (the
+/// `INFERENCE_PROVIDERS` "ollama" descriptor: local by construction, no
+/// credentials, no cloud crossing). Private-store chunks and
+/// private-context recall queries embed through the port bound to this
+/// model ONLY; the configured cloud embedder above never sees private
+/// content (the degrade-not-leak lift). The 0.6b emits the store's
+/// default 1024 width natively (the cloud 8B is MRL-truncated to it), so
+/// both stores share one vector width; the provider prefix must match
+/// the descriptor's id (pinned in kask_bridge — the port's provider
+/// check rejects a mismatched prefix per call).
+pub const DEFAULT_PRIVATE_EMBEDDING_MODEL: &str = "ollama/qwen3-embedding:0.6b";

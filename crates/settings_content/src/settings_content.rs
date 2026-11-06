@@ -1970,6 +1970,16 @@ pub struct KaskPrivateInferenceSettingsContent {
     /// settings-layer default.
     #[serde(default)]
     pub private_thread_disabled_servers: Option<Vec<String>>,
+    /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's
+    /// LOCAL embedding model (provider-qualified for the local ollama
+    /// provider, e.g. `"ollama/qwen3-embedding:0.6b"`). Private-store
+    /// chunks at ingest and private-context recall queries embed through
+    /// the local port bound to this model ONLY — the configured cloud
+    /// embedder never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (private content stays keyword-only, surfaced).
+    #[serde(default)]
+    pub embedding_model: Option<String>,
 }
 
 /// zed-kask: D100 — the default local-leg provider set for privacy-marked

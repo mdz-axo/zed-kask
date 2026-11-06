@@ -349,6 +349,30 @@ pub struct ResolvedEmbeddingCredentials {
     pub(crate) api_key: String,
 }
 
+/// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's LOCAL
+/// embedding binding. Private content (private-store chunks at ingest,
+/// private-context recall queries) embeds through a port bound to the
+/// OLLAMA descriptor — the local `INFERENCE_PROVIDERS` entry that serves
+/// OpenAI-compatible `/embeddings` at its `api_url`
+/// (`http://localhost:11434/v1`) with NO api key: local inference needs
+/// no credentials, and the bearer header the port sends carries an empty
+/// value the local server ignores. The credentialed cloud port never
+/// sees private content — the keyword-only degrade lifts only by going
+/// local, never by widening to the cloud.
+///
+/// `None` when the ollama descriptor is absent from the table (a removed
+/// entry — the private port is then not wired and the keyword-only degrade
+/// persists, surfaced at wiring time).
+pub fn local_ollama_embedding_credentials() -> Option<ResolvedEmbeddingCredentials> {
+    INFERENCE_PROVIDERS
+        .iter()
+        .find(|provider| provider.id.eq_ignore_ascii_case("ollama") && provider.serves_embeddings)
+        .map(|provider| ResolvedEmbeddingCredentials {
+            provider,
+            api_key: String::new(),
+        })
+}
+
 /// Resolve provider-bound credentials for an embedding model string by reading
 /// the API key from the Zed keychain at the provider's `api_url`.
 ///

@@ -367,8 +367,18 @@ ingest seam; the injector federates both stores on private-marked
 contexts only. The per-surface filters (§4 M5) stand as designed — the
 `InferenceProvenance` mark rides rows inside each store as the belt; the
 per-call `_meta` channel (the M5 plan's M5-A) carries the caller context
-to the tools. Landed: commit `fe9ab1f696` (the split) and `bc1170dcff`
-(the child-side `_meta` read side); the zed-side `_meta` write (M5 plan
-step 1) is the named follow-up. Degrade-not-leak until a local
-embedding/classification model serves (the V1 keyword-only degrade is
-surfaced, never silent).
+to the tools. Landed: commit `fe9ab1f696` (the split), `bc1170dcff`
+(the child-side `_meta` read side), and `0952bfbd67` (the zed-side `_meta`
+write — M5 plan step 1, landed the same day). Degrade-not-leak until a
+local embedding/classification model serves (the V1 keyword-only degrade is
+surfaced, never silent). **Item 3 record (2026-11-05, the operator's
+local-ollama directive):** the embedding half of the degrade lifted on the
+host path — `RealMemoryPort` carries a private pair (a local port bound to
+the `INFERENCE_PROVIDERS` ollama descriptor + the setting
+`kask.private_inference.embedding_model`, default `ollama/qwen3-embedding:0.6b`
+— the 0.6b emits the stores' 1024 width natively), private chunks at ingest
+and private-context queries at recall embed through it only (zero cloud
+calls; the stored vector row carries the LEG's model string so the KNN
+model gate joins), and the unwired case keeps the keyword-only degrade.
+The classifier half and the curator MCP child's tool-side query embed (via
+the cloud IPC, provenance-ungated) remain the named follow-ups.

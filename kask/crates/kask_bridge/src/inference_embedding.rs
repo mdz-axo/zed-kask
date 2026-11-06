@@ -17,6 +17,144 @@ use http_client::{AsyncBody, HttpClient, Method, Request};
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
 
+/// zed-kask: D100 item 3 (operator 2026-11-05) — construct the private
+/// leg's LOCAL embedding port.
+///
+/// Binds to the local ollama descriptor (no credentials — see
+/// [`local_ollama_embedding_credentials`]); private chunks and private
+/// recall queries embed through this instance ONLY, and the credentialed
+/// cloud port is never consulted for them. Returns `None` — with a warn
+/// naming the boundary and the setting — when the model is empty (the
+/// operator's explicit opt-out; the keyword-only degrade persists) or when
+/// the model does not name the local provider (a cloud-prefixed string
+/// here would be rejected by the port's per-call provider check, so the
+/// mismatch is surfaced at wiring time instead of failing every call).
+///
+/// The same `http_client`/`tokio_handle`/`max_concurrency` wiring as the
+/// cloud port: the local server is on loopback, but it is still an HTTP
+/// call that must be spawned and bounded.
+pub fn build_private_embedding_port(
+    model: &str,
+    http_client: Arc<dyn HttpClient>,
+    tokio_handle: tokio::runtime::Handle,
+    max_concurrency: usize,
+) -> Option<LanguageModelEmbeddingPort> {
+    if model.is_empty() {
+        tracing::warn!(
+            target: "kask.private_inference",
+            "private embedding model is empty — private-store chunks and private-context \
+             queries stay keyword-only (set kask.private_inference.embedding_model to lift \
+             the degrade)"
+        );
+        return None;
+    }
+    let credentials = crate::inference_providers::local_ollama_embedding_credentials();
+    let Some(credentials) = credentials else {
+        tracing::warn!(
+            target: "kask.private_inference",
+            "the ollama descriptor is absent from INFERENCE_PROVIDERS — the private \
+             embedding port is not wired; the keyword-only degrade persists"
+        );
+        return None;
+    };
+    let prefix_matches = model
+        .split_once('/')
+        .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case(credentials.provider.id));
+    if !prefix_matches {
+        tracing::warn!(
+            target: "kask.private_inference",
+            model = %model,
+            local_provider = %credentials.provider.id,
+            "the private embedding model does not name the local provider — the private \
+             port is not wired (set kask.private_inference.embedding_model to a \
+             {}/<model> string); private content stays keyword-only and never widens \
+             to the cloud embedder",
+            credentials.provider.id
+        );
+        return None;
+    }
+    Some(LanguageModelEmbeddingPort::new(
+        credentials,
+        http_client,
+        tokio_handle,
+        max_concurrency,
+    ))
+}
+
+#[cfg(test)]
+mod private_port_tests {
+    use super::*;
+    use crate::inference_providers::{INFERENCE_PROVIDERS, local_ollama_embedding_credentials};
+    use hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL;
+
+    fn http_client() -> Arc<dyn HttpClient> {
+        http_client::FakeHttpClient::with_404_response()
+    }
+
+    #[test]
+    fn local_ollama_credentials_bind_the_serving_descriptor_with_no_key() {
+        let credentials =
+            local_ollama_embedding_credentials().expect("the ollama descriptor resolves");
+        assert_eq!(credentials.provider.id, "ollama");
+        assert!(credentials.provider.serves_embeddings);
+        assert_eq!(
+            credentials.api_key, "",
+            "local inference needs no credentials"
+        );
+    }
+
+    #[test]
+    fn the_default_private_model_names_the_local_provider() {
+        // The constant and the descriptor cannot drift apart: a prefix change
+        // on either side fails here, not as a per-call port rejection.
+        let credentials =
+            local_ollama_embedding_credentials().expect("the ollama descriptor resolves");
+        let (prefix, model_id) = DEFAULT_PRIVATE_EMBEDDING_MODEL
+            .split_once('/')
+            .expect("the default is provider-qualified");
+        assert_eq!(prefix, credentials.provider.id);
+        assert!(!model_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_rejects_empty_and_cloud_prefixed_models_but_binds_the_local_one() {
+        let handle = tokio::runtime::Handle::current();
+        assert!(
+            build_private_embedding_port("", http_client(), handle.clone(), 4).is_none(),
+            "the explicit empty opt-out wires no port"
+        );
+        assert!(
+            build_private_embedding_port(
+                hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL,
+                http_client(),
+                handle.clone(),
+                4,
+            )
+            .is_none(),
+            "a cloud-prefixed model never wires the private local port"
+        );
+        let port =
+            build_private_embedding_port(DEFAULT_PRIVATE_EMBEDDING_MODEL, http_client(), handle, 4)
+                .expect("the local default wires the private port");
+        // Construction wires a bound port; no HTTP happens until an embed.
+        drop(port);
+    }
+
+    #[test]
+    fn the_ollama_descriptor_serves_embeddings_from_loopback() {
+        let ollama = INFERENCE_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == "ollama")
+            .expect("the local provider is registered");
+        assert!(ollama.serves_embeddings);
+        assert!(
+            ollama.api_url.contains("localhost") || ollama.api_url.contains("127.0.0.1"),
+            "the local embedding endpoint must be loopback: {}",
+            ollama.api_url
+        );
+    }
+}
+
 /// Request sent to the tokio-side embedding executor.
 struct EmbedRequest {
     /// The provider-prefixed model string (e.g.

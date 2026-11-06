@@ -1837,6 +1837,29 @@ fn main() {
                         // RealMemoryPort below).
                         embedding_port_for_ipc = embedding_port.clone();
 
+                        // zed-kask: D100 item 3 (operator 2026-11-05) — the
+                        // private leg's LOCAL embedding port: private-store
+                        // chunks and private-context recall queries embed
+                        // through this instance ONLY (the local ollama
+                        // descriptor; no credentials). Unwired — the
+                        // empty-model opt-out, a non-local model string, a
+                        // removed descriptor — keeps the keyword-only
+                        // degrade, surfaced by the builder.
+                        let private_embedding_model =
+                            kask_settings.private_inference.embedding_model.clone();
+                        let private_embedding_port = kask_bridge::build_private_embedding_port(
+                            &private_embedding_model,
+                            app_state_for_deferred.client.http_client(),
+                            gpui_tokio::Tokio::handle_async(&*cx),
+                            kask_settings.general.max_concurrency as usize,
+                        );
+                        if private_embedding_port.is_some() {
+                            log::info!(
+                                "hKask private embedding port wired — private semantic recall \
+                                 serves locally (model: {private_embedding_model})"
+                            );
+                        }
+
                         // The classifier model for write-time chunk
                         // tagging. The saved Kask setting is authoritative for
                         // this in-process consumer. `HKASK_CLASSIFIER_MODEL`
@@ -1875,6 +1898,8 @@ fn main() {
                             embedding_model,
                             embedding_dim,
                             embedding_port,
+                            private_embedding_port,
+                            private_embedding_model,
                             classifier_model,
                             template_root,
                             kask_settings.memory.consolidation_cadence_secs,

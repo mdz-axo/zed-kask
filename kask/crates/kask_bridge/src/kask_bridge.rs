@@ -63,14 +63,15 @@ pub use inference_chat::{
     LanguageModelInferencePort, NoModelInferencePort, global_inference_port,
     set_global_inference_port,
 };
-pub use inference_embedding::LanguageModelEmbeddingPort;
+pub use inference_embedding::{LanguageModelEmbeddingPort, build_private_embedding_port};
 pub use inference_ipc_server::{
     InferenceIpcServer, WorktreeSpawner, set_worktree_spawner, swap_inference_ipc_ports,
 };
 pub use inference_providers::{
     DATA_SERVICES, DataServiceDescriptor, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
     ResolvedEmbeddingCredentials, credential_url_for_key, credential_urls_for_mcp,
-    data_service_credential_urls, resolve_embedding_credentials,
+    data_service_credential_urls, local_ollama_embedding_credentials,
+    resolve_embedding_credentials,
 };
 pub use inference_resilience::InferenceResilienceConfig;
 pub use inference_socket::{

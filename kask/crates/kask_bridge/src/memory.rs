@@ -212,11 +212,13 @@ pub struct RealMemoryPort {
     /// rows recall only there); a public context never touches it. A
     /// separate SQLCipher file, so the public DB — backups, exports, the
     /// curator MCP server's tools — is clean by construction. V1 stated
-    /// limits: the private store gets no consolidation/forgetting pass and
-    /// its chunks are stored WITHOUT embeddings or classifier tags until a
-    /// local embedding/classification model serves them (private content
-    /// never crosses to the configured cloud models — degrade-not-leak,
-    /// surfaced).
+    /// limits: the private store gets no consolidation/forgetting pass, and
+    /// its chunks get no CLASSIFIER tags (the configured classifier is a
+    /// cloud model; structural tags only, surfaced). The embedding half
+    /// of the former degrade LIFTED (D100 item 3, 2026-11-05): private
+    /// chunks and private-context queries embed through the LOCAL ollama
+    /// port (`private_embedding_port` below) — never the configured cloud
+    /// embedder.
     private_curator_store: Arc<CuratorStore>,
     /// `None` when embedding credentials are unavailable — h_mem writes still
     /// work (they're pure SQL), but semantic recall (KNN) is degraded to
@@ -224,6 +226,19 @@ pub struct RealMemoryPort {
     /// episodic memory of conversations is more valuable than vector search.
     embedding_port: Option<LanguageModelEmbeddingPort>,
     embedding_model: String,
+    /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's
+    /// LOCAL embedding port, bound to the local ollama descriptor (no
+    /// credentials; `build_private_embedding_port`). Private-store chunks
+    /// at ingest and private-context recall queries embed through THIS
+    /// instance only — the configured cloud port above never sees private
+    /// content. `None` (or an empty `private_embedding_model`) keeps the
+    /// keyword-only degrade, surfaced.
+    private_embedding_port: Option<LanguageModelEmbeddingPort>,
+    /// The private leg's local model string
+    /// (`kask.private_inference.embedding_model`, default
+    /// `DEFAULT_PRIVATE_EMBEDDING_MODEL` — provider-qualified for the
+    /// local ollama provider).
+    private_embedding_model: String,
     external_passphrase: String,
     external_sources: Arc<std::sync::Mutex<Option<Arc<ExternalSourceCache>>>>,
     /// The classifier model used for write-time chunk tagging
@@ -277,6 +292,8 @@ impl RealMemoryPort {
         embedding_model: String,
         embedding_dim: usize,
         embedding_port: Option<LanguageModelEmbeddingPort>,
+        private_embedding_port: Option<LanguageModelEmbeddingPort>,
+        private_embedding_model: String,
         classifier_model: Option<String>,
         template_root: std::path::PathBuf,
         consolidation_cadence_secs: u64,
@@ -328,6 +345,8 @@ impl RealMemoryPort {
             private_curator_store,
             embedding_port,
             embedding_model,
+            private_embedding_port,
+            private_embedding_model,
             external_passphrase: passphrase.to_string(),
             external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model,
@@ -551,6 +570,8 @@ impl MemoryPort for RealMemoryPort {
                 private_curator_store: &self.private_curator_store,
                 embedding_port: self.embedding_port.as_ref(),
                 embedding_model: &self.embedding_model,
+                private_embedding_port: self.private_embedding_port.as_ref(),
+                private_embedding_model: &self.private_embedding_model,
                 classifier_model: self.classifier_model.as_deref(),
                 template_root: self.template_root.as_path(),
                 curator_webid: self.curator_webid,
@@ -772,6 +793,7 @@ impl RealMemoryPort {
                         limit,
                         "recall_context_curator",
                         private_context,
+                        self.curator_store.embedding_dim() as u32,
                     )
                     .await?,
                 );
@@ -786,6 +808,7 @@ impl RealMemoryPort {
                         limit,
                         "recall_context_curator_private",
                         private_context,
+                        self.private_curator_store.embedding_dim() as u32,
                     )
                     .await?,
                 );
@@ -886,81 +909,34 @@ impl RealMemoryPort {
             .unwrap_or(0)
     }
 
-    /// Shared recall implementation for the curator's store.
-    ///
-    /// `log_label` is used in tracing so recall paths are distinguishable in
-    /// logs.
-    ///
-    /// This was previously duplicated verbatim between `recall_context` and
-    /// `recall_context_curator`; the duplication was a maintenance hazard
-    /// (a fix to one had to be manually mirrored in the other).
-    async fn recall_from<'a>(
-        &'a self,
-        store: &'a Arc<MemoryStore>,
-        query: &'a str,
-        limit: usize,
+    /// Embed one recall query through `port` (None = no port wired) at the
+    /// store's width — the shared request/response ladder for the public
+    /// (configured cloud) and private (local ollama) recall legs. Every
+    /// failure is surfaced as a warned `None` (the KNN leg degrades to
+    /// keyword-only); a `None` port is the already-surfaced wiring state
+    /// and returns quietly.
+    async fn embed_recall_query(
+        &self,
+        port: Option<LanguageModelEmbeddingPort>,
+        model: &str,
+        query: &str,
+        dimensions: u32,
         log_label: &'static str,
-        private_context: bool,
-    ) -> Result<Vec<MemorySnippet>, MemoryError> {
-        // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
-        // touch only the survivors. Both the embedding-KNN and keyword paths
-        // read from the same `store`, so no per-candidate source tag is
-        // needed — the touch target is always `store`.
-        struct Candidate {
-            snippet: MemorySnippet,
-            h_mem_id: hkask_storage::HMemId,
-        }
-        let mut candidates: Vec<Candidate> = Vec::new();
-        // FR-4 (D-2): rows excluded by the privacy filter this call —
-        // surfaced after the legs, never silently dropped (an empty result
-        // must not read as "no memory found").
-        let mut excluded_private: usize = 0;
-
-        // ── 1. Embedding search (KNN) ────────────────────────────────
-        //
-        // Embed the query and search for similar stored embeddings.
-        // This finds turns where the user asked similar questions.
-        // Spawn the embedding HTTP call on the tokio runtime so the
-        // GPUI-side channel task can resolve credentials and make the
-        // HTTP call.
-        //
-        // zed-kask: D100 (operator ruling 2026-11-05): a PRIVATE context's
-        // prompt is private content — it never crosses to the configured
-        // (cloud) embedder. The KNN leg is skipped and the recall degrades
-        // to keyword-only, surfaced; a local embedding model lifts the
-        // degrade.
-        let embedded = if private_context {
-            tracing::warn!(
-                target: "reg.memory",
-                label = log_label,
-                "private context: query embedding skipped — the configured embedder is a cloud model; recall degraded to keyword-only (a local embedding model lifts the degrade)"
-            );
-            // The join-result shape with no embed: the KNN leg is skipped.
-            Ok(Ok(None))
-        } else {
-            let embedding_model = self.embedding_model.clone();
-            let embedding_port = self.embedding_port.clone();
-            let dimensions = self.curator_store.embedding_dim() as u32;
-            let query_owned = query.to_string();
-            self.tokio_handle
-                .spawn(async move {
-                    let Some(ref embedding_port) = embedding_port else {
-                        return Ok(None);
-                    };
-                    embedding_port
-                        .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
-                        .await
-                        .map(|batch| {
-                            Some((batch.vectors, batch.requested_model, batch.actual_model))
-                        })
-                })
-                .await
-        };
-
-        // A failed embed degrades recall to keyword-only — surface it so
-        // the operator can distinguish "no memory found" from "embedding
-        // endpoint down".
-        let embedded = match embedded {
+    ) -> Option<(Vec<Vec<f32>>, String, Option<String>)> {
+        let model = model.to_string();
+        let query = query.to_string();
+        match self
+            .tokio_handle
+            .spawn(async move {
+                let Some(ref port) = port else {
+                    return Ok(None);
+                };
+                port.embed_with_dimensions(&model, &[query], Some(dimensions))
+                    .await
+                    .map(|batch| Some((batch.vectors, batch.requested_model, batch.actual_model)))
+            })
+            .await
+        {
             Ok(Ok(embedded)) => embedded,
             Ok(Err(e)) => {
                 tracing::warn!(
@@ -980,6 +956,82 @@ impl RealMemoryPort {
                 );
                 None
             }
+        }
+    }
+
+    /// Shared recall implementation for the curator's store.
+    ///
+    /// `log_label` is used in tracing so recall paths are distinguishable in
+    /// logs.
+    ///
+    /// This was previously duplicated verbatim between `recall_context` and
+    /// `recall_context_curator`; the duplication was a maintenance hazard
+    /// (a fix to one had to be manually mirrored in the other).
+    async fn recall_from<'a>(
+        &'a self,
+        store: &'a Arc<MemoryStore>,
+        query: &'a str,
+        limit: usize,
+        log_label: &'static str,
+        private_context: bool,
+        dimensions: u32,
+    ) -> Result<Vec<MemorySnippet>, MemoryError> {
+        // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
+        // touch only the survivors. Both the embedding-KNN and keyword paths
+        // read from the same `store`, so no per-candidate source tag is
+        // needed — the touch target is always `store`.
+        struct Candidate {
+            snippet: MemorySnippet,
+            h_mem_id: hkask_storage::HMemId,
+        }
+        let mut candidates: Vec<Candidate> = Vec::new();
+        // FR-4 (D-2): rows excluded by the privacy filter this call —
+        // surfaced after the legs, never silently dropped (an empty result
+        // must not read as "no memory found").
+        let mut excluded_private: usize = 0;
+
+        // ── 1. Embedding search (KNN) ─────────────────────────────────
+        //
+        // Embed the query and search for similar stored embeddings.
+        // This finds turns where the user asked similar questions.
+        // Spawn the embedding HTTP call on the tokio runtime so the
+        // GPUI-side channel task can resolve credentials and make the
+        // HTTP call.
+        //
+        // zed-kask: D100 item 3 (operator 2026-11-05) — a PRIVATE
+        // context's prompt is private content: it embeds through the
+        // LOCAL ollama port ONLY (`private_embedding_port`; the setting
+        // `kask.private_inference.embedding_model`); the configured cloud
+        // embedder never sees it. An unwired or failed local port degrades
+        // this leg to keyword-only, surfaced — never the cloud port. A
+        // public context embeds through the configured port as before.
+        let embedded = if private_context {
+            if self.private_embedding_model.is_empty() || self.private_embedding_port.is_none() {
+                tracing::warn!(
+                    target: "reg.memory",
+                    label = log_label,
+                    "private context: the local embedding port is not wired — recall degraded to keyword-only (set kask.private_inference.embedding_model to lift the degrade; private content never widens to the configured cloud embedder)"
+                );
+                None
+            } else {
+                self.embed_recall_query(
+                    self.private_embedding_port.clone(),
+                    &self.private_embedding_model,
+                    query,
+                    dimensions,
+                    log_label,
+                )
+                .await
+            }
+        } else {
+            self.embed_recall_query(
+                self.embedding_port.clone(),
+                &self.embedding_model,
+                query,
+                dimensions,
+                log_label,
+            )
+            .await
         };
         if let Some((vectors, requested_model, actual_model)) = embedded
             && let Some(query_vector) = vectors.into_iter().next()
@@ -993,8 +1045,21 @@ impl RealMemoryPort {
                 Ok(outcome) => {
                     // Model-gate degradation must be visible: rows excluded
                     // because they were embedded under a different model are
-                    // a migration in progress, not an empty memory.
-                    if outcome.excluded_model_mismatch > 0 {
+                    // a migration in progress, not an empty memory — EXCEPT
+                    // on a private-context leg, where the exclusion is by
+                    // construction (D100 item 3): the query embeds in the
+                    // LOCAL model space, so this store's cloud-model vectors
+                    // cannot join, and its rows stay keyword-reachable.
+                    // Debug there, not warn — it fires on every
+                    // private-context recall against a cloud-model store.
+                    if outcome.excluded_model_mismatch > 0 && private_context {
+                        tracing::debug!(
+                            target: "reg.memory",
+                            label = log_label,
+                            excluded = outcome.excluded_model_mismatch,
+                            "KNN excluded this store's cloud-model vectors — the private context's query embeds locally (D100 item 3); keyword recall still serves this leg"
+                        );
+                    } else if outcome.excluded_model_mismatch > 0 {
                         tracing::warn!(
                             target: "reg.memory",
                             label = log_label,
@@ -1497,6 +1562,12 @@ pub(crate) mod tests {
             ))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
+            // The private pair defaults unwired: every existing test's
+            // private legs keep the keyword-only degrade (their pinned
+            // behavior); the item-3 pins wire the pair explicitly via
+            // `in_memory_port_with_private_embed_fn`.
+            private_embedding_port: None,
+            private_embedding_model: String::new(),
             external_passphrase: String::new(),
             external_sources: Arc::new(std::sync::Mutex::new(None)),
             classifier_model: None,
@@ -1539,6 +1610,8 @@ pub(crate) mod tests {
             private_curator_store: &port.private_curator_store,
             embedding_port,
             embedding_model: &port.embedding_model,
+            private_embedding_port: port.private_embedding_port.as_ref(),
+            private_embedding_model: &port.private_embedding_model,
             classifier_model: port.classifier_model.as_deref(),
             template_root: port.template_root.as_path(),
             curator_webid: port.curator_webid,
@@ -1573,6 +1646,27 @@ pub(crate) mod tests {
             tokio::runtime::Handle::current(),
         );
         port_with(in_memory_curator_store(), embedding_port, None, 0, 0.3)
+    }
+
+    /// The item-3 fixture: the CLOUD pair (as every test wires it) plus a
+    /// LOCAL pair wired as the private leg — the pins assert private
+    /// content reaches the local port and never the cloud one.
+    pub(crate) fn in_memory_port_with_private_embed_fn(
+        cloud_embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
+        private_embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
+    ) -> RealMemoryPort {
+        let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
+            cloud_embed_fn,
+            tokio::runtime::Handle::current(),
+        );
+        let private_embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
+            private_embed_fn,
+            tokio::runtime::Handle::current(),
+        );
+        let mut port = port_with(in_memory_curator_store(), embedding_port, None, 0, 0.3);
+        port.private_embedding_port = Some(private_embedding_port);
+        port.private_embedding_model = "ollama/test-private-embedding".to_string();
+        port
     }
 
     pub(crate) fn in_memory_port_with_external_fixture() -> RealMemoryPort {
@@ -2233,17 +2327,98 @@ pub(crate) mod tests {
         (embed_calls, counting_embed)
     }
 
-    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the write
-    /// side: a PRIVATE turn's chunks never cross to the configured (cloud)
-    /// embedder — zero embed calls — while a public turn's do. Surfaced via
-    /// the degraded report accounting.
+    /// The deterministic two-direction embedder for the KNN-isolation
+    /// pins: any text containing one of `target_markers` embeds to one
+    /// fixed direction; every other text embeds to the orthogonal one —
+    /// so a marker query is KNN-identical to a marker chunk while sharing
+    /// NO word with it (the keyword leg cannot find it).
+    fn knn_direction_fixture_embed_fn(
+        target_markers: &'static [&'static str],
+    ) -> Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> {
+        Arc::new(move |text: &str| -> Vec<f32> {
+            let mut vector = vec![0.0_f32; 1024];
+            if target_markers.iter().any(|marker| text.contains(marker)) {
+                for entry in vector.iter_mut().take(512) {
+                    *entry = 1.0;
+                }
+            } else {
+                for entry in vector.iter_mut().skip(512) {
+                    *entry = 1.0;
+                }
+            }
+            vector
+        })
+    }
+
+    /// D100 item 3 (operator 2026-11-05) — the WRITE-side lift: a PRIVATE
+    /// turn's chunks embed through the LOCAL port (the private pair) and
+    /// the configured cloud embedder never sees them — zero cloud calls.
+    /// A public turn's chunks embed through the configured port as before
+    /// (and add no local calls).
     #[tokio::test]
-    async fn private_chunks_never_reach_the_configured_embedder() {
+    async fn private_turn_chunks_embed_via_the_local_port_not_the_configured_embedder() {
+        let (cloud_calls, cloud_embed) = counting_embed_fn();
+        let (local_calls, local_embed) = counting_embed_fn();
+        let port = in_memory_port_with_private_embed_fn(cloud_embed, local_embed);
+
+        let private_record = TurnRecord {
+            thread_id: "local-embed-private".to_string(),
+            user_input: "private question that must not cross to the cloud embedder".to_string(),
+            agent_response: "private answer embedded locally only".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        port.ingest_turn(private_record)
+            .await
+            .expect("private ingest succeeds");
+        assert_eq!(
+            cloud_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a private turn never reaches the configured cloud embedder"
+        );
+        let local_after_private = local_calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            local_after_private > 0,
+            "a private turn's chunks embed through the local port (item 3's lift)"
+        );
+
+        let public_record = TurnRecord {
+            thread_id: "cloud-embed-public".to_string(),
+            user_input: "public question that may embed".to_string(),
+            agent_response: "public answer embedded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
+        };
+        port.ingest_turn(public_record)
+            .await
+            .expect("public ingest succeeds");
+        assert!(
+            cloud_calls.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "a public turn embeds through the configured port as usual"
+        );
+        assert_eq!(
+            local_calls.load(std::sync::atomic::Ordering::SeqCst),
+            local_after_private,
+            "a public turn adds no local-port calls"
+        );
+    }
+
+    /// The WRITE-side degrade PERSISTS when the local pair is unwired (the
+    /// explicit opt-out or an unset private model): a private turn's chunks
+    /// stay keyword-recallable only and the configured cloud embedder sees
+    /// zero calls — the original D100 degrade-not-leak contract, now
+    /// scoped to the unwired case.
+    #[tokio::test]
+    async fn private_turn_chunks_stay_keyword_only_when_no_local_port_is_wired() {
         let (embed_calls, counting_embed) = counting_embed_fn();
         let port = in_memory_port_with_embed_fn(counting_embed);
 
         let private_record = TurnRecord {
-            thread_id: "no-embed-private".to_string(),
+            thread_id: "no-local-port-private".to_string(),
             user_input: "private question that must not embed".to_string(),
             agent_response: "private answer stored keyword-only".to_string(),
             model: "private-model".to_string(),
@@ -2257,34 +2432,95 @@ pub(crate) mod tests {
         assert_eq!(
             embed_calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
-            "a private turn never reaches the configured embedder"
-        );
-
-        let public_record = TurnRecord {
-            thread_id: "yes-embed-public".to_string(),
-            user_input: "public question that may embed".to_string(),
-            agent_response: "public answer embedded".to_string(),
-            model: "test-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
-        };
-        port.ingest_turn(public_record)
-            .await
-            .expect("public ingest succeeds");
-        assert!(
-            embed_calls.load(std::sync::atomic::Ordering::SeqCst) > 0,
-            "a public turn embeds as usual"
+            "an unwired local leg degrades keyword-only — never the cloud embedder"
         );
     }
 
-    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the READ
-    /// side: a private-marked context's QUERY (the private thread's prompt)
-    /// never crosses to the configured (cloud) embedder — zero embed calls,
-    /// recall keyword-only, surfaced. A public context's query embeds as
-    /// usual.
+    /// D100 item 3 — the READ-side lift: a private-marked context's QUERY
+    /// embeds through the LOCAL port (zero cloud calls) and the KNN leg is
+    /// LIVE for private content: a query with NO keyword overlap with the
+    /// stored chunk still recalls it — the only path to that snippet is
+    /// the locally-embedded KNN join (the unwired control below finds
+    /// nothing for the same query).
     #[tokio::test]
-    async fn private_context_recall_never_embeds_the_query() {
+    async fn private_context_recall_embeds_the_query_via_the_local_port() {
+        let (cloud_calls, cloud_embed) = counting_embed_fn();
+        let local_embed =
+            knn_direction_fixture_embed_fn(&["confidential-project-alpha", "vector-probe-xray"]);
+        let port = in_memory_port_with_private_embed_fn(cloud_embed, local_embed);
+
+        let private_record = TurnRecord {
+            thread_id: "knn-private-thread".to_string(),
+            user_input: "private discussion of the confidential-project-alpha roadmap".to_string(),
+            agent_response: "private answer about milestones and sequencing".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        port.ingest_turn(private_record)
+            .await
+            .expect("private ingest succeeds");
+
+        // The query shares NO word with the chunk content — only the
+        // locally-embedded KNN leg can find it.
+        let snippets = port
+            .recall_context_curator("vector-probe-xray unrelated phrasing", 10, true)
+            .await
+            .expect("private recall succeeds");
+        assert_eq!(
+            cloud_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a private context's prompt never crosses to the configured cloud embedder"
+        );
+        assert!(
+            snippets
+                .iter()
+                .any(|s| s.text.contains("confidential-project-alpha")),
+            "the locally-embedded KNN leg recalls the private chunk: {:?}",
+            snippets.iter().map(|s| s.text.as_str()).collect::<Vec<_>>()
+        );
+
+        // The falsifier control: the SAME no-overlap query against the
+        // SAME content with the local pair UNWIRED finds nothing — proving
+        // the snippet above arrived through the local embed, not the
+        // keyword leg (and the cloud embedder still saw zero calls).
+        let (unwired_calls, unwired_embed) = counting_embed_fn();
+        let unwired_port = in_memory_port_with_embed_fn(unwired_embed);
+        let unwired_record = TurnRecord {
+            thread_id: "knn-unwired-thread".to_string(),
+            user_input: "private discussion of the confidential-project-alpha roadmap".to_string(),
+            agent_response: "private answer about milestones and sequencing".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        unwired_port
+            .ingest_turn(unwired_record)
+            .await
+            .expect("unwired ingest succeeds");
+        let empty = unwired_port
+            .recall_context_curator("vector-probe-xray unrelated phrasing", 10, true)
+            .await
+            .expect("unwired recall succeeds");
+        assert!(
+            empty.is_empty(),
+            "unwired, the no-overlap query finds nothing — the recall above was KNN"
+        );
+        assert_eq!(
+            unwired_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "unwired, the cloud embedder still sees zero private calls"
+        );
+    }
+
+    /// The READ-side degrade PERSISTS when the local pair is unwired: a
+    /// private context's query never embeds (zero cloud calls) and the
+    /// keyword leg still serves the private rows — degrade, not loss —
+    /// while a public context's query embeds as usual.
+    #[tokio::test]
+    async fn private_context_recall_stays_keyword_only_when_no_local_port_is_wired() {
         let (embed_calls, counting_embed) = counting_embed_fn();
         let port = in_memory_port_with_embed_fn(counting_embed);
 
@@ -2310,7 +2546,7 @@ pub(crate) mod tests {
         assert_eq!(
             embed_calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
-            "a private context's prompt never crosses to the configured embedder"
+            "an unwired local leg never widens a private context's query to the configured embedder"
         );
         assert!(
             snippets.iter().any(|s| s.text.contains("quokka")),
