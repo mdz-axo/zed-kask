@@ -3397,7 +3397,9 @@ pub(crate) mod tests {
         let recalled_at_before = before[0].recalled_at;
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let messages = injector.inject_context("gate-test-thread", prompt, false).await;
+        let messages = injector
+            .inject_context("gate-test-thread", prompt, false)
+            .await;
         let content = match &messages[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
@@ -3425,7 +3427,9 @@ pub(crate) mod tests {
         );
 
         // Second attempt with no update: still excluded — the one-way door.
-        let messages_again = injector.inject_context("gate-test-thread", prompt, false).await;
+        let messages_again = injector
+            .inject_context("gate-test-thread", prompt, false)
+            .await;
         let content_again = match &messages_again[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
@@ -3446,7 +3450,9 @@ pub(crate) mod tests {
         .with_confidence(hkask_types::Confidence::new(0.7));
         curator_store.store(lifted).expect("store lifted");
 
-        let messages_lifted = injector.inject_context("gate-test-thread", prompt, false).await;
+        let messages_lifted = injector
+            .inject_context("gate-test-thread", prompt, false)
+            .await;
         let content_lifted = match &messages_lifted[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
