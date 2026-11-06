@@ -2,7 +2,7 @@
 
 title: Media panel transcript-bundle implementation plan
 audience: operator (PI) + build agents
-last_updated: 2026-11-04
+last_updated: 2026-11-06
 status: proposed — awaiting operator confirmation; implementation deliberately separated
 source_study: kask/docs/research/media-transcript-interaction-study-2026-11-04.md (research run ce75b8fc6a8392f5)
 predecessor: kask/docs/plans/media-panel-redesign-plan-2026-11-02.md (landed phases A–D)
@@ -325,6 +325,47 @@ the ordered builder (delete the unordered call sites in the same change — P5.5
 **Risks:** size L — the plan's only L; seek jumps across an 82-minute recording in
 preview (decoder seek performance; measure before UX polish); op-order must not
 leak into strike identity.
+
+**Addendum (2026-11-06 — the composition review's S6 design pre-review,
+`kask/docs/research/media-panel-composition-interaction-review-2026-11-06.md`
+§5, commit `7a1306ebb5`; operator-approved this date). The review's
+findings-on-paper fold into this slice's spec:**
+
+- **Membership is replaced, not paired (F1):** `reel_selection` and its
+  three write paths (`popover_include_in_reel`, the highlight-row toggle,
+  and the reload rebuild in `apply_transcript_result`) are deleted — the
+  ordered `ClipSpec` list's include flag is the one source of truth for
+  membership and order (no set-and-list pair).
+- **Composer state survives reloads (F2):** every annotation CRUD reloads
+  the workspace, and the landed reload rebuilds membership from all
+  researcher highlights — S6 keys composer state (order, inclusion,
+  strikes) to highlight identity and re-matches across reloads. New
+  acceptance test: order/exclude/strike, perform an unrelated annotation
+  edit, assert composer state survives the reload.
+- **In-reel strikes bake into Keep ops (F3):** the server unions ALL Cut
+  ops globally (`transcript_select.rs` `edl_to_keep_ranges`), so a
+  per-clip strike is never a Cut in the composer EDL — the op builder
+  splits the one clip's Keep op via per-clip difference math that REUSES
+  the server's algebra (publish `subtract_cuts_from_range` or add a pub
+  per-clip helper beside it; the S5 `merge_over_prior` reuse is the
+  standard — no fork). Acceptance-3 additionally pins that a composer
+  EDL carries no Cut ops.
+- **Preview timing reads the render path's source (F10):** the preview's
+  word→time mapping uses the stored source bundle words
+  (`edl_to_clip_plan`'s input), never the working view's timings —
+  preview and rendered reel must agree on `re_anchored` views. New
+  acceptance test: preview over a `re_anchored` fixture asserts each seek
+  equals `edl_to_clip_plan`'s output for the same clip.
+- **Union mirror deleted (F4):** `union_word_ranges` (one call site,
+  inside `compose_reel_params`) is deleted; union, where still needed,
+  calls the server's pub `union_ranges`.
+- **Preview substrate (F9):** the preview reuses the follow-loop task
+  pattern (single-instance guard, GPUI-native timer, exit on surface
+  change, poll only while playing, position through
+  `transport_position_secs` — the S4 rate contract), joins the teardown
+  sites (surface-switch, open, close, reload) and exits on widget-None
+  (hidden media suspends); the 82.7-minute seek jump is measured before
+  any UX polish.
 
 ### S7 — Standards exports (P2)
 
