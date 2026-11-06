@@ -719,6 +719,20 @@ impl AnyAgentTool for KaskServerTool {
         // without an entity lease, and never present in the model-supplied
         // `input` (the anti-spoof pin below).
         let provenance = event_stream.calling_provenance();
+        // zed-kask: D100 (the review's dispatch-time belt for the private-
+        // thread tool perimeter). The offer-point refusal
+        // (`Thread::enabled_tools`) is re-evaluated per request iteration
+        // (`refresh_turn_tools`), but a tool call issued in the same
+        // iteration as a mid-turn mark flip arrives against the pre-flip
+        // tool map; a private-provenance call to a perimeter-disabled
+        // server then refuses HERE — before the dispatch, named with the
+        // same boundary the offer point names. The belt reads the host-
+        // owned server id and the host-captured provenance (D68); the
+        // model-supplied input is never consulted. The settings read is
+        // captured in the update (the spawn's future outlives `App`).
+        let refused_by_private_perimeter = provenance
+            == hkask_types::InferenceProvenance::PrivateInference
+            && crate::thread::server_disabled_on_private_threads(&server_id, cx);
         cx.spawn(async move |_| {
             let input = input
                 .recv()
@@ -728,6 +742,18 @@ impl AnyAgentTool for KaskServerTool {
             authorize
                 .await
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+            if refused_by_private_perimeter {
+                let refusal = format!(
+                    "private thread refused {server_id}/{tool_name}: this server's \
+                     assisting inference cannot run locally, so it is disabled on \
+                     privacy-marked threads (kask.private_inference.private_thread_disabled_servers)"
+                );
+                return Err(AgentToolOutput {
+                    raw_output: serde_json::Value::String(refusal.clone()),
+                    llm_output: vec![LanguageModelToolResultContent::Text(refusal.into())],
+                });
+            }
 
             // zed-kask: D-seam — F2/P1b. Race the managed dispatch against user
             // cancellation so `Thread::cancel` can complete even when the child
@@ -2113,6 +2139,108 @@ mod tests {
                 hkask_types::InferenceProvenance::PublicProvider,
             ][..],
             "a spoofed provenance argument in the input cannot claim private — the host-derived mark wins"
+        );
+    }
+
+    /// zed-kask: D100 (the review's dispatch-time belt for the private-
+    /// thread tool perimeter) — a private-provenance call to a perimeter-
+    /// disabled server (the default set: media) refuses at dispatch with
+    /// the boundary text, before the source is consulted; a public-
+    /// provenance call to the same server dispatches. This closes the
+    /// mid-turn window the review's F2 named: the offer-point refusal
+    /// re-evaluates per request iteration, but a tool call issued in the
+    /// same iteration as a mark flip still reaches `run` against the
+    /// pre-flip tool map — the belt refuses it here, at dispatch.
+    #[gpui::test]
+    async fn kask_server_tool_refuses_private_provenance_on_disabled_servers(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
+
+        // The default perimeter disables the media server — no settings
+        // configuration needed (`server_disabled_on_private_threads` falls
+        // back to `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS` when the
+        // `kask.private_inference` section is absent).
+        let descriptors = vec![KaskToolDescriptor {
+            server_id: "media".to_string(),
+            name: "media_analyze".to_string(),
+            description: "A governed media tool".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provenances = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: descriptors.clone(),
+            invocations: invocations.clone(),
+            provenances: provenances.clone(),
+            ..Default::default()
+        });
+
+        // Private provenance: refused at dispatch — the boundary text
+        // surfaces, and the source never sees the call.
+        let (event_stream, _rx) = ToolCallEventStream::test_for_actor_with_provenance(
+            hkask_types::WebID::for_agent_name("private-thread"),
+            hkask_types::InferenceProvenance::PrivateInference,
+        );
+        let tool = std::sync::Arc::new(KaskServerTool {
+            source: source.clone(),
+            descriptor: descriptors[0].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+        let refusal = match result {
+            Err(output) => output,
+            Ok(_) => panic!("the belt must refuse the private-provenance call"),
+        };
+        let refusal_text = refusal.raw_output.as_str().expect("the refusal is text");
+        assert!(
+            refusal_text.contains("private thread refused media/media_analyze"),
+            "the refusal names the refused server and tool: {refusal_text}"
+        );
+        assert!(
+            refusal_text.contains("kask.private_inference"),
+            "the refusal names the PI-owned policy home: {refusal_text}"
+        );
+        assert!(
+            invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_empty(),
+            "no dispatch happens — the belt refuses before the source"
+        );
+
+        // Public provenance: the same server and tool dispatch normally —
+        // the belt is provenance-scoped, never a blanket refusal.
+        let (event_stream, _rx) = ToolCallEventStream::test_for_actor_with_provenance(
+            hkask_types::WebID::for_agent_name("public-thread"),
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        let tool = std::sync::Arc::new(KaskServerTool {
+            source,
+            descriptor: descriptors[0].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({}));
+        let result = cx.update(|cx| tool.run(input, event_stream, cx)).await;
+        assert!(
+            result.is_ok(),
+            "a public-provenance call to the server dispatches"
+        );
+        assert_eq!(
+            invocations
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
+            1,
+            "the public-provenance control case dispatched exactly once"
         );
     }
 

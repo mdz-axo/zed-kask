@@ -2521,8 +2521,10 @@ impl Thread {
     /// selected: never a public fallback. Curator sessions mark and route
     /// identically (PI ruling 2026-10-30 — the enforcement reads this flag,
     /// never the agent identity). Pinned by
-    /// `marking_a_thread_clears_a_held_public_model` and
-    /// `unmark_restores_public_model_selection`.
+    /// `private_thread_refuses_a_public_model_at_the_storage_gate` (the
+    /// storage leg: set-before-mark accepted, the mark-time clear, re-set
+    /// refused, unmark re-admits — the review's F3 correction: the two pin
+    /// names this comment previously cited do not exist).
     pub fn set_private_inference(&mut self, private: bool, cx: &mut Context<Self>) {
         if self.kask.is_private_inference() == private {
             return;

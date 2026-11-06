@@ -6501,8 +6501,9 @@ impl ThreadView {
                 Color::Accent,
                 SharedString::from(
                     "Private inference: on — this thread routes only to the private \
-                     inference leg (kask.private_inference); its content never \
-                     reaches a public provider. Click to route on public providers.",
+                     inference leg (kask.private_inference); no request dispatches to \
+                     a public provider while the mark is on. Click to route on \
+                     public providers.",
                 ),
             )
         } else {
@@ -15715,8 +15716,9 @@ mod private_inference_toggle_tests {
             "the marked tooltip names the PI-owned policy home: {marked_text}"
         );
         assert!(
-            marked_text.contains("never reaches a public provider"),
-            "the marked tooltip names the privacy boundary: {marked_text}"
+            marked_text.contains("no request dispatches to a public provider"),
+            "the marked tooltip names the privacy boundary — the per-request \
+             claim the gates enforce, transition-true for a mid-turn mark: {marked_text}"
         );
 
         let (unmarked_icon, unmarked_color, unmarked_label) =

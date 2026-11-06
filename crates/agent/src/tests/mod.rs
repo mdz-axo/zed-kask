@@ -5598,6 +5598,135 @@ async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContex
     fake.end_last(&model);
 }
 
+/// zed-kask: D100 (review finding F2) — the mark-change-mid-turn
+/// interaction on the tool perimeter. The perimeter is re-evaluated per
+/// REQUEST ITERATION (`refresh_turn_tools` inside `run_turn_internal`),
+/// tighter than the register's "per turn": a mark flipped while a turn
+/// runs still leaves the pre-flip tool map live for the rest of the
+/// current iteration (pinned here — `has_tool` stays true across the
+/// flip), but the NEXT iteration's request carries the re-scoped map (the
+/// media tool gone, the other server's tool kept). The in-iteration window
+/// is closed at dispatch for kask-sourced tools by the belt pin
+/// `kask_server_tool_refuses_private_provenance_on_disabled_servers`.
+#[gpui::test]
+async fn marking_mid_turn_re_scopes_the_running_turns_tool_map(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // The fake provider is the local leg (the perimeter pin's pattern),
+    // so the mid-turn mark does NOT clear the held model and the turn
+    // keeps iterating — the request-gate arms are pinned separately in
+    // thread.rs.
+    cx.update(|cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .private_inference
+                    .get_or_insert_default()
+                    .local_provider_ids = Some(vec!["fake".to_string()]);
+            });
+        });
+    });
+
+    let _media_calls = setup_context_server(
+        "media",
+        vec![plain_mcp_tool("media_analyze")],
+        &context_server_store,
+        cx,
+    );
+    let mut other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // An unmarked turn starts; the running turn's tool map offers the
+    // media tool (built at the request's construction).
+    thread.update(cx, |thread, cx| {
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let first = fake
+        .pending_completions()
+        .pop()
+        .expect("the unmarked turn's first request");
+    let names = tool_names_for_completion(&first);
+    assert!(
+        names.contains(&"media_analyze".to_string()),
+        "the unmarked turn offers the media tool: {names:?}"
+    );
+    assert!(
+        cx.update(|cx| thread.read(cx).has_tool("media_analyze")),
+        "the running turn's map was built before the flip"
+    );
+
+    // The PI marks the thread MID-TURN (the toggle has no status guard).
+    // The pre-flip map is still live for the rest of this iteration — the
+    // documented window the dispatch-time belt closes for kask tools.
+    thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+    assert!(
+        cx.update(|cx| thread.read(cx).has_tool("media_analyze")),
+        "the in-flight iteration keeps the pre-flip map — the belt owns the dispatch"
+    );
+
+    // The model emits a research_tool call (offered on both maps); the
+    // turn loops into its next iteration, whose request carries the
+    // re-scoped tool map.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: "research_tool".into(),
+        raw_input: json!({}).to_string(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({})),
+        is_input_complete: true,
+        thought_signature: None,
+    };
+    fake.send_last_event(&model, LanguageModelCompletionEvent::ToolUse(tool_use));
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    let (params, response) = other_calls.recv().await.unwrap();
+    assert_eq!(params.name, "research_tool");
+    response
+        .send(context_server::types::CallToolResponse {
+            content: vec![context_server::types::ToolResponseContent::Text {
+                text: "done".into(),
+            }],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .expect("the research tool response is delivered");
+    cx.run_until_parked();
+
+    let second = fake
+        .pending_completions()
+        .pop()
+        .expect("the turn's next iteration");
+    let names = tool_names_for_completion(&second);
+    assert!(
+        !names.contains(&"media_analyze".to_string()),
+        "the mid-turn mark re-scopes the running turn's tool map at the next \
+         iteration — the perimeter is per-request, not per-turn: {names:?}"
+    );
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "the other server's tool remains offered: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
 /// Pin D6 (post-removal): the curator memory-edit tools are available to
 /// plain threads. The curator-thread gate that once excluded
 /// `memory_insert`/`memory_update`/`memory_resolve_contradiction` from
