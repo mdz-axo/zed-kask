@@ -20,7 +20,10 @@
 //! - `HKASK_EMBEDDING_MODEL` — default embedding model
 //! - `HKASK_OCR_MODEL` — OCR model for scanned PDF fallback
 //! - `HKASK_RERANK_MODEL` — rerank model for research deep-search rerank
-//! - `HKASK_MODEL_DEFAULT` — fallback when provider-specific not set
+//! - `HKASK_DEFAULT_MODEL` — the kask default model (settings-layer default,
+//!   injected by `mcp_env()`; the direct path fails typed when unset)
+//! - `HKASK_PRIVATE_EMBEDDING_MODEL` — the private leg's local embedding
+//!   model (D100 item 3 + the query-side provenance routing)
 
 /// Environment binding for `kask.models.qa_generation_model`.
 pub const QA_GENERATION_MODEL_ENV: &str = "HKASK_QA_GENERATION_MODEL";

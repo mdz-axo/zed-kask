@@ -1921,7 +1921,7 @@ pub struct KaskModelsSettingsContent {
     /// never falls back to the active chat model.
     pub qa_generation_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
-    /// When empty, falls back to the kask default (`RunPod/kask-ocr`).
+    /// When empty, falls back to the kask default (`ollama/glm-ocr:latest`).
     pub ocr_model: Option<String>,
     /// Rerank model for the research server's deep-search rerank stage
     /// (provider-prefixed). When empty, falls back to the kask default
