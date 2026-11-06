@@ -203,6 +203,73 @@ struct PaneStrike {
     annotation_id: String,
 }
 
+/// S6 reel composer: one clip of the composed reel — a researcher highlight
+/// carried into the ordered clip list with its own inclusion flag and
+/// in-reel strike sub-ranges. Identity is the highlight's (annotation id +
+/// source word range): composer state re-matches across every workspace
+/// reload on that key, so order, inclusion, and strikes survive reloads
+/// (a rename changes neither the id nor the range).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReelClip {
+    annotation_id: String,
+    start_word: usize,
+    end_word: usize,
+    label: String,
+    include: bool,
+    /// In-reel strike sub-ranges over the clip's own source range — the
+    /// compose bakes them into the clip's Keep op through the server's
+    /// published difference helper, never as a global Cut op (the algebra
+    /// unions ALL cuts and subtracts them from EVERY keep).
+    strikes: Vec<(usize, usize)>,
+}
+
+/// S6 reel preview: the composed reel's ordered span plan driving the
+/// shared player without rendering. `spans` is `edl_to_clip_plan`'s output
+/// over the stored SOURCE bundle words — the render path's own mapping;
+/// the working view's timings are never read (they are interpolated
+/// estimates over different indices on `re_anchored` views).
+#[derive(Clone, Debug, PartialEq)]
+struct ReelPreview {
+    /// (start_ms, end_ms) per span, composed order.
+    spans: Vec<(u64, u64)>,
+    /// The span currently playing.
+    index: usize,
+}
+
+impl ReelPreview {
+    /// One walk step: if the position has crossed the CURRENT span's end,
+    /// move to the next span in composed order — seeking its start — or
+    /// finish when the plan is done. Spans play in COMPOSED order, not time
+    /// order: a span whose absolute times sit before the current one is
+    /// entered by the seek, never skipped by the position (a later clip in
+    /// the composed list always plays, however early it sits in the
+    /// recording).
+    fn advance(&mut self, position_ms: u64) -> ReelPreviewStep {
+        let Some(&(_, current_end)) = self.spans.get(self.index) else {
+            return ReelPreviewStep::Finished;
+        };
+        if position_ms < current_end {
+            return ReelPreviewStep::Hold;
+        }
+        self.index += 1;
+        match self.spans.get(self.index) {
+            Some(&(next_start, _)) => ReelPreviewStep::Seek(next_start),
+            None => ReelPreviewStep::Finished,
+        }
+    }
+}
+
+/// One preview walk step's outcome (S6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReelPreviewStep {
+    /// The current span is still playing — keep polling.
+    Hold,
+    /// The walk moved onto a new span — seek the player to this start (ms).
+    Seek(u64),
+    /// The plan played through — the preview is done.
+    Finished,
+}
+
 /// The workspace's reading surface (operator refinement 2026-10-30): the
 /// word-transcript pane and the visual-transcript event log are parallel
 /// annotations over the same recording — the operator switches surfaces
@@ -422,6 +489,14 @@ struct TranscriptPaneState {
     /// the newest correction layer never silently reverts an earlier fix
     /// (the silent-revert guard).
     correction_edits: Vec<PaneCorrectionEdit>,
+    /// The immutable source bundle's word timings (S6): the render path's
+    /// own word→time input — `edl_to_clip_plan` runs over these server-side,
+    /// and the reel preview maps its spans through the same words so
+    /// preview and rendered reel agree on `re_anchored` views (the working
+    /// `words` above carry interpolated estimates over different indices
+    /// there). Empty when the stored bundle carries no word timings (a
+    /// text-only source).
+    source_words: Vec<PaneWord>,
 }
 
 /// One stored correction edit of the live correction layer (S5) — the
@@ -873,11 +948,20 @@ pub struct MediaViewer {
     /// The label editor input's focus handle, created lazily on first open
     /// (pure tests construct the viewer without a GPUI context).
     label_input_focus: Option<gpui::FocusHandle>,
-    /// S5 reel editing: which researcher-authored clips (start, end) the
-    /// next compose gathers — rebuilt to ALL researcher-authored pane
-    /// selections whenever the workspace loads, toggled per clip by the
-    /// operator (membership keys on provenance, never the label text).
-    reel_selection: HashSet<(usize, usize)>,
+    /// S6 reel composer: the ordered clip list — the ONE source of truth
+    /// for reel membership AND order (the unordered `reel_selection` set it
+    /// replaces is deleted; no set-and-list pair can drift). Re-matched to
+    /// highlight identity on every workspace load: existing clips keep
+    /// their composer deltas, new researcher highlights join included at
+    /// the tail, deleted highlights drop their clips.
+    reel_clips: Vec<ReelClip>,
+    /// S6 reel preview: the armed preview's span plan and walk position —
+    /// `None` when no preview is running.
+    reel_preview: Option<ReelPreview>,
+    /// The preview's polling task — the follow-task lifecycle pattern:
+    /// single instance, cancelled by taking the handle (the teardown
+    /// sites), self-cancels when the substrate leaves.
+    reel_preview_task: Option<Task<()>>,
     /// The workspace's reading surface (operator refinement 2026-10-30):
     /// the word-transcript pane or the visual-transcript event log.
     transcript_surface: TranscriptSurface,
@@ -980,7 +1064,9 @@ impl MediaViewer {
             transcript_search_task: None,
             highlight_edit: None,
             label_input_focus: None,
-            reel_selection: HashSet::new(),
+            reel_clips: Vec::new(),
+            reel_preview: None,
+            reel_preview_task: None,
             transcript_surface: TranscriptSurface::default(),
             visual_events: None,
             visual_events_request: RequestLifecycle::new(),
@@ -1082,6 +1168,7 @@ impl MediaViewer {
             // re-entry resumes it without a refetch.
             self.suspend_media_widget(cx);
             self.transcript_follow_task.take();
+            self.stop_reel_preview(cx);
             self.current_word = None;
             self.selection_mode = false;
             self.selection_anchor = None;
@@ -2467,6 +2554,7 @@ impl MediaViewer {
         self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
+        self.stop_reel_preview(cx);
         // A fresh workspace starts on the word surface with no visual-event
         // or redaction state carried over (S5).
         self.transcript_surface = TranscriptSurface::Words;
@@ -2539,6 +2627,7 @@ impl MediaViewer {
         self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
+        self.stop_reel_preview(cx);
         self.transcript_surface = TranscriptSurface::Words;
         self.visual_events = None;
         self.visual_events_request.invalidate();
@@ -3142,16 +3231,14 @@ impl MediaViewer {
         }
         match result {
             Ok(state) => {
-                // S5 reel editing: a fresh workspace loads with ALL
-                // researcher-authored pane selections included in the next
-                // compose (membership keys on provenance, never the label
-                // text — free-text labels must not affect the reel flow).
-                self.reel_selection = state
-                    .highlights
-                    .iter()
-                    .filter(|highlight| highlight.researcher_supplied)
-                    .map(|highlight| (highlight.start_word, highlight.end_word))
-                    .collect();
+                // S6: every annotation CRUD reloads the workspace. The preview
+                // task tears down with the reload (its span plan derives from
+                // state that just changed), while the composer state
+                // RE-MATCHES to highlight identity and survives — order,
+                // inclusion, and in-reel strikes keep their deltas; new
+                // researcher highlights join included, deleted ones drop.
+                self.stop_reel_preview(cx);
+                self.rematch_reel_clips(&state);
                 // A fresh workspace invalidates any open label editor and
                 // selection popover — their annotation ids and word ranges
                 // belong to the previous view — and the transcript search
@@ -3950,7 +4037,7 @@ impl MediaViewer {
         let Some(state) = self.transcript.as_ref() else {
             return;
         };
-        let selection = self.reel_selection.clone();
+        let selection = self.reel_clips.clone();
         let Some(compose_params) = compose_reel_params(state, &selection, mode) else {
             self.status = Some(mode.empty_status().into());
             cx.notify();
@@ -4575,42 +4662,207 @@ impl MediaViewer {
         cx.notify();
     }
 
-    /// The tray's Include in reel action. Over a researcher highlight's
-    /// exact range it flips reel membership (the highlights row's toggle,
-    /// no dispatch); over a fresh range it dispatches the existing create
-    /// path with the default label — the reload includes every researcher
-    /// highlight, so the one click carries the range into the reel (the
-    /// low-effort path: selection → reel). A bare membership insert for a
-    /// range with no highlight would be wiped at the next reload (the
-    /// reload rebuilds membership from the highlights), which is exactly
-    /// why the fresh arm creates.
-    fn popover_include_in_reel(&mut self, cx: &mut Context<Self>) {
+    /// S6: the composer's re-match on every workspace load — the reload
+    /// persistence mechanism. Existing clips keep their composer deltas
+    /// (order, inclusion, in-reel strikes) keyed to highlight identity
+    /// (annotation id + source range), with labels refreshed from the
+    /// reloaded highlights; new researcher highlights join included at the
+    /// tail (the fresh-workspace semantics); deleted highlights drop their
+    /// clips; model-pass rows never compose.
+    fn rematch_reel_clips(&mut self, state: &TranscriptPaneState) {
+        let mut clips: Vec<ReelClip> = self
+            .reel_clips
+            .drain(..)
+            .filter(|clip| {
+                state.highlights.iter().any(|highlight| {
+                    highlight.researcher_supplied
+                        && Self::reel_clip_identity_matches(clip, highlight)
+                })
+            })
+            .collect();
+        for clip in &mut clips {
+            if let Some(highlight) = state.highlights.iter().find(|highlight| {
+                highlight.researcher_supplied && Self::reel_clip_identity_matches(clip, highlight)
+            }) {
+                clip.label = highlight.label.clone();
+            }
+        }
+        for highlight in state
+            .highlights
+            .iter()
+            .filter(|highlight| highlight.researcher_supplied)
+        {
+            let exists = clips
+                .iter()
+                .any(|clip| Self::reel_clip_identity_matches(clip, highlight));
+            if !exists {
+                clips.push(ReelClip {
+                    annotation_id: highlight.annotation_id.clone(),
+                    start_word: highlight.start_word,
+                    end_word: highlight.end_word,
+                    label: highlight.label.clone(),
+                    include: true,
+                    strikes: Vec::new(),
+                });
+            }
+        }
+        self.reel_clips = clips;
+    }
+
+    /// The composer's identity key: a highlight is the same clip across
+    /// reloads when its annotation id AND source range match (a rename
+    /// changes neither).
+    fn reel_clip_identity_matches(clip: &ReelClip, highlight: &PaneHighlight) -> bool {
+        clip.annotation_id == highlight.annotation_id
+            && clip.start_word == highlight.start_word
+            && clip.end_word == highlight.end_word
+    }
+
+    /// S6: move a clip within the composed order — the reel row's ↑/↓.
+    /// Bounds-guarded: a no-op at the list's edges, never a panic.
+    fn move_reel_clip(&mut self, clip_index: usize, up: bool, cx: &mut Context<Self>) {
+        if clip_index >= self.reel_clips.len() {
+            return;
+        }
+        let target = if up {
+            clip_index.checked_sub(1)
+        } else {
+            Some(clip_index + 1)
+        };
+        if let Some(target) = target
+            && target < self.reel_clips.len()
+        {
+            self.reel_clips.swap(clip_index, target);
+            cx.notify();
+        }
+    }
+
+    /// S6: flip one clip's inclusion — the highlights row's toggle and the
+    /// popover's Include arm both write here; the clip's include flag is
+    /// the ONE membership source of truth (no set beside the list). Keyed
+    /// to highlight identity, so the flip survives reloads and is safe on
+    /// re_anchored views too (it flips stored source-anchored membership,
+    /// never a working selection).
+    fn toggle_reel_clip_include(
+        &mut self,
+        annotation_id: &str,
+        start_word: usize,
+        end_word: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.reel_clips.iter_mut().find(|clip| {
+            clip.annotation_id == annotation_id
+                && clip.start_word == start_word
+                && clip.end_word == end_word
+        }) {
+            clip.include = !clip.include;
+            cx.notify();
+        }
+    }
+
+    /// S6: undo one in-reel strike on a clip (the reel row's per-strike
+    /// Restore). Bounds-guarded.
+    fn remove_reel_clip_strike(
+        &mut self,
+        clip_index: usize,
+        strike_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(clip) = self.reel_clips.get_mut(clip_index)
+            && strike_index < clip.strikes.len()
+        {
+            clip.strikes.remove(strike_index);
+            cx.notify();
+        }
+    }
+
+    /// S6: the selection popover's Include-in-reel arm. Over a composed
+    /// clip's range it flips that clip's include flag (the row toggle's
+    /// path — one source of truth, no dispatch); over a fresh range it
+    /// dispatches the existing create path with the default label — the
+    /// reload re-matches every researcher highlight into the composer, so
+    /// the one click carries the range into the reel (a clip with no
+    /// highlight behind it would have no reload identity to survive on).
+    fn popover_toggle_reel_include(&mut self, cx: &mut Context<Self>) {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
         if self.selection_tray_is_correct_only() {
             self.status = Some(
-                "Include in reel needs an index-identical view — Suggest correction \
-                 instead."
+                "Include in reel needs an index-identical view — Suggest correction \n                 instead."
                     .into(),
             );
             cx.notify();
             return;
         }
-        let range = (start_word, end_word);
-        if self.reel_selection.remove(&range) {
-            self.status = Some("Removed from the reel.".into());
+        match self
+            .reel_clips
+            .iter()
+            .find(|clip| clip.start_word == start_word && clip.end_word == end_word)
+        {
+            Some(clip) => {
+                let now_included = !clip.include;
+                let (annotation_id, clip_start, clip_end) =
+                    (clip.annotation_id.clone(), clip.start_word, clip.end_word);
+                self.toggle_reel_clip_include(&annotation_id, clip_start, clip_end, cx);
+                self.status = Some(
+                    if now_included {
+                        "Added to the reel."
+                    } else {
+                        "Removed from the reel."
+                    }
+                    .into(),
+                );
+                cx.notify();
+            }
+            None => {
+                self.create_workspace_highlight(start_word, end_word, resolve_create_label(""), cx);
+            }
+        }
+    }
+
+    /// S6: the selection popover's in-reel strike arm — a sub-range cut
+    /// inside ONE clip, recorded on that clip (the compose bakes it into
+    /// the clip's Keep op; never a whole-recording strike). The completed
+    /// range must lie within exactly one INCLUDED clip; anything else
+    /// refuses honestly. Index-identical views only — the tray gate (the
+    /// strike anchors working-view indices, which only match source tools
+    /// on index-identical views).
+    fn popover_strike_in_reel(&mut self, cx: &mut Context<Self>) {
+        let Some((start_word, end_word)) = self.selection_popover.take() else {
+            return;
+        };
+        if self.selection_tray_is_correct_only() {
+            self.status = Some(
+                "Strike in reel clip needs an index-identical view — Suggest \n                 correction instead."
+                    .into(),
+            );
             cx.notify();
-        } else if self.transcript.as_ref().is_some_and(|state| {
-            state.highlights.iter().any(|highlight| {
-                highlight.researcher_supplied && (highlight.start_word, highlight.end_word) == range
+            return;
+        }
+        let inside: Vec<usize> = self
+            .reel_clips
+            .iter()
+            .enumerate()
+            .filter(|(_, clip)| {
+                clip.include && clip.start_word <= start_word && end_word <= clip.end_word
             })
-        }) {
-            self.reel_selection.insert(range);
-            self.status = Some("Added to the reel.".into());
-            cx.notify();
-        } else {
-            self.create_workspace_highlight(start_word, end_word, resolve_create_label(""), cx);
+            .map(|(index, _)| index)
+            .collect();
+        match inside.as_slice() {
+            [clip_index] => {
+                self.reel_clips[*clip_index]
+                    .strikes
+                    .push((start_word, end_word));
+                self.status = Some("Struck the sub-range inside the reel clip.".into());
+                cx.notify();
+            }
+            _ => {
+                self.status = Some(
+                    "Strike in reel clip needs a range inside exactly one included clip.".into(),
+                );
+                cx.notify();
+            }
         }
     }
 
@@ -4958,6 +5210,7 @@ impl MediaViewer {
     fn render_selection_popover(
         excerpt: &str,
         include_label: &str,
+        strike_in_clip: bool,
         correct_only: bool,
         focus: &gpui::FocusHandle,
         cx: &mut Context<Self>,
@@ -5009,6 +5262,22 @@ impl MediaViewer {
                             this.popover_cut(cx);
                         })),
                 )
+                .when(strike_in_clip, |tray| {
+                    tray.child(
+                        div()
+                            .id("media-transcript-popover-strike-in-reel")
+                            .cursor_pointer()
+                            .hover(|el| el.bg(cx.theme().colors().element_hover))
+                            .child(
+                                Label::new(SharedString::from("Strike in reel clip"))
+                                    .size(LabelSize::XSmall)
+                                    .color(ui::Color::Error),
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.popover_strike_in_reel(cx);
+                            })),
+                    )
+                })
             })
             .child(
                 div()
@@ -5050,11 +5319,136 @@ impl MediaViewer {
                                 .color(ui::Color::Default),
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
-                            this.popover_include_in_reel(cx);
+                            this.popover_toggle_reel_include(cx);
                         })),
                 )
             })
             .into_any_element()
+    }
+
+    // ── S6 reel preview (the auto-seek chain on the shared player) ─────────
+
+    /// S6: toggle the composed reel's preview — plays the composed spans on
+    /// the shared player without rendering, seeking span-to-span as playback
+    /// crosses each span's end. Player-local (no admission — the seek paths'
+    /// class); the position source and the seek target are the S4
+    /// rate-contract pair.
+    fn toggle_reel_preview(&mut self, cx: &mut Context<Self>) {
+        if self.reel_preview.is_some() {
+            self.stop_reel_preview(cx);
+            self.status = Some("Reel preview stopped.".into());
+            cx.notify();
+            return;
+        }
+        self.start_reel_preview(cx);
+    }
+
+    /// S6: stop the preview and cancel its task — the one teardown entry
+    /// every site shares (surface switch, open, close, reload, the toggle's
+    /// off arm) and idempotent.
+    fn stop_reel_preview(&mut self, cx: &mut Context<Self>) {
+        self.reel_preview_task.take();
+        self.reel_preview = None;
+        cx.notify();
+    }
+
+    /// S6: arm and start the preview — build the span plan (the render
+    /// path's own clip plan over the SOURCE bundle words), prime the first
+    /// span with an immediate seek, then poll the player on the follow
+    /// loop's task pattern: single-instance guard, GPUI-native timer,
+    /// self-cancel when the substrate leaves, poll only while playing.
+    fn start_reel_preview(&mut self, cx: &mut Context<Self>) {
+        if self.reel_preview.is_some() {
+            return;
+        }
+        let Some(state) = self.transcript.as_ref() else {
+            return;
+        };
+        let spans = match reel_preview_plan(state, &self.reel_clips) {
+            Ok(spans) => spans,
+            Err(reason) => {
+                self.status = Some(reason.into());
+                cx.notify();
+                return;
+            }
+        };
+        let first_start = spans[0].0;
+        self.reel_preview = Some(ReelPreview { spans, index: 0 });
+        self.seek_workspace_transcript(first_start, cx);
+        self.status = Some("Previewing the composed reel — press play to hear it.".into());
+        cx.notify();
+        let entity = cx.entity().downgrade();
+        self.reel_preview_task = Some(cx.spawn(async move |_this, cx| {
+            loop {
+                cx.background_executor().timer(FOLLOW_POLL_INTERVAL).await;
+                let keep_going = entity
+                    .update(cx, |viewer, cx| viewer.reel_preview_tick(cx))
+                    .unwrap_or_default();
+                if !keep_going {
+                    return;
+                }
+            }
+        }));
+    }
+
+    /// S6: one preview poll — the task body, directly callable (the
+    /// teardown pins drive it). Returns false (state cleared) when the
+    /// substrate is gone — the surface left, the transcript closed, the
+    /// widget cleared (hidden media suspends); holds while playback is
+    /// paused (the D3 poll-only-while-playing discipline); otherwise
+    /// advances the walk. Position reads `transport_position_secs` — the
+    /// S4 rate-conversion accessor, media seconds at every rate.
+    fn reel_preview_tick(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.active_tab != ViewerTab::Workspace
+            || self.transcript.is_none()
+            || self.media_widget.is_none()
+            || self.reel_preview.is_none()
+        {
+            self.stop_reel_preview(cx);
+            return false;
+        }
+        let playing = self
+            .media_widget
+            .as_ref()
+            .is_some_and(|widget| widget.read(cx).is_transport_playing());
+        if !playing {
+            return true;
+        }
+        let Some(position_ms) = self
+            .media_widget
+            .as_ref()
+            .and_then(|widget| widget.read(cx).transport_position_secs())
+            .map(|secs| (secs * 1000.0) as u64)
+        else {
+            return true;
+        };
+        self.step_reel_preview(position_ms, cx)
+    }
+
+    /// S6: one walk step — advance past every span the position has crossed,
+    /// seeking the newly-current span's start through the bound widget.
+    /// Separated from the tick so the walk is drivable with a scripted
+    /// position timeline (the playing gate lives in the tick).
+    fn step_reel_preview(&mut self, position_ms: u64, cx: &mut Context<Self>) -> bool {
+        let step = self
+            .reel_preview
+            .as_mut()
+            .map(|preview| preview.advance(position_ms));
+        match step {
+            Some(ReelPreviewStep::Hold) => true,
+            Some(ReelPreviewStep::Seek(target_ms)) => {
+                self.seek_workspace_transcript(target_ms, cx);
+                true
+            }
+            Some(ReelPreviewStep::Finished) => {
+                self.reel_preview = None;
+                self.reel_preview_task.take();
+                self.status = Some("Reel preview finished.".into());
+                cx.notify();
+                false
+            }
+            None => false,
+        }
     }
 
     /// Seek the workspace's bound player to a working word's start — the
@@ -6838,16 +7232,28 @@ impl MediaViewer {
         // actions read the range from the tray state, not from the render.
         let pending_popover = self.selection_popover.map(|(start_word, end_word)| {
             let excerpt = transcript_range_excerpt(state, start_word, end_word);
-            let include_label = if self.reel_selection.contains(&(start_word, end_word)) {
+            let include_label = if self.reel_clips.iter().any(|clip| {
+                clip.include && clip.start_word == start_word && clip.end_word == end_word
+            }) {
                 "Remove from reel"
             } else {
                 "Include in reel"
             };
+            // The in-reel strike arm (S6) needs the completed range inside
+            // exactly one INCLUDED clip.
+            let strike_in_clip = self
+                .reel_clips
+                .iter()
+                .filter(|clip| {
+                    clip.include && clip.start_word <= start_word && end_word <= clip.end_word
+                })
+                .count()
+                == 1;
             // The tray's action set follows the view's mode (S5): the
             // correction-only set on re_anchored views.
             let correct_only =
                 selection_tray_mode(&state.alignment) == Ok(SelectionTrayMode::CorrectOnly);
-            (excerpt, include_label, correct_only)
+            (excerpt, include_label, strike_in_clip, correct_only)
         });
         // The whole sub-surface content (header rows, surface body rows,
         // annotation sections) renders as ONE virtualized list (S3d):
@@ -6929,11 +7335,12 @@ impl MediaViewer {
                 cx,
             )));
         }
-        if let Some((excerpt, include_label, correct_only)) = pending_popover {
+        if let Some((excerpt, include_label, strike_in_clip, correct_only)) = pending_popover {
             workspace =
                 workspace.child(v_flex().px_3().pt_3().child(Self::render_selection_popover(
                     &excerpt,
                     include_label,
+                    strike_in_clip,
                     correct_only,
                     &selection_popover_focus,
                     cx,
@@ -7663,7 +8070,16 @@ impl MediaViewer {
             if highlight.researcher_supplied {
                 let annotation_id = highlight.annotation_id.clone();
                 let (start_word, end_word) = (highlight.start_word, highlight.end_word);
-                let included = self.reel_selection.contains(&(start_word, end_word));
+                // S6: membership reads the clip's include flag — the ONE
+                // source of truth. Safe on re_anchored views too: the flag
+                // keys the stored highlight's own source anchors, never a
+                // working selection.
+                let included = self.reel_clips.iter().any(|clip| {
+                    clip.annotation_id == annotation_id
+                        && clip.start_word == start_word
+                        && clip.end_word == end_word
+                        && clip.include
+                });
                 let include_toggle = div()
                     .id(SharedString::from(format!(
                         "media-transcript-reel-toggle-{annotation_id}"
@@ -7686,12 +8102,17 @@ impl MediaViewer {
                             ui::Color::Muted
                         }),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !this.reel_selection.remove(&(start_word, end_word)) {
-                            this.reel_selection.insert((start_word, end_word));
-                        }
-                        cx.notify();
-                    }));
+                    .on_click({
+                        let toggle_annotation_id = annotation_id.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            this.toggle_reel_clip_include(
+                                &toggle_annotation_id,
+                                start_word,
+                                end_word,
+                                cx,
+                            );
+                        })
+                    });
                 let edit = HighlightEdit {
                     kind: HighlightEditKind::Rename {
                         annotation_id: highlight.annotation_id.clone(),
@@ -7831,8 +8252,11 @@ impl MediaViewer {
         section.into_any_element()
     }
 
-    /// The reel tail section (S5): plain-language compose actions, visible
-    /// only when their inputs exist.
+    /// The reel tail section (S5/S6): the reel composer's surface — the
+    /// ordered clip list with per-clip reorder, include toggle, duration
+    /// readout, and in-reel strikes with their Restore — plus the preview
+    /// toggle (player-local, no admission) and the plain-language compose
+    /// actions. Visible only when their inputs exist.
     fn render_workspace_reel_section(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(state) = self.transcript.as_ref() else {
             return div().into_any_element();
@@ -7849,9 +8273,196 @@ impl MediaViewer {
                 any_researcher_highlight && !state.strikes.is_empty(),
             ),
         ];
+        let any_included_clip = self.reel_clips.iter().any(|clip| clip.include);
         let mut section = v_flex().gap_2();
-        if affordances.iter().any(|(_, visible)| *visible) {
-            section = section.child(Self::section_label("Create a reel"));
+        if affordances.iter().any(|(_, visible)| *visible)
+            || !self.reel_clips.is_empty()
+            || any_included_clip
+        {
+            section = section.child(Self::section_label("Compose a reel"));
+        }
+        // The composed clip list (S6): order, inclusion, and in-reel strikes,
+        // editable in place. Clip rows carry the composed position, label,
+        // word range, and duration (the baked span total over the source
+        // bundle words); the ↑/↓ buttons reorder, the include toggle flips
+        // membership, and each in-reel strike restores individually.
+        let clip_count = self.reel_clips.len();
+        for (clip_index, clip) in self.reel_clips.iter().enumerate() {
+            let row = format!(
+                "{}. {} — words {}–{}",
+                clip_index + 1,
+                clip.label,
+                clip.start_word,
+                clip.end_word,
+            );
+            let duration = reel_clip_duration_ms(state, clip);
+            let mut row_element = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-reel-clip-{clip_index}"
+                )))
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .child(
+                    Label::new(SharedString::from(row))
+                        .size(LabelSize::XSmall)
+                        .color(if clip.include {
+                            ui::Color::Default
+                        } else {
+                            ui::Color::Muted
+                        }),
+                );
+            if let Some(duration_ms) = duration {
+                row_element = row_element.child(
+                    Label::new(SharedString::from(format!(
+                        "{:.1}s",
+                        duration_ms as f64 / 1000.0
+                    )))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+                );
+            }
+            section = section.child(row_element);
+
+            let mut controls = div()
+                .id(SharedString::from(format!(
+                    "media-transcript-reel-clip-controls-{clip_index}"
+                )))
+                .flex()
+                .flex_wrap()
+                .gap_2();
+            if clip_index > 0 {
+                controls = controls.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-reel-clip-up-{clip_index}"
+                        )))
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("↑"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.move_reel_clip(clip_index, true, cx);
+                        })),
+                );
+            }
+            if clip_index + 1 < clip_count {
+                controls = controls.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-reel-clip-down-{clip_index}"
+                        )))
+                        .cursor_pointer()
+                        .hover(|el| el.bg(cx.theme().colors().element_hover))
+                        .child(
+                            Label::new(SharedString::from("↓"))
+                                .size(LabelSize::XSmall)
+                                .color(ui::Color::Default),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.move_reel_clip(clip_index, false, cx);
+                        })),
+                );
+            }
+            let annotation_id = clip.annotation_id.clone();
+            let (start_word, end_word) = (clip.start_word, clip.end_word);
+            controls = controls.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "media-transcript-reel-toggle-{annotation_id}"
+                    )))
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(if clip.include {
+                            "Included in reel"
+                        } else {
+                            "Add to reel"
+                        }))
+                        .size(LabelSize::XSmall)
+                        .color(if clip.include {
+                            ui::Color::Default
+                        } else {
+                            ui::Color::Muted
+                        }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_reel_clip_include(&annotation_id, start_word, end_word, cx);
+                    })),
+            );
+            section = section.child(controls);
+
+            for (strike_index, (strike_start, strike_end)) in clip.strikes.iter().enumerate() {
+                section = section.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "media-transcript-reel-clip-strike-{clip_index}-{strike_index}"
+                        )))
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            Label::new(SharedString::from(format!(
+                                "Struck words {strike_start}–{strike_end}"
+                            )))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!(
+                                    "media-transcript-reel-clip-restore-{clip_index}-{strike_index}"
+                                )))
+                                .cursor_pointer()
+                                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                                .child(
+                                    Label::new(SharedString::from("Restore"))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Default),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.remove_reel_clip_strike(clip_index, strike_index, cx);
+                                })),
+                        ),
+                );
+            }
+        }
+        // The preview toggle (S6): player-local — the seek paths' class, no
+        // admission. The auto-seek chain plays the composed spans on the
+        // shared player without rendering.
+        if any_included_clip {
+            let previewing = self.reel_preview.is_some();
+            section = section.child(
+                div()
+                    .id("media-transcript-reel-preview-toggle")
+                    .cursor_pointer()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(if previewing {
+                            "Stop preview"
+                        } else {
+                            "Preview reel"
+                        }))
+                        .size(LabelSize::XSmall)
+                        .color(if previewing {
+                            ui::Color::Error
+                        } else {
+                            ui::Color::Default
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_reel_preview(cx);
+                    })),
+            );
         }
         for (mode, visible) in affordances {
             if !visible {
@@ -9420,38 +10031,112 @@ impl ReelComposeMode {
     }
 }
 
-/// Union inclusive word ranges: sort, then merge overlapping AND adjacent
-/// ranges — mirroring the server's union_ranges (adjacent ranges share no
-/// words between them, so merging adds none). Keeps stay pairwise disjoint
-/// through this, satisfying the selection algebra's disjoint-Keep check.
-fn union_word_ranges(ranges: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    let mut sorted: Vec<(usize, usize)> = ranges.to_vec();
-    sorted.sort();
-    let mut union: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in sorted {
-        match union.last_mut() {
-            Some((_, last_end)) if start <= last_end.saturating_add(1) => {
-                if end > *last_end {
-                    *last_end = end;
-                }
-            }
-            _ => union.push((start, end)),
-        }
+/// S6: the composed reel's ordered keep ranges — ONE home for the op walk
+/// the compose request and the preview plan share. For each included clip in
+/// composer order: the clip's source range minus its own in-reel strikes and
+/// minus every word an earlier included clip already played (the selection
+/// algebra admits each source span once — overlapping Keep ops are rejected
+/// — so a later clip that overlaps an earlier one repeats only its unplayed
+/// remainder). Both subtractions run through the server's published helpers
+/// (union_ranges + subtract_cuts_from_range — the algebra's own difference
+/// math, never a panel fork; the panel's former union_word_ranges mirror is
+/// deleted).
+fn composed_keep_ranges(clips: &[ReelClip]) -> Vec<hkask_mcp_media::transcript_select::WordRange> {
+    use hkask_mcp_media::transcript_select::{WordRange, subtract_cuts_from_range, union_ranges};
+    let mut played: Vec<WordRange> = Vec::new();
+    let mut keeps: Vec<WordRange> = Vec::new();
+    for clip in clips.iter().filter(|clip| clip.include) {
+        let base = WordRange::new(clip.start_word, clip.end_word);
+        let mut cuts: Vec<WordRange> = clip
+            .strikes
+            .iter()
+            .map(|(start, end)| WordRange::new(*start, *end))
+            .collect();
+        cuts.extend(played.iter().copied());
+        let pieces = subtract_cuts_from_range(base, &union_ranges(&cuts));
+        played.extend(pieces.iter().copied());
+        keeps.extend(pieces);
     }
-    union
+    keeps
 }
 
-/// The exact `educt_store_layer` request for a pane-composed reel (R3): the
-/// EDL built directly from the pane's annotations — Keep ops from the
-/// toggled-in researcher highlights (union-merged so overlapping
-/// selections never trip the algebra's disjoint-Keep check) and Cut ops
-/// from every strike. Assemble keeps only, reduce cuts only, mixed carries
-/// both; `None` when the mode has nothing to compose. Provenance carries
-/// the pane_reel_compose template — never researcher_annotation — so a
-/// single-cut reduce EDL can never masquerade as a researcher strike when
-/// the pane re-parses its own transcript. Membership keys on provenance
-/// and the toggle, never the label text: free-text labels name clips for
-/// the human without affecting reel composition.
+/// The pane's source bundle words as the server's timed-word wire type (S6)
+/// — one home for the field mapping, so every word→time path (the preview
+/// plan, the duration readout) maps identically to the render path.
+fn source_timed_words(state: &TranscriptPaneState) -> Vec<hkask_mcp_media::transcript::TimedWord> {
+    state
+        .source_words
+        .iter()
+        .map(|word| hkask_mcp_media::transcript::TimedWord {
+            word: word.word.clone(),
+            start_ms: word.start_ms,
+            end_ms: word.end_ms,
+            confidence: None,
+        })
+        .collect()
+}
+
+/// The preview's span plan (S6): the composed clip list mapped to media
+/// spans through the render path's own function over the stored SOURCE
+/// bundle words (`edl_to_clip_plan` — the word→time mapping the render
+/// uses), so preview and rendered reel agree on `re_anchored` views, where
+/// the working view's timings are interpolated estimates over different
+/// indices. Honest refusals, never silent: no included clips, or a source
+/// with no word timings.
+fn reel_preview_plan(
+    state: &TranscriptPaneState,
+    clips: &[ReelClip],
+) -> Result<Vec<(u64, u64)>, &'static str> {
+    let keep_ranges = composed_keep_ranges(clips);
+    if keep_ranges.is_empty() {
+        return Err("Nothing to preview — include at least one clip in the reel first.");
+    }
+    let words = source_timed_words(state);
+    if words.is_empty() {
+        return Err("Reel preview needs the recording's source word timings.");
+    }
+    let edl = hkask_mcp_media::transcript_select::Edl {
+        ops: keep_ranges
+            .into_iter()
+            .map(|range| hkask_mcp_media::transcript_select::EdlEntry {
+                range,
+                op: hkask_mcp_media::transcript_select::EdlOp::Keep,
+            })
+            .collect(),
+    };
+    hkask_mcp_media::transcript_select::edl_to_clip_plan(&words, &edl)
+        .map_err(|_| "Reel preview needs the recording's source word timings.")
+}
+
+/// One clip's composed duration over the source bundle words (S6's duration
+/// readout): the time-span total of the clip's strike-subtracted pieces —
+/// what the reel will actually play for this clip. `None` when the source
+/// carries no word timings (the readout degrades honestly).
+fn reel_clip_duration_ms(state: &TranscriptPaneState, clip: &ReelClip) -> Option<u64> {
+    use hkask_mcp_media::transcript_select::{
+        WordRange, subtract_cuts_from_range, union_ranges, word_range_to_time_range,
+    };
+    let words = source_timed_words(state);
+    if words.is_empty() {
+        return None;
+    }
+    let cuts: Vec<WordRange> = clip
+        .strikes
+        .iter()
+        .map(|(start, end)| WordRange::new(*start, *end))
+        .collect();
+    let pieces = subtract_cuts_from_range(
+        WordRange::new(clip.start_word, clip.end_word),
+        &union_ranges(&cuts),
+    );
+    let mut total = 0;
+    for piece in pieces {
+        let (start_ms, end_ms) = word_range_to_time_range(&words, piece).ok()?;
+        total += end_ms - start_ms;
+    }
+    Some(total)
+}
+
 /// The event-click state machine's outcome (S5, mirroring the word pane's
 /// S4 part-2 model).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -9877,22 +10562,25 @@ fn parse_redaction_render(payload: &Value) -> Result<RedactionRenderSummary, Str
     })
 }
 
+/// The exact `educt_store_layer` request for a pane-composed reel (R3, S6
+/// ordered form): the EDL built directly from the pane's ordered clip list
+/// — Keep ops from the included clips in composer order, with in-reel
+/// strikes baked into the keeps through the server's own difference math
+/// (a composer EDL carries no Cut ops in the assemble form; a per-clip
+/// strike as a Cut would strike EVERY clip overlapping the range), and Cut
+/// ops from every whole-recording strike per the mode. Assemble keeps
+/// only, reduce cuts only, mixed carries both; `None` when the mode has
+/// nothing to compose. Provenance carries the pane_reel_compose template —
+/// never researcher_annotation — so a composed EDL can never masquerade
+/// as a researcher strike when the pane re-parses its own transcript.
 fn compose_reel_params(
     state: &TranscriptPaneState,
-    selection: &HashSet<(usize, usize)>,
+    clips: &[ReelClip],
     mode: ReelComposeMode,
 ) -> Option<serde_json::Value> {
-    let keeps: Vec<(usize, usize)> = match mode {
+    let keeps = match mode {
         ReelComposeMode::Reduce => Vec::new(),
-        ReelComposeMode::Assemble | ReelComposeMode::Mixed => state
-            .highlights
-            .iter()
-            .filter(|highlight| {
-                highlight.researcher_supplied
-                    && selection.contains(&(highlight.start_word, highlight.end_word))
-            })
-            .map(|highlight| (highlight.start_word, highlight.end_word))
-            .collect(),
+        ReelComposeMode::Assemble | ReelComposeMode::Mixed => composed_keep_ranges(clips),
     };
     let cuts: Vec<(usize, usize)> = match mode {
         ReelComposeMode::Assemble => Vec::new(),
@@ -9902,7 +10590,7 @@ fn compose_reel_params(
             .map(|strike| (strike.start_word, strike.end_word))
             .collect(),
     };
-    // Mixed is "keeps minus strikes": with nothing toggled in there is
+    // Mixed is "keeps minus strikes": with nothing included there is
     // nothing to keep, so it refuses with its empty status rather than
     // silently composing the reduce reel (cuts-only ops read as the whole
     // transcript under the algebra's subtractive base).
@@ -9910,10 +10598,10 @@ fn compose_reel_params(
         return None;
     }
     let mut ops = Vec::new();
-    for (start_word, end_word) in union_word_ranges(&keeps) {
+    for range in keeps {
         ops.push(serde_json::json!({
             "op": "keep",
-            "range": {"start_word": start_word, "end_word": end_word},
+            "range": {"start_word": range.start_word, "end_word": range.end_word},
         }));
     }
     for (start_word, end_word) in cuts {
@@ -10524,6 +11212,42 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
                 .collect::<Result<Vec<_>, String>>()?
         }
     };
+    // The immutable source bundle's word timings (S6): the render path's
+    // own word→time input (`educt_get_transcript` carries the stored bundle
+    // under "transcript"). Absent when the stored bundle has no word
+    // timings (a text-only source) — the preview refuses honestly then.
+    let source_words = object
+        .get("transcript")
+        .and_then(Value::as_object)
+        .and_then(|bundle| bundle.get("words"))
+        .and_then(Value::as_array)
+        .map(|words| {
+            words
+                .iter()
+                .map(|word| {
+                    let entry = word
+                        .as_object()
+                        .ok_or_else(|| "source bundle word is not an object.".to_string())?;
+                    Ok(PaneWord {
+                        word: entry
+                            .get("word")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| "source bundle word has no text.".to_string())?
+                            .to_string(),
+                        start_ms: entry
+                            .get("start_ms")
+                            .and_then(Value::as_u64)
+                            .ok_or_else(|| "source bundle word has no start_ms.".to_string())?,
+                        end_ms: entry
+                            .get("end_ms")
+                            .and_then(Value::as_u64)
+                            .ok_or_else(|| "source bundle word has no end_ms.".to_string())?,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
     Ok(TranscriptPaneState {
         transcript_id,
         media_path,
@@ -10539,6 +11263,7 @@ fn parse_transcript_payload(payload: &Value) -> Result<TranscriptPaneState, Stri
         highlights,
         strikes,
         correction_edits,
+        source_words,
     })
 }
 
@@ -12401,6 +13126,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
 
             // Create confirm: the editor closes and the unwired invoker
@@ -12590,6 +13316,7 @@ mod tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         }
     }
 
@@ -13994,6 +14721,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.edit_request.state = ResourceState::Loading;
@@ -14014,14 +14742,15 @@ mod tests {
     }
 
     /// dcterms:identifier: `MediaViewer::popover_include_in_reel`
-    /// expect: Over a researcher highlight's exact range the tray flips
-    /// reel membership (the highlights row's toggle, no dispatch); over a
-    /// fresh range it dispatches the existing create path — an in-flight
-    /// edit surfaces the admission refusal and the range never enters the
-    /// selection directly (a bare membership insert would be wiped at the
-    /// next reload; a fresh range rides the create + reload include).
-    /// [P1] Motivating: selection → reel is one click (the low-effort
-    /// path), and membership state stays honest.
+    /// expect: Over a composed clip's range the tray flips that clip's
+    /// include flag (the highlights row's toggle path, no dispatch — the
+    /// clip's flag is the one membership source of truth); over a fresh
+    /// range it dispatches the existing create path — an in-flight edit
+    /// surfaces the admission refusal and the range never enters the
+    /// composer directly (a clip with no highlight behind it has no reload
+    /// identity to survive on, so the fresh arm creates).
+    /// [P1] Motivating: selection → reel is one click (the low-effort path),
+    /// and membership state stays honest.
     #[gpui::test]
     fn popover_include_toggles_reel_membership(cx: &mut gpui::TestAppContext) {
         let viewer = cx.new(|_| MediaViewer::new());
@@ -14048,36 +14777,39 @@ mod tests {
                 }],
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
+            viewer.reel_clips = vec![reel_clip("ann-1", 3, 9, true, &[])];
 
-            // Included → the tray removes the range (the row toggle).
-            viewer.reel_selection.insert((3, 9));
+            // Included → the tray flips the clip's include flag off.
             viewer.selection_popover = Some((3, 9));
-            viewer.popover_include_in_reel(cx);
-            assert!(
-                !viewer.reel_selection.contains(&(3, 9)),
-                "the include toggle removes an included range"
+            viewer.popover_toggle_reel_include(cx);
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![("ann-1".into(), false, vec![])],
+                "the include toggle flips the included clip off"
             );
             assert!(viewer.selection_popover.is_none());
 
-            // Excluded highlight → the tray re-adds the range.
+            // Excluded → the tray flips it back on.
             viewer.selection_popover = Some((3, 9));
-            viewer.popover_include_in_reel(cx);
-            assert!(
-                viewer.reel_selection.contains(&(3, 9)),
-                "the include toggle re-adds the highlight's range"
+            viewer.popover_toggle_reel_include(cx);
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![("ann-1".into(), true, vec![])],
+                "the include toggle re-adds the highlight's clip"
             );
             assert!(viewer.selection_popover.is_none());
 
             // A fresh range dispatches the create path — an in-flight edit
-            // surfaces the refusal, and the range never enters the
-            // selection directly.
+            // surfaces the refusal, and no clip materializes.
             viewer.edit_request.state = ResourceState::Loading;
             viewer.selection_popover = Some((20, 22));
-            viewer.popover_include_in_reel(cx);
-            assert!(
-                !viewer.reel_selection.contains(&(20, 22)),
-                "a fresh range rides the create dispatch, never a bare membership insert"
+            viewer.popover_toggle_reel_include(cx);
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![("ann-1".into(), true, vec![])],
+                "a fresh range rides the create dispatch, never a bare clip insert"
             );
             assert!(
                 viewer
@@ -14138,6 +14870,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.selection_popover = Some((1, 3));
             viewer.popover_copy_time(cx);
@@ -14205,6 +14938,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.close_transcript_workspace(cx);
@@ -14237,6 +14971,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.selection_popover = Some((3, 9));
             viewer.toggle_transcript_surface(TranscriptSurface::Events, cx);
@@ -14860,12 +15595,13 @@ mod tests {
     }
 
     /// dcterms:identifier: `compose_reel_params`
-    /// expect: The three compose modes build the reel EDL directly —
-    /// assemble keeps only the toggled-in researcher highlights
-    /// (overlapping and adjacent selections union-merge), reduce cuts every
-    /// strike, mixed carries both; empty op sets yield None, model-pass rows
-    /// never compose, and the pane_reel_compose provenance never matches
-    /// the pane strike identity. [P1]
+    /// expect: The three compose modes build the reel EDL directly from
+    /// the ordered clip list — assemble keeps only the included clips in
+    /// composer order (a later clip that overlaps an earlier one keeps only
+    /// its unplayed remainder; adjacent clips stay separate ops), reduce
+    /// cuts every strike, mixed carries both; empty op sets yield None, and
+    /// the pane_reel_compose provenance never matches the pane strike
+    /// identity. [P1]
     #[test]
     fn compose_reel_params_builds_each_mode() {
         let state = TranscriptPaneState {
@@ -14905,14 +15641,6 @@ mod tests {
                     annotation_id: "layer-6".into(),
                     researcher_supplied: true,
                 },
-                PaneHighlight {
-                    start_word: 100,
-                    end_word: 110,
-                    label: "model-theme".into(),
-                    note: "n".into(),
-                    annotation_id: "layer-100".into(),
-                    researcher_supplied: false,
-                },
             ],
             strikes: vec![PaneStrike {
                 start_word: 4,
@@ -14920,13 +15648,19 @@ mod tests {
                 annotation_id: "strike-4".into(),
             }],
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         };
-        let toggled: HashSet<(usize, usize)> = [(0, 3), (2, 5), (6, 7)].into_iter().collect();
+        let clips = [
+            reel_clip("layer-0", 0, 3, true, &[]),
+            reel_clip("layer-2", 2, 5, true, &[]),
+            reel_clip("layer-6", 6, 7, true, &[]),
+        ];
 
-        // Assemble: the three overlapping/adjacent keeps union-merge into
-        // one disjoint Keep op [0,7]; the model row never composes.
+        // Assemble: the ordered builder — the first clip keeps its range,
+        // the overlapping second keeps only its unplayed remainder [4,5],
+        // the adjacent third stays its own op.
         let assemble =
-            compose_reel_params(&state, &toggled, ReelComposeMode::Assemble).expect("assemble");
+            compose_reel_params(&state, &clips, ReelComposeMode::Assemble).expect("assemble");
         assert_eq!(assemble["transcript_id"], serde_json::json!("t-1"));
         assert_eq!(assemble["layer"]["kind"], serde_json::json!("edl"));
         assert_eq!(
@@ -14934,37 +15668,40 @@ mod tests {
             serde_json::json!("pane_reel_compose")
         );
         let ops = assemble["layer"]["ops"].as_array().expect("ops");
-        assert_eq!(ops.len(), 1, "overlapping and adjacent keeps union-merge");
+        assert_eq!(ops.len(), 3, "ordered keeps, the overlap trimmed");
         assert_eq!(ops[0]["op"], serde_json::json!("keep"));
         assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(0));
-        assert_eq!(ops[0]["range"]["end_word"], serde_json::json!(7));
+        assert_eq!(ops[0]["range"]["end_word"], serde_json::json!(3));
+        assert_eq!(ops[1]["range"]["start_word"], serde_json::json!(4));
+        assert_eq!(ops[1]["range"]["end_word"], serde_json::json!(5));
+        assert_eq!(ops[2]["range"]["start_word"], serde_json::json!(6));
+        assert_eq!(ops[2]["range"]["end_word"], serde_json::json!(7));
 
         // Reduce: one Cut op per strike, no keeps.
-        let reduce =
-            compose_reel_params(&state, &toggled, ReelComposeMode::Reduce).expect("reduce");
+        let reduce = compose_reel_params(&state, &clips, ReelComposeMode::Reduce).expect("reduce");
         let ops = reduce["layer"]["ops"].as_array().expect("ops");
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0]["op"], serde_json::json!("cut"));
         assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(4));
 
-        // Mixed: the merged keep plus the cut.
-        let mixed = compose_reel_params(&state, &toggled, ReelComposeMode::Mixed).expect("mixed");
+        // Mixed: the ordered keeps plus the cut.
+        let mixed = compose_reel_params(&state, &clips, ReelComposeMode::Mixed).expect("mixed");
         let ops = mixed["layer"]["ops"].as_array().expect("ops");
-        assert_eq!(ops.len(), 2);
+        assert_eq!(ops.len(), 4);
         assert_eq!(ops[0]["op"], serde_json::json!("keep"));
-        assert_eq!(ops[1]["op"], serde_json::json!("cut"));
+        assert_eq!(ops[3]["op"], serde_json::json!("cut"));
 
-        // Empty op sets yield None — and Mixed with nothing toggled in
+        // Empty op sets yield None — and Mixed with nothing included
         // refuses rather than silently composing the reduce reel.
-        let none_toggled: HashSet<(usize, usize)> = HashSet::new();
-        assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Assemble).is_none());
-        assert!(compose_reel_params(&state, &none_toggled, ReelComposeMode::Mixed).is_none());
+        let none_included = [reel_clip("layer-0", 0, 3, false, &[])];
+        assert!(compose_reel_params(&state, &none_included, ReelComposeMode::Assemble).is_none());
+        assert!(compose_reel_params(&state, &none_included, ReelComposeMode::Mixed).is_none());
         let no_strikes = TranscriptPaneState {
             strikes: Vec::new(),
             correction_edits: Vec::new(),
             ..state
         };
-        assert!(compose_reel_params(&no_strikes, &toggled, ReelComposeMode::Reduce).is_none());
+        assert!(compose_reel_params(&no_strikes, &clips, ReelComposeMode::Reduce).is_none());
 
         // The pane_reel_compose provenance never matches the pane strike
         // identity: a single-cut reduce EDL re-parsed as a transcript layer
@@ -14986,6 +15723,586 @@ mod tests {
             "a composed single-cut EDL is not a researcher strike"
         );
         assert_eq!(parsed.layers.len(), 1, "it stays in the Layers strip");
+    }
+
+    // ── S6 reel composer pins ─────────────────────────────────────────────
+
+    fn reel_highlight(annotation_id: &str, start_word: usize, end_word: usize) -> PaneHighlight {
+        PaneHighlight {
+            start_word,
+            end_word,
+            label: format!("{annotation_id} label"),
+            note: "n".into(),
+            annotation_id: annotation_id.into(),
+            researcher_supplied: true,
+        }
+    }
+
+    fn reel_clip(
+        annotation_id: &str,
+        start_word: usize,
+        end_word: usize,
+        include: bool,
+        strikes: &[(usize, usize)],
+    ) -> ReelClip {
+        ReelClip {
+            annotation_id: annotation_id.into(),
+            start_word,
+            end_word,
+            label: format!("{annotation_id} label"),
+            include,
+            strikes: strikes.to_vec(),
+        }
+    }
+
+    /// The composer's state as comparable identities: (annotation id,
+    /// include, strikes) per clip, in composer order.
+    fn reel_clip_identities(viewer: &MediaViewer) -> Vec<(String, bool, Vec<(usize, usize)>)> {
+        viewer
+            .reel_clips
+            .iter()
+            .map(|clip| {
+                (
+                    clip.annotation_id.clone(),
+                    clip.include,
+                    clip.strikes.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// dcterms:identifier: `MediaViewer::rematch_reel_clips`
+    /// expect: Composer state — order, inclusion, and per-clip in-reel
+    /// strikes — survives every workspace reload, keyed to highlight
+    /// identity (annotation id + source range): a fresh load composes every
+    /// researcher highlight included in transcript order, an unrelated
+    /// annotation edit reloads the workspace and the deltas survive the
+    /// re-match, new researcher highlights join included at the tail,
+    /// deleted highlights drop their clips, and a rename refreshes the
+    /// clip's label. [P1]
+    #[gpui::test]
+    fn reel_composer_rebuilds_reorders_and_survives_reload(cx: &mut gpui::TestAppContext) {
+        let viewer = cx.new(|_| MediaViewer::new());
+
+        // Load 1: three researcher highlights compose [a, b, c], all
+        // included (the landed fresh-workspace semantics).
+        viewer.update(cx, |viewer, cx| {
+            let epoch = viewer
+                .transcript_request
+                .begin(RequestOwner::Transcript("t-reel".into()))
+                .expect("the first load owns its request");
+            let mut state = pane_state("t-reel");
+            state.highlights = vec![
+                reel_highlight("layer-a", 0, 3),
+                reel_highlight("layer-b", 5, 8),
+                reel_highlight("layer-c", 10, 12),
+            ];
+            viewer.apply_transcript_result(epoch, Ok(state), cx);
+        });
+        viewer.update(cx, |viewer, cx| {
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![
+                    ("layer-a".into(), true, vec![]),
+                    ("layer-b".into(), true, vec![]),
+                    ("layer-c".into(), true, vec![]),
+                ]
+            );
+            // Composer deltas: b before a, c excluded, b's tail struck in-reel.
+            viewer.move_reel_clip(1, true, cx);
+            viewer.toggle_reel_clip_include("layer-c", 10, 12, cx);
+            viewer.selection_popover = Some((5, 7));
+            viewer.popover_strike_in_reel(cx);
+        });
+
+        // Reload 2 — an unrelated annotation edit mid-compose: the same
+        // highlights with a renamed label, an unrelated strike elsewhere, a
+        // model-pass row, and a NEW researcher highlight.
+        viewer.update(cx, |viewer, cx| {
+            let epoch = viewer
+                .transcript_request
+                .begin(RequestOwner::Transcript("t-reel".into()))
+                .expect("the reload owns its request");
+            let mut state = pane_state("t-reel");
+            state.highlights = vec![
+                PaneHighlight {
+                    label: "renamed a".into(),
+                    ..reel_highlight("layer-a", 0, 3)
+                },
+                reel_highlight("layer-b", 5, 8),
+                reel_highlight("layer-c", 10, 12),
+                reel_highlight("layer-d", 30, 32),
+                PaneHighlight {
+                    researcher_supplied: false,
+                    ..reel_highlight("layer-model", 100, 110)
+                },
+            ];
+            state.strikes = vec![PaneStrike {
+                start_word: 40,
+                end_word: 41,
+                annotation_id: "unrelated-strike".into(),
+            }];
+            viewer.apply_transcript_result(epoch, Ok(state), cx);
+        });
+        viewer.update(cx, |viewer, _| {
+            // The composer deltas survived the reload; d joined included at
+            // the tail; the model row never composes.
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![
+                    ("layer-b".into(), true, vec![(5, 7)]),
+                    ("layer-a".into(), true, vec![]),
+                    ("layer-c".into(), false, vec![]),
+                    ("layer-d".into(), true, vec![]),
+                ],
+                "order, inclusion, and strikes survive the reload"
+            );
+            assert_eq!(
+                viewer.reel_clips[1].label, "renamed a",
+                "the re-match refreshes labels from the reloaded highlights"
+            );
+        });
+
+        // Reload 3 — deleting a highlight drops its clip; the rest survives.
+        viewer.update(cx, |viewer, cx| {
+            let epoch = viewer
+                .transcript_request
+                .begin(RequestOwner::Transcript("t-reel".into()))
+                .expect("the reload owns its request");
+            let mut state = pane_state("t-reel");
+            state.highlights = vec![
+                reel_highlight("layer-a", 0, 3),
+                reel_highlight("layer-b", 5, 8),
+                reel_highlight("layer-d", 30, 32),
+            ];
+            viewer.apply_transcript_result(epoch, Ok(state), cx);
+        });
+        viewer.update(cx, |viewer, _| {
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![
+                    ("layer-b".into(), true, vec![(5, 7)]),
+                    ("layer-a".into(), true, vec![]),
+                    ("layer-d".into(), true, vec![]),
+                ],
+                "the deleted highlight's clip drops; the deltas survive"
+            );
+        });
+    }
+
+    /// dcterms:identifier: `composed_keep_ranges`
+    /// expect: Reorder changes the composed op order — the composed clip
+    /// list emits its Keep ops in composer order, and a later clip that
+    /// overlaps an earlier one repeats only its unplayed remainder (the
+    /// selection algebra admits each source span once — overlapping Keep
+    /// ops are rejected — so [b(5,15), a(0,10)] composes keep(5,15) then
+    /// keep(0,4), and the reverse order composes keep(0,10) then
+    /// keep(11,15)). [P1]
+    #[test]
+    fn reorder_changes_composed_op_order() {
+        let state = pane_state("t-order");
+        let b_first = [
+            reel_clip("layer-b", 5, 15, true, &[]),
+            reel_clip("layer-a", 0, 10, true, &[]),
+        ];
+        let params =
+            compose_reel_params(&state, &b_first, ReelComposeMode::Assemble).expect("compose");
+        let ops = params["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0]["op"], serde_json::json!("keep"));
+        assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(5));
+        assert_eq!(ops[0]["range"]["end_word"], serde_json::json!(15));
+        assert_eq!(ops[1]["range"]["start_word"], serde_json::json!(0));
+        assert_eq!(
+            ops[1]["range"]["end_word"],
+            serde_json::json!(4),
+            "the later clip repeats only its unplayed remainder"
+        );
+
+        let a_first = [
+            reel_clip("layer-a", 0, 10, true, &[]),
+            reel_clip("layer-b", 5, 15, true, &[]),
+        ];
+        let params =
+            compose_reel_params(&state, &a_first, ReelComposeMode::Assemble).expect("compose");
+        let ops = params["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0]["range"]["start_word"], serde_json::json!(0));
+        assert_eq!(ops[0]["range"]["end_word"], serde_json::json!(10));
+        assert_eq!(ops[1]["range"]["start_word"], serde_json::json!(11));
+        assert_eq!(ops[1]["range"]["end_word"], serde_json::json!(15));
+    }
+
+    /// dcterms:identifier: `compose_reel_params` (S6 ordered form)
+    /// expect: An in-reel strike bakes into the clip's Keep op through the
+    /// server's published difference helper — the composer EDL carries
+    /// ONLY Keep ops (never a Cut op: the algebra unions ALL cuts globally,
+    /// so a per-clip strike as a Cut would strike every clip overlapping
+    /// the range), the struck sub-range splits the clip into its flanking
+    /// pieces, excluded clips compose nothing, and the pane_reel_compose
+    /// provenance keeps the ordered form outside the pane strike identity.
+    /// [P1]
+    #[test]
+    fn in_reel_strikes_bake_into_keeps_not_cuts() {
+        let state = pane_state("t-bake");
+        let clips = [
+            reel_clip("layer-a", 0, 10, true, &[(3, 4)]),
+            reel_clip("layer-b", 20, 24, false, &[]),
+        ];
+        let params =
+            compose_reel_params(&state, &clips, ReelComposeMode::Assemble).expect("compose");
+        assert_eq!(
+            params["layer"]["provenance"]["prompt_template"],
+            serde_json::json!("pane_reel_compose")
+        );
+        let ops = params["layer"]["ops"].as_array().expect("ops");
+        assert_eq!(ops.len(), 2, "the strike splits the one clip's Keep op");
+        assert!(
+            ops.iter().all(|op| op["op"] == serde_json::json!("keep")),
+            "a composer EDL carries no Cut ops — strikes are baked keeps"
+        );
+        assert_eq!(
+            ops[0]["range"],
+            serde_json::json!({"start_word": 0, "end_word": 2})
+        );
+        assert_eq!(
+            ops[1]["range"],
+            serde_json::json!({"start_word": 5, "end_word": 10})
+        );
+
+        // The ordered identity extension: the composed layer re-parsed as
+        // a transcript layer renders no strike row (the pane strike
+        // identity needs researcher_annotation + exactly one Cut op).
+        let payload = serde_json::json!({
+            "summary": {"id": "t-bake", "media_path": "/m", "words_count": 11, "has_word_timings": true},
+            "working_transcript": {"text": "a b c", "alignment": "original", "words": [
+                {"word": "a", "start_ms": 0, "end_ms": 100}
+            ]},
+            "layers": [
+                {"id": "compose-ordered", "created_at": "c1", "layer": params["layer"].clone()}
+            ],
+            "exports": [], "renders": []
+        });
+        let parsed = parse_transcript_payload(&payload).expect("parses");
+        assert!(
+            parsed.strikes.is_empty(),
+            "an ordered multi-Keep composer EDL is not a researcher strike"
+        );
+        assert_eq!(parsed.layers.len(), 1, "it stays in the Layers strip");
+    }
+
+    /// dcterms:identifier: `reel_preview_plan`
+    /// expect: The preview's word→time mapping reads the stored SOURCE
+    /// bundle words — the render path's own input — never the working
+    /// view's timings: over a re_anchored fixture whose working timings are
+    /// interpolated estimates over different indices, every preview span
+    /// equals `edl_to_clip_plan`'s output for the same composed EDL over
+    /// the source words, and differs from the working-view mapping. [P1]
+    #[test]
+    fn reel_preview_plan_reads_source_bundle_words() {
+        let mut state = pane_state("t-preview");
+        state.alignment = "re_anchored".into();
+        // The source bundle words: six words, 0..=5, timings 0..1800ms.
+        state.source_words = (0..6)
+            .map(|index| PaneWord {
+                word: format!("w{index}"),
+                start_ms: index * 300,
+                end_ms: index * 300 + 300,
+            })
+            .collect();
+        // The re_anchored working view: interpolated estimates over
+        // DIFFERENT indices — ten times the source timings.
+        state.words = Some(
+            (0..6)
+                .map(|index| PaneWord {
+                    word: format!("w{index}"),
+                    start_ms: index * 3000,
+                    end_ms: index * 3000 + 3000,
+                })
+                .collect(),
+        );
+        let clips = [
+            reel_clip("layer-b", 2, 5, true, &[]),
+            reel_clip("layer-a", 0, 1, true, &[]),
+        ];
+        let spans = reel_preview_plan(&state, &clips).expect("plan");
+
+        // The render path's own plan over the same composed EDL and the
+        // SOURCE bundle words — the equality the preview must hold.
+        let keep_ranges = composed_keep_ranges(&clips);
+        let edl = hkask_mcp_media::transcript_select::Edl {
+            ops: keep_ranges
+                .iter()
+                .map(|range| hkask_mcp_media::transcript_select::EdlEntry {
+                    range: *range,
+                    op: hkask_mcp_media::transcript_select::EdlOp::Keep,
+                })
+                .collect(),
+        };
+        let timed = |words: &[PaneWord]| -> Vec<hkask_mcp_media::transcript::TimedWord> {
+            words
+                .iter()
+                .map(|word| hkask_mcp_media::transcript::TimedWord {
+                    word: word.word.clone(),
+                    start_ms: word.start_ms,
+                    end_ms: word.end_ms,
+                    confidence: None,
+                })
+                .collect()
+        };
+        let source_words = timed(&state.source_words);
+        let expected = hkask_mcp_media::transcript_select::edl_to_clip_plan(&source_words, &edl)
+            .expect("the render plan maps");
+        assert_eq!(spans, expected, "preview spans equal the render plan");
+        assert_eq!(
+            spans,
+            vec![(600, 1800), (0, 600)],
+            "the spans follow the composed order over the SOURCE timings"
+        );
+        let working_words = timed(
+            state
+                .words
+                .as_deref()
+                .expect("the fixture carries working words"),
+        );
+        let working_plan =
+            hkask_mcp_media::transcript_select::edl_to_clip_plan(&working_words, &edl)
+                .expect("the working-view plan maps");
+        assert_ne!(
+            spans, working_plan,
+            "the preview never reads the working view's timings"
+        );
+    }
+
+    /// The committed preview fixture (a 3-second WAV, the widget crate's
+    /// playback-seek fixture copied in) — the real audio the scripted-widget
+    /// preview test loads, seeks, and reads positions from.
+    const REEL_PREVIEW_FIXTURE: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/test_data/reel-preview.wav");
+
+    fn assert_player_position_near(
+        cx: &gpui::TestAppContext,
+        widget: &gpui::Entity<hkask_media_widget::MediaWidget>,
+        expected_ms: f64,
+    ) {
+        let position = widget
+            .read_with(cx, |widget, _| widget.transport_position_secs())
+            .expect("the player reports a position");
+        let expected_secs = expected_ms / 1000.0;
+        assert!(
+            (position - expected_secs).abs() < 0.05,
+            "the player position {position}s must sit at the seek target {expected_secs}s"
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::toggle_reel_preview`
+    /// expect: The preview plays the composed order on the shared player
+    /// without rendering: starting primes a seek to the first span's start
+    /// (observable as the real player's position landing off 0), the walk
+    /// holds while playback is paused (the playing gate), crossing a
+    /// span's end seeks the next span's start through the bound widget (a
+    /// backward jump natural playback never makes — the landing is the
+    /// seek's proof), and the last span's end finishes the preview. [P1]
+    #[gpui::test]
+    fn reel_preview_plays_spans_in_composed_order(cx: &mut gpui::TestAppContext) {
+        hkask_media_widget::approve_gallery_media_path(std::path::Path::new(REEL_PREVIEW_FIXTURE))
+            .expect("the committed preview fixture must be admittable");
+        let widget = cx.new(|cx| {
+            hkask_media_widget::MediaWidget::new(
+                hkask_media_widget::MediaRef::new(
+                    REEL_PREVIEW_FIXTURE.into(),
+                    hkask_media_widget::MediaKind::Audio,
+                ),
+                cx,
+            )
+        });
+        // Drive the widget's own pub load path (the production entry after
+        // construction), then let the async file read + decode complete —
+        // the error gate below is only meaningful once a load has run.
+        widget.update(cx, |widget, cx| widget.load(cx));
+        cx.run_until_parked();
+        assert!(
+            widget.read_with(cx, |widget, _| widget.error_message().is_none()),
+            "the fixture must load — a seek on a failed (or never-run) load is a vacuous green"
+        );
+
+        // The workspace: source words over the 3-second fixture, the clips
+        // composed [b(900..1500ms), a(0..600ms)].
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, _| {
+            let mut state = pane_state("t-preview-order");
+            state.source_words = (0..6)
+                .map(|index| PaneWord {
+                    word: format!("w{index}"),
+                    start_ms: index * 300,
+                    end_ms: index * 300 + 300,
+                })
+                .collect();
+            viewer.transcript = Some(state);
+            viewer.reel_clips = vec![
+                reel_clip("layer-b", 3, 4, true, &[]),
+                reel_clip("layer-a", 0, 1, true, &[]),
+            ];
+            viewer.media_widget = Some(widget.clone());
+            viewer.media_widget_body = Some("fixture".into());
+            viewer.active_tab = ViewerTab::Workspace;
+        });
+        viewer.update(cx, |viewer, cx| viewer.toggle_reel_preview(cx));
+        viewer.update(cx, |viewer, _| {
+            let preview = viewer.reel_preview.as_ref().expect("the preview armed");
+            assert_eq!(
+                preview.spans,
+                vec![(900, 1500), (0, 600)],
+                "the span plan follows the composed order"
+            );
+        });
+        // The prime seek landed on the real player: the position reads the
+        // first span's start, off the 0.0 the fixture loads paused at.
+        assert_player_position_near(cx, &widget, 900.);
+
+        // Paused: the walk holds (the playing gate — the tick keeps polling
+        // without advancing).
+        viewer.update(cx, |viewer, cx| {
+            assert!(
+                viewer.reel_preview_tick(cx),
+                "the tick keeps polling while paused"
+            );
+            assert_eq!(
+                viewer.reel_preview.as_ref().expect("held").index,
+                0,
+                "the walk never advances a paused player"
+            );
+        });
+
+        // The walk, scripted through the production step: crossing span 1's
+        // end seeks span 2's start through the bound widget — the position
+        // lands at 0, a backward jump natural playback never makes.
+        viewer.update(cx, |viewer, cx| viewer.step_reel_preview(1_500, cx));
+        assert_player_position_near(cx, &widget, 0.);
+
+        // Crossing the last span's end finishes the preview.
+        viewer.update(cx, |viewer, cx| {
+            viewer.step_reel_preview(600, cx);
+            assert!(viewer.reel_preview.is_none(), "the preview finished");
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| status.contains("finished")),
+                "the finish surfaces: {:?}",
+                viewer.status
+            );
+        });
+    }
+
+    /// dcterms:identifier: `MediaViewer::stop_reel_preview`
+    /// expect: The preview joins the sub-surface's teardown sites — leaving
+    /// the workspace, a fresh open, closing the transcript, and every reload
+    /// stop it and clear the span plan (the composer state itself survives
+    /// reloads; only the preview tears down), and the tick exits on
+    /// widget-None (hidden media clears the widget mid-preview). [P1]
+    #[gpui::test]
+    fn reel_preview_teardown_joins_the_surface_lifecycle(cx: &mut gpui::TestAppContext) {
+        // Tab switches and opens dispatch reads through the shared
+        // process-global invoker — the lock prevents cross-talk into a
+        // concurrent lock-holder's scripted invoker.
+        let _invoker_lock = INVOKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let viewer = cx.new(|_| MediaViewer::new());
+        let arm_preview = |viewer: &mut MediaViewer, cx: &mut gpui::Context<MediaViewer>| {
+            let mut state = pane_state("t-preview-teardown");
+            state.source_words = vec![PaneWord {
+                word: "a".into(),
+                start_ms: 0,
+                end_ms: 300,
+            }];
+            viewer.transcript = Some(state);
+            viewer.reel_clips = vec![reel_clip("layer-a", 0, 0, true, &[])];
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.toggle_reel_preview(cx);
+            assert!(viewer.reel_preview.is_some(), "the preview armed");
+            assert!(viewer.reel_preview_task.is_some());
+        };
+
+        // Leaving the workspace tears the preview down.
+        viewer.update(cx, |viewer, cx| {
+            arm_preview(viewer, cx);
+            viewer.activate_tab(ViewerTab::Library, cx);
+        });
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.reel_preview.is_none(),
+                "leaving the workspace stops the preview"
+            );
+            assert!(viewer.reel_preview_task.is_none());
+        });
+
+        // A fresh open tears it down (open_transcript resets the surface).
+        viewer.update(cx, |viewer, cx| {
+            arm_preview(viewer, cx);
+            viewer.open_transcript("t-other".into(), cx);
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.reel_preview.is_none(),
+                "a fresh open stops the preview"
+            );
+            assert!(viewer.reel_preview_task.is_none());
+        });
+
+        // The reload path tears it down — while the composer state re-matches.
+        viewer.update(cx, |viewer, cx| {
+            arm_preview(viewer, cx);
+            let epoch = viewer
+                .transcript_request
+                .begin(RequestOwner::Transcript("t-preview-teardown".into()))
+                .expect("the reload owns its request");
+            let mut state = pane_state("t-preview-teardown");
+            state.source_words = vec![PaneWord {
+                word: "a".into(),
+                start_ms: 0,
+                end_ms: 300,
+            }];
+            state.highlights = vec![reel_highlight("layer-a", 0, 0)];
+            viewer.apply_transcript_result(epoch, Ok(state), cx);
+            assert!(
+                viewer.reel_preview.is_none(),
+                "the reload stops the preview"
+            );
+            assert!(viewer.reel_preview_task.is_none());
+            assert_eq!(
+                reel_clip_identities(viewer),
+                vec![("layer-a".into(), true, vec![])],
+                "the composer state re-matched across the same reload"
+            );
+        });
+
+        // widget-None: the tick exits and clears (hidden media suspends or
+        // the selection changes mid-preview).
+        viewer.update(cx, |viewer, cx| {
+            arm_preview(viewer, cx);
+            viewer.clear_media_widget(cx);
+            assert!(
+                !viewer.reel_preview_tick(cx),
+                "the tick exits on widget-None"
+            );
+            assert!(viewer.reel_preview.is_none());
+            assert!(viewer.reel_preview_task.is_none());
+        });
+
+        // Closing the transcript tears it down.
+        viewer.update(cx, |viewer, cx| {
+            arm_preview(viewer, cx);
+            viewer.close_transcript_workspace(cx);
+        });
+        viewer.update(cx, |viewer, _| {
+            assert!(
+                viewer.reel_preview.is_none(),
+                "closing the transcript stops the preview"
+            );
+        });
     }
 
     /// dcterms:identifier: `resolved_highlight_runs`
@@ -15211,7 +16528,7 @@ mod tests {
                 annotation_id: "strike-4".into(),
             }];
             viewer.transcript = Some(state);
-            viewer.reel_selection.insert((0, 2));
+            viewer.reel_clips = vec![reel_clip("layer-0", 0, 2, true, &[])];
             viewer.compose_workspace_reel(ReelComposeMode::Assemble, cx);
             assert!(
                 matches!(viewer.edit_request.state, ResourceState::Failed(_)),
@@ -15221,10 +16538,10 @@ mod tests {
                 viewer.edit_progress.is_none(),
                 "the refusal cleared the compose progress"
             );
-            // Nothing toggled in: the assemble empty status surfaces
+            // Nothing included: the assemble empty status surfaces
             // without admitting an edit.
             viewer.edit_request.state = ResourceState::Idle;
-            viewer.reel_selection.clear();
+            viewer.reel_clips = vec![reel_clip("layer-0", 0, 2, false, &[])];
             viewer.compose_workspace_reel(ReelComposeMode::Assemble, cx);
             assert!(
                 viewer
@@ -15327,6 +16644,7 @@ mod tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         };
         let blocks = build_pane_blocks(&state);
         assert_eq!(blocks.len(), 5, "four breaks split 50 words into 5 blocks");
@@ -15424,6 +16742,7 @@ mod tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         };
         let blocks = build_pane_blocks(&state);
         assert_eq!(blocks.len(), 2);
@@ -15479,6 +16798,7 @@ mod tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             };
             viewer.apply_transcript_result(new_request, Ok(state.clone()), cx);
             viewer.apply_transcript_result(old_request, Err("stale error".into()), cx);
@@ -15562,6 +16882,7 @@ mod tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         });
         viewer
     }
@@ -16529,6 +17850,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             // The open path's post-state (T3): open_transcript selects the
             // Workspace and yields the inspector's share to the reading
@@ -16593,6 +17915,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -16722,6 +18045,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             }
         }
 
@@ -16802,6 +18126,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Workspace;
             viewer.inspector_open = false;
@@ -16896,6 +18221,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Workspace;
             viewer.inspector_open = false;
@@ -17057,6 +18383,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.active_tab = ViewerTab::Workspace;
             viewer.inspector_open = false;
@@ -17167,7 +18494,7 @@ mod viewer_layout_tests {
         cx.update_window_entity(&viewer, |viewer, _window, cx| {
             viewer.popover_cut(cx);
             viewer.selection_popover = Some((0, 2));
-            viewer.popover_include_in_reel(cx);
+            viewer.popover_toggle_reel_include(cx);
         });
         cx.run_until_parked();
         viewer.update(cx, |viewer, _| {
@@ -17230,6 +18557,7 @@ mod viewer_layout_tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         }
     }
 
@@ -17579,6 +18907,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -17667,6 +18996,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -17737,6 +19067,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             // The open path's post-state (T3).
             viewer.active_tab = ViewerTab::Workspace;
@@ -18224,6 +19555,7 @@ mod viewer_layout_tests {
                 highlights: Vec::new(),
                 strikes: Vec::new(),
                 correction_edits: Vec::new(),
+                source_words: Vec::new(),
             });
             viewer.visual_events = Some(VisualEventsState {
                 status: "completed".into(),
@@ -18376,6 +19708,7 @@ mod viewer_layout_tests {
             highlights: Vec::new(),
             strikes: Vec::new(),
             correction_edits: Vec::new(),
+            source_words: Vec::new(),
         });
         viewer.visual_events = Some(state);
         viewer.transcript_surface = TranscriptSurface::Events;

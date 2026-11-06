@@ -305,10 +305,15 @@ pub fn edl_to_clip_plan(words: &[TimedWord], edl: &Edl) -> Result<Vec<(u64, u64)
     keep_ranges_to_clip_plan(words, &keep_ranges)
 }
 
-/// Map keep-ranges to a render plan: `(start_ms, end_ms)` pairs for
-/// Subtract sorted, disjoint cuts from one base range, preserving order.
-/// A cut may split the base range into multiple pieces.
-fn subtract_cuts_from_range(base: WordRange, cuts: &[WordRange]) -> Vec<WordRange> {
+/// Subtract sorted, disjoint cuts from one base range, preserving the
+/// base's order. A cut may split the base into multiple pieces; cuts that
+/// do not intersect the base are no-ops. This is the per-clip difference
+/// step of the subtractive mode — and the published home for per-clip
+/// difference math generally: the panel's reel composer bakes an in-reel
+/// strike into the ONE clip's Keep op here instead of entering the EDL
+/// as a global Cut, which the algebra would subtract from EVERY keep.
+/// Callers pass already-unioned cuts (`union_ranges` output).
+pub fn subtract_cuts_from_range(base: WordRange, cuts: &[WordRange]) -> Vec<WordRange> {
     let mut pieces = Vec::new();
     let mut cursor = base.start_word;
     for cut in cuts {
@@ -729,5 +734,82 @@ mod tests {
     #[test]
     fn union_ranges_empty_input_yields_empty_union() {
         assert!(union_ranges(&[]).is_empty());
+    }
+
+    // ── subtract_cuts_from_range (the published per-clip difference) ────
+
+    fn ranges(pairs: &[(usize, usize)]) -> Vec<WordRange> {
+        pairs
+            .iter()
+            .map(|(start, end)| WordRange::new(*start, *end))
+            .collect()
+    }
+
+    /// dcterms:identifier: `subtract_cuts_from_range`
+    /// expect: The published per-clip difference step covers contained,
+    /// overlapping, and boundary cuts — a contained cut splits the base
+    /// into its two flanking pieces, a boundary-touching cut removes only
+    /// its side, an overhanging cut trims to the overlap, a covering cut
+    /// empties the base, cuts outside the base are no-ops, and multiple
+    /// cuts tile the base down to the uncut remainders. [P1]
+    #[test]
+    fn subtract_cuts_covers_contained_overlapping_and_boundary() {
+        let base = WordRange::new(10, 20);
+        // Contained: the two flanking pieces.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(12, 14)])),
+            ranges(&[(10, 11), (15, 20)])
+        );
+        // Boundary at the start: only the right remainder.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(10, 12)])),
+            ranges(&[(13, 20)])
+        );
+        // Boundary at the end: only the left remainder.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(18, 20)])),
+            ranges(&[(10, 17)])
+        );
+        // Overhanging on the left (the cut starts before the base).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(5, 12)])),
+            ranges(&[(13, 20)])
+        );
+        // Overhanging on the right (the cut ends past the base).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(18, 25)])),
+            ranges(&[(10, 17)])
+        );
+        // A cut covering the whole base empties it.
+        assert!(subtract_cuts_from_range(base, &ranges(&[(5, 25)])).is_empty());
+        // Cuts outside the base are no-ops (before and after).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(0, 5)])),
+            ranges(&[(10, 20)])
+        );
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(30, 35)])),
+            ranges(&[(10, 20)])
+        );
+    }
+
+    /// dcterms:identifier: `subtract_cuts_from_range`
+    /// expect: Multiple contained cuts tile the base into the uncut
+    /// remainders, and cuts that together cover the base leave nothing.
+    /// [P1]
+    #[test]
+    fn subtract_cuts_tiles_multiple_cuts_to_the_remainders() {
+        assert_eq!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &ranges(&[(2, 3), (6, 7)])),
+            ranges(&[(0, 1), (4, 5), (8, 10)])
+        );
+        assert!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &ranges(&[(0, 4), (5, 10)])).is_empty()
+        );
+        assert_eq!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &[]),
+            ranges(&[(0, 10)]),
+            "an empty cut list yields the base unchanged"
+        );
     }
 }
