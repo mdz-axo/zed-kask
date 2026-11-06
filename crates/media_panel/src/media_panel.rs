@@ -12,6 +12,8 @@
 
 pub mod media_viewer;
 pub mod panel_button;
+#[cfg(test)]
+mod test_fixtures;
 
 use gpui::{
     App, ClickEvent, Context, DefiniteLength, Entity, EventEmitter, FocusHandle, Focusable,

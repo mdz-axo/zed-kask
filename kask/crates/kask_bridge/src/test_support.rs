@@ -2,61 +2,7 @@
 //! One canonical copy — test modules import from here instead of
 //! re-declaring.
 
-use credentials_provider::CredentialsProvider;
 use hkask_keystore::KeychainError;
-
-/// A mock `CredentialsProvider` for paths that still READ through the
-/// provider trait — the embedding-credential resolution in
-/// `inference_providers.rs`. MCP-server credential reads no longer
-/// traverse the trait (they go through the typed keychain-read seam,
-/// `typed_keychain_read` in mcp_servers.rs, because the trait has no
-/// transient state), so canned MCP-credential reads — including failure
-/// states — belong to [`MockKeychain`] below.
-pub(crate) struct MockCredentialsProvider {
-    pub(crate) secrets: std::collections::HashMap<String, Vec<u8>>,
-}
-
-impl MockCredentialsProvider {
-    /// The always-`Ok` shape tests previously constructed by struct literal.
-    pub(crate) fn new(secrets: std::collections::HashMap<String, Vec<u8>>) -> Self {
-        Self { secrets }
-    }
-}
-
-impl CredentialsProvider for MockCredentialsProvider {
-    fn read_credentials<'a>(
-        &'a self,
-        url: &'a str,
-        _cx: &'a gpui::AsyncApp,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
-    > {
-        let result = self
-            .secrets
-            .get(url)
-            .cloned()
-            .map(|pw| ("user".to_string(), pw));
-        Box::pin(async move { Ok(result) })
-    }
-
-    fn write_credentials<'a>(
-        &'a self,
-        _url: &'a str,
-        _username: &'a str,
-        _password: &'a [u8],
-        _cx: &'a gpui::AsyncApp,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    fn delete_credentials<'a>(
-        &'a self,
-        _url: &'a str,
-        _cx: &'a gpui::AsyncApp,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
-        Box::pin(async { Ok(()) })
-    }
-}
 
 /// A mock for the typed keychain-read seam (`typed_keychain_read` in
 /// mcp_servers.rs) — canned outcomes per URL, classified over the SAME

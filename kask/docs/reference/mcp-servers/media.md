@@ -712,7 +712,7 @@ workspace's transcript sub-surface — never a standalone destination.
   workspace: Back renders above the player, the error shows as a
   dismissible status line, and range selection stays reachable (pinned by
   `transcript_media_failure_keeps_navigation_and_curation_reachable`,
-  media_viewer.rs:14426).
+  media_viewer.rs:16338).
 - **Annotate**: an explicit Select-range mode turns word clicks into a
   two-click range (`handle_word_selection`, :3281) that opens a label
   editor (`open_label_editor`, :3860; `render_label_editor`, :3990) — a

@@ -949,7 +949,8 @@ pub(crate) fn filter_config_env_for_server(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{MockCredentialsProvider, MockKeychain};
+    use crate::test_support::MockKeychain;
+    use credentials_provider::test_support::FakeCredentialsProvider;
 
     /// The experimentation server's registration entry is pinned: id, binary, the
     /// SQLCipher passphrase credential, and the config allowlist aligned with
@@ -1700,7 +1701,7 @@ mod tests {
     #[tokio::test]
     async fn delegated_grants_follow_settings_and_launch_lifecycle() {
         let _guard = ENV_TEST_LOCK.lock().await;
-        let provider = MockCredentialsProvider::new(std::collections::HashMap::new());
+        let provider = FakeCredentialsProvider::default();
         // Keychain reads go through the typed seam, not the provider — seed
         // the mock keychain with every credential URL so each
         // `build_mcp_server_env` call reads Loaded. In particular the DB
@@ -1808,7 +1809,7 @@ mod tests {
     async fn build_mcp_server_env_forwards_allowlisted_operator_overrides() {
         let _guard = ENV_TEST_LOCK.lock().await;
         let settings = crate::KaskSettings::default();
-        let provider = MockCredentialsProvider::new(std::collections::HashMap::new());
+        let provider = FakeCredentialsProvider::default();
         // Keychain reads go through the typed seam — seed the mock keychain
         // with every credential URL (the DB passphrase especially: an
         // absent passphrase would arm the REAL provisioning tier).
@@ -2061,7 +2062,7 @@ mod tests {
         let env = build_mcp_server_env(
             "research",
             &settings,
-            &MockCredentialsProvider::new(std::collections::HashMap::new()),
+            &FakeCredentialsProvider::default(),
             None,
             None,
             &cx,
@@ -2213,7 +2214,7 @@ mod tests {
             .map(|(_, url)| url.clone())
             .expect("HKASK_DB_PASSPHRASE must be in the curator credentials allowlist");
 
-        let provider = MockCredentialsProvider::new(std::collections::HashMap::new());
+        let provider = FakeCredentialsProvider::default();
         let _mock_keychain = MockKeychain::new()
             .with_secret(&passphrase_url, b"keychain-secret-passphrase")
             .install();
@@ -2287,7 +2288,7 @@ mod tests {
         // the default does not emit it, the test still pins the invariant:
         // whatever `mcp_env()` emits, only allowlisted keys survive.
         let settings = crate::KaskSettings::default();
-        let provider = MockCredentialsProvider::new(std::collections::HashMap::new());
+        let provider = FakeCredentialsProvider::default();
         // Hygiene: the scenarios server's credentials allowlist is empty,
         // so no keychain read should occur — but an installed empty mock
         // guarantees none can reach the REAL keychain if the allowlist

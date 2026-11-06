@@ -465,7 +465,7 @@ fn embedding_provider_descriptor(
 #[cfg(test)]
 mod tests {
     use super::INFERENCE_PROVIDERS;
-    use crate::test_support::MockCredentialsProvider;
+    use credentials_provider::test_support::FakeCredentialsProvider;
 
     // Pins the inference-provider credential consolidation (the
     // 2026-08-31 split-brain fix — successor to the D29 mirror contract):
@@ -640,7 +640,8 @@ mod tests {
                 )
             })
             .collect();
-        let credentials = MockCredentialsProvider::new(secrets);
+        let credentials = FakeCredentialsProvider::default();
+        credentials.state.lock().keys = secrets;
         let async_cx = cx.to_async();
 
         // Ineligible routes: keys ARE present at their slots, so these

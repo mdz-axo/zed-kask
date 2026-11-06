@@ -426,6 +426,53 @@ mod tests {
         );
     }
 
+    /// expect: the production self-heal branch — `get()` re-opens the store
+    /// when the initial open failed — restores curator memory mid-session.
+    /// `for_tests` constructs with `heal_enabled: false` (the outage-probe
+    /// pins depend on heal being disabled), so without this test the live
+    /// `needs_heal && heal_enabled → try_heal` branch in `get()` has zero
+    /// test consumers — the capability-stripped-constructor shape (every
+    /// existing test disables the very capability it should pin).
+    /// pre: the db_path's initial open fails — a garbage file occupies the
+    /// path, so `open_or_repair`'s passphrase probe rejects it and `new()`
+    /// holds `None`.
+    /// post: while the corruption persists, `get()` stays `None` (the heal
+    /// re-open fails the same probe); once the failure clears (the garbage
+    /// removed, so the re-open creates a fresh DB), `get()` returns the
+    /// healed store carrying the ORIGINAL constructor parameters — the
+    /// decay constant reaches the healed store exactly as the initial one.
+    #[test]
+    fn get_heals_the_store_once_the_open_failure_clears() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("curator.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        std::fs::write(&db_path, b"not a database").expect("seed the corrupt db file");
+
+        let store = CuratorStore::new(db_path.clone(), "test-passphrase", 1024, 30.0);
+        assert!(
+            !store.availability(),
+            "the corrupt file must fail the initial open"
+        );
+        assert!(
+            store.get().is_none(),
+            "the heal re-open must fail while the corrupt file occupies the path"
+        );
+
+        std::fs::remove_file(&db_path).expect("clear the corruption");
+        let healed = store
+            .get()
+            .expect("get() must heal once the re-open can succeed");
+        assert_eq!(
+            healed.memory_life_days(),
+            30.0,
+            "the healed store carries the constructor's decay constant"
+        );
+        assert!(
+            store.availability(),
+            "availability() reflects the healed store"
+        );
+    }
+
     /// The gemba walk reads skill activation outcomes from the archive, so an
     /// outcome recorded in one session is still there after a restart
     /// (operator ruling 2026-09-24).

@@ -10277,6 +10277,7 @@ fn tool_result_changed_gallery(output: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_fixtures::scheduled_job;
 
     /// Invoker-global tests serialize: mock invokers install into a
     /// process-global, and two installers racing under parallel test
@@ -10581,13 +10582,7 @@ mod tests {
     #[gpui::test]
     fn load_jobs_surfaces_strict_rows_and_response_failures(cx: &mut gpui::TestAppContext) {
         let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        struct RestoreInvoker(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
-        impl Drop for RestoreInvoker {
-            fn drop(&mut self) {
-                hkask_tool_invoker::set_tool_invoker(self.0.take());
-            }
-        }
-        let _restore = RestoreInvoker(hkask_tool_invoker::shared_tool_invoker());
+        let _restore = InvokerRestore(hkask_tool_invoker::shared_tool_invoker());
         let record = hkask_mcp_media::types::JobRecord {
             id: "job-1".into(),
             op: "transcribe".into(),
@@ -10763,22 +10758,6 @@ mod tests {
             op: "video_clip".into(),
             status: status.into(),
             created_at: "2026-09-14T00:00:00Z".into(),
-            completed_at: None,
-            result: None,
-            error: None,
-            source: None,
-        }
-    }
-
-    /// A job fixture with explicit identity, op, and timing — the L11 shape
-    /// needs controlled `created_at` ordering (a deep job older than the
-    /// page's newer completions).
-    fn scheduled_job(id: &str, op: &str, status: &str, created_at: &str) -> JobRecord {
-        JobRecord {
-            id: id.into(),
-            op: op.into(),
-            status: status.into(),
-            created_at: created_at.into(),
             completed_at: None,
             result: None,
             error: None,
@@ -12615,13 +12594,7 @@ mod tests {
     #[gpui::test]
     fn gallery_previous_and_next_reach_adjacent_pages(cx: &mut gpui::TestAppContext) {
         let _invoker_guard = INVOKER_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        struct RestoreInvoker(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
-        impl Drop for RestoreInvoker {
-            fn drop(&mut self) {
-                hkask_tool_invoker::set_tool_invoker(self.0.take());
-            }
-        }
-        let _restore = RestoreInvoker(hkask_tool_invoker::shared_tool_invoker());
+        let _restore = InvokerRestore(hkask_tool_invoker::shared_tool_invoker());
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         hkask_tool_invoker::set_tool_invoker(Some(std::sync::Arc::new(GalleryPageInvoker {
             calls: calls.clone(),
@@ -14614,7 +14587,7 @@ mod tests {
 
     /// Install a scripted invoker, returning (recorded-calls, restore). The
     /// caller holds INVOKER_TEST_LOCK for the test's lifetime — the same
-    /// serialization discipline as the inline RestoreInvoker tests.
+    /// serialization discipline as the direct-install invoker tests.
     struct InvokerRestore(Option<std::sync::Arc<dyn hkask_tool_invoker::ToolInvoker>>);
     impl Drop for InvokerRestore {
         fn drop(&mut self) {
@@ -15348,25 +15321,21 @@ mod edit_tests {
 #[cfg(test)]
 mod viewer_layout_tests {
     use super::*;
+    use crate::test_fixtures::scheduled_job;
     use gpui::{DefiniteLength, TestAppContext, px, size};
 
-    const FIXTURE: &str =
-        "/home/mdz-axolotl/Documents/zk-data/media-mcp/generated/vonnegut-shape-of-stories.mp4";
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/test_data/viewer-layout.mp4");
 
-    /// A job record fixture for the activity-layer render tests (this
-    /// module cannot reach `mod tests`' fixtures — `use super::*` stops at
-    /// the file root).
-    fn job_fixture(id: &str, op: &str, status: &str, created_at: &str) -> JobRecord {
-        JobRecord {
-            id: id.into(),
-            op: op.into(),
-            status: status.into(),
-            created_at: created_at.into(),
-            completed_at: None,
-            result: None,
-            error: None,
-            source: None,
-        }
+    /// Admit the committed fixture through the widget's locator-validation
+    /// boundary (`approve_gallery_media_path`) — the same authority the
+    /// viewer's ingest path uses for gallery-published media. The widget's
+    /// cfg(test) approved root covers only its OWN crate's `test_data`; this
+    /// crate's fixture lives outside both it and the artifacts dir, so
+    /// without explicit admission the shared widget refuses to resolve the
+    /// path and the video area never renders (the layout pins then fail).
+    fn admit_fixture() {
+        hkask_media_widget::approve_gallery_media_path(std::path::Path::new(FIXTURE))
+            .expect("the committed layout fixture must be admittable");
     }
 
     /// Layout ground truth at the VIEWER level — the full production chain
@@ -15376,10 +15345,8 @@ mod viewer_layout_tests {
     /// laid-out height tracks window height exactly.
     #[gpui::test]
     fn viewer_video_area_scales_with_window_size(cx: &mut TestAppContext) {
-        if !std::path::Path::new(FIXTURE).exists() {
-            return;
-        }
         init_layout_test_globals(cx);
+        admit_fixture();
 
         let viewer = cx.new(|_| MediaViewer::new());
         let output = serde_json::json!({
@@ -15656,10 +15623,8 @@ mod viewer_layout_tests {
     /// resizes back — the no-thrash probe.
     #[gpui::test]
     fn viewer_content_fits_narrow_pane(cx: &mut TestAppContext) {
-        if !std::path::Path::new(FIXTURE).exists() {
-            return;
-        }
         init_layout_test_globals(cx);
+        admit_fixture();
 
         let viewer = cx.new(|_| MediaViewer::new());
         let output = serde_json::json!({
@@ -15708,10 +15673,8 @@ mod viewer_layout_tests {
     /// clips as the backstop.
     #[gpui::test]
     fn closing_transcript_leaves_widget_inside_pane(cx: &mut TestAppContext) {
-        if !std::path::Path::new(FIXTURE).exists() {
-            return;
-        }
         init_layout_test_globals(cx);
+        admit_fixture();
 
         let viewer = cx.new(|_| MediaViewer::new());
         let output = serde_json::json!({
@@ -16851,10 +16814,11 @@ mod viewer_layout_tests {
             viewer.jobs_total = Some(2);
             viewer.jobs_limit = hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT;
             viewer.jobs_has_more = false;
-            let mut live = job_fixture("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+            let mut live =
+                scheduled_job("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
             live.source = Some("/talk.wav".into());
             viewer.live_jobs = vec![live];
-            viewer.jobs = vec![job_fixture(
+            viewer.jobs = vec![scheduled_job(
                 "job-done",
                 "video_clip",
                 "completed",
@@ -16941,7 +16905,8 @@ mod viewer_layout_tests {
                     gallery_asset_id: Some("asset-other".into()),
                 },
             ];
-            let mut live = job_fixture("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
+            let mut live =
+                scheduled_job("job-live", "transcribe", "running", "2026-09-05T00:00:00Z");
             live.source = Some("/talk.wav".into());
             viewer.live_jobs = vec![live];
             cx.notify();
