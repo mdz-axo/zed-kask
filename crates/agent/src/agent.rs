@@ -3370,6 +3370,24 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
+        // zed-kask: D100 (the review's F1) — the panel scoping's dispatch leg:
+        // a marked thread's selector refuses a non-local model BEFORE any
+        // write — the thread's held model, the thinking/effort/speed slots,
+        // and the global agent default in the settings file. The storage
+        // gate (`Thread::set_model`) refuses silently (log-only), which left
+        // a refused pick still re-writing the GLOBAL default model through
+        // the settings write below; the typed refusal here precedes every
+        // write. The picker's `confirm` and cycle-favorites paths skip
+        // disabled entries, so this is the belt for any direct-set path.
+        if thread.read(cx).is_private_inference()
+            && !crate::thread::is_private_leg_model(&model, cx)
+        {
+            return Task::ready(Err(anyhow::anyhow!(crate::thread::PrivateRoutingError {
+                provider_id: model.provider_id.0.clone().into(),
+                model_id: model.id.0.clone().into(),
+            })));
+        }
+
         let favorite = agent_settings::AgentSettings::get_global(cx)
             .favorite_models
             .iter()
@@ -13317,6 +13335,99 @@ mod internal_tests {
                 "an unmarked thread's model list is fully selectable"
             );
         }
+    }
+
+    /// zed-kask: D100 (the review's F1) — the panel scoping's dispatch leg:
+    /// `select_model` on a privacy-marked thread refuses a non-local model
+    /// BEFORE any write — the thread's held model, the thinking/effort/speed
+    /// slots, and the global agent default in the settings file. The storage
+    /// gate refuses silently (log-only), which left a refused pick still
+    /// re-writing the GLOBAL default model through the settings write; the
+    /// typed refusal precedes every write, so the observable set is: the
+    /// error names the boundary, the thread's model stays unset, the effort
+    /// slot is untouched, and the settings default stays un-set.
+    #[gpui::test]
+    async fn private_thread_select_model_refuses_before_any_write(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+
+        init_test(cx);
+        let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // The fake provider ("fake") is NOT in the local-leg set — the
+        // same policy shape as the list-scoping pin above.
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .private_inference
+                        .get_or_insert_default()
+                        .provider_id = Some("private-local".to_string());
+                });
+            });
+        });
+
+        let selector = NativeAgentModelSelector {
+            session_id: session_id.clone(),
+            connection: (*connection).clone(),
+        };
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
+        });
+
+        // Any listed model is non-local under this policy; take the first.
+        let entries = resolved_model_entries(&selector, cx, true).await;
+        let public_id = entries
+            .first()
+            .expect("the list carries models to refuse")
+            .id
+            .clone();
+
+        let effort_before =
+            cx.update(|cx| thread.read_with(cx, |t, _| t.thinking_effort().cloned()));
+        let result = cx.update(|cx| selector.select_model(public_id, cx)).await;
+        let refusal = result.expect_err("a marked thread's select_model refuses a non-local model");
+        assert!(
+            refusal.to_string().contains("private thread refused"),
+            "the refusal names the boundary: {refusal}"
+        );
+        assert!(
+            refusal.to_string().contains("kask.private_inference"),
+            "the refusal names the PI-owned policy home: {refusal}"
+        );
+
+        // No write happened: the thread's model stays unset, the effort
+        // slot is untouched, and the global agent default was never
+        // re-written (the settings write never dispatched) — asserted
+        // before/after, not against a preset value.
+        let default_model_before = cx.update(|cx| {
+            agent_settings::AgentSettings::get_global(cx)
+                .default_model
+                .clone()
+        });
+        assert!(
+            cx.update(|cx| thread.read_with(cx, |t, _| t.model().is_none())),
+            "the refused pick never reaches the thread's model slot"
+        );
+        let effort_after =
+            cx.update(|cx| thread.read_with(cx, |t, _| t.thinking_effort().cloned()));
+        assert_eq!(
+            effort_before, effort_after,
+            "the refused pick never reaches the thinking-effort slot"
+        );
+        assert_eq!(
+            cx.update(|cx| {
+                agent_settings::AgentSettings::get_global(cx)
+                    .default_model
+                    .clone()
+            }),
+            default_model_before,
+            "the refused pick never rewrites the global default model"
+        );
     }
 
     fn set_draft_and_save(

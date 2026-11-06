@@ -149,6 +149,12 @@ impl ModelPickerDelegate {
 
         let favorite_models: Vec<_> = all_models
             .into_iter()
+            // zed-kask: D100 (the review's F1) — the panel scoping applies
+            // to the cycle path too: disabled entries (a private thread's
+            // non-local models, listed with the boundary reason) are
+            // skipped, matching `confirm`'s disabled check — a favorite the
+            // thread may not hold is never cycled into.
+            .filter(|model| model.disabled.is_none())
             .filter(|model| self.favorites.contains(&model.id))
             .unique_by(|model| &model.id)
             .collect();
@@ -594,10 +600,84 @@ mod tests {
         );
     }
 
+    /// zed-kask: D100 (the review's F1) — the cycle-favorites path honors the
+    /// panel scoping: a DISABLED favorite (a private thread's non-local
+    /// model, listed with the boundary reason) is skipped — the cycle lands
+    /// on the enabled favorite, never on a model the thread may not hold.
+    /// `confirm` already checks `disabled`; this pins the cycle path's own
+    /// filter.
+    #[gpui::test]
+    fn cycling_favorites_skips_disabled_models(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let local_model = AgentModelInfo {
+            id: AgentModelId::new("private-local/local-model"),
+            name: "Local".into(),
+            description: None,
+            icon: None,
+            is_latest: false,
+            disabled: None,
+            cost: None,
+        };
+        let disabled_public = AgentModelInfo {
+            id: AgentModelId::new("public-provider/public-model"),
+            name: "Public".into(),
+            description: None,
+            icon: None,
+            is_latest: false,
+            disabled: Some(language_model::DisabledReason(
+                "private thread — only the local private inference leg serves \
+                 this thread (kask.private_inference)"
+                    .into(),
+            )),
+            cost: None,
+        };
+        let model_selector = Rc::new(TestModelSelector {
+            models: vec![disabled_public, local_model.clone()],
+            selected_model: RefCell::new(local_model),
+            selected_models: RefCell::new(Vec::new()),
+            favorites: [
+                AgentModelId::new("public-provider/public-model"),
+                AgentModelId::new("private-local/local-model"),
+            ]
+            .into_iter()
+            .collect(),
+        });
+
+        let window_handle = cx.add_window({
+            let model_selector = model_selector.clone();
+            move |window, cx| {
+                let selector: Rc<dyn AgentModelSelector> = model_selector;
+                acp_model_selector(selector, cx.focus_handle(), window, cx)
+            }
+        });
+        cx.run_until_parked();
+
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        window_handle
+            .update(&mut cx, |picker, window, cx| {
+                picker.delegate.cycle_favorite_models(window, cx);
+            })
+            .unwrap();
+
+        assert_eq!(
+            model_selector.selected_models.borrow().as_slice(),
+            &[AgentModelId::new("private-local/local-model")],
+            "the cycle skips the disabled public favorite and re-lands on the \
+             enabled local one — a disabled entry is never cycled into"
+        );
+    }
+
     struct TestModelSelector {
         models: Vec<AgentModelInfo>,
         selected_model: RefCell<AgentModelInfo>,
         selected_models: RefCell<Vec<AgentModelId>>,
+        favorites: HashSet<AgentModelId>,
     }
 
     impl TestModelSelector {
@@ -627,6 +707,7 @@ mod tests {
                 selected_model: RefCell::new(models[0].clone()),
                 models,
                 selected_models: RefCell::new(Vec::new()),
+                favorites: HashSet::default(),
             }
         }
     }
@@ -646,6 +727,10 @@ mod tests {
 
         fn selected_model(&self, _cx: &mut App) -> Task<Result<AgentModelInfo>> {
             Task::ready(Ok(self.selected_model.borrow().clone()))
+        }
+
+        fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<AgentModelId> {
+            self.favorites.clone()
         }
     }
 
