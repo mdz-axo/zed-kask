@@ -1,0 +1,124 @@
+# Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)
+
+STATUS: **proposal, awaiting the operator checkpoint** — D100's named
+follow-up; closing it changes the M5 positive-control shape, so the
+operator approves this design before any implementation. Nothing here is
+built or claimed built.
+
+## 1. The seam (IS — tree-verified 2026-11-06)
+
+The curator MCP child embeds every query via the configured embedder
+regardless of the call's provenance:
+
+- `semantic_recall_fragments`
+  (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:411-441`)
+  embeds the query with `curator_embedding_model()` (env
+  `HKASK_EMBEDDING_MODEL` ← `kask.models.embedding_model`) through
+  `inference_port.embed_with_dimensions` — the zed IPC bridge
+  (`HKASK_INFERENCE_SOCKET`) → zed's LanguageModelRegistry → the
+  configured (cloud) embedder. It serves `curator_semantic_search`
+  (`:446`) and `curator_consult`.
+- `curator_federated_search` embeds the same way at its head (`:553-576`)
+  and feeds both its curator leg and every sealed corpus source with the
+  one query vector.
+- The per-call provenance is already readable in the child
+  (`current_call_provenance()`,
+  `kask/crates/hkask-mcp-server/src/server/call_provenance.rs:35` — the
+  M5 read side; every kask server gets it by construction). The
+  query-embed sites never consult it.
+
+A private-marked context's tool query therefore crosses to the cloud
+embedder whenever the configured model is cloud-provider — the one
+remaining privacy seam named in D100.
+
+## 2. The routing rule (the child-side mirror of the item-3 lift)
+
+At the embed sites, read `current_call_provenance()`:
+
+- **Private call → the private embedding model.** The setting
+  `kask.private_inference.embedding_model` (default
+  `ollama/qwen3-embedding:0.6b`, `DEFAULT_PRIVATE_EMBEDDING_MODEL`) reaches
+  the child as a NEW `config_env` entry (`HKASK_PRIVATE_EMBEDDING_MODEL`)
+  on the curator server's registry block
+  (`kask_bridge/src/mcp_servers.rs`, alongside `HKASK_EMBEDDING_MODEL`),
+  emitted by `mcp_env()`. The child embeds the query with THAT model
+  string; the IPC server's registry resolution routes it to the local
+  ollama descriptor — loopback `/v1/embeddings`, no credentials (the same
+  per-call model resolution the backfill sweep already exercises over the
+  same port). The model string IS the routing signal — the same
+  discipline as the stored-vector model-string gate.
+- **Public call → unchanged** (`HKASK_EMBEDDING_MODEL`, the configured
+  cloud model).
+- **Unset/empty private model (the operator's explicit opt-out) or a
+  failed local embed → NO embed for the private call:** the semantic leg
+  degrades to exact/keyword-only with a surfaced note — the mirror of
+  `private_context_recall_stays_keyword_only_when_no_local_port_is_wired`.
+  Never cross.
+
+## 3. The consequence, stated honestly
+
+The child's store is the PUBLIC store — the child never opens the private
+DB (the store-split posture; the production private-recall path is the
+bridge injector, which already embeds private queries locally). A private
+call's locally-embedded query vector lives in the local model's space, so
+the KNN model-string gate excludes every cloud-model row: the semantic leg
+returns empty with the EXISTING surfaced `excluded_model_mismatch` counts
+(`semantic_recall_fragments_for_vector` carries them at `:406`; the
+federated status surfaces them per source at `:617-621`). That is the
+bridge's already-recorded posture — "the public store's KNN leg is
+unreachable from private contexts by construction … while its rows stay
+keyword-reachable there" — made true at the child too. Private calls keep
+the exact/keyword legs (`call_admits`-filtered) and lose
+semantic-over-public; degrade-not-leak, surfaced, never silent. The
+federated sealed-corpus legs follow the same rule (the one local-model
+vector gates out at each cloud-embedded source — per-source surfaced
+status; crossing is the leak being closed). The bridge injector remains
+the semantic path for private content, so the capability loss is bounded
+and named.
+
+## 4. The write-side seam, named for scope (same repair family)
+
+`memory_insert` from a private call writes a private-marked row (the mark
+inherited from evidence — pinned
+`memory_insert_inherits_the_evidence_inference_provenance`) into the
+child's public store and embeds its PASSAGE via `semantic_embedding` →
+the configured (cloud) model — private content on the same crossing.
+`publish_semantic_write`/`embed_for_semantic_recall` and the backfill
+sweeps share the site. This design proposes that as **Phase 2** — the same
+routing rule over private-marked rows' passage embeds — named now so the
+seam is not discovered later. The operator decides whether Phase 2 rides
+the first implementation or follows it.
+
+## 5. The M5 positive-control re-shape (the operator checkpoint's substance)
+
+- `private_call_contexts_receive_their_private_rows`: the KNN fixture
+  must seed its private rows under the LOCAL model string (a private
+  call's query embeds local-model; the gate matches local-model rows).
+  The re-shaped pin ALSO asserts the surfaced model-gate emptiness over
+  cloud-model rows — the production child store's only shape.
+- `semantic_search_filters_private_rows_by_call_context`: both sides
+  re-shape the same way.
+- NEW pins:
+  `private_call_query_embeds_via_the_private_model_not_the_configured_embedder`
+  (a recording stub port: a private call makes ZERO configured-model
+  embeds and one private-model embed), `public_call_query_embeds_unchanged`,
+  `private_call_federated_sources_surface_the_model_gate_exclusion`, and
+  the degrade pin (unset private model → keyword-only, surfaced, zero
+  embed calls).
+- The no-field rule holds: no tool SCHEMA gains a provenance field (the
+  routing reads `_meta` only, parent-set).
+
+## 6. Gates on implementation
+
+`cargo test -p hkask-mcp-curator` (the tool_behavior suite),
+`cargo test -p hkask-mcp-server`, the settings → `mcp_env` → allowlist
+injection pin, and `./script/clippy` over every touched kask crate.
+D100's row extends in the same change.
+
+## 7. The checkpoint question
+
+Approve this design (it changes the M5 positive-control shape), and say
+whether Phase 2 — the write-side passage embeds of private-marked rows —
+rides the first implementation or follows. The alternative this design
+rejects: routing private queries to the configured cloud model — the
+crossing D100 names as the seam.
