@@ -966,6 +966,41 @@ mod tests {
     }
 
     #[test]
+    fn streaming_mode_stays_unroutable_in_v1() {
+        // The P2 boundary (compile_placement's doc + the P2 streaming-parity
+        // plan §7): the compiler has no streaming intent in v1 — the slot
+        // fields stay `None` and the rendered command never carries a
+        // moe-stream spelling. Streaming earns routability only through
+        // the measured parity band (the operator's routing decision reads
+        // the band); never by default, never by accident. The pinned
+        // experiment surface can decode and fixture-gate as an EXPERIMENT
+        // manifest while the production surface stays the mainline pin.
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        let mut hw = test_hw();
+        hw.vram = Some(VramSource::Declared {
+            bytes: 8_589_934_592,
+        });
+        let plan = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &test_meta(),
+            &hw,
+            &test_brief(),
+            &PlacementPolicy::default(),
+            &manifest,
+        )
+        .expect("the GPU plan compiles on the production surface");
+        let rendered = plan.to_string();
+        assert!(
+            !rendered.contains("moe-stream"),
+            "v1 routing never emits a streaming spelling — the P2 experiment engine sits behind the band gate, got: {rendered}"
+        );
+        assert_eq!(
+            plan.surface_id, "llama-cpp-mainline-cpu-p0",
+            "the production surface is the mainline pin, never an experiment surface"
+        );
+    }
+
+    #[test]
     fn draft_asked_without_a_brief_spec_is_refused() {
         // The Gemma brief has no [draft] table — the compiler never
         // invents a draft for a model that ships none.

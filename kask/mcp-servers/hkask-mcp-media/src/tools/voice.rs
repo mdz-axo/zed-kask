@@ -920,6 +920,7 @@ mod tests {
                 .educt_export(Parameters(EductExportRequest {
                     transcript_id: transcript_id.clone(),
                     format: format.to_string(),
+                    layer_id: None,
                 }))
                 .await
                 .expect("export transcript");

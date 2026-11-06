@@ -86,12 +86,17 @@ repository, never a second clone.
   vonnegut fixture dependency and its silent skip are GONE; a missing
   fixture fails loudly, never passes vacuously).
 - Gates at handoff: `cargo test -p media_panel` 121/121 on the clean tree.
-  CI: the census landing `a8b8a136b2` is green (run `42147369034`). The red
-  run `42157758249` on origin/main `a95fe4018d` failed "Duplication ratchet" —
-  the private-inference stream's FR-4 push territory, adjudicated 2026-11-05;
-  their four unpushed local commits (`dba74fd9ab`, `bc1170dcff`,
-  `c2bdaf0c5a`, `fe9ab1f696`) are their fix in flight: never push, touch, or
-  react to their red.
+  CI: the census landing `a8b8a136b2` is green (run `42147369034`). The FR-4
+  ratchet red was adjudicated 2026-11-05/06: nine FR clusters deduped in
+  `532d8b6442` + `c10f39bb1d`, zero baseline change. The ratchet is red
+  AGAIN (5613 vs the 5599 baseline at the 2026-11-06 scan) and this arc's
+  OWN S5/S7 legs are the largest live debtor (+13 clusters): every arc's
+  committed duplication is its own debt — dedupable scaffolding
+  consolidates, and additions that survive as accepted duplication bump
+  `kask/scripts/duplication-ratchet-baseline.txt` in the SAME commit with
+  the justification (the gate's doctrine). The gate has a ±2-4 same-tree
+  noise floor (calibration task `30796b8c` on the Ongoing Work board) —
+  re-run before believing a ±1 breach.
 
 **Goal/board state:** judge recorded `continue` 2026-11-05 with per-criterion
 evidence. Board: S1–S3 done, S4–S7 backlog. The S4 card carries the

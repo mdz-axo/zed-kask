@@ -4027,6 +4027,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id: transcript_id.clone(),
                 format: "srt".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("corrected SRT export");
@@ -4040,6 +4041,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "corpus_text".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("aligned corpus export");
@@ -4193,6 +4195,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id: transcript_id.clone(),
                 format: "srt".to_string(),
+                layer_id: None,
             }))
             .await
             .expect_err("unaligned SRT must fail");
@@ -4205,6 +4208,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "corpus_text".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("corrected text-only corpus export");
@@ -4830,6 +4834,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id: transcript_id.to_string(),
                 format: format.to_string(),
+                layer_id: None,
             }))
             .await
             .expect("export succeeds");
@@ -5036,6 +5041,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "review_csv".to_string(),
+                layer_id: None,
             }))
             .await
             .expect_err("review csv without a paragraph layer is not-found");
@@ -5439,6 +5445,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id: transcript_id.clone(),
                 format: "srt".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("srt export succeeds");
@@ -5561,6 +5568,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "corpus_text".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("corpus export still succeeds for text-only search");
@@ -5579,6 +5587,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "bogus".to_string(),
+                layer_id: None,
             }))
             .await
             .expect_err("unknown format must be rejected");
@@ -5597,6 +5606,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(crate::types::EductExportRequest {
                 transcript_id,
                 format: "highlights_csv".to_string(),
+                layer_id: None,
             }))
             .await
             .expect_err("no highlight layers must be not-found");
@@ -5837,6 +5847,7 @@ mod tool_behavior_tests {
             .educt_export(Parameters(EductExportRequest {
                 transcript_id: transcript_id.clone(),
                 format: "srt".to_string(),
+                layer_id: None,
             }))
             .await
             .expect("SRT export succeeds after realignment");

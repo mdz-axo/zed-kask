@@ -462,6 +462,50 @@ mod tests {
     const UNSLOTH_PREBUILT_TOML: &str =
         include_str!("../../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
 
+    const SERVEURPERSO_STREAM_TOML: &str = include_str!(
+        "../../../../registry/private-inference/llama-cpp-serveurperso-moe-stream.toml"
+    );
+
+    #[test]
+    fn the_serveurperso_stream_surface_decodes_and_its_fixtures_gate_it() {
+        // The P2 streaming experiment engine's surface (the pinned fork,
+        // local-leg plan §12 item 2, the P2 streaming-parity plan §8):
+        // decode + validate + every-fixture-gates, the exact-commit pin
+        // (the binary's own --version spelling), and the streaming
+        // constraint class this surface exists to guard. The streaming
+        // spellings do NOT ride [flags] — FlagVocabulary has no streaming
+        // intent (streaming is unroutable in v1, pinned in placement) —
+        // the fork's --help-verified streaming vocabulary lives in the
+        // TOML's provenance header until the band gates a routing intent.
+        let manifest =
+            decode(SERVEURPERSO_STREAM_TOML).expect("serveurperso stream manifest decodes");
+        manifest
+            .validate()
+            .expect("serveurperso stream manifest validates");
+        run_fixtures(&manifest).expect("every fixture gates every constraint");
+        assert_eq!(manifest.version_pin.commit, "7174388");
+        assert_eq!(manifest.version_pin.version, "0.3.0-dev");
+        assert_eq!(manifest.surface_id, "llama-cpp-serveurperso-moe-stream-p2");
+        assert!(
+            manifest
+                .constraints
+                .iter()
+                .any(|c| matches!(c, Constraint::ExpertSlotFloor { .. }))
+        );
+        assert!(
+            manifest
+                .constraints
+                .iter()
+                .any(|c| matches!(c, Constraint::MutuallyExclusive { .. }))
+        );
+        // The draft vocabulary is verified on this fork (the P2 legs run
+        // without the draft — the vocabulary is recorded, not consumed).
+        assert_eq!(
+            manifest.flags.model_draft.as_deref(),
+            Some("--spec-draft-model")
+        );
+    }
+
     #[test]
     fn the_unsloth_prebuilt_surface_decodes_and_its_fixtures_gate_it() {
         let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest decodes");

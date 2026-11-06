@@ -139,6 +139,15 @@ off-axis rulings stand (M5 plan §4, PI-approved stated limits).
 - The tree is SHARED: pathspec commits only, check
   `git diff --cached --stat` first, verify the commit numstat against the
   measured pre-commit diff, never a working-tree-wide mutation.
+- The duplication-ratchet gate is red on main (5613 vs the 5599 baseline at
+  handoff): every arc's committed duplication is its own debt — additions
+  that survive as accepted duplication bump
+  `kask/scripts/duplication-ratchet-baseline.txt` in the SAME commit with
+  the justification (the gate's doctrine); dedupable scaffolding
+  consolidates instead (the adjudicated precedents: `532d8b6442` and
+  `c10f39bb1d`, nine clusters, zero baseline change). The gate has a ±2-4
+  same-tree noise floor (calibration task `30796b8c` on the Ongoing Work
+  board) — re-run before believing a ±1 breach.
 - MCP tool responses are `{"content": <value>}` envelopes — use
   `unwrap_tool_envelope`.
 
