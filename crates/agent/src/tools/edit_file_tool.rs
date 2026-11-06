@@ -437,10 +437,13 @@ mod tests {
         // first line of the multi-line `old_text` omits its leading
         // indentation while subsequent lines include theirs, so the indent
         // delta computed from the first line must not be applied to the
-        // following lines. `old_text` also omits the `self.extra` line, so
-        // the query lines don't correspond one-to-one to the matched buffer
-        // rows and the indent pairing must follow the fuzzy match's
-        // alignment instead of assuming equal line counts.
+        // following lines.
+        // zed-kask: D101 — upstream's version of this test also omitted the
+        // `self.extra` line from `old_text`, pinning the gap-skip match whose
+        // span replacement DROPPED that row (the live eaten-`#[gpui::test]`
+        // class). The fork includes the row (contiguous 1:1 pairing); the
+        // gap variant is refused at the matcher level
+        // (`test_query_omitting_a_buffer_line_does_not_match`).
         let content = concat!(
             "class Outer:\n",
             "    def method(self):\n",
@@ -462,6 +465,7 @@ mod tests {
                         edits: vec![Edit {
                             old_text: concat!(
                                 "self.target_a = \"before\"\n",
+                                "        self.extra = \"row\"\n",
                                 "        self.target_b = \"before\"\n",
                                 "        self.target_c = \"before\"\n",
                                 "        self.target_d = \"before\"",
@@ -469,6 +473,7 @@ mod tests {
                             .into(),
                             new_text: concat!(
                                 "self.target_a = \"after\"\n",
+                                "        self.extra = \"row\"\n",
                                 "        self.target_b = \"after\"\n",
                                 "        self.target_c = \"after\"\n",
                                 "        self.target_d = \"after\"",
@@ -485,8 +490,8 @@ mod tests {
         let EditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
             panic!("expected success");
         };
-        // The matched range includes the `self.extra` row, so it is replaced
-        // along with the rest of the match.
+        // The `self.extra` row survives the edit: the span replacement
+        // covers exactly the paired lines.
         assert_eq!(
             new_text,
             concat!(
@@ -494,6 +499,7 @@ mod tests {
                 "    def method(self):\n",
                 "        self.kept = \"unchanged\"\n",
                 "        self.target_a = \"after\"\n",
+                "        self.extra = \"row\"\n",
                 "        self.target_b = \"after\"\n",
                 "        self.target_c = \"after\"\n",
                 "        self.target_d = \"after\"\n",

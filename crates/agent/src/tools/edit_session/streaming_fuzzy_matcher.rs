@@ -1,15 +1,26 @@
 use language::{Point, TextBufferSnapshot};
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
-const REPLACEMENT_COST: u32 = 1;
 const INSERTION_COST: u32 = 3;
 const DELETION_COST: u32 = 10;
 // Two matches are enough to prove ambiguity, so stop scanning early; exact
 // matches are byte-identical and can't be ranked.
 const MAX_EXACT_MATCHES: usize = 2;
 
-/// A streaming fuzzy matcher that can process text chunks incrementally
+/// A streaming matcher that can process text chunks incrementally
 /// and return the best match found so far at each step.
+///
+/// zed-kask: D101 — the fork's matching contract is trimmed-exact and
+/// contiguous: a query line pairs with a buffer line only when the two
+/// are equal after trimming, and a match is accepted only when every
+/// query line pairs 1:1 with the buffer lines of a contiguous span.
+/// Upstream additionally accepted per-line content fuzziness (0.8
+/// normalized Levenshtein) and spans with skipped interior lines (0.8
+/// matched-ratio), which silently applied edits against stale premises
+/// and dropped span-interior lines (observed live 2026-11-05: an eaten
+/// `#[gpui::test]` attribute and an eaten `cx.run_until_parked();`).
+/// A refused match surfaces as an honest no-match error through the
+/// D78 restore arm — the caller re-reads and retries.
 pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
@@ -194,8 +205,6 @@ impl StreamingFuzzyMatcher {
                 let diagonal = SearchState::new(
                     if query_line == buffer_line {
                         self.matrix.get(row, col).cost
-                    } else if fuzzy_eq(query_line, buffer_line) {
-                        self.matrix.get(row, col).cost + REPLACEMENT_COST
                     } else {
                         self.matrix
                             .get(row, col)
@@ -251,9 +260,15 @@ impl StreamingFuzzyMatcher {
             line_pairs.reverse();
 
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
-            let matched_ratio = line_pairs.len() as f32
-                / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-            if matched_ratio >= 0.8 {
+            // zed-kask: D101 — require contiguous 1:1 pairing: every
+            // query line pairs with exactly one buffer line, and every
+            // matched buffer line pairs. A match that skips buffer lines
+            // inside its span would replace (drop) them silently; a query
+            // line with no pair means the caller's old_text is not what
+            // the buffer holds.
+            if line_pairs.len() == matched_buffer_row_count as usize
+                && line_pairs.len() == new_query_line_count
+            {
                 let buffer_start_ix = self
                     .snapshot
                     .point_to_offset(Point::new(buffer_row_start, 0));
@@ -365,19 +380,6 @@ fn find_exact_matches(snapshot: &TextBufferSnapshot, query: &str) -> Vec<Range<u
     matches
 }
 
-fn fuzzy_eq(left: &str, right: &str) -> bool {
-    const THRESHOLD: f64 = 0.8;
-
-    let min_levenshtein = left.len().abs_diff(right.len());
-    let min_normalized_levenshtein =
-        1. - (min_levenshtein as f64 / cmp::max(left.len(), right.len()) as f64);
-    if min_normalized_levenshtein < THRESHOLD {
-        return false;
-    }
-
-    strsim::normalized_levenshtein(left, right) >= THRESHOLD
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum SearchDirection {
     Up,
@@ -481,6 +483,11 @@ mod tests {
 
     #[test]
     fn test_streaming_fuzzy_match() {
+        // zed-kask: D101 — the fuzzy path tolerates only whitespace drift.
+        // The query's indentation differs from the buffer, so the query is
+        // not a verbatim substring and resolves through the fuzzy path;
+        // every line still pairs 1:1 after trimming. Upstream's pin used
+        // content-typo'd lines (`a, c` vs `a, b`); the fork refuses those.
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
@@ -498,13 +505,12 @@ mod tests {
 
         let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
 
-        // Push a fuzzy query that should match the first function
         assert_eq!(
-            push(&mut finder, "function foo(a, c) {\n").as_deref(),
+            push(&mut finder, "  function foo(a, b) {\n").as_deref(),
             Some("function foo(a, b) {")
         );
         assert_eq!(
-            push(&mut finder, "    return a + c;\n}\n").as_deref(),
+            push(&mut finder, "      return a + b;\n  }\n").as_deref(),
             Some(concat!(
                 "function foo(a, b) {\n",
                 "    return a + b;\n",
@@ -567,6 +573,11 @@ mod tests {
 
     #[test]
     fn test_multiline_fuzzy_match() {
+        // zed-kask: D101 — the query's lines are trimmed-equal to the
+        // buffer's (indentation differs), which is the fuzzy path's only
+        // remaining tolerance. Upstream's pin used content-typo'd lines
+        // (`Result` vs `fmt::Result`, `self.username` vs `self.name`);
+        // the fork refuses those.
         let buffer = TextBuffer::new(
             ReplicaId::LOCAL,
             BufferId::new(1).unwrap(),
@@ -598,7 +609,7 @@ mod tests {
         assert_eq!(
             push(
                 &mut finder,
-                "    fn fmt(&self, f: &mut Formatter) -> Result {\n"
+                "    fn fmt(&self, f: &mut Formatter) -> fmt::Result {\n"
             )
             .as_deref(),
             Some(concat!(
@@ -615,11 +626,7 @@ mod tests {
             ))
         );
         assert_eq!(
-            push(
-                &mut finder,
-                "            .field(\"name\", &self.username)\n"
-            )
-            .as_deref(),
+            push(&mut finder, "            .field(\"name\", &self.name)\n").as_deref(),
             Some(concat!(
                 "impl Debug for User {\n",
                 "    fn fmt(&self, f: &mut Formatter) -> fmt::Result {\n",
@@ -668,11 +675,15 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_resolve_location_function_with_typo(mut rng: StdRng) {
+        // zed-kask: D101 — a query line that differs by content (`u32` vs
+        // the buffer's `usize`) must NOT match: applying an edit against
+        // a stale premise corrupts the file. Upstream's pin blessed the
+        // typo-tolerant match; the fork refuses it.
         assert_location_resolution(
             indoc! {"
-                «fn foo1(a: usize) -> usize {
+                fn foo1(a: usize) -> usize {
                     40
-                }»
+                }
 
                 fn foo2(b: usize) -> usize {
                     42
@@ -685,15 +696,19 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_resolve_location_class_methods(mut rng: StdRng) {
+        // zed-kask: D101 — the query omits `three()`, a buffer line inside
+        // the span it would replace: upstream's ratio gate accepted the
+        // 4-of-5 alignment and the span replacement DROPPED the omitted
+        // line. The fork refuses the match.
         assert_location_resolution(
             indoc! {"
                 class Something {
                     one() { return 1; }
-                «    two() { return 2222; }
+                    two() { return 2222; }
                     three() { return 333; }
                     four() { return 4444; }
                     five() { return 5555; }
-                    six() { return 6666; }»
+                    six() { return 6666; }
                     seven() { return 7; }
                     eight() { return 8; }
                 }
@@ -1065,8 +1080,13 @@ mod tests {
         }
     }
 
+    /// zed-kask: D101 — renamed from upstream's
+    /// `test_line_pairs_skip_unmatched_buffer_line`, which blessed the
+    /// gap-skip alignment (the query omits `self.extra`, a buffer line
+    /// inside the span it would replace; the span replacement would DROP
+    /// the omitted line). The fork refuses the whole match.
     #[test]
-    fn test_line_pairs_skip_unmatched_buffer_line() {
+    fn test_query_omitting_a_buffer_line_does_not_match() {
         let text = indoc! {r#"
             class Outer:
                 def method(self):
@@ -1096,13 +1116,53 @@ mod tests {
             ),
             None,
         );
-        let SearchMatches::Fuzzy(matches) = matcher.finish() else {
-            panic!("expected a fuzzy match");
-        };
-        let [search_match] = matches.as_slice() else {
-            panic!("expected one match, got {}", matches.len());
-        };
-        assert_eq!(search_match.line_pairs, [(0, 3), (1, 5), (2, 6), (3, 7)]);
+        let matches = matcher.finish();
+        assert!(
+            search_matches(&matches).is_empty(),
+            "a query that omits a buffer line inside its span must not match — \
+             the span replacement would drop the omitted line"
+        );
+    }
+
+    /// zed-kask: D101 — the live near-miss specimen (2026-11-05): the
+    /// query's fourth line differs from the buffer by content (`_: ""`
+    /// vs `_ => ""`). Upstream's ratio gate accepted the 5-of-6 pairing
+    /// and applied the edit against the wrong premise; the contiguous
+    /// gate refuses it — the unpaired query line fails the 1:1 check.
+    #[test]
+    fn test_near_miss_line_content_does_not_match() {
+        let text = concat!(
+            "fn pick(flag: bool) {\n",
+            "    match flag {\n",
+            "        true => \"yes\",\n",
+            "        _ => \"\",\n",
+            "    }\n",
+            "}\n",
+        );
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            text.to_string(),
+        );
+        let mut matcher = StreamingFuzzyMatcher::new(buffer.snapshot().clone());
+
+        matcher.push(
+            concat!(
+                "fn pick(flag: bool) {\n",
+                "    match flag {\n",
+                "        true => \"yes\",\n",
+                "        _: \"\",\n",
+                "    }\n",
+                "}\n",
+            ),
+            None,
+        );
+        let matches = matcher.finish();
+        assert!(
+            search_matches(&matches).is_empty(),
+            "a query line that differs from the buffer by content must refuse \
+             the whole match"
+        );
     }
 
     #[test]
@@ -1144,7 +1204,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=input.len().min(50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());
