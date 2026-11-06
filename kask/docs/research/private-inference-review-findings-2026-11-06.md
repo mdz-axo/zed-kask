@@ -426,3 +426,41 @@ forward local-routing rule. **No implementation in this engagement.**
    every pin re-run with commands + results (§0); every file:line verified
    fresh this session; IS/OUGHT labels throughout; the uncommitted state
    reported (§5).
+
+## 7. Disposition addendum (2026-11-06, the operator's "proceed as proposed")
+
+The operator approved proceeding on the review's proposals; the five
+actionable findings were implemented as five commits (each pathspec-
+committed, gates re-run, D100 updated in the same change where the seam
+changed):
+
+- **F7** — `cafb10b729`: the composition-root routing pin
+  (`zed_kask_tool_source_routes_the_provenance_parameter_to_the_stamping_entry`,
+  the include_str/D43 discipline).
+- **F2+F3** — `d5eb221cc9`: the dispatch-time belt
+  (`KaskServerTool::run` re-checks the perimeter for private-provenance
+  calls) + the mid-turn pin (`marking_mid_turn_re_scopes_the_running_turns_tool_map`)
+  + the phantom pin names fixed + the marked tooltip reworded to the
+  transition-true per-request claim. The mid-turn toggle guard was
+  DISPOSED as wording-not-idle-guard (the PI can still stop a running
+  public turn by marking — an idle guard would prevent exactly that);
+  the operator may override.
+- **F1** — `de808235c0`: the cycle-favorites disabled filter + the
+  `select_model` before-any-write refusal (both picker paths + the
+  global-default write closed).
+- **F4** — `154ee2cde6`: the three policy rows (the page complete at 6/6;
+  embedding_model with entry-time prefix validation).
+- **F9/F10 + the plan naming** — `ac40450c3f`: the zero-class guard + the
+  SYS one-home extraction + the plan §6 refresh, verified both ways
+  live (empty dirs exit 5; a real fixture bands).
+- **F8** closed earlier by the P2 stream's own landing
+  (`8ca8aa648a`, the reasoning_content fix + the honest
+  instrument-confounded verdict).
+- **F5** (the perimeter's surfaced-reason proposal) remains DEFERRED — a
+  low-severity UX proposal never filed as a task; it changes the pinned
+  pure label function's shape and should ride a panel-UX pass.
+- **Item 4** (the private store's lifecycle) remains at the RESERVED
+  operator checkpoint (`4b36bc63`) — "proceed as proposed" was read as
+  the actionable findings only; the item-4 proposal was explicitly the
+  recommendation + checkpoint, not implementation. If the operator's
+  approval meant the mirror too, say the word.
