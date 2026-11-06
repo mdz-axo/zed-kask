@@ -240,7 +240,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `consolidation_cadence_secs` | `u64` | `300` | 0 = disabled; otherwise at least 60s. First pass waits one interval; cadences above one hour are preserved. |
+| `consolidation_cadence_secs` | `u64` | `300` | 0 = disabled; otherwise at least 60s. First pass waits one interval; cadences above one hour are preserved. Since 2026-11-06 (D100 item 4) the one timer carries BOTH stores' consolidation passes and the private forgetting leg — 0 is the single "no automated passes" switch |
 | `confidence_floor` | `f64` | `0.3` | Memory retention floor (0.0–1.0) |
 | `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
 | `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
@@ -250,7 +250,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 | `memory_life_days` | `f64` | `90` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
 | `distillation_cadence_secs` | `u64` | `600` | ALWAYS-mode distillation cadence in seconds (0 = disabled); the curator server's background pass distills finished threads into additive candidate lesson h_mems at the 0.5 confidence floor |
 | `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
-| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled). Default matches the curator server's `DEFAULT_FORGETTING_DAYS` |
+| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled). Default matches the curator server's `DEFAULT_FORGETTING_DAYS`. Since 2026-11-06 (D100 item 4) the same knob also drives the BRIDGE-SIDE private-store forgetting leg: an age-gated sweep over the private store's turn storage (`curator:thread:` rows only), sparing rows recalled within the window — the private store has no child-side forgetting, so this and the consolidation twin are its only forgetting surfaces |
 
 These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:230-296`).
 

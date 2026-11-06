@@ -1904,6 +1904,7 @@ fn main() {
                             template_root,
                             kask_settings.memory.consolidation_cadence_secs,
                             kask_settings.memory.confidence_floor,
+                            kask_settings.memory.forgetting_days,
                             kask_settings.memory.memory_life_days,
                             gpui_tokio::Tokio::handle_async(&*cx),
                         ) {

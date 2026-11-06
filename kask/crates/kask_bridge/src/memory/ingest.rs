@@ -81,6 +81,10 @@ pub(crate) struct WriteContext<'a> {
     /// curator-store heal so the timer promotes freshly-ingested curator h_mems.
     /// Behind an `Arc` shared with the timer, which re-reads it on each tick.
     pub curator_consolidation: &'a Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
+    /// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+    /// the private store's consolidation TWIN, same rebuild discipline
+    /// (rebuilt after the private store's heal) and the same one-tick fire.
+    pub private_curator_consolidation: &'a Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
     pub consolidation_cadence_secs: u64,
 }
 
@@ -215,8 +219,10 @@ pub(crate) async fn write_turn(
         .unwrap_or_default();
 
     // Resolve the curator stores once per ingestion. The consolidation
-    // rebuild stays keyed on the PUBLIC store (the private store gets no
-    // consolidation pass in v1 — a stated limit).
+    // rebuilds stay keyed on their OWN store's heal: the public twin on the
+    // public store, the private twin on the private sibling (operator
+    // ruling 2026-11-06, the review's item 4 — the private store's
+    // forgetting mirror; the former v1 stated limit is lifted).
     let public_curator_store = ctx.curator_store.get();
     if public_curator_store.is_some() {
         let needs_rebuild = match ctx.curator_consolidation.read() {
@@ -227,6 +233,24 @@ pub(crate) async fn write_turn(
             let rebuilt =
                 build_curator_consolidation(ctx.consolidation_cadence_secs, &public_curator_store);
             if let Ok(mut guard) = ctx.curator_consolidation.write()
+                && guard.is_none()
+            {
+                *guard = rebuilt;
+            }
+        }
+    }
+    let private_store_for_rebuild = ctx.private_curator_store.get();
+    if private_store_for_rebuild.is_some() {
+        let needs_rebuild = match ctx.private_curator_consolidation.read() {
+            Ok(guard) => guard.is_none(),
+            Err(_) => true,
+        };
+        if needs_rebuild && ctx.consolidation_cadence_secs > 0 {
+            let rebuilt = build_curator_consolidation(
+                ctx.consolidation_cadence_secs,
+                &private_store_for_rebuild,
+            );
+            if let Ok(mut guard) = ctx.private_curator_consolidation.write()
                 && guard.is_none()
             {
                 *guard = rebuilt;
@@ -758,6 +782,9 @@ mod tests {
         let curator_consolidation = std::sync::Arc::new(std::sync::RwLock::new(
             build_curator_consolidation(0, &None),
         ));
+        let private_curator_consolidation = std::sync::Arc::new(std::sync::RwLock::new(
+            build_curator_consolidation(0, &None),
+        ));
         let tokio_handle = tokio::runtime::Handle::current();
         let ctx = WriteContext {
             curator_store: &curator_store,
@@ -771,6 +798,7 @@ mod tests {
             curator_webid: WebID::from_persona(b"curator"),
             tokio_handle: &tokio_handle,
             curator_consolidation: &curator_consolidation,
+            private_curator_consolidation: &private_curator_consolidation,
             consolidation_cadence_secs: 0,
         };
 

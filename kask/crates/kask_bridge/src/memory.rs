@@ -174,6 +174,12 @@ impl ExternalSourceCache {
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
+/// zed-kask: D100 — the turn-storage entity prefix, the ONE bridge-side
+/// spelling (the ingest path's chunk entities, the recall budget's prefix
+/// query, and the private forgetting leg's prune scope all key on it; the
+/// curator MCP child's `SHARED_TURN_PREFIX` is its crate-private sibling).
+pub(crate) const TURN_ENTITY_PREFIX: &str = "curator:thread:";
+
 /// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
 /// Stores each completed turn as cleaned, word-bounded chunks under the
@@ -211,14 +217,23 @@ pub struct RealMemoryPort {
     /// a private-marked context's recall federates BOTH stores (the private
     /// rows recall only there); a public context never touches it. A
     /// separate SQLCipher file, so the public DB — backups, exports, the
-    /// curator MCP server's tools — is clean by construction. V1 stated
-    /// limits: the private store gets no consolidation/forgetting pass, and
-    /// its chunks get no CLASSIFIER tags (the configured classifier is a
-    /// cloud model; structural tags only, surfaced). The embedding half
-    /// of the former degrade LIFTED (D100 item 3, 2026-11-05): private
-    /// chunks and private-context queries embed through the LOCAL ollama
-    /// port (`private_embedding_port` below) — never the configured cloud
-    /// embedder.
+    /// curator MCP server's tools — is clean by construction. Stated
+    /// limits: the private store keeps NO child-side surface (no
+    /// distillation, no child forgetting pass, no MCP valve — the
+    /// bridge-side legs below are its only forgetting surfaces; the
+    /// inference-carrying passes stay unmirrored until a local model leg
+    /// exists, the forward local-routing rule), and its chunks get no
+    /// CLASSIFIER tags (the configured classifier is a cloud model;
+    /// structural tags only, surfaced). The embedding half of the former
+    /// degrade LIFTED (D100 item 3, 2026-11-05): private chunks and
+    /// private-context queries embed through the LOCAL ollama port
+    /// (`private_embedding_port` below) — never the configured cloud
+    /// embedder. The forgetting mirror (operator ruling 2026-11-06, the
+    /// review's item 4): the inference-free deletion surfaces now run over
+    /// the private store too — the consolidation twin
+    /// (`private_curator_consolidation` below) and the age-gated turn-storage
+    /// forgetting leg (both bridge-side, both timer-driven on the one
+    /// consolidation cadence).
     private_curator_store: Arc<CuratorStore>,
     /// `None` when embedding credentials are unavailable — h_mem writes still
     /// work (they're pure SQL), but semantic recall (KNN) is degraded to
@@ -262,10 +277,36 @@ pub struct RealMemoryPort {
     // and re-read the current value on each tick — picks up the rebuild that
     // `write_turn` performs after a curator-store heal.
     curator_consolidation: Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
-    /// Consolidation cadence in seconds. `0` disables the trigger.
+    /// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+    /// the private store's consolidation TWIN: the same inference-free
+    /// confidence-floor sweep over `private_curator_store`, built by the
+    /// same `build_curator_consolidation` home (one builder, two
+    /// instances), fired on the same timer tick, rebuilt after the private
+    /// store's heal. The pass is deletion-only (`MemoryConsolidator::
+    /// consolidate`), so the mirror adds no cloud-exposure surface; any
+    /// future inference-carrying consolidation over private content must
+    /// route its model leg through the local leg (the item-3 pattern) or
+    /// not ship — the forward local-routing rule, recorded in D100.
+    private_curator_consolidation: Arc<RwLock<Option<Arc<MemoryConsolidator>>>>,
+    /// Consolidation cadence in seconds. `0` disables the trigger — for
+    /// BOTH stores' consolidation passes and the private forgetting leg
+    /// (they ride the one timer; "no automated passes" is one switch).
     consolidation_cadence_secs: u64,
     /// Confidence floor for cleanup during consolidation.
     confidence_floor: f64,
+    /// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+    /// the private forgetting leg's age knob
+    /// (`kask.memory.forgetting_days`, the same setting the curator MCP
+    /// child reads for its public-store forgetting). The leg prunes the
+    /// private store's AGED TURN STORAGE (`curator:thread:` rows — the
+    /// `curator_memory_prune` valve's fail-closed default scope) past the
+    /// age, sparing rows recalled within the same window (the decay-clock
+    /// discipline: a recently-recalled row stays). `0` disables the leg
+    /// (mirroring the child's "0 disables the pass"). The public store gets
+    /// NO bridge-side prune — its forgetting is the child's
+    /// distillation-gated pass plus the operator's MCP valve; two pruners
+    /// of the same rows would interfere.
+    forgetting_days: u64,
     /// Tokio runtime handle — entered around embedding HTTP calls so that
     /// `reqwest` (which is tokio-backed) has a reactor.
     tokio_handle: tokio::runtime::Handle,
@@ -298,6 +339,7 @@ impl RealMemoryPort {
         template_root: std::path::PathBuf,
         consolidation_cadence_secs: u64,
         confidence_floor: f64,
+        forgetting_days: u64,
         memory_life_days: f64,
         tokio_handle: tokio::runtime::Handle,
     ) -> Result<Self, String> {
@@ -339,6 +381,14 @@ impl RealMemoryPort {
             consolidation_cadence_secs,
             &curator_store.get(),
         )));
+        // zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+        // the private twin: the same builder home over the private store.
+        // Inference-free (deletion-only), so the mirror carries no
+        // cloud-exposure surface.
+        let private_curator_consolidation = Arc::new(RwLock::new(build_curator_consolidation(
+            consolidation_cadence_secs,
+            &private_curator_store.get(),
+        )));
 
         Ok(Self {
             curator_store,
@@ -353,8 +403,10 @@ impl RealMemoryPort {
             template_root,
             curator_webid,
             curator_consolidation,
+            private_curator_consolidation,
             consolidation_cadence_secs,
             confidence_floor,
+            forgetting_days,
             tokio_handle,
             ingest_semaphore: tokio::sync::Semaphore::new(resolve_ingest_concurrency()),
         })
@@ -379,8 +431,11 @@ impl RealMemoryPort {
             return None;
         }
         let curator_consolidation = Arc::clone(&self.curator_consolidation);
+        let private_curator_consolidation = Arc::clone(&self.private_curator_consolidation);
+        let private_curator_store = Arc::clone(&self.private_curator_store);
         let curator_webid = self.curator_webid;
         let confidence_floor = self.confidence_floor;
+        let forgetting_days = self.forgetting_days;
         let cadence_secs = self.consolidation_cadence_secs;
         let poll_interval = Duration::from_secs(cadence_secs.max(60));
 
@@ -407,6 +462,22 @@ impl RealMemoryPort {
                         "consolidation_timer",
                     );
                 }
+                // zed-kask: D100 (operator ruling 2026-11-06, the review's
+                // item 4) — the private twin fires on the same tick, then
+                // the private forgetting leg. Both inference-free.
+                let private_consolidator = private_curator_consolidation
+                    .read()
+                    .ok()
+                    .and_then(|guard| guard.clone());
+                if let Some(consolidator) = private_consolidator {
+                    fire_curator_consolidation_pass(
+                        &consolidator,
+                        curator_webid,
+                        confidence_floor,
+                        "consolidation_timer_private",
+                    );
+                }
+                fire_private_forgetting_pass(&private_curator_store, forgetting_days);
             }
         });
         Some(handle)
@@ -533,6 +604,51 @@ fn fire_curator_consolidation_pass(
     }
 }
 
+/// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) — fire
+/// one private-store forgetting pass: an age-gated sweep over the private
+/// store's TURN STORAGE (`curator:thread:` rows — the `curator_memory_prune`
+/// valve's fail-closed default scope), through the valve's own store-level
+/// call. `forgetting_days == 0` disables the leg (mirroring the child's "0
+/// disables the pass"); rows recalled within the same window are spared (the
+/// decay-clock discipline — a recently-recalled row's clock was reset, so
+/// age alone must not delete it). Bridge-side, not child-side: the private
+/// store has NO child surface (the public DB's clean-by-construction posture
+/// stands), so this leg and the consolidation twin are the private store's
+/// only forgetting surfaces — and the public store gets NO bridge-side
+/// prune, since its forgetting is the child's distillation-gated pass plus
+/// the operator's MCP valve (two pruners of the same rows would interfere).
+/// Called by the consolidation timer on each cadence tick (and directly by
+/// tests simulating a tick).
+fn fire_private_forgetting_pass(private_store: &CuratorStore, forgetting_days: u64) {
+    if forgetting_days == 0 {
+        return;
+    }
+    let Some(store) = private_store.get() else {
+        tracing::warn!(
+            target: "reg.memory",
+            "private forgetting pass skipped — the private store is unavailable"
+        );
+        return;
+    };
+    let max_age = forgetting_days as i64;
+    match store.prune_by_age_in_prefixes(&[TURN_ENTITY_PREFIX], max_age, Some(max_age)) {
+        Ok(outcome) => {
+            tracing::info!(
+                target: "reg.memory",
+                candidates = outcome.candidates,
+                deleted = outcome.deleted_count,
+                spared = outcome.spared_count,
+                failed = outcome.failed_count,
+                forgetting_days,
+                "Private forgetting pass complete"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(target: "reg.memory", error = %e, "Private forgetting pass failed");
+        }
+    }
+}
+
 impl MemoryPort for RealMemoryPort {
     fn ingest_turn<'a>(
         &'a self,
@@ -577,6 +693,7 @@ impl MemoryPort for RealMemoryPort {
                 curator_webid: self.curator_webid,
                 tokio_handle: &self.tokio_handle,
                 curator_consolidation: &self.curator_consolidation,
+                private_curator_consolidation: &self.private_curator_consolidation,
                 consolidation_cadence_secs: self.consolidation_cadence_secs,
             };
             ingest::write_turn(&ctx, record).await?;
@@ -1154,7 +1271,7 @@ impl RealMemoryPort {
             // them into memory on every recall call. We load 10x the
             // recall limit (most recent first) to give the keyword filter a
             // reasonable pool to filter from without unbounded loading.
-            let entity_prefix = "curator:thread:".to_string();
+            let entity_prefix = TURN_ENTITY_PREFIX.to_string();
             let recall_budget = limit.saturating_mul(10).max(50);
             match store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget) {
                 Ok(h_mems) => {
@@ -1339,7 +1456,7 @@ impl RealMemoryPort {
         // Exact entity match — every chunk of the thread. A failed read is an
         // error, not "the thread has no memories" (the unwrap_or(0) trap):
         // this query is the function's only source, so propagate.
-        let thread_entity = format!("curator:thread:{thread_id}");
+        let thread_entity = format!("{TURN_ENTITY_PREFIX}{thread_id}");
         let h_mems = store
             .query_deduped_untouched(&thread_entity)
             .map_err(|error| {
@@ -1545,7 +1662,7 @@ pub(crate) mod tests {
         ))
     }
 
-    /// The `RealMemoryPort` literal — the one copy of the fifteen-field
+    /// The `RealMemoryPort` literal — the one copy of the seventeen-field
     /// construction the port constructors below and the counting-driver
     /// tests share.
     fn port_with(
@@ -1574,8 +1691,14 @@ pub(crate) mod tests {
             template_root: std::path::PathBuf::from("test-registry-root"),
             curator_webid: WebID::from_persona(b"curator"),
             curator_consolidation: Arc::new(RwLock::new(curator_consolidation)),
+            // The item-4 twin defaults UNBUILT and the forgetting leg
+            // disabled — every existing test's legs stay inert (their
+            // pinned behavior); the item-4 pins build the twin and set
+            // the knob explicitly.
+            private_curator_consolidation: Arc::new(RwLock::new(None)),
             consolidation_cadence_secs,
             confidence_floor,
+            forgetting_days: 0,
             tokio_handle: tokio::runtime::Handle::current(),
             ingest_semaphore: tokio::sync::Semaphore::new(1),
         }
@@ -1617,6 +1740,7 @@ pub(crate) mod tests {
             curator_webid: port.curator_webid,
             tokio_handle: &port.tokio_handle,
             curator_consolidation: &port.curator_consolidation,
+            private_curator_consolidation: &port.private_curator_consolidation,
             consolidation_cadence_secs: port.consolidation_cadence_secs,
         }
     }
@@ -4131,6 +4255,228 @@ pub(crate) mod tests {
                 .len(),
             1,
             "the above-floor h_mem survives the pass"
+        );
+    }
+
+    /// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+    /// the consolidation TWIN over the private store: the private pass prunes
+    /// its own below-floor rows and spares its above-floor rows while the
+    /// PUBLIC store is untouched (the split holds under the mirror), and the
+    /// public pass never touches the private store. Both passes are the same
+    /// deletion-only sweep (`MemoryConsolidator::consolidate`) over their own
+    /// store — no inference, no cloud surface (the forward local-routing
+    /// rule's current bound).
+    #[tokio::test]
+    async fn private_consolidation_twin_prunes_low_confidence_across_the_split() {
+        let mut port = in_memory_port_with_cadence(300, 0.3);
+        let webid = WebID::from_persona(b"curator");
+
+        // Seed BOTH sides of the split with below- and above-floor rows.
+        let public_store = port.curator_store.get().expect("public store");
+        let public_low = hkask_storage::HMem::new(
+            "probe:public-low",
+            "turn",
+            serde_json::Value::String("public below floor".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        public_store.store(public_low).expect("seed public low");
+        let public_high = hkask_storage::HMem::new(
+            "probe:public-high",
+            "turn",
+            serde_json::Value::String("public above floor".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.9));
+        public_store.store(public_high).expect("seed public high");
+
+        let private_store = in_memory_curator_store();
+        let private_low = hkask_storage::HMem::new(
+            "probe:private-low",
+            "turn",
+            serde_json::Value::String("private below floor".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        private_store.store(private_low).expect("seed private low");
+        let private_high = hkask_storage::HMem::new(
+            "probe:private-high",
+            "turn",
+            serde_json::Value::String("private above floor".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.9));
+        private_store
+            .store(private_high)
+            .expect("seed private high");
+        port.private_curator_store =
+            Arc::new(CuratorStore::for_tests(Some(Arc::clone(&private_store))));
+        // The twin, built the way `RealMemoryPort::new` builds it.
+        port.private_curator_consolidation = Arc::new(RwLock::new(build_curator_consolidation(
+            300,
+            &Some(Arc::clone(&private_store)),
+        )));
+
+        // The private twin fires: its own below-floor dies, its above-floor
+        // survives, the PUBLIC rows are all untouched.
+        let twin = port
+            .private_curator_consolidation
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .expect("the private twin is built");
+        fire_curator_consolidation_pass(&twin, webid, 0.3, "private_twin_test");
+        assert!(
+            private_store
+                .h_mems_by_entity_prefix("probe:private-low")
+                .expect("query private low")
+                .is_empty(),
+            "the private below-floor row dies on the twin's pass"
+        );
+        assert_eq!(
+            private_store
+                .h_mems_by_entity_prefix("probe:private-high")
+                .expect("query private high")
+                .len(),
+            1,
+            "the private above-floor row survives"
+        );
+        assert_eq!(
+            public_store
+                .h_mems_by_entity_prefix("probe:public-low")
+                .expect("query public low")
+                .len(),
+            1,
+            "the private twin never touches the public store"
+        );
+
+        // The public pass fires: its below-floor dies — and a freshly-seeded
+        // private below-floor row SURVIVES it (the public pass never crosses
+        // the split).
+        let fresh_private_low = hkask_storage::HMem::new(
+            "probe:private-low-2",
+            "turn",
+            serde_json::Value::String("fresh private below floor".to_string()),
+            webid,
+        )
+        .with_confidence(hkask_types::Confidence::new(0.1));
+        private_store
+            .store(fresh_private_low)
+            .expect("seed fresh private low");
+        let public_pass = port
+            .curator_consolidation
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .expect("the public consolidator is built for cadence > 0");
+        fire_curator_consolidation_pass(&public_pass, webid, 0.3, "public_pass_test");
+        assert!(
+            public_store
+                .h_mems_by_entity_prefix("probe:public-low")
+                .expect("query public low")
+                .is_empty(),
+            "the public below-floor row dies on the public pass"
+        );
+        assert_eq!(
+            private_store
+                .h_mems_by_entity_prefix("probe:private-low-2")
+                .expect("query fresh private low")
+                .len(),
+            1,
+            "the public pass never crosses the split — the private below-floor row survives it"
+        );
+    }
+
+    /// zed-kask: D100 (operator ruling 2026-11-06, the review's item 4) —
+    /// the private forgetting leg: the age-gated sweep is TURN-STORAGE-ONLY
+    /// over the private store (the `curator_memory_prune` valve's fail-closed
+    /// default scope): an aged `curator:thread:` row dies, an aged
+    /// knowledge-layer row survives, a recently-RECALLED aged turn row is
+    /// spared (the decay-clock discipline), and `forgetting_days == 0`
+    /// disables the leg entirely. The store-level scope/spare semantics are
+    /// pinned in hkask-memory (`prune_by_age_in_prefixes_spares_knowledge_rows`);
+    /// this pin holds the bridge-side SEAM: the leg's arguments, its own store,
+    /// and its disable knob.
+    #[tokio::test]
+    async fn private_forgetting_leg_prunes_aged_turn_storage_only() {
+        let mut port = in_memory_port();
+        let webid = WebID::from_persona(b"curator");
+
+        let private_store = in_memory_curator_store();
+        let mut aged_turn = hkask_storage::HMem::new(
+            "curator:thread:forget-test",
+            "turn",
+            serde_json::Value::String("aged turn".to_string()),
+            webid,
+        );
+        // Both stamps age: `HMem::new` stamps `recalled_at` to now, and the
+        // spare path compares `recalled_at` — a fresh recall-spare would
+        // block the prune the pin must observe.
+        aged_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        aged_turn.recalled_at = chrono::Utc::now() - chrono::Duration::days(100);
+        private_store.store(aged_turn).expect("seed aged turn");
+
+        let mut aged_ruling = hkask_storage::HMem::new(
+            "skill:forget-test",
+            "operator_ruling",
+            serde_json::Value::String("a durable ruling".to_string()),
+            webid,
+        );
+        aged_ruling.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        aged_ruling.recalled_at = chrono::Utc::now() - chrono::Duration::days(100);
+        private_store.store(aged_ruling).expect("seed aged ruling");
+
+        let mut recalled_turn = hkask_storage::HMem::new(
+            "curator:thread:recall-spared",
+            "turn",
+            serde_json::Value::String("old but recently recalled".to_string()),
+            webid,
+        );
+        // `observed_at` aged out, `recalled_at` fresh (HMem::new's stamp) —
+        // the decay clock was reset, so the leg spares it.
+        recalled_turn.observed_at = chrono::Utc::now() - chrono::Duration::days(100);
+        private_store
+            .store(recalled_turn)
+            .expect("seed recall-spared turn");
+
+        port.private_curator_store = Arc::new(CuratorStore::for_tests(Some(private_store.clone())));
+
+        // 0 disables the leg — nothing moves.
+        fire_private_forgetting_pass(&port.private_curator_store, 0);
+        assert_eq!(
+            private_store
+                .h_mems_by_entity_prefix("curator:thread:forget-test")
+                .expect("query aged turn")
+                .len(),
+            1,
+            "forgetting_days == 0 disables the leg"
+        );
+
+        // A 50-day window: the aged turn dies; the aged knowledge row and
+        // the recently-recalled aged turn survive.
+        fire_private_forgetting_pass(&port.private_curator_store, 50);
+        assert!(
+            private_store
+                .h_mems_by_entity_prefix("curator:thread:forget-test")
+                .expect("query aged turn")
+                .is_empty(),
+            "the aged turn row is pruned"
+        );
+        assert_eq!(
+            private_store
+                .h_mems_by_entity_prefix("skill:forget-test")
+                .expect("query aged ruling")
+                .len(),
+            1,
+            "knowledge-layer rows survive the turn-scoped leg"
+        );
+        assert_eq!(
+            private_store
+                .h_mems_by_entity_prefix("curator:thread:recall-spared")
+                .expect("query recall-spared")
+                .len(),
+            1,
+            "a recently-recalled row is spared (the decay-clock discipline)"
         );
     }
 
