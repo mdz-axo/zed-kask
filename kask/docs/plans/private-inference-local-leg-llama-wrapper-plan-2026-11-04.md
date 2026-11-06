@@ -311,9 +311,21 @@ before MTP routes by default.
 
 1. ~~**P0 approval**~~ — **COMPLETE 2026-11-04** (matrix ran, all four legs
    measured, record §4 filled, fleet downloaded).
-2. **Step 7 checkpoint** — approve the P2 streaming experiment shape (pinned fork +
-   parity band) with streaming unroutable in v1 routing. **Deferred** — the
-   operator has not asked for it; the trigger stands.
+2. **Step 7 checkpoint** — approve the P2 streaming experiment shape (pinned
+   fork + parity band) with streaming unroutable in v1 routing.
+   **APPROVED 2026-11-05** (operator, in-session): the ServeurpersoCom
+   `moe-stream-partition` fork experiment — tested with this exact model,
+   behind the same wrapper — with the parity harness and its measured band
+   is approved as its own engagement. Streaming stays **unroutable in v1
+   routing** until the band gates it (the public-retraction lesson: streamed-
+   vs-resident output diverges on long generations — semantically close,
+   not identical — so the band, and only the band, earns routability). The
+   measured input stands as recorded (`docs/research/private-inference-
+   unsloth-mtp-measurement-2026-11-05.md`: 16.5% P2 median gain, parity
+   unresolved — instrument-confounded, not parity-miss). The experiment
+   runs on the operator's call; the parity-instrument follow-up (a
+   fresh-slot protocol before any identity claim) precedes any band
+   adjudication.
 3. **Drift-watch ownership** — operator-triaged on each llama.cpp release, or delegated
    with typed escalation; the runbook (step 8) is written either way.
 
