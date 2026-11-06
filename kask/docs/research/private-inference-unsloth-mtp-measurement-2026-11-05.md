@@ -158,3 +158,31 @@ lisp receipts (the frozen adjudication arithmetic):
 4. **`.rules` proposals** (filed in the arc report, not edited inline):
    the shipped-lib CWD-relative-path trap; the cross-instrument
    comparison trap.
+
+## 8. Post-experiment amendments (2026-11-06 — post-freeze; no re-run)
+
+- **D-E corrected — the TSVs were right all along; `usage_of` needs no
+  patch.** The recorded symptom ("prompt+completion concatenated,
+  completion empty") was a tab-collapsed display reading of a correct
+  TSV, not a parse defect: a field-aware sweep of every row of all six
+  leg summaries (`awk -F'\t'`, 2026-11-06) reads NF=10 with the token
+  fields correctly split (P1 `[123] [128]`, P2 `[584] [256]`, P3 `[913]
+  [256]`; stream rows honestly blank — SSE bodies carry no usage), and
+  the step-by-step `usage_of` trace over the e4/f4 response JSONs yields
+  584/256. The record's jq-derived token counts agree with the TSV
+  bytes. §7 follow-up 3's `usage_of` half is closed as no-defect; the
+  display-reading lesson landed as the cross-instrument comparison rule
+  (`.rules`, `## Other traps`, 2026-11-06). No number in §4 moves — the
+  frozen measurements are unchanged by this correction.
+- **D-F repaired in the harness — the stream TTFT is now the first
+  non-empty `content` line's arrival.** The script header's pre-declared
+  contingency fired on the first legs (TTFB flushes at 0.015 s on the
+  584-token prefill), and the mid-experiment freeze ended with the P2
+  close-out: `kask/scripts/p0-bench-llama.sh` now times the first content
+  line (a rep with no content line within the cap leaves `ttft_s` blank
+  — refuse the empty-side comparison), keeps TTFB as the flush
+  observable (first SSE line arrival), and takes the stream total as
+  wall-clock. The prompt suite and every non-stream column are
+  unchanged; the deviation is recorded in the script header. TTFT itself
+  remains unmeasured for the fork engines until a leg re-runs under the
+  patched harness.

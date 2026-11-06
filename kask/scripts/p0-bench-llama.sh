@@ -6,12 +6,18 @@
 # launches through the placement compiler's rendered LaunchPlan); this script
 # only measures an ALREADY-READY llama-server and records raw evidence:
 #
-#   - per-request curl timings: TTFB + total (non-stream), and for the
-#     streaming rep TTFB is recorded as the TTFT candidate — validated at the
-#     first leg against the known prefill duration (llama-server flushes SSE
-#     headers with the first token; if a leg shows near-zero TTFB on the
-#     long-prefill prompt, TTFT must be re-taken with a first-content-line
-#     timer and this script patched — the validation is part of the method)
+#   - per-request curl timings: TTFB + total (non-stream). For the streaming
+#     rep the TTFT candidate at freeze (2026-11-04) was TTFB; the header's
+#     own validation FIRED on the first legs (D-F: near-zero TTFB, 0.015 s,
+#     on the 584-token prefill — the SSE flush precedes the first token), so
+#     the stream leg was patched post-experiment (2026-11-06; the MTP record
+#     §8 carries the deviation — the mid-experiment freeze ended with the
+#     P2 close-out): TTFT is now the first non-empty `content` line's
+#     arrival (a thinking model emits reasoning_content first; a rep with
+#     NO content line within the cap leaves ttft_s blank — refuse the
+#     empty-side comparison), TTFB stays recorded as the flush observable
+#     (first SSE line arrival), and the stream total is wall-clock from
+#     request start.
 #   - per-request server-log slices (the server's own prompt-eval/eval report)
 #   - response bodies (usage token counts) for every request
 #   - post-load and post-suite RAM (VmRSS/VmHWM) + amdgpu VRAM samples
@@ -303,27 +309,63 @@ for entry in "${SUITE[@]}"; do
             "$label" "$prompt_id" "$rep" "$mode" "$ttfb" '' "$total" "$ptok" "$ctok" "${req##*/}" >> "$summary"
     done
 
-    # One streaming rep per class: TTFB recorded as the TTFT candidate
-    # (validated at the first leg — see the header comment).
+    # One streaming rep per class. TTFT = the first non-empty `content`
+    # line's arrival (patched 2026-11-06 — the D-F contingency fired: these
+    # engines flush SSE headers before the first token, so the TTFB recorded
+    # as the TTFT candidate at freeze was invalid; see the header comment).
+    # A rep with no content line within the cap leaves ttft_s blank — the
+    # analysis refuses the empty-side comparison (finish_reason "length"
+    # with empty content is the normal shape for the thinking model at
+    # short caps). The body is reassembled line-by-line (byte-identical for
+    # newline-terminated SSE); ttfb is the first SSE line's arrival (the
+    # flush observable); total is wall-clock from request start.
     mode=stream
     rep=1
     req="$out/${label}_${prompt_id}_${mode}_${rep}_req.json"
     body="$out/${label}_${prompt_id}_${mode}_${rep}_body.txt"
+    first_line_ns_file="$out/${label}_${prompt_id}_stream_first_line.ns"
+    first_content_ns_file="$out/${label}_${prompt_id}_stream_first_content.ns"
+    rm -f "$first_line_ns_file" "$first_content_ns_file"
+    : > "$body"
     build_request "$prompt" "$max_tokens" true "$req"
     log_before=$(server_log_size)
-    timings=$(curl -sN -o "$body" -X POST "$endpoint/v1/chat/completions" \
+    start_ns=$(date +%s%N)
+    curl -sN -X POST "$endpoint/v1/chat/completions" \
         -H 'Content-Type: application/json' \
-        -w '%{time_starttransfer} %{time_total}' \
-        --data-binary "@$req")
+        --data-binary "@$req" | while IFS= read -r line; do
+        printf '%s\n' "$line" >> "$body"
+        [ -e "$first_line_ns_file" ] || date +%s%N > "$first_line_ns_file"
+        if [ ! -e "$first_content_ns_file" ]; then
+            case "$line" in
+                *'"content":""'*|*'"content": ""'*)
+                    ;; # the empty-delta shape — reasoning may continue; no content yet
+                *'"content":"'*|*'"content": "'*)
+                    date +%s%N > "$first_content_ns_file"
+                    ;;
+            esac
+        fi
+    done
+    end_ns=$(date +%s%N)
     sleep 0.3
     tail -c +$((log_before + 1)) "$server_log" \
         > "$out/${label}_${prompt_id}_${mode}_${rep}_srvlog.txt" 2>/dev/null || true
-    ttfb=${timings%% *}
-    total=${timings##* }
+    first_line_ns=$(cat "$first_line_ns_file" 2>/dev/null || true)
+    first_content_ns=$(cat "$first_content_ns_file" 2>/dev/null || true)
+    if [ -n "$first_line_ns" ]; then
+        ttfb=$(awk -v d=$((first_line_ns - start_ns)) 'BEGIN { printf "%.6f", d / 1e9 }')
+    else
+        ttfb=''
+    fi
+    if [ -n "$first_content_ns" ]; then
+        ttft=$(awk -v d=$((first_content_ns - start_ns)) 'BEGIN { printf "%.6f", d / 1e9 }')
+    else
+        ttft=''
+    fi
+    total=$(awk -v d=$((end_ns - start_ns)) 'BEGIN { printf "%.6f", d / 1e9 }')
     ptok=$(usage_of "$body" prompt_tokens)
     ctok=$(usage_of "$body" completion_tokens)
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$label" "$prompt_id" "$rep" "$mode" "$ttfb" "$ttfb" "$total" "$ptok" "$ctok" "${req##*/}" >> "$summary"
+        "$label" "$prompt_id" "$rep" "$mode" "$ttfb" "$ttft" "$total" "$ptok" "$ctok" "${req##*/}" >> "$summary"
 done
 
 sample_mem post_suite "$mem"
