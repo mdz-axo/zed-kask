@@ -1390,6 +1390,12 @@ pub(crate) mod tests {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-seek.wav")
     }
 
+    /// A 2s video WITH an audio stream — exercises the audio-master clock
+    /// path (as opposed to the wall-clock fallback arm).
+    fn video_with_audio_fixture() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-opus.mp4")
+    }
+
     struct RetryStorage {
         attempts: std::sync::atomic::AtomicUsize,
     }
@@ -2222,6 +2228,98 @@ pub(crate) mod tests {
         assert!(
             delta >= wall_elapsed.mul_f32(1.5),
             "media time advances at ≥1.5× wall clock (delta {delta:?} over {wall_elapsed:?})"
+        );
+    }
+
+    /// expect: At 2× speed the VIDEO position advances at twice wall-clock —
+    /// the CycleSpeed command reaches the worker, the audio pipeline's output
+    /// player speeds, and the audio-master clock (consumed audio scaled back
+    /// to media time per read) advances at rate.
+    /// [P1] Motivating: speed on both media kinds is the S4 objective; the
+    /// video chain (transport → command → worker → decoder pipeline) must
+    /// actually speed, not just the audio-kind path.
+    /// pre: the 2s video+audio opus fixture loads its first frame without
+    /// error; the transport cycles to 2×.
+    /// post: after playing at 2×, the position delta reaches ≥900ms of media
+    /// in <0.8s wall and at ≥1.5× wall (1× needs ≥0.9s; 2× ≈ 0.45s). The
+    /// bounds discriminate on a real-time-cadenced output device — a CI null
+    /// sink that drains faster than real time satisfies them vacuously.
+    /// Serializes on GLOBAL_TEST_LOCK like every sink-opening test.
+    #[allow(clippy::await_holding_lock)]
+    #[gpui::test]
+    async fn speed_two_x_advances_video_position_at_double_wall_clock(cx: &mut TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let path = video_with_audio_fixture();
+        let reference = MediaRef::new(
+            SharedString::from(path.to_string_lossy().to_string()),
+            MediaKind::Video,
+        );
+        let widget = cx.update(|cx| cx.new(|cx| MediaWidget::new(reference, cx)));
+        cx.update(|cx| widget.update(cx, |widget, cx| widget.load(cx)));
+        let load_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while widget.read_with(cx, |widget, _cx| widget.current_frame.is_none())
+            && std::time::Instant::now() < load_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        assert!(
+            widget.read_with(cx, |widget, _cx| widget.current_frame.is_some()),
+            "the opus video fixture loads its first frame"
+        );
+        // Cycle 1× → 1.25× → 1.5× → 2× — the full widget → command → worker
+        // → decoder pipeline chain.
+        for _ in 0..3 {
+            cx.update(|cx| {
+                widget.update(cx, |widget, cx| {
+                    widget.handle_transport_event(&TransportEvent::CycleSpeed, cx)
+                })
+            });
+        }
+        assert_eq!(
+            widget.read_with(cx, |widget, _cx| widget.last_transport.map(|s| s.speed)),
+            Some(2.0),
+            "three cycles from 1× land on 2× and the transport state reports it"
+        );
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.handle_transport_event(&TransportEvent::TogglePlay, cx)
+            })
+        });
+        let wall_start = std::time::Instant::now();
+        let position_start = widget
+            .read_with(cx, |widget, _cx| widget.transport_position_secs())
+            .unwrap_or(0.0);
+        let play_deadline = wall_start + Duration::from_secs(3);
+        while widget.read_with(cx, |widget, _cx| {
+            widget
+                .transport_position_secs()
+                .is_none_or(|position| position - position_start < 0.9)
+        }) && std::time::Instant::now() < play_deadline
+        {
+            let timer = cx.update(|cx| cx.background_executor().timer(Duration::from_millis(10)));
+            timer.await;
+            cx.run_until_parked();
+        }
+        let wall_elapsed = wall_start.elapsed();
+        let delta = Duration::from_secs_f64(
+            widget
+                .read_with(cx, |widget, _cx| widget.transport_position_secs())
+                .unwrap_or(0.0)
+                - position_start,
+        );
+        assert!(
+            delta >= Duration::from_millis(900),
+            "2× playback advances the video clock past 0.9s of media (got {delta:?})"
+        );
+        assert!(
+            wall_elapsed < Duration::from_millis(800),
+            "2× playback reaches 0.9s of video media in <0.8s wall (took {wall_elapsed:?}; 1× needs ≥0.9s)"
+        );
+        assert!(
+            delta >= wall_elapsed.mul_f32(1.5),
+            "video media time advances at ≥1.5× wall clock (delta {delta:?} over {wall_elapsed:?})"
         );
     }
 
