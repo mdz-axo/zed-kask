@@ -264,6 +264,15 @@ not a v1 decision); swap pressure (headroom factor in the guard).
   experiment behind the same wrapper + parity harness with the measured band; streaming
   becomes routable only when the band gates it. Telemetry loop lands when its trigger
   fires; the jinja seam when a second consumer exists.
+  **Measured 2026-11-05 (the P2 engagement, its plan + measurement record):**
+  the pinned ServeurpersoCom fork (tip `7174388`) is a **speed miss** on this
+  machine (decode 9.02 vs the resident 13.72 tok/s, 1.52× slower; P2 wall
+  2.28× slower) and the parity band is **unmeasured — instrument-confounded**
+  (within-leg temp-0 determinism fails at the operating ctx on both engines
+  even under the fresh-slot protocol). Streaming stays unroutable in v1 —
+  pinned; a revisit needs M4-Max-class VRAM for a meaningful expert cache and
+  a determinism instrument that holds at the configuration
+  (`kask/docs/research/private-inference-p2-streaming-parity-measurement-2026-11-05.md`).
 - **P3 — upstream.** Gaps go to llama.cpp as small PRs (expert-hit telemetry hooks,
   placement presets) — never a private ggml fork (the crowded-field + rebase-burden
   ruling from the research runs). Watch FreeToken's q\*-class adaptive co-execution as

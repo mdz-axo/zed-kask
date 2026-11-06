@@ -147,9 +147,80 @@ probe-pinned) and is never the shipped surface.
 
 ## 9. Implementation record
 
-- **Step 1 (acquisition + build, 2026-11-05):** cloned at tip
+**Attribution:** the code slices (the surface TOML, the three scripts, the
+placement/manifest pins, this plan) landed in the concurrent stream's commit
+`631d4468b2` ("Add the P2 streaming experiment surface and parity harness",
+pushed to origin) alongside that stream's own media files — the shared-tree
+sweep the `.rules` records; the work is intact under a faithful message. The
+compare-script's instrument fix (the glob resolution + the reasoning-field +
+the non-empty refusal) and this record land after it.
+
+- **Step 1 (acquisition + build, 2026-11-05): DONE.** Cloned at tip
   `7174388895e8471a8bf2869e34d6a61e33f4b84c` (branch `moe-stream-partition`,
-  `ServeurpersoCom/llama.cpp`), `BUILD_PIN.txt` written, `rev-parse HEAD` == the
-  ls-remote tip — **PIN_MATCHES**. HIP build launched (the build-hip.sh recipe:
-  `GGML_HIP=ON, AMDGPU_TARGETS=gfx1102, ROCm 7.2`) — outcome recorded below when
-  `BUILD_HIP_DONE`.
+  `ServeurpersoCom/llama.cpp`), `BUILD_PIN.txt` written, `rev-parse HEAD` ==
+  the ls-remote tip — **PIN_MATCHES**. HIP build completed (`BUILD_HIP_DONE`,
+  the build-hip.sh recipe, ROCm 7.2); the binary's own `--version` line:
+  `0.3.0-dev (build 1, commit 7174388)` — the fork branches from an OLDER
+  upstream than mainline (0.3.0-dev vs 0.9.0-dev), so every spelling was
+  re-verified live against this binary's `--help`.
+- **Step 2 (the manifest surface): DONE.**
+  `llama-cpp-serveurperso-moe-stream.toml` decodes, validates and
+  every-fixture-gates (the crate's 52-test suite green). The fixture gate
+  caught one real mismatch on landing (the mlock exclusivity fixture also
+  tripping the RAM-headroom guard — mmap=false counts weights resident);
+  fixed in place. The streaming vocabulary cannot ride `[flags]`
+  (FlagVocabulary has no streaming intent — by design) — it lives in the
+  provenance header; the legs pass the streaming flags by hand (the P0
+  discipline). The engine's own abort validated the constraint model
+  directly: `multi-pass expert GEMMs need at least 3*n_expert_used dynamic
+  slots` — the same arithmetic as the surface's `expert_slot_floor`
+  (floor_mult 3 × n_expert_used 10 = 30).
+- **Step 3 (the fresh-slot instrument): FAILED at ctx 16384 — the
+  instrument-confounded verdict.** The c′ deviation came first: the slot
+  floor needs ~2.7 GiB of VRAM for the expert cache, and at ctx 32768 the
+  compute-pool alloc OOM'd (the D-B class: `ROCm error: out of memory` at
+  `ggml_cuda_pool_leg::alloc`) — the matched pair ran at **ctx 16384**
+  (recorded, like D-C). Under the fresh-slot protocol (`--parallel 1
+  --no-reasoning-preserve --no-cache-prompt`, spellings verified on BOTH
+  engines' `--help`), within-leg temperature-0 determinism STILL fails on
+  the short classes for BOTH engines (resident P1 reasoning 631/647/649
+  chars, first divergence at byte ~310-316; streaming P1 652/659, byte
+  316) — the confound persists through slot-state resets, so the mechanism
+  is engine-compute-level at this quantization/ctx, a refinement of D-G
+  (the slot-state hypothesis alone was insufficient). The resident's long
+  class WAS byte-stable across its 3 reps (4350 chars × 3, byte-identical)
+  while the streaming engine diverged within-leg there too. Per the
+  pre-declared protocol the gate precedes the band: **no cross-leg
+  identity claim is made; the band is UNMEASURED.**
+- **Step 4 (the paired legs): DONE, anchor holds.** Both legs at ctx 16384,
+  the frozen p0 suite + the long leg; artifacts under
+  `measurements/p2-parity-2026-11-05/{resident,streaming}/`. The
+  consistency anchor holds: the resident's engine-reported decode is
+  **13.72 tok/s** — inside the P0 13.0-15.0 class (the environment did not
+  drift; the configuration shift — single-slot, no-cache-prompt, ctx
+  16384 — did not move the class).
+- **Step 5 (the receipts): SPEED MISS + INSTRUMENT-CONFOUNDED.** The frozen
+  lisp receipts (sign: negative = streaming slower):
+  resident P2 median **24.83 s** vs streaming **56.53 s** → wall change
+  **−127.7%** (2.28× slower); P3 −166.7%; the long leg warm 137–145 s vs
+  84–90 s (−70.6% at the medians; the streaming r1 paid 348 s — the
+  cold-cache SSD loads); engine-reported decode **9.02 vs 13.72 tok/s**
+  (1.52× slower, −34%); `anchor_resident_decode_in_p0_13_15_class = true`.
+  The M4 Max 36 GB datapoint (26 tok/s via streaming) does not transfer
+  to the 8 GB card: the 30-slot cache holds too small an expert fraction
+  and the misses cross PCIe/SSD.
+- **Step 6 (the v1-unroutable pin): green.**
+  `streaming_mode_stays_unroutable_in_v1` (placement) + the surface
+  decode/fixture pins (manifest) — the production surface stays the
+  mainline pin; the fork surface is an experiment manifest.
+
+**The engagement's adjudication (the frozen vocabulary):** streaming does
+NOT earn routability on this machine — three independent bars: (1) the
+parity band unmeasured (instrument-confounded, the honest recording over a
+forced claim); (2) the speed a MISS (slower, not a tie); (3) the streaming
+engine's own within-request nondeterminism at the long class (it diverges
+against itself at temperature 0 — a routable engine must at least be
+self-consistent). Streaming stays **UNROUTABLE in v1**; the fork surface
+stays pinned as the experiment record; a future streaming revisit needs
+VRAM for a meaningful expert cache (the M4 Max class) or a parity instrument
+that holds at this configuration.
