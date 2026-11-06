@@ -110,6 +110,25 @@ pub fn embedding_model() -> Option<String> {
         .filter(|m| !m.trim().is_empty())
 }
 
+/// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the env
+/// name carrying the private leg's LOCAL embedding model to kask MCP children
+/// (`kask.private_inference.embedding_model` → `mcp_env()` → this var). The
+/// curator child routes private-call query embeds through this model ONLY
+/// (the registry resolves it to the local ollama descriptor — loopback, no
+/// credentials); public calls keep `HKASK_EMBEDDING_MODEL`. Empty/unset is the
+/// surfaced degrade — the private semantic leg skips the embed, and the
+/// query never widens to the configured cloud embedder.
+pub const PRIVATE_EMBEDDING_MODEL_ENV: &str = "HKASK_PRIVATE_EMBEDDING_MODEL";
+
+/// The private leg's LOCAL embedding model as injected into kask MCP children
+/// ([`PRIVATE_EMBEDDING_MODEL_ENV`]). Empty/unset reads `None` — the private
+/// call degrade, never a fallback to the configured cloud model.
+pub fn private_embedding_model() -> Option<String> {
+    std::env::var(PRIVATE_EMBEDDING_MODEL_ENV)
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+}
+
 /// Read the OCR model from the env layer: `HKASK_OCR_MODEL` → `None`
 /// when unset. The settings chain (which carries the code default)
 /// injects this env var for MCP server children.

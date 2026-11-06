@@ -72,6 +72,15 @@ enum SemanticRecallError {
              hidden code constant"
     )]
     EmbeddingNotConfigured,
+    /// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
+    /// private-call degrade: no private embedding model is configured, so
+    /// the semantic leg is SKIPPED for private call contexts (the exact and
+    /// keyword legs serve the call); the query never widens to the
+    /// configured cloud embedder.
+    #[error(
+        "private call context: no private embedding model configured — set kask.private_inference.embedding_model (injected as HKASK_PRIVATE_EMBEDDING_MODEL); the semantic leg is skipped for private contexts and the query never widens to the configured cloud embedder"
+    )]
+    PrivateEmbeddingNotConfigured,
 }
 
 /// Semantic-recall outcome: the resolved `(h_mem, distance)` fragments
@@ -103,6 +112,30 @@ fn call_admits(h_mem: &hkask_storage::HMem) -> bool {
     hkask_mcp_server::current_call_provenance()
         == hkask_types::InferenceProvenance::PrivateInference
         || h_mem.inference_provenance != hkask_types::InferenceProvenance::PrivateInference
+}
+
+/// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
+/// query-embed routing decision, the ONE home the semantic tools' embed
+/// sites resolve through. A private call context takes the private leg's
+/// LOCAL model or the surfaced degrade; a public call context takes the
+/// configured model or its surfaced error. The model string IS the routing
+/// signal (the stored-vector model-string gate's discipline): a private
+/// query vector lands in the local model's space, so the KNN gate excludes
+/// every cloud-model row and surfaces `excluded_model_mismatch` — the
+/// bridge's recorded posture ("the public store's KNN leg is unreachable
+/// from private contexts by construction"), made true at the child. The
+/// private leg never widens to the configured cloud embedder.
+fn routed_query_model(
+    provenance: hkask_types::InferenceProvenance,
+    private_model: Option<String>,
+    configured_model: Option<String>,
+) -> Result<String, SemanticRecallError> {
+    match provenance {
+        hkask_types::InferenceProvenance::PrivateInference => {
+            private_model.ok_or(SemanticRecallError::PrivateEmbeddingNotConfigured)
+        }
+        _ => configured_model.ok_or(SemanticRecallError::EmbeddingNotConfigured),
+    }
 }
 
 fn degradation_note(
@@ -413,8 +446,18 @@ impl CuratorServer {
         query: &str,
         limit: usize,
     ) -> Result<SemanticRecall, SemanticRecallError> {
-        let embedding_model =
-            curator_embedding_model().ok_or(SemanticRecallError::EmbeddingNotConfigured)?;
+        // zed-kask: D100's named follow-up (operator-approved 2026-11-06) —
+        // the query embed routes by the CALL's provenance (the M5 `_meta`
+        // mark): private call contexts embed through the private leg's
+        // LOCAL model only; public contexts keep the configured model. The
+        // private query vector lands in the local model's space, so the
+        // KNN gate excludes cloud-model rows and surfaces
+        // `excluded_model_mismatch` — never a widening to the cloud.
+        let embedding_model = routed_query_model(
+            hkask_mcp_server::current_call_provenance(),
+            hkask_inference::model_constants::private_embedding_model(),
+            curator_embedding_model(),
+        )?;
         let batch = self
             .inference_port
             .embed_with_dimensions(
@@ -550,13 +593,18 @@ impl CuratorServer {
                 return Err(McpToolError::invalid_argument("query must not be empty"));
             }
             let limit = req.limit.unwrap_or(10).clamp(1, 50);
-            let embedding_model = curator_embedding_model().ok_or_else(|| {
-                McpToolError::permission_denied(
-                    "no embedding model configured — set kask.models.embedding_model \
-                     (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a \
-                     hidden code constant",
-                )
-            })?;
+            // zed-kask: D100's named follow-up (operator-approved
+            // 2026-11-06) — the federated query embed routes by the call's
+            // provenance too: private contexts embed through the private
+            // leg's LOCAL model only (each sealed source's model gate then
+            // surfaces its per-source exclusion); unset/empty is the
+            // surfaced degrade, never a widening to the cloud.
+            let embedding_model = routed_query_model(
+                hkask_mcp_server::current_call_provenance(),
+                hkask_inference::model_constants::private_embedding_model(),
+                curator_embedding_model(),
+            )
+            .map_err(|reason| McpToolError::permission_denied(reason.to_string()))?;
             let batch = self
                 .inference_port
                 .embed_with_dimensions(
@@ -1749,6 +1797,62 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
 #[cfg(test)]
 mod tests {
+    /// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
+    /// query-embed routing decision's table, over pure decision inputs (no
+    /// process env): private contexts take the private model or the surfaced
+    /// degrade; public contexts take the configured model or its surfaced
+    /// error. The env plumbing and the recording-port falsifier live in
+    /// tests/tool_behavior.rs.
+    #[test]
+    fn routed_query_model_pins_the_provenance_table() {
+        use hkask_types::InferenceProvenance;
+
+        assert!(
+            matches!(
+                super::routed_query_model(
+                    InferenceProvenance::PrivateInference,
+                    Some("ollama/qwen3-embedding:0.6b".to_string()),
+                    None,
+                ),
+                Ok(model) if model == "ollama/qwen3-embedding:0.6b"
+            ),
+            "a private call embeds through the private model"
+        );
+        assert!(
+            matches!(
+                super::routed_query_model(
+                    InferenceProvenance::PrivateInference,
+                    None,
+                    Some("cloud/model".to_string()),
+                ),
+                Err(super::SemanticRecallError::PrivateEmbeddingNotConfigured)
+            ),
+            "a private call with no private model degrades — never the configured cloud model"
+        );
+        assert!(
+            matches!(
+                super::routed_query_model(
+                    InferenceProvenance::PublicProvider,
+                    None,
+                    Some("cloud/model".to_string()),
+                ),
+                Ok(model) if model == "cloud/model"
+            ),
+            "a public call keeps the configured model unchanged"
+        );
+        assert!(
+            matches!(
+                super::routed_query_model(
+                    InferenceProvenance::PublicProvider,
+                    Some("ollama/x".to_string()),
+                    None,
+                ),
+                Err(super::SemanticRecallError::EmbeddingNotConfigured)
+            ),
+            "the public path's surfaced error is unchanged"
+        );
+    }
+
     /// expect: "The curator server refuses startup without its DB
     /// passphrase — 14 of 15 tools are DB-backed and there is no
     /// in-memory store to fall back to, so a limping start would surface

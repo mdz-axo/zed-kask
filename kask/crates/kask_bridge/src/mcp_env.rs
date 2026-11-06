@@ -279,6 +279,7 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_DEFAULT_MODEL",
     "HKASK_CLASSIFIER_MODEL",
     hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
+    hkask_inference::model_constants::PRIVATE_EMBEDDING_MODEL_ENV,
     "HKASK_OCR_MODEL",
     "HKASK_RERANK_MODEL",
 ];
@@ -669,6 +670,33 @@ mod tests {
         assert_eq!(
             env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
             Some("voyage/voyage-3")
+        );
+    }
+
+    /// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
+    /// private leg's LOCAL embedding model reaches the kask MCP children
+    /// through `HKASK_PRIVATE_EMBEDDING_MODEL`, carrying the operator's
+    /// explicit opt-out (an EMPTY value is emitted as empty — the child's
+    /// reader maps empty/unset to the surfaced degrade, never a cloud
+    /// fallback). The per-server admission is the curator server's
+    /// `config_env` allowlist entry.
+    #[test]
+    fn mcp_env_emits_the_private_embedding_model() {
+        let mut settings = KaskSettings::default();
+        settings.private_inference.embedding_model = "ollama/qwen3-embedding:0.6b".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_PRIVATE_EMBEDDING_MODEL").map(String::as_str),
+            Some("ollama/qwen3-embedding:0.6b")
+        );
+
+        // The explicit opt-out: an empty setting emits empty — the child
+        // reads the degrade, never a hidden default.
+        settings.private_inference.embedding_model = String::new();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_PRIVATE_EMBEDDING_MODEL").map(String::as_str),
+            Some("")
         );
     }
 }

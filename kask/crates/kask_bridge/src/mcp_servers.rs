@@ -177,6 +177,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // model configured" — the exact gap observed live 2026-09-04
             // (the allowlist must align with actual env-var reads).
             "HKASK_EMBEDDING_MODEL",
+            // zed-kask: D100's named follow-up (operator-approved
+            // 2026-11-06) — the private leg's LOCAL embedding model for
+            // the query-embed routing: private-call queries embed through
+            // this model only; absent/empty is the surfaced degrade.
+            hkask_inference::model_constants::PRIVATE_EMBEDDING_MODEL_ENV,
         ],
     },
     BuiltinMcpServer {

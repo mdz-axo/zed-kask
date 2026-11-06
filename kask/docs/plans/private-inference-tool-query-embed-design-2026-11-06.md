@@ -1,9 +1,9 @@
 # Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)
 
-STATUS: **proposal, awaiting the operator checkpoint** — D100's named
-follow-up; closing it changes the M5 positive-control shape, so the
-operator approves this design before any implementation. Nothing here is
-built or claimed built.
+STATUS: **approved by the operator 2026-11-06; implemented the same day** —
+the query side (Phase 1). The write-side passage embeds of private-marked
+rows (§4) remain the named Phase 2 seam, not implemented. D100's row
+carries the landed record and the pin list.
 
 ## 1. The seam (IS — tree-verified 2026-11-06)
 

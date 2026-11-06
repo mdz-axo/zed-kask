@@ -182,6 +182,63 @@ fn unit_vector() -> Vec<f32> {
     vector
 }
 
+/// Records every `embed_with_dimensions` call's model — the routing
+/// falsifier's instrument (D100's named follow-up, 2026-11-06). Returns the
+/// constant unit vectors so the search proceeds past the embed.
+#[derive(Default)]
+struct RecordingEmbedPort {
+    models: std::sync::Mutex<Vec<String>>,
+}
+
+impl RecordingEmbedPort {
+    fn embedded_models(&self) -> Vec<String> {
+        self.models
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+impl hkask_types::InferencePort for RecordingEmbedPort {
+    stub_generate_arm!();
+
+    fn embed<'a>(&'a self, _model: &str, texts: &[String]) -> hkask_types::EmbedFuture<'a> {
+        // The ConstantEmbedPort shape: unit vectors at the test width.
+        let count = texts.len();
+        let dim = test_dim();
+        Box::pin(async move {
+            Ok(hkask_types::EmbeddingBatch {
+                vectors: (0..count)
+                    .map(|_| {
+                        let mut vector = vec![0.0f32; dim];
+                        vector[0] = 1.0;
+                        vector
+                    })
+                    .collect(),
+                requested_model: String::new(),
+                actual_model: None,
+                usage: hkask_types::InferenceUsage::default(),
+            })
+        })
+    }
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        if let Some(d) = dimensions {
+            debug_assert_eq!(d as usize, test_dim());
+        }
+        self.models
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(model.to_string());
+        self.embed_with_identity(model, texts)
+    }
+}
+
 fn failing_inference_port() -> Arc<dyn hkask_types::InferencePort> {
     Arc::new(FailingEmbedPort)
 }
@@ -212,8 +269,15 @@ fn seed_h_mem(
 /// the same unit vector, so every seeded row is a guaranteed hit). An
 /// entity with an embedding but no h_mem is the orphan-resolution fixture.
 fn seed_embedding(memory: &hkask_memory::MemoryStore, entity: &str) {
+    seed_embedding_with_model(memory, entity, "test-model");
+}
+
+/// The D100-follow-up shape: a row whose embedding lives in a named model's
+/// space — `"test-private-model"` seeds the private leg's local space, the
+/// space a private call context's query vector matches.
+fn seed_embedding_with_model(memory: &hkask_memory::MemoryStore, entity: &str, model: &str) {
     memory
-        .store_embedding(entity, &unit_vector(), "test-model", None)
+        .store_embedding(entity, &unit_vector(), model, None)
         .expect("seed embedding");
 }
 
@@ -272,6 +336,14 @@ fn ensure_embedding_model_env() {
             // SAFETY: test-only env write, executed once before any test
             // body relies on it, always to the same value.
             unsafe { std::env::set_var("HKASK_EMBEDDING_MODEL", "test-model") };
+        }
+        // The private leg's LOCAL model (D100's named follow-up,
+        // 2026-11-06): distinct from the configured model so the routing
+        // pins can tell the two apart; set in the same one-shot for the
+        // same reasons (a later test cannot unset a sibling's write).
+        if std::env::var("HKASK_PRIVATE_EMBEDDING_MODEL").is_err() {
+            // SAFETY: test-only env write, one-shot, always the same value.
+            unsafe { std::env::set_var("HKASK_PRIVATE_EMBEDDING_MODEL", "test-private-model") };
         }
     });
 }
@@ -1025,7 +1097,28 @@ async fn semantic_search_filters_private_rows_by_call_context() {
         "the semantic exclusion is surfaced — got: {response}",
     );
 
-    // Private context: the same query recalls the private fragment.
+    // Private context (the D100-follow-up re-shape, 2026-11-06): the query
+    // embeds through the PRIVATE model (`test-private-model`), so the
+    // seeded cloud-model embedding gates OUT by the model string — surfaced
+    // as `model_mismatch_excluded`, never silently empty — while a
+    // private-model embedding on a private row recalls: the KNN positive
+    // control in the local-model space.
+    let private_entity = "curator:thread:m5-semantic-local";
+    let private_local = hkask_storage::HMem::new(
+        private_entity,
+        "turn",
+        serde_json::json!({
+            "user_input": "a private question in the local space",
+            "agent_response": "a private answer in the local space",
+        }),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    memory
+        .store(private_local)
+        .expect("seed local-space private turn");
+    seed_embedding_with_model(&memory, private_entity, "test-private-model");
+
     let response = hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.curator_semantic_search(Parameters(SemanticSearchRequest {
@@ -1039,9 +1132,84 @@ async fn semantic_search_filters_private_rows_by_call_context() {
     assert_eq!(
         response["count"].as_u64(),
         Some(1),
-        "a private context recalls the private fragment — got: {response}",
+        "a private context recalls the private fragment in the local-model space — got: {response}",
+    );
+    assert_eq!(
+        response["model_mismatch_excluded"].as_u64(),
+        Some(1),
+        "the cloud-model embedding gates out by the model string, surfaced — got: {response}",
     );
     assert!(response.get("excluded_private_rows").is_none());
+}
+
+/// D100's named follow-up (operator-approved 2026-11-06), the routing
+/// falsifier: a PRIVATE call context's query embed travels to the PRIVATE
+/// model only — the recording port observes zero configured-model embeds
+/// and exactly one private-model embed; the same server under a PUBLIC
+/// context embeds via the configured model, unchanged.
+#[tokio::test]
+async fn private_call_query_embeds_via_the_private_model_not_the_configured_embedder() {
+    let recording = Arc::new(RecordingEmbedPort::default());
+    let (server, _memory) = make_server_with_embedding_port(recording.clone());
+
+    // Private context: one private-model embed, zero configured-model embeds.
+    hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.curator_semantic_search(Parameters(SemanticSearchRequest {
+            query: "a private question".to_string(),
+            limit: None,
+        })),
+    )
+    .await
+    .expect("search ok");
+    let models = recording.embedded_models();
+    assert_eq!(
+        models,
+        vec!["test-private-model".to_string()],
+        "the private call embeds through the private model only — got: {models:?}"
+    );
+
+    // Public context on the same server: the configured model, unchanged.
+    server
+        .curator_semantic_search(Parameters(SemanticSearchRequest {
+            query: "a public question".to_string(),
+            limit: None,
+        }))
+        .await
+        .expect("search ok");
+    let models = recording.embedded_models();
+    assert_eq!(
+        models,
+        vec!["test-private-model".to_string(), "test-model".to_string(),],
+        "the public call embeds via the configured model, unchanged — got: {models:?}"
+    );
+}
+
+/// The federated head embed is a SEPARATE call site — pin the same routing
+/// there: a private call context's federated query embeds through the
+/// private model only (the sealed-source legs' model gates then surface
+/// their per-source exclusions; this server has no sealed sources
+/// configured, so the curator leg is the one embed).
+#[tokio::test]
+async fn private_call_federated_query_embeds_via_the_private_model() {
+    let recording = Arc::new(RecordingEmbedPort::default());
+    let (server, _memory) = make_server_with_embedding_port(recording.clone());
+
+    hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.curator_federated_search(Parameters(FederatedSearchRequest {
+            query: "a private federated question".to_string(),
+            limit: None,
+        })),
+    )
+    .await
+    .expect("search ok");
+    assert_eq!(
+        recording.embedded_models(),
+        vec!["test-private-model".to_string()],
+        "the private federated call embeds through the private model only — got: {:?}",
+        recording.embedded_models()
+    );
 }
 
 /// The no-field rule (P4), pinned at the schema surface: no tool

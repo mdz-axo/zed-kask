@@ -755,6 +755,16 @@ impl KaskSettings {
         let effective_embedding = self.effective_embedding_model();
         crate::mcp_env::emit_corpus_embedding_env(&self.corpus, &effective_embedding, &mut env);
         crate::mcp_env::emit_corpus_template_root_env(&self.corpus, &data_dir, &mut env);
+        // zed-kask: D100's named follow-up (operator-approved 2026-11-06) —
+        // the private leg's LOCAL embedding model reaches the kask MCP
+        // children (the curator server's private-call query embeds route
+        // through it). Emitted unconditionally: an empty value carries the
+        // operator's explicit opt-out, and the child's reader maps
+        // empty/unset to the surfaced degrade — never a cloud fallback.
+        env.insert(
+            hkask_inference::model_constants::PRIVATE_EMBEDDING_MODEL_ENV.to_string(),
+            self.private_inference.embedding_model.clone(),
+        );
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
