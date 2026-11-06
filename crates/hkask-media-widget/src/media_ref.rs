@@ -86,6 +86,10 @@ static APPROVED_GALLERY_FILES: OnceLock<parking_lot::RwLock<HashSet<PathBuf>>> =
 
 /// Register one exact path observed through a successful gallery tool result.
 /// Assistant-authored media-block fields never call this authority boundary.
+/// Consumer crates' tests and benches admit their committed fixtures through
+/// this same boundary: `PathMediaStorage`'s test-mode root covers only the
+/// widget crate's own `test_data/`, so a consumer crate's fixture resolves
+/// only after explicit registration here.
 pub fn approve_gallery_media_path(path: &Path) -> anyhow::Result<()> {
     let path = path.canonicalize().map_err(|error| {
         anyhow::anyhow!(
