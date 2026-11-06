@@ -53,6 +53,11 @@ const SENTENCE_BOUNDARY: &str = ".!?";
 /// (no DB open, no passphrase, no consolidation timer).
 pub(crate) struct WriteContext<'a> {
     pub curator_store: &'a CuratorStore,
+    /// zed-kask: D100/FR-4 (operator ruling 2026-11-05) — the private
+    /// sibling store: a turn from a privacy-marked thread routes its
+    /// writes here (the record's `InferenceProvenance` is the routing
+    /// signal — the same mark the zed side read from the thread).
+    pub private_curator_store: &'a CuratorStore,
     pub embedding_port: Option<&'a LanguageModelEmbeddingPort>,
     pub embedding_model: &'a str,
     /// The classifier model used for write-time chunk tagging
@@ -131,6 +136,13 @@ pub(crate) async fn write_turn(
     let thread_id = record.thread_id.clone();
     let model = record.model.clone();
     let is_curator_turn = record.agent_id.as_deref() == Some("Curator");
+    // zed-kask: D100/FR-4 (operator ruling 2026-11-05) — the write-routing
+    // signal: a turn produced on a privacy-marked thread lands in the
+    // PRIVATE store, everything else in the public store. The provenance
+    // rides the record from the zed side (the producing thread's D100
+    // mark) — never caller-set on the write side.
+    let private_turn =
+        record.inference_provenance == hkask_types::InferenceProvenance::PrivateInference;
 
     // Turn identity for chunk provenance/ordering. TurnRecord carries no
     // ordinal or timestamp, so write time stands in for turn-completion time.
@@ -139,17 +151,18 @@ pub(crate) async fn write_turn(
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
 
-    // Resolve the curator stores once per ingestion.
-    let curator_store = ctx.curator_store.get();
-    // Rebuild the curator consolidation service after a heal.
-    if curator_store.is_some() {
+    // Resolve the curator stores once per ingestion. The consolidation
+    // rebuild stays keyed on the PUBLIC store (the private store gets no
+    // consolidation pass in v1 — a stated limit).
+    let public_curator_store = ctx.curator_store.get();
+    if public_curator_store.is_some() {
         let needs_rebuild = match ctx.curator_consolidation.read() {
             Ok(guard) => guard.is_none(),
             Err(_) => true,
         };
         if needs_rebuild && ctx.consolidation_cadence_secs > 0 {
             let rebuilt =
-                build_curator_consolidation(ctx.consolidation_cadence_secs, &curator_store);
+                build_curator_consolidation(ctx.consolidation_cadence_secs, &public_curator_store);
             if let Ok(mut guard) = ctx.curator_consolidation.write()
                 && guard.is_none()
             {
@@ -157,6 +170,13 @@ pub(crate) async fn write_turn(
             }
         }
     }
+    // The store this turn writes to: the private sibling for a private
+    // turn, the public store otherwise.
+    let curator_store = if private_turn {
+        ctx.private_curator_store.get()
+    } else {
+        ctx.curator_store.get()
+    };
 
     // ── 2. Clean + chunk the turn content ─────────────────────────────
     let cleaned = clean_turn_text(&record.user_input, &record.agent_response);
@@ -199,7 +219,22 @@ pub(crate) async fn write_turn(
     // applied below; this pass adds the content-derived dimensions (what/why),
     // subjects, domain concepts, and expertise level. Any failure degrades to
     // structural-only — surfaced, never silent, never blocking the write.
-    let content_tags = tag_chunks_with_llm(ctx, &chunk_texts).await;
+    //
+    // zed-kask: D100 (operator ruling 2026-11-05): a PRIVATE turn never
+    // reaches the configured classifier — it is a cloud model, and private
+    // content never crosses to cloud models ("any tools assisting on
+    // private threads need to be limited to private inference"). Private
+    // chunks get the structural-only degradation, surfaced.
+    let content_tags = if private_turn {
+        tracing::warn!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            "private turn: classifier tagging skipped — the configured classifier is a cloud model; chunks get structural tags only (a local classifier lifts the degrade)"
+        );
+        None
+    } else {
+        tag_chunks_with_llm(ctx, &chunk_texts).await
+    };
 
     // ── 4. Embed every chunk in one batched call ──────────────────────
     // Skipped when no embedding port is available — h_mem writes are pure SQL
@@ -210,59 +245,74 @@ pub(crate) async fn write_turn(
     // (the entity_ref invariant): KNN results join back to the h_mems, and
     // the stored passage_text lets the recall path pinpoint the matched
     // chunk instead of injecting the whole thread.
-    let vectors: Option<Vec<Vec<f32>>> = match ctx.embedding_port.cloned() {
-        Some(embedding_port) => {
-            let embedding_model = ctx.embedding_model.to_string();
-            let dimensions = ctx.curator_store.embedding_dim() as u32;
-            let texts = chunk_texts.clone();
-            let vectors = ctx
-                .tokio_handle
-                .spawn(async move {
-                    embedding_port
-                        .embed_with_dimensions(&embedding_model, &texts, Some(dimensions))
-                        .await
-                        .map(|batch| batch.vectors)
-                })
-                .await;
-            match vectors {
-                Ok(Ok(vectors)) if vectors.len() == chunk_texts.len() => Some(vectors),
-                Ok(Ok(vectors)) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        expected = chunk_texts.len(),
-                        got = vectors.len(),
-                        "Embedding count mismatch — chunks written without embeddings"
-                    );
-                    None
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Failed to embed turn chunks — semantic recall degraded to keyword-only"
-                    );
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        thread_id = %thread_id,
-                        error = %e,
-                        "Embedding task panicked — chunks written without embeddings"
-                    );
-                    None
+    // zed-kask: D100 (operator ruling 2026-11-05): a PRIVATE turn never
+    // reaches the configured embedder — it is a cloud model, and private
+    // content never crosses to cloud models (degrade-not-leak). Stored
+    // without embeddings: keyword-recallable in the private store;
+    // semantic recall for private content lifts when a local embedding
+    // model serves the leg.
+    let vectors: Option<Vec<Vec<f32>>> = if private_turn {
+        tracing::warn!(
+            target: "reg.memory",
+            thread_id = %thread_id,
+            "private turn: chunk embedding skipped — the configured embedder is a cloud model; stored keyword-recallable only (a local embedding model lifts the degrade)"
+        );
+        None
+    } else {
+        match ctx.embedding_port.cloned() {
+            Some(embedding_port) => {
+                let embedding_model = ctx.embedding_model.to_string();
+                let dimensions = ctx.curator_store.embedding_dim() as u32;
+                let texts = chunk_texts.clone();
+                let vectors = ctx
+                    .tokio_handle
+                    .spawn(async move {
+                        embedding_port
+                            .embed_with_dimensions(&embedding_model, &texts, Some(dimensions))
+                            .await
+                            .map(|batch| batch.vectors)
+                    })
+                    .await;
+                match vectors {
+                    Ok(Ok(vectors)) if vectors.len() == chunk_texts.len() => Some(vectors),
+                    Ok(Ok(vectors)) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            thread_id = %thread_id,
+                            expected = chunk_texts.len(),
+                            got = vectors.len(),
+                            "Embedding count mismatch — chunks written without embeddings"
+                        );
+                        None
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            thread_id = %thread_id,
+                            error = %e,
+                            "Failed to embed turn chunks — semantic recall degraded to keyword-only"
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            thread_id = %thread_id,
+                            error = %e,
+                            "Embedding task panicked — chunks written without embeddings"
+                        );
+                        None
+                    }
                 }
             }
-        }
-        None => {
-            tracing::warn!(
-                target: "reg.memory",
-                thread_id = %thread_id,
-                "No embedding port — chunks written without embeddings (semantic recall degraded to keyword-only)"
-            );
-            None
+            None => {
+                tracing::warn!(
+                    target: "reg.memory",
+                    thread_id = %thread_id,
+                    "No embedding port — chunks written without embeddings (semantic recall degraded to keyword-only)"
+                );
+                None
+            }
         }
     };
 
@@ -271,7 +321,7 @@ pub(crate) async fn write_turn(
         attempted: chunk_texts.len(),
         ..Default::default()
     };
-    let embedding_expected = ctx.embedding_port.is_some();
+    let embedding_expected = ctx.embedding_port.is_some() && !private_turn;
     if !embedding_expected {
         report.degraded = report.attempted;
     }
@@ -647,6 +697,7 @@ mod tests {
         let tokio_handle = tokio::runtime::Handle::current();
         let ctx = WriteContext {
             curator_store: &curator_store,
+            private_curator_store: &CuratorStore::for_tests(None),
             embedding_port: None,
             embedding_model: "test-model",
             classifier_model: Some("test-classifier"),

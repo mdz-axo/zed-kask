@@ -29,6 +29,23 @@ pub(crate) fn curator_db_path() -> String {
         resolved.to_string_lossy().to_string()
     })
 }
+
+/// Resolve the curator's PRIVATE memory DB path (operator ruling
+/// 2026-11-05 — the separate private curator memory database): sibling
+/// file `curator-private.db` in the curator's agent dir, `HKASK_CURATOR_PRIVATE_DB`
+/// to override. Same passphrase chain and data-dir resolution as the public
+/// store; a separate SQLCipher file so private-turn content never lands in
+/// the public DB and a public-store backup/export is clean by construction.
+pub(crate) fn curator_private_db_path() -> String {
+    std::env::var("HKASK_CURATOR_PRIVATE_DB").unwrap_or_else(|_| {
+        let p = hkask_types::agent_paths::agent_dir("curator").join("curator-private.db");
+        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
+        if let Some(parent) = resolved.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        resolved.to_string_lossy().to_string()
+    })
+}
 /// Open a `RegulationArchive` (durable regulation-span store) on the curator's
 /// sovereign `curator.db` — the same DB the curator MCP server's `reg_query` and
 /// `curator_algedonic_log` tools read. Returns `None` on any failure; the

@@ -37,6 +37,7 @@ use crate::inference_embedding::LanguageModelEmbeddingPort;
 // `use super::open_regulation_archive`.
 mod curator_stores;
 pub(crate) use curator_stores::curator_db_path;
+pub(crate) use curator_stores::curator_private_db_path;
 pub use curator_stores::{
     CuratorRegulationArchive, hydrate_operator_feedback, open_curator_regulation_archive,
     persist_operator_feedback, persist_skill_outcome, persist_skill_tool_failure,
@@ -203,6 +204,20 @@ pub struct RealMemoryPort {
     // are no-ops — recall is curator-only until the zed agent gets its own
     // recall path.
     curator_store: Arc<CuratorStore>,
+    /// zed-kask: D100/FR-4 (operator ruling 2026-11-05) — the curator's
+    /// PRIVATE memory store (`agents/curator/curator-private.db`) behind the
+    /// same self-healing handle. Turns from privacy-marked threads are
+    /// written HERE (write routing by the record's `InferenceProvenance`);
+    /// a private-marked context's recall federates BOTH stores (the private
+    /// rows recall only there); a public context never touches it. A
+    /// separate SQLCipher file, so the public DB — backups, exports, the
+    /// curator MCP server's tools — is clean by construction. V1 stated
+    /// limits: the private store gets no consolidation/forgetting pass and
+    /// its chunks are stored WITHOUT embeddings or classifier tags until a
+    /// local embedding/classification model serves them (private content
+    /// never crosses to the configured cloud models — degrade-not-leak,
+    /// surfaced).
+    private_curator_store: Arc<CuratorStore>,
     /// `None` when embedding credentials are unavailable — h_mem writes still
     /// work (they're pure SQL), but semantic recall (KNN) is degraded to
     /// keyword-only. This must NOT block the memory pipeline: the curator's
@@ -294,6 +309,14 @@ impl RealMemoryPort {
             embedding_dim,
             memory_life_days,
         ));
+        // zed-kask: D100/FR-4 — the private sibling (same handle, same
+        // passphrase chain, its own SQLCipher file).
+        let private_curator_store = Arc::new(CuratorStore::new(
+            curator_private_db_path(),
+            passphrase,
+            embedding_dim,
+            memory_life_days,
+        ));
 
         let curator_consolidation = Arc::new(RwLock::new(build_curator_consolidation(
             consolidation_cadence_secs,
@@ -302,6 +325,7 @@ impl RealMemoryPort {
 
         Ok(Self {
             curator_store,
+            private_curator_store,
             embedding_port,
             embedding_model,
             external_passphrase: passphrase.to_string(),
@@ -524,6 +548,7 @@ impl MemoryPort for RealMemoryPort {
             // `write_turn` borrows the port's fields via `WriteContext`.
             let ctx = WriteContext {
                 curator_store: &self.curator_store,
+                private_curator_store: &self.private_curator_store,
                 embedding_port: self.embedding_port.as_ref(),
                 embedding_model: &self.embedding_model,
                 classifier_model: self.classifier_model.as_deref(),
@@ -733,17 +758,39 @@ impl RealMemoryPort {
         private_context: bool,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            let Some(ref curator_store) = self.curator_store.get() else {
-                return Ok(Vec::new());
-            };
-            self.recall_from(
-                curator_store,
-                query,
-                limit,
-                "recall_context_curator",
-                private_context,
-            )
-            .await
+            let mut snippets: Vec<MemorySnippet> = Vec::new();
+            // zed-kask: D100/FR-4 (operator ruling 2026-11-05) — store
+            // federation: the public store always recalls; a private-marked
+            // context (the PI's stated use) additionally federates the
+            // PRIVATE store. A public context never touches it — the
+            // private rows are structurally unreachable, not filtered.
+            if let Some(ref curator_store) = self.curator_store.get() {
+                snippets.extend(
+                    self.recall_from(
+                        curator_store,
+                        query,
+                        limit,
+                        "recall_context_curator",
+                        private_context,
+                    )
+                    .await?,
+                );
+            }
+            if private_context
+                && let Some(ref private_curator_store) = self.private_curator_store.get()
+            {
+                snippets.extend(
+                    self.recall_from(
+                        private_curator_store,
+                        query,
+                        limit,
+                        "recall_context_curator_private",
+                        private_context,
+                    )
+                    .await?,
+                );
+            }
+            Ok(snippets)
         })
     }
 
@@ -761,17 +808,38 @@ impl RealMemoryPort {
         private_context: bool,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            let Some(ref curator_store) = self.curator_store.get() else {
-                return Ok(Vec::new());
-            };
-            self.recall_thread_from(
-                curator_store,
-                thread_id,
-                limit,
-                "recall_thread_curator",
-                private_context,
-            )
-            .await
+            let mut snippets: Vec<MemorySnippet> = Vec::new();
+            // zed-kask: D100/FR-4 — the same federation on the entity-keyed
+            // path: a thread marked mid-life has chunks in BOTH stores; a
+            // private context recalls both, a public context only the
+            // public copy.
+            if let Some(ref curator_store) = self.curator_store.get() {
+                snippets.extend(
+                    self.recall_thread_from(
+                        curator_store,
+                        thread_id,
+                        limit,
+                        "recall_thread_curator",
+                        private_context,
+                    )
+                    .await?,
+                );
+            }
+            if private_context
+                && let Some(ref private_curator_store) = self.private_curator_store.get()
+            {
+                snippets.extend(
+                    self.recall_thread_from(
+                        private_curator_store,
+                        thread_id,
+                        limit,
+                        "recall_thread_curator_private",
+                        private_context,
+                    )
+                    .await?,
+                );
+            }
+            Ok(snippets)
         })
     }
 
@@ -855,22 +923,39 @@ impl RealMemoryPort {
         // Spawn the embedding HTTP call on the tokio runtime so the
         // GPUI-side channel task can resolve credentials and make the
         // HTTP call.
-        let embedding_model = self.embedding_model.clone();
-        let embedding_port = self.embedding_port.clone();
-        let dimensions = self.curator_store.embedding_dim() as u32;
-        let query_owned = query.to_string();
-        let embedded = self
-            .tokio_handle
-            .spawn(async move {
-                let Some(ref embedding_port) = embedding_port else {
-                    return Ok(None);
-                };
-                embedding_port
-                    .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
-                    .await
-                    .map(|batch| Some((batch.vectors, batch.requested_model, batch.actual_model)))
-            })
-            .await;
+        //
+        // zed-kask: D100 (operator ruling 2026-11-05): a PRIVATE context's
+        // prompt is private content — it never crosses to the configured
+        // (cloud) embedder. The KNN leg is skipped and the recall degrades
+        // to keyword-only, surfaced; a local embedding model lifts the
+        // degrade.
+        let embedded = if private_context {
+            tracing::warn!(
+                target: "reg.memory",
+                label = log_label,
+                "private context: query embedding skipped — the configured embedder is a cloud model; recall degraded to keyword-only (a local embedding model lifts the degrade)"
+            );
+            // The join-result shape with no embed: the KNN leg is skipped.
+            Ok(Ok(None))
+        } else {
+            let embedding_model = self.embedding_model.clone();
+            let embedding_port = self.embedding_port.clone();
+            let dimensions = self.curator_store.embedding_dim() as u32;
+            let query_owned = query.to_string();
+            self.tokio_handle
+                .spawn(async move {
+                    let Some(ref embedding_port) = embedding_port else {
+                        return Ok(None);
+                    };
+                    embedding_port
+                        .embed_with_dimensions(&embedding_model, &[query_owned], Some(dimensions))
+                        .await
+                        .map(|batch| {
+                            Some((batch.vectors, batch.requested_model, batch.actual_model))
+                        })
+                })
+                .await
+        };
 
         // A failed embed degrades recall to keyword-only — surface it so
         // the operator can distinguish "no memory found" from "embedding
@@ -1081,7 +1166,23 @@ impl RealMemoryPort {
             std::collections::HashMap::with_capacity(candidates.len());
         for candidate in &candidates {
             if !connectedness_by_entity.contains_key(&candidate.snippet.entity) {
-                let score = self.connectedness(&candidate.snippet.entity);
+                // zed-kask: D100/FR-4 — the connectedness comes from the
+                // STORE being recalled (each store carries its own
+                // co-occurrence links): private-store candidates rank on
+                // private-store connectedness, never cross-store.
+                let score = match store.connectedness(&candidate.snippet.entity) {
+                    Ok(score) => score,
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.memory",
+                            error = %e,
+                            entity = %candidate.snippet.entity,
+                            label = log_label,
+                            "connectedness lookup failed during recall — ranking as 0"
+                        );
+                        0
+                    }
+                };
                 connectedness_by_entity.insert(candidate.snippet.entity.clone(), score);
             }
         }
@@ -1393,6 +1494,9 @@ pub(crate) mod tests {
     ) -> RealMemoryPort {
         RealMemoryPort {
             curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            private_curator_store: Arc::new(CuratorStore::for_tests(Some(
+                in_memory_curator_store(),
+            ))),
             embedding_port: Some(embedding_port),
             embedding_model: "test-model".to_string(),
             external_passphrase: String::new(),
@@ -1434,6 +1538,7 @@ pub(crate) mod tests {
     ) -> WriteContext<'a> {
         WriteContext {
             curator_store: &port.curator_store,
+            private_curator_store: &port.private_curator_store,
             embedding_port,
             embedding_model: &port.embedding_model,
             classifier_model: port.classifier_model.as_deref(),
@@ -2083,10 +2188,13 @@ pub(crate) mod tests {
         };
 
         port.ingest_turn(record).await.expect("ingest succeeds");
+        // zed-kask: D100/FR-4 (operator ruling 2026-11-05) — the store
+        // split: the private-routed turn lands in the PRIVATE store (marked),
+        // and the PUBLIC store never receives a row for the thread.
         let chunks = port
-            .curator_store
+            .private_curator_store
             .get()
-            .expect("curator store")
+            .expect("private curator store")
             .query_deduped_untouched("curator:thread:private-thread")
             .expect("query should succeed");
         assert!(!chunks.is_empty(), "the turn produced chunks");
@@ -2097,6 +2205,127 @@ pub(crate) mod tests {
                 "every chunk of a private-routed turn carries the mark"
             );
         }
+        let public_rows = port
+            .curator_store
+            .get()
+            .expect("public curator store")
+            .query_deduped_untouched("curator:thread:private-thread")
+            .expect("query should succeed");
+        assert!(
+            public_rows.is_empty(),
+            "the public store never receives a private turn's content — \
+             the separate private DB is clean-by-construction on the public side"
+        );
+    }
+
+    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the write
+    /// side: a PRIVATE turn's chunks never cross to the configured (cloud)
+    /// embedder — zero embed calls — while a public turn's do. Surfaced via
+    /// the degraded report accounting.
+    #[tokio::test]
+    async fn private_chunks_never_reach_the_configured_embedder() {
+        let embed_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting_embed = {
+            let embed_calls = embed_calls.clone();
+            Arc::new(move |_text: &str| -> Vec<f32> {
+                embed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                vec![0.0_f32; 1024]
+            }) as Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>
+        };
+        let port = in_memory_port_with_embed_fn(counting_embed);
+
+        let private_record = TurnRecord {
+            thread_id: "no-embed-private".to_string(),
+            user_input: "private question that must not embed".to_string(),
+            agent_response: "private answer stored keyword-only".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        port.ingest_turn(private_record)
+            .await
+            .expect("private ingest succeeds");
+        assert_eq!(
+            embed_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a private turn never reaches the configured embedder"
+        );
+
+        let public_record = TurnRecord {
+            thread_id: "yes-embed-public".to_string(),
+            user_input: "public question that may embed".to_string(),
+            agent_response: "public answer embedded".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
+        };
+        port.ingest_turn(public_record)
+            .await
+            .expect("public ingest succeeds");
+        assert!(
+            embed_calls.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "a public turn embeds as usual"
+        );
+    }
+
+    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the READ
+    /// side: a private-marked context's QUERY (the private thread's prompt)
+    /// never crosses to the configured (cloud) embedder — zero embed calls,
+    /// recall keyword-only, surfaced. A public context's query embeds as
+    /// usual.
+    #[tokio::test]
+    async fn private_context_recall_never_embeds_the_query() {
+        let embed_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting_embed = {
+            let embed_calls = embed_calls.clone();
+            Arc::new(move |_text: &str| -> Vec<f32> {
+                embed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                vec![0.0_f32; 1024]
+            }) as Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>
+        };
+        let port = in_memory_port_with_embed_fn(counting_embed);
+
+        let private_record = TurnRecord {
+            thread_id: "private-query-thread".to_string(),
+            user_input: "a private prompt about zephyr reconnection".to_string(),
+            agent_response: "a private answer with a distinctive keyword quokka".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+        port.ingest_turn(private_record)
+            .await
+            .expect("private ingest succeeds");
+
+        // A private-context recall still finds its private rows (the
+        // keyword leg) while NEVER embedding the query.
+        let snippets = port
+            .recall_context_curator("zephyr reconnection", 10, true)
+            .await
+            .expect("private recall succeeds");
+        assert_eq!(
+            embed_calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a private context's prompt never crosses to the configured embedder"
+        );
+        assert!(
+            snippets.iter().any(|s| s.text.contains("quokka")),
+            "the keyword leg still recalls the private row — degrade, not loss: {:?}",
+            snippets.iter().map(|s| s.text.as_str()).collect::<Vec<_>>()
+        );
+
+        // A public context's query embeds as usual.
+        let _ = port
+            .recall_context_curator("any public query", 10, false)
+            .await
+            .expect("public recall succeeds");
+        assert!(
+            embed_calls.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "a public context's query embeds as usual"
+        );
     }
 
     /// FR-4, the other direction: public-thread content stays
@@ -2140,9 +2369,10 @@ pub(crate) mod tests {
         use agent::ThreadMemoryPort as _;
 
         let inner = in_memory_port();
-        // Keep a handle to the store the bridge's inner port writes to —
-        // the inner port moves into the Arc<dyn MemoryPort>.
-        let store_handle = inner.curator_store.clone();
+        // Keep a handle to the PRIVATE store the bridge's inner port routes
+        // the D100-flagged turn to (the store split — operator ruling
+        // 2026-11-05); the inner port moves into the Arc<dyn MemoryPort>.
+        let store_handle = inner.private_curator_store.clone();
         let inner: std::sync::Arc<dyn MemoryPort> = std::sync::Arc::new(inner);
         let bridge = BridgeMemoryPort::new(inner);
 
