@@ -34,11 +34,11 @@ The agent reads the SKILL.md, follows its instructions, and calls tools
 
 ## Reference models
 
-Fagan, "Design and code inspections to reduce errors in program development," IBM Systems Journal 15(3) (1976) — the audit method's spine: defect detection separated from correction (the audit finds and scores; the score is advisory; deletion and deprecation belong to the operator), severity classification (critical/high/medium/low), and follow-up verification (an accepted proposal is applied by a delegated agent and done only when verified). The inspection is a three-role discipline — author, inspector, follow-up verifier; a decoupled critic (an agent that neither designed nor edits nor judges acceptance) is the inspector role. Goodhart's law (`onto_anchor` → derived `goodharts_law`, operator ruling 2026-09-24) governs the evaluation separation: the session that designed a candidate cannot also be the judge that accepts it. The optimize loop copies Deming's PDCA; the S13 condition vocabulary follows Toyota Kata (Rother). The check set S1–S14/T1–T5, the Algedonic board, the gemba walk, and the proposal-card workflow are project machinery — unanchored, labeled as such.
+Fagan, "Design and code inspections to reduce errors in program development," IBM Systems Journal 15(3) (1976) — the audit method's spine: defect detection separated from correction (the audit finds and scores; the score is advisory; deletion and deprecation belong to the operator), severity classification (critical/high/medium/low), and follow-up verification (an accepted proposal is applied by a delegated agent and done only when verified). The inspection is a three-role discipline — author, inspector, follow-up verifier; a decoupled critic (an agent that neither designed nor edits nor judges acceptance) is the inspector role. Goodhart's law (`onto_anchor` → derived `goodharts_law`, operator ruling 2026-09-24) governs the evaluation separation: the session that designed a candidate cannot also be the judge that accepts it. The optimize loop copies Deming's PDCA; the S13 condition vocabulary follows Toyota Kata (Rother). The check set S1–S15/T1–T5, the Algedonic board, the gemba walk, and the proposal-card workflow are project machinery — unanchored, labeled as such.
 
 ## Initial and target condition
 
-- **Initial condition:** the target skill's canonical SKILL.md (and, for the template-logic audit, the target `.j2` with its parsed goal), the operator's task/outcome for optimize work, and — for validate — the check set S1–S14/T1–T5 itself. For optimize: the baseline behavior and the fixed, independently judged task set with expected results, specified before any candidate is designed.
+- **Initial condition:** the target skill's canonical SKILL.md (and, for the template-logic audit, the target `.j2` with its parsed goal), the operator's task/outcome for optimize work, and — for validate — the check set S1–S15/T1–T5 itself. For optimize: the baseline behavior and the fixed, independently judged task set with expected results, specified before any candidate is designed.
 - **Target condition:** validate — every check evaluated with per-check evidence, failures carrying file:line and fix suggestions; audit — every signal verified against the actual tree (or reported `unverified` without penalty) and the health score computed by the pinned `lisp_eval` form; optimize — a measured comparison over the fixed tasks with a proposal card (or the baseline kept with gaps reported), never an applied change; template-logic audit — a comparison-backed proposal or the kept baseline. A failed Check (a candidate that misses a hard contract or regresses) keeps the baseline and reports the gap.
 
 ## Step types (D/P labelling)
@@ -46,7 +46,7 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
 | Validate — mechanical checks (S1–S11, T1–T5) | D | the sweep scripts, the prescreen, the render_template_tool.rs corpus tests, file reads |
-| Validate — read-triage adjudication (S10 body usages, S13 loop-anatomy recognition) | P | the operator's rulings cited in the check text; the prescreen flags, the auditor adjudicates |
+| Validate — read-triage adjudication (S10 body usages, S13 loop-anatomy recognition, S15 decision-point naming) | P | the operator's rulings cited in the check text; the prescreen flags, the auditor adjudicates |
 | Audit — signal verification | D | the actual tree and live tool surface (file:line evidence); the vague-instruction judgment is P, critiqued by the operator |
 | Audit — health score | D | `lisp_eval` (the health-score form; receipts in the regression case) |
 | Optimize — candidate design | P | the fixed-case comparison (the evaluator); the operator judges in the gemba walk |
@@ -160,6 +160,28 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
         content-level complement (the labelled D steps are actually D),
         judged at read-triage and by the periodic systematic sweep (card
         c30df9f3 is the first corpus-wide run).
+   - **S15**: Decision points are named and oracled. For every bounded
+     structured judgment the skill or its templates instruct — a threshold
+     call, a ranking, a go/no-go, a severity assignment, a calibrated score
+     over a fixed answer space — the instruction names (a) the answer space
+     (the admissible values the judgment ranges over) and (b) the
+     verification oracle that adjudicates its deterministic consequences: a
+     pinned test, a named `lisp_eval` form/gate, or an operator checkpoint.
+     The complement of S14: S14 moves what a deterministic engine can
+     compute out of the model; S15 requires what the model must judge to
+     carry declared bounds and a named oracle — counts, threshold
+     applications and weighted totals over a decision's scores still route
+     to the named engine (S14 applies). A bounded judgment with an implicit
+     answer space or an unnamed oracle fails this check at read-triage.
+     Where a decision-model setting exists and is configured, decision
+     templates route through it with fail-visible resolution (unset is a
+     typed error naming the setting, never a silent chat-model fallback);
+     no such setting exists today, and bounded judgments run on the
+     thread's model with their named oracles. Mechanical enforcement
+     point: none as a standalone script — read-triage under this check
+     (the prescreen's D/P labelling is the floor). In-corpus precedents:
+     SF-3 (superforecasting), EQM-2 (eqm), TB-2 (task-breakdown),
+     KSA-1/KSA-2 (kask-seam-audit), CR-1 (code-review).
       - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate
      (`kask/registry/templates/<name>/`)
@@ -189,8 +211,8 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
      by `corpus_templates_render_without_error` and
      `corpus_includes_resolve_and_strip`
      (crates/agent/src/tools/render_template_tool.rs).
-2. Evaluate every check for every targeted skill without omissions, and verify 19-check ID completeness deterministically via `lisp_eval` gate **`SM-2`**:
-   - form: `(and (= (length evaluated_checks) 19) (member "S1" evaluated_checks) (member "S2" evaluated_checks) (member "S3" evaluated_checks) (member "S4" evaluated_checks) (member "S5" evaluated_checks) (member "S6" evaluated_checks) (member "S7" evaluated_checks) (member "S8" evaluated_checks) (member "S9" evaluated_checks) (member "S10" evaluated_checks) (member "S11" evaluated_checks) (member "S12" evaluated_checks) (member "S13" evaluated_checks) (member "S14" evaluated_checks) (member "T1" evaluated_checks) (member "T2" evaluated_checks) (member "T3" evaluated_checks) (member "T4" evaluated_checks) (member "T5" evaluated_checks))`
+2. Evaluate every check for every targeted skill without omissions, and verify 20-check ID completeness deterministically via `lisp_eval` gate **`SM-2`**:
+   - form: `(and (= (length evaluated_checks) 20) (member "S1" evaluated_checks) (member "S2" evaluated_checks) (member "S3" evaluated_checks) (member "S4" evaluated_checks) (member "S5" evaluated_checks) (member "S6" evaluated_checks) (member "S7" evaluated_checks) (member "S8" evaluated_checks) (member "S9" evaluated_checks) (member "S10" evaluated_checks) (member "S11" evaluated_checks) (member "S12" evaluated_checks) (member "S13" evaluated_checks) (member "S14" evaluated_checks) (member "S15" evaluated_checks) (member "T1" evaluated_checks) (member "T2" evaluated_checks) (member "T3" evaluated_checks) (member "T4" evaluated_checks) (member "T5" evaluated_checks))`
    - env: `{ "evaluated_checks": <array of check IDs evaluated> }`
 3. Include specific evidence for any fail results (file path, line number).
 4. Provide actionable fix suggestions for any failures.
@@ -220,7 +242,7 @@ This loop runs within one session and ends in a **proposal card**, never an appl
 
 1. **Plan:** Read the canonical SKILL.md and referenced .j2 templates via `read_file`; obtain the operator's task/outcome and relevant historical constraints. Specify baseline behavior and a fixed, independently judged set of representative, negative, boundary and held-out tasks with expected results before revising anything. Select success, regression, safety and cost measures and a feasible run budget. `skill-maintenance-audit` and `skill-maintenance-validate` identify defects, but passing them does not establish task success. If the objective or oracle cannot be established, ask for it or return `unverified`; do not optimize to a proxy health score.
 2. **Do:** Render `skill-maintenance-optimize` to lay out at most four genuinely different candidates: unchanged baseline, surgical repair, remove/merge/simplify, and replacement of the process architecture. Permit elimination of a template, reallocation of responsibilities or a new skill boundary if the task justifies it; preserve only externally required contracts. Record why a candidate class is inapplicable rather than forcing a change. For .j2 reasoning defects, run the template-logic audit below on the template as a leaf; the optimize loop owns SKILL.md changes and integration. A template-contract change lands with its live render pin — a render on known inputs asserting the changed behavior, its counts checked against hand-computed expectations — and the corpus suites green; the pin is a step of this Do phase, not a precedent. Do not use a legacy manifest as the process specification.
-3. **Check (measure, do not judge):** Run baseline and candidate implementations against the **same** tasks and evaluator when a deterministic harness can run them; validate S1–S14/T1–T5 and render reachability for every finalist. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain measured run evidence with the proposal card (attach existing harness artifacts using `kanban_task_add_deliverable` when applicable). A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable harnesses are `unverified`, never wins.
+3. **Check (measure, do not judge):** Run baseline and candidate implementations against the **same** tasks and evaluator when a deterministic harness can run them; validate S1–S15/T1–T5 and render reachability for every finalist. Call `lisp_eval` to reconcile task IDs, run counts, arithmetic and hard-gate results from recorded data; retain measured run evidence with the proposal card (attach existing harness artifacts using `kanban_task_add_deliverable` when applicable). A self-scored answer, static template overlap, or a green structural check is not evidence of improved task outcomes. Missing runs and unavailable harnesses are `unverified`, never wins.
 4. **Formal gate when applicable:** Invoke `lean-prover` only if a candidate depends on a precisely stated finite decision rule or safety invariant whose proof changes the choice (e.g. no unapproved write transition). State assumptions, compile the exact declaration in the pinned Lean version, inspect `#print axioms` and negative controls, and test that the production decision rule matches the model. Lean cannot prove semantic quality or an absolute optimum. If no such obligation exists, record `not applicable`; if needed but uncheckable, record `unverified`.
 5. **Act (card or drop):** A candidate that satisfies hard constraints and has measured evidence becomes a proposal card using the Proposal card handoff above. Give it a title naming the skill and change, and a description containing the full diff, predeclared tasks, measured before/after (or `unverified`), verification criteria and open falsifiers. Attach existing harness artifacts with `kanban_task_add_deliverable` when relevant. Keep the returned card ID as the proposal reference. Otherwise drop the candidate and keep the baseline. For a new falsifier, revise the design and rerun the same held-out cases at most once in this session. Do not edit the SKILL.md, record a verdict, or claim an improvement in this session. The proposal is decided in the gemba walk by the operator, or by the Curator under an operator grant; an accepted proposal is applied by a delegated agent and is done only when verified (`algedonic-review`, Proposal authority and done).
 
@@ -240,7 +262,7 @@ Audits one `.j2` template's logic against its `{# goal: ... #}` annotation and t
 
 ## Regression case
 
-Validate both directions: render `skill-maintenance/skill-maintenance-validate` with `target` and `skill_name` naming a known-good skill (e.g. `superforecasting`) and a known-bad fixture (a SKILL.md missing When to Use and Constraints) — the good target passes S5/S8, the bad target fails them with file:line evidence, and `SM-2` verifies all 19 check IDs (`S1`–`S14`, `T1`–`T5`) are present. Audit: render `skill-maintenance/skill-maintenance-audit` with `skill_name` and `workspace_context`, then run the health-score form three ways via `lisp_eval` — `{0,0,0,0}` → 1.0, one critical → 0.5, `{2 critical, 1 high, 1 medium, 1 low}` → 0 (the floor). Template-logic chain: run `read_file` + `SM-1` on a `target_path` and `target_content` carrying a `{# goal: ... #}` block (`true`) and one without (`false`); render `logic-critique-template` then `logic-critique-critique` over the critique (the decoupled second pass). Optimize: render `skill-maintenance-optimize` with `skill_name`, `objective`, `baseline`, `tasks`, `candidates`, `observations`. The `SM-1`, `SM-2`, and health form receipts above are executed live through `lisp_eval`.
+Validate both directions: render `skill-maintenance/skill-maintenance-validate` with `target` and `skill_name` naming a known-good skill (e.g. `superforecasting`) and a known-bad fixture (a SKILL.md missing When to Use and Constraints) — the good target passes S5/S8, the bad target fails them with file:line evidence, and `SM-2` verifies all 20 check IDs (`S1`–`S15`, `T1`–`T5`) are present. Audit: render `skill-maintenance/skill-maintenance-audit` with `skill_name` and `workspace_context`, then run the health-score form three ways via `lisp_eval` — `{0,0,0,0}` → 1.0, one critical → 0.5, `{2 critical, 1 high, 1 medium, 1 low}` → 0 (the floor). Template-logic chain: run `read_file` + `SM-1` on a `target_path` and `target_content` carrying a `{# goal: ... #}` block (`true`) and one without (`false`); render `logic-critique-template` then `logic-critique-critique` over the critique (the decoupled second pass). Optimize: render `skill-maintenance-optimize` with `skill_name`, `objective`, `baseline`, `tasks`, `candidates`, `observations`. The `SM-1`, `SM-2`, and health form receipts above are executed live through `lisp_eval`.
 
 ## Registry Templates
 
@@ -250,7 +272,7 @@ Validate both directions: render `skill-maintenance/skill-maintenance-validate` 
 | `logic-critique-critique.j2` | Template-logic audit: keep only concerns that link a concrete defect to the goal. |
 | `logic-compare-candidates.j2` | Template-logic audit: compare baseline and distinct candidates on fixed cases from observed evidence; names a candidate to propose, never applies one. |
 | `logic-compose-proposal.j2` | Template-logic audit: compose the comparison-backed diff for a proposal card, or keep the baseline. |
-| `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S14 / T1–T5 with per-check evidence and fix suggestions. |
+| `skill-maintenance-validate.j2` | Validate a skill or all skills against S1–S15 / T1–T5 with per-check evidence and fix suggestions. |
 | `skill-maintenance-audit.j2` | SKILL.md-first staleness audit: verified dead tools, missing referenced templates, removed dispatch vocabulary, vague instructions, malformed templates; traceable health penalties and advisory recommendations. |
 | `skill-maintenance-optimize.j2` | Compare distinct SKILL.md and companion-template architectures on fixed task outcomes, hard constraints and regressions, and package the measured comparison as a proposal for the operator's algedonic review; never select or apply a winner. |
 

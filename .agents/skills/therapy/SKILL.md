@@ -270,7 +270,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - `kanban_task_create` on the Algedonic review board for "escalate_to_board" and "record_practice_gap" strategies.
 
    **Reification proposals (the learning step):**
-   - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries — then, for a reified SKILL.md/.j2 pair, route the created artifact through `create-skill`'s Phase 4 validation path (mechanical prescreen and contract checks, the `skill-maintenance` S1–S14 read, and one functional trial) before the reification is reported done: a lesson-born skill clears the same validation bar as any newly created skill. `.rules` entries are project files outside that path.
+   - Create the skill/template/rule as approved by the user. Use `write_file` to write SKILL.md, .j2 templates, or .rules entries — then, for a reified SKILL.md/.j2 pair, route the created artifact through `create-skill`'s Phase 4 validation path (mechanical prescreen and contract checks, the `skill-maintenance` S1–S15 read, and one functional trial) before the reification is reported done: a lesson-born skill clears the same validation bar as any newly created skill. `.rules` entries are project files outside that path.
 
    **Post-reification hygiene (forgetting — runs after reification, not part of learning):**
    - **Purge**: `memory_resolve_contradiction` with strategy "forget" for each source h_mem.
