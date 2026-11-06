@@ -276,6 +276,7 @@ impl ContextInjector for BridgeContextInjector {
         &self,
         thread_id: &str,
         user_prompt: &str,
+        private_context: bool,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Vec<LanguageModelRequestMessage>> + Send + '_>,
     > {
@@ -312,10 +313,16 @@ impl ContextInjector for BridgeContextInjector {
             return Box::pin(async move { Vec::new() });
         }
 
+        // FR-4 (D-2): `private_context` — the calling thread's D100 mark —
+        // is the ONLY context signal the recall filter keys on (passed down
+        // from the injector call site in run_turn_internal, which holds the
+        // thread). A private-marked context recalls its private rows; a
+        // public context never does.
+
         Box::pin(async move {
             // Prompt-salient recall: embedding similarity against the user's prompt.
             let prompt_snippets = memory_port
-                .recall_context_curator(&prompt, prompt_limit)
+                .recall_context_curator(&prompt, prompt_limit, private_context)
                 .await;
             let prompt_snippets = match prompt_snippets {
                 Ok(s) => s,
@@ -337,7 +344,7 @@ impl ContextInjector for BridgeContextInjector {
             // Thread-scoped recall: prior turns from this thread by entity match.
             // Fresh every turn — no session-lifetime snapshot.
             let thread_snippets = memory_port
-                .recall_thread_curator(&thread_id, thread_limit)
+                .recall_thread_curator(&thread_id, thread_limit, private_context)
                 .await;
             let thread_snippets = match thread_snippets {
                 Ok(s) => s,
@@ -511,7 +518,7 @@ mod tests {
                 vec!["fixture-reference".into()],
                 manifest_path.clone(),
             );
-        let messages = enabled.inject_context("empty-thread", prompt).await;
+        let messages = enabled.inject_context("empty-thread", prompt, false).await;
         let content = match &messages[0].content[0] {
             MessageContent::Text(text) => text,
             _ => anyhow::bail!("expected text content"),
@@ -533,7 +540,7 @@ mod tests {
                 vec!["fixture-reference".into(), "other".into()],
                 manifest_path.clone(),
             );
-        let messages = multiple.inject_context("empty-thread", prompt).await;
+        let messages = multiple.inject_context("empty-thread", prompt, false).await;
         let content = match &messages[0].content[0] {
             MessageContent::Text(text) => text,
             _ => anyhow::bail!("expected text content"),
@@ -543,7 +550,7 @@ mod tests {
 
         let disabled = BridgeContextInjector::new_curator(port, 3, 0.0, true)
             .with_federated_sources(false, vec!["fixture-reference".into()], manifest_path);
-        let messages = disabled.inject_context("empty-thread", prompt).await;
+        let messages = disabled.inject_context("empty-thread", prompt, false).await;
         let content = match &messages[0].content[0] {
             MessageContent::Text(text) => text,
             _ => anyhow::bail!("expected text content"),
@@ -564,7 +571,7 @@ mod tests {
             );
         assert!(
             injector
-                .inject_context("thread", "a long enough prompt for recall")
+                .inject_context("thread", "a long enough prompt for recall", false)
                 .await
                 .is_empty()
         );
@@ -655,7 +662,7 @@ mod tests {
         // ingested turn. The prompt is long enough to pass the should_recall gate.
         let prompt = "I need to understand the zephyr protocol reconnection strategy for debugging";
         let messages = injector
-            .inject_context("convergence-test-thread", prompt)
+            .inject_context("convergence-test-thread", prompt, false)
             .await;
 
         assert_eq!(
@@ -674,11 +681,128 @@ mod tests {
         );
     }
 
+    /// FR-4 (D-2), falsifier (b) leg 1 — the named enforcement path: a
+    /// PUBLIC recall context (the injector call with `private_context: false`)
+    /// never returns a private-inference-marked row. The private-marked
+    /// turn IS in the store and matches the prompt; the filter must keep it
+    /// out of the injected context.
+    #[tokio::test]
+    async fn public_context_injection_never_returns_private_marked_rows() {
+        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
+            let mut vec = vec![0.0_f32; 128];
+            for word in text.split_whitespace() {
+                let hash = word
+                    .bytes()
+                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+                vec[(hash as usize) % 128] += 1.0;
+            }
+            vec
+        });
+        let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
+
+        // One private-marked turn and one public turn, both keyword-matching
+        // the prompt — the private one must never surface in a public context.
+        port.ingest_turn(TurnRecord {
+            thread_id: "private-origin-thread".to_string(),
+            user_input: "How does the zephyr protocol handle reconnection?".to_string(),
+            agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        })
+        .await
+        .expect("ingest succeeds");
+        port.ingest_turn(TurnRecord {
+            thread_id: "public-origin-thread".to_string(),
+            user_input: "How does the aardvark protocol handle reconnection?".to_string(),
+            agent_response: "The aardvark protocol uses linear backoff.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
+        })
+        .await
+        .expect("ingest succeeds");
+
+        let injector = BridgeContextInjector::new_curator(port, 10, 0.0, true);
+        let prompt = "I need to understand protocol reconnection strategy for debugging";
+        let messages = injector
+            .inject_context("public-origin-thread", prompt, false)
+            .await;
+
+        let content = messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .map(|c| match c {
+                MessageContent::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect::<String>();
+        assert!(
+            !content.contains("zephyr"),
+            "a public recall context must never return the private-marked row — got: {content}"
+        );
+        assert!(
+            !content.contains("exponential backoff"),
+            "the private turn's content must not leak into a public context: {content}"
+        );
+    }
+
+    /// FR-4 (D-2), falsifier (b) leg 2 — the PI's stated use: a private-
+    /// marked Curator thread recalls its own private rows. The filter must
+    /// not over-block the private context.
+    #[tokio::test]
+    async fn private_context_injection_recalls_its_private_rows() {
+        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
+            let mut vec = vec![0.0_f32; 128];
+            for word in text.split_whitespace() {
+                let hash = word
+                    .bytes()
+                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+                vec[(hash as usize) % 128] += 1.0;
+            }
+            vec
+        });
+        let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
+
+        port.ingest_turn(TurnRecord {
+            thread_id: "private-origin-thread".to_string(),
+            user_input: "How does the zephyr protocol handle reconnection?".to_string(),
+            agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        })
+        .await
+        .expect("ingest succeeds");
+
+        let injector = BridgeContextInjector::new_curator(port, 10, 0.0, true);
+        let prompt = "I need to understand the zephyr protocol reconnection strategy for debugging";
+        let messages = injector
+            .inject_context("private-origin-thread", prompt, true)
+            .await;
+
+        let content = messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .map(|c| match c {
+                MessageContent::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect::<String>();
+        assert!(
+            content.contains("zephyr"),
+            "a private-marked context recalls its own private rows — got: {content}"
+        );
+    }
+
     /// Zero-count absence-signaling test (Priority 2): when recall finds
     /// nothing, inject_context now returns a System message signaling the
     /// absence — the hypocognition guard. This test verifies the
-    /// absence-message path doesn't panic and produces one message with
-    /// the gap-signaling content.
+    /// absence-message path doesn't panic and produces one message with the
+    /// gap-signaling content.
     ///
     /// Grounding: Dunning (`138299529:13`) — "Blatantly pointing out to
     /// people that there is information they miss... prompts them to be
@@ -691,7 +815,9 @@ mod tests {
 
         // Query with a prompt that shares no keywords with the empty store.
         let prompt = "this prompt has no matching content in the empty memory store";
-        let messages = injector.inject_context("no-match-thread", prompt).await;
+        let messages = injector
+            .inject_context("no-match-thread", prompt, false)
+            .await;
 
         assert_eq!(
             messages.len(),
@@ -721,7 +847,7 @@ mod tests {
         // injecting "No relevant memory found" into the agent thread.
         let prompt =
             "a long enough prompt that would pass the recall gate for an ordinary agent thread";
-        let messages = injector.inject_context("agent-thread", prompt).await;
+        let messages = injector.inject_context("agent-thread", prompt, false).await;
         assert!(
             messages.is_empty(),
             "non-curator threads get no memory injection — not even an absence message"

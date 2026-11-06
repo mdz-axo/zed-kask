@@ -3691,10 +3691,17 @@ pub(crate) fn threads_db_path_override() -> Option<std::path::PathBuf> {
 pub trait ContextInjector: Send + Sync {
     /// Retrieve context relevant to the user's prompt and return it as
     /// additional request messages to insert into the prompt.
+    ///
+    /// zed-kask: D100/FR-4 — `private_context` carries the calling thread's
+    /// privacy mark: the injector's recall must exclude private-marked rows
+    /// from a public context, while a private-marked context (the PI's
+    /// stated use) recalls its own rows. The flag comes from the thread the
+    /// turn runs on — never from the prompt or any model-facing input.
     fn inject_context(
         &self,
         thread_id: &str,
         user_prompt: &str,
+        private_context: bool,
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>
@@ -6205,6 +6212,7 @@ mod internal_tests {
             &self,
             _thread_id: &str,
             _user_prompt: &str,
+            _private_context: bool,
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<Output = Vec<language_model::LanguageModelRequestMessage>>

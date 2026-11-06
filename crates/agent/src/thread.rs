@@ -3799,6 +3799,13 @@ impl Thread {
                 let agent_id = this
                     .read_with(cx, |this, _| this.kask.agent_id().clone())
                     .ok();
+                // zed-kask: D100/FR-4 — the recall context signal: the
+                // calling thread's privacy mark, read here and passed to the
+                // injector so private-marked rows never enter a public
+                // context's recall. Never model-facing.
+                let private_context = this
+                    .read_with(cx, |this, _| this.kask.is_private_inference())
+                    .unwrap_or(false);
                 let user_prompt = request
                     .messages
                     .iter()
@@ -3817,7 +3824,9 @@ impl Thread {
                         .ok()
                         .unwrap_or_default();
                     if !user_prompt.is_empty() {
-                        let injected = injector.inject_context(&thread_id, &user_prompt).await;
+                        let injected = injector
+                            .inject_context(&thread_id, &user_prompt, private_context)
+                            .await;
                         if !injected.is_empty() {
                             // Insert after the system prompt (index 0)
                             request.messages.splice(1..1, injected);

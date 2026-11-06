@@ -730,13 +730,20 @@ impl RealMemoryPort {
         &'a self,
         query: &'a str,
         limit: usize,
+        private_context: bool,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
             let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
-            self.recall_from(curator_store, query, limit, "recall_context_curator")
-                .await
+            self.recall_from(
+                curator_store,
+                query,
+                limit,
+                "recall_context_curator",
+                private_context,
+            )
+            .await
         })
     }
 
@@ -751,13 +758,20 @@ impl RealMemoryPort {
         &'a self,
         thread_id: &'a str,
         limit: usize,
+        private_context: bool,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
             let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
-            self.recall_thread_from(curator_store, thread_id, limit, "recall_thread_curator")
-                .await
+            self.recall_thread_from(
+                curator_store,
+                thread_id,
+                limit,
+                "recall_thread_curator",
+                private_context,
+            )
+            .await
         })
     }
 
@@ -818,6 +832,7 @@ impl RealMemoryPort {
         query: &'a str,
         limit: usize,
         log_label: &'static str,
+        private_context: bool,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
         // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
         // touch only the survivors. Both the embedding-KNN and keyword paths
@@ -828,6 +843,10 @@ impl RealMemoryPort {
             h_mem_id: hkask_storage::HMemId,
         }
         let mut candidates: Vec<Candidate> = Vec::new();
+        // FR-4 (D-2): rows excluded by the privacy filter this call —
+        // surfaced after the legs, never silently dropped (an empty result
+        // must not read as "no memory found").
+        let mut excluded_private: usize = 0;
 
         // ── 1. Embedding search (KNN) ────────────────────────────────
         //
@@ -920,6 +939,20 @@ impl RealMemoryPort {
                         };
                         if let Ok(h_mems) = store.query_deduped_untouched(entity_ref) {
                             for h_mem in h_mems {
+                                // FR-4 (D-2): the recall filter — private-
+                                // marked rows never enter a non-private
+                                // recall context. `private_context` is the
+                                // D100 mark of the thread whose prompt this
+                                // recall feeds (passed down from the injector
+                                // call site); a private-marked context
+                                // recalls its own rows.
+                                if !private_context
+                                    && h_mem.inference_provenance
+                                        == hkask_types::InferenceProvenance::PrivateInference
+                                {
+                                    excluded_private += 1;
+                                    continue;
+                                }
                                 let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem)
                                 else {
                                     continue;
@@ -976,6 +1009,16 @@ impl RealMemoryPort {
             match store.query_deduped_untouched_by_prefix(&entity_prefix, recall_budget) {
                 Ok(h_mems) => {
                     for h_mem in h_mems {
+                        // FR-4 (D-2): the keyword leg carries the same
+                        // filter — a private-marked row never enters a
+                        // non-private context by either leg.
+                        if !private_context
+                            && h_mem.inference_provenance
+                                == hkask_types::InferenceProvenance::PrivateInference
+                        {
+                            excluded_private += 1;
+                            continue;
+                        }
                         let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
                             continue;
                         };
@@ -1012,6 +1055,19 @@ impl RealMemoryPort {
                     );
                 }
             }
+        }
+
+        // FR-4 (D-2): the privacy filter's exclusions are surfaced, never
+        // silently dropped — an empty recall in a non-private context must
+        // be distinguishable from "no memory found".
+        if excluded_private > 0 {
+            tracing::warn!(
+                target: "reg.memory",
+                label = log_label,
+                excluded = excluded_private,
+                private_context,
+                "Private-inference-marked rows excluded from this non-private recall context (FR-4)"
+            );
         }
 
         // ── 3. Sort by combined relevance × confidence × connectedness and truncate ─
@@ -1109,8 +1165,10 @@ impl RealMemoryPort {
         thread_id: &'a str,
         limit: usize,
         log_label: &'static str,
+        private_context: bool,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
         let mut candidates: Vec<(MemorySnippet, hkask_storage::HMemId)> = Vec::new();
+        let mut excluded_private: usize = 0;
 
         // Exact entity match — every chunk of the thread. A failed read is an
         // error, not "the thread has no memories" (the unwrap_or(0) trap):
@@ -1124,6 +1182,15 @@ impl RealMemoryPort {
                 ))
             })?;
         for h_mem in h_mems {
+            // FR-4 (D-2): a private-marked thread's own turns recall only
+            // into a private-marked context; a non-private context never
+            // loads them.
+            if !private_context
+                && h_mem.inference_provenance == hkask_types::InferenceProvenance::PrivateInference
+            {
+                excluded_private += 1;
+                continue;
+            }
             let Some(text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
                 continue;
             };
@@ -1142,6 +1209,16 @@ impl RealMemoryPort {
         // candidates are already in recency order. All candidates have
         // relevance_score 1.0 (exact entity match), so no sort is needed.
         candidates.truncate(limit);
+
+        // FR-4 (D-2): surfaced, never silently dropped.
+        if excluded_private > 0 {
+            tracing::warn!(
+                target: "reg.memory",
+                label = log_label,
+                excluded = excluded_private,
+                "Private-inference-marked rows excluded from this non-private thread recall (FR-4)"
+            );
+        }
 
         // Touch only the injected h_mems — resets the decay clock on
         // memories that actually got used.
@@ -2589,7 +2666,7 @@ pub(crate) mod tests {
 
         // Query with two distinct keywords — both should match.
         let snippets = port
-            .recall_context_curator("rust python", 10)
+            .recall_context_curator("rust python", 10, false)
             .await
             .expect("recall succeeds");
 
@@ -2630,7 +2707,7 @@ pub(crate) mod tests {
                 .expect("seed episode");
         }
         let snippets = port
-            .recall_context_curator("orchard harvest", 2)
+            .recall_context_curator("orchard harvest", 2, false)
             .await
             .expect("recall");
         assert_eq!(snippets.len(), 2);
@@ -2669,7 +2746,7 @@ pub(crate) mod tests {
         // leg — "quokka" appears in the stored text and passes the >3-char
         // word filter.
         let snippets = port
-            .recall_context_curator("quokka habitat", 10)
+            .recall_context_curator("quokka habitat", 10, false)
             .await
             .expect("recall must not error when the embedding endpoint is down");
         assert!(
@@ -2715,7 +2792,7 @@ pub(crate) mod tests {
                     .await
                     .expect("ingest succeeds");
 
-                    port.recall_context_curator(&query, 10)
+                    port.recall_context_curator(&query, 10, false)
                         .await
                         .expect("recall must never error on embed failure")
                 });
@@ -2759,15 +2836,15 @@ pub(crate) mod tests {
                 .expect("publish structured memory");
         }
         let semantic = semantic_port
-            .recall_context_curator("wombat guava", 10)
+            .recall_context_curator("wombat guava", 10, false)
             .await
             .expect("KNN recall");
         let keyword = keyword_port
-            .recall_context_curator("ruby telescope", 10)
+            .recall_context_curator("ruby telescope", 10, false)
             .await
             .expect("keyword fallback");
         let thread = keyword_port
-            .recall_thread_curator("structured", 10)
+            .recall_thread_curator("structured", 10, false)
             .await
             .expect("exact thread recall");
         for (label, snippets) in [
@@ -2813,11 +2890,11 @@ pub(crate) mod tests {
                 .expect("seed scope fixture");
         }
         let keyword = port
-            .recall_context_curator("quokka", 10)
+            .recall_context_curator("quokka", 10, false)
             .await
             .expect("keyword recall");
         let thread = port
-            .recall_thread_curator("scope", 10)
+            .recall_thread_curator("scope", 10, false)
             .await
             .expect("thread recall");
         for snippets in [keyword, thread] {
@@ -2869,7 +2946,7 @@ pub(crate) mod tests {
         // in the stored text — the keyword leg returns nothing. The semantic
         // leg must find the turn via KNN (constant embedding → distance 0).
         let snippets = port
-            .recall_context_curator("kangaroo wallaby emu cassowary", 10)
+            .recall_context_curator("kangaroo wallaby emu cassowary", 10, false)
             .await
             .expect("recall succeeds");
         assert!(
@@ -2904,7 +2981,7 @@ pub(crate) mod tests {
 
         // Zero-overlap query — the only path to the turn is the semantic leg.
         let snippets = port
-            .recall_context_curator("kookaburra wombat quoll bilby", 10)
+            .recall_context_curator("kookaburra wombat quoll bilby", 10, false)
             .await
             .expect("recall succeeds");
         assert!(
@@ -2957,7 +3034,7 @@ pub(crate) mod tests {
         }
 
         let snippets = port
-            .recall_context_curator("Which contingency governs zephyr readiness?", 2)
+            .recall_context_curator("Which contingency governs zephyr readiness?", 2, false)
             .await
             .expect("recall succeeds");
 
@@ -3092,7 +3169,7 @@ pub(crate) mod tests {
         }
 
         let snippets = port
-            .recall_context_curator("xvantium", 20)
+            .recall_context_curator("xvantium", 20, false)
             .await
             .expect("recall succeeds");
         assert_eq!(snippets.len(), 20, "all 20 turns should be recalled");
@@ -3157,7 +3234,7 @@ pub(crate) mod tests {
         // Recall with a query that matches both (constant embedding →
         // both at distance 0 → both have relevance_score 1.0).
         let snippets = port
-            .recall_context_curator("matching query", 10)
+            .recall_context_curator("matching query", 10, false)
             .await
             .expect("recall succeeds");
 
@@ -3221,7 +3298,7 @@ pub(crate) mod tests {
         // h_mem should be loaded as a candidate but NOT injected (no keyword
         // overlap), so its recalled_at should NOT be touched.
         let snippets = port
-            .recall_context_curator("completely_different_query", 10)
+            .recall_context_curator("completely_different_query", 10, false)
             .await
             .expect("recall succeeds");
         assert!(
@@ -3242,7 +3319,7 @@ pub(crate) mod tests {
         // its recalled_at should be touched.
         std::thread::sleep(std::time::Duration::from_millis(10));
         let snippets = port
-            .recall_context_curator("unique_keyword_xyz", 10)
+            .recall_context_curator("unique_keyword_xyz", 10, false)
             .await
             .expect("recall succeeds");
         assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
@@ -3320,7 +3397,7 @@ pub(crate) mod tests {
         let recalled_at_before = before[0].recalled_at;
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let messages = injector.inject_context("gate-test-thread", prompt).await;
+        let messages = injector.inject_context("gate-test-thread", prompt, false).await;
         let content = match &messages[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
@@ -3348,7 +3425,7 @@ pub(crate) mod tests {
         );
 
         // Second attempt with no update: still excluded — the one-way door.
-        let messages_again = injector.inject_context("gate-test-thread", prompt).await;
+        let messages_again = injector.inject_context("gate-test-thread", prompt, false).await;
         let content_again = match &messages_again[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
@@ -3369,7 +3446,7 @@ pub(crate) mod tests {
         .with_confidence(hkask_types::Confidence::new(0.7));
         curator_store.store(lifted).expect("store lifted");
 
-        let messages_lifted = injector.inject_context("gate-test-thread", prompt).await;
+        let messages_lifted = injector.inject_context("gate-test-thread", prompt, false).await;
         let content_lifted = match &messages_lifted[0].content[0] {
             MessageContent::Text(t) => t.as_str(),
             _ => panic!("expected text content"),
@@ -3453,7 +3530,7 @@ pub(crate) mod tests {
 
         // Recall from the curator's store — the keyword should match.
         let snippets = port
-            .recall_context_curator("regulation_status_check_keyword", 5)
+            .recall_context_curator("regulation_status_check_keyword", 5, false)
             .await
             .expect("curator recall should succeed");
         assert!(
@@ -3489,7 +3566,7 @@ pub(crate) mod tests {
 
         // Recall by thread_id — should find the turn via exact entity match.
         let snippets = port
-            .recall_thread_curator(thread_id, 10)
+            .recall_thread_curator(thread_id, 10, false)
             .await
             .expect("thread recall should succeed");
         assert!(
@@ -3521,7 +3598,7 @@ pub(crate) mod tests {
 
         // Recall by thread_id from the curator's stores.
         let snippets = port
-            .recall_thread_curator(thread_id, 10)
+            .recall_thread_curator(thread_id, 10, false)
             .await
             .expect("curator thread recall should succeed");
         assert!(
