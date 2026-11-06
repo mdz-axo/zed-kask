@@ -349,6 +349,27 @@ struct ReviewCsvExportEffectiveParams<'a> {
     flagged: usize,
 }
 
+#[derive(serde::Serialize)]
+struct WebVttExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    cues: usize,
+    correction_layer_id: Option<&'a str>,
+}
+
+#[derive(serde::Serialize)]
+struct WebAnnotationExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    layer_ids: &'a [String],
+    annotations: usize,
+}
+
+#[derive(serde::Serialize)]
+struct OtioExportEffectiveParams<'a> {
+    transcript_id: &'a str,
+    edl_layer_id: &'a str,
+    clips: usize,
+}
+
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 enum WorkingTranscriptAlignment {
@@ -1943,6 +1964,7 @@ impl MediaServer {
         Parameters(EductExportRequest {
             transcript_id,
             format,
+            layer_id,
         }): Parameters<EductExportRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_export", async {
@@ -1957,8 +1979,9 @@ impl MediaServer {
             let export_format = crate::transcript_export::TranscriptExportFormat::parse(&format)
                 .ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
-                        "format must be \"srt\", \"highlights_csv\", \"review_csv\", or \
-                         \"corpus_text\", got \"{format}\""
+                        "format must be \"srt\", \"highlights_csv\", \"review_csv\", \
+                         \"corpus_text\", \"webvtt\", \"web_annotation\", or \"otio\", \
+                         got \"{format}\""
                     ))
                 })?;
             match export_format {
@@ -2133,6 +2156,145 @@ impl MediaServer {
                         result["degradation"] = serde_json::json!(degradation);
                     }
                     Ok(result)
+                }
+                crate::transcript_export::TranscriptExportFormat::WebVtt => {
+                    if !summary.has_word_timings {
+                        return Err(McpToolError::invalid_argument(
+                            "transcript has no word-level timings; WebVTT karaoke cues cannot \
+                             anchor (NoWordTimings)",
+                        ));
+                    }
+                    let working = working_transcript(driver, &transcript_id, &bundle)?;
+                    let working_words = working.require_timed_words("WebVTT export")?;
+                    let vtt =
+                        crate::transcript_export::webvtt_from_words(working_words).map_err(
+                            |error| McpToolError::invalid_argument(format!("WebVTT export: {error}")),
+                        )?;
+                    let effective_params = WebVttExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        cues: vtt.matches(" --> ").count(),
+                        correction_layer_id: working.correction_layer_id.as_deref(),
+                    };
+                    crate::transcript_export::publish_document(
+                        driver,
+                        &transcript_id,
+                        export_format,
+                        vtt.as_bytes(),
+                        &effective_params,
+                    )
+                }
+                crate::transcript_export::TranscriptExportFormat::WebAnnotation => {
+                    let layers = transcript_store::list_layers(driver, &transcript_id)
+                        .map_err(map_store_error)?;
+                    let highlight_records: Vec<_> = layers
+                        .into_iter()
+                        .filter(|record| record.layer.kind() == "highlight")
+                        .collect();
+                    if highlight_records.is_empty() {
+                        return Err(McpToolError::not_found(format!(
+                            "no highlight layers found for transcript {transcript_id}"
+                        )));
+                    }
+                    let collection = crate::transcript_export::web_annotation_collection(
+                        &bundle.words,
+                        &highlight_records,
+                        &format!("urn:hkask:transcript:{transcript_id}"),
+                    )
+                    .map_err(|error| {
+                        McpToolError::invalid_argument(format!("Web Annotation export: {error}"))
+                    })?;
+                    let layer_ids = highlight_records
+                        .iter()
+                        .map(|record| record.id.clone())
+                        .collect::<Vec<_>>();
+                    let annotations = collection["items"]
+                        .as_array()
+                        .map(|items| items.len())
+                        .unwrap_or(0);
+                    let effective_params = WebAnnotationExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        layer_ids: &layer_ids,
+                        annotations,
+                    };
+                    let content = serde_json::to_vec_pretty(&collection).map_err(|error| {
+                        McpToolError::internal(format!(
+                            "serialize web annotation collection: {error}"
+                        ))
+                    })?;
+                    crate::transcript_export::publish_document(
+                        driver,
+                        &transcript_id,
+                        export_format,
+                        &content,
+                        &effective_params,
+                    )
+                }
+                crate::transcript_export::TranscriptExportFormat::Otio => {
+                    let layers = transcript_store::list_layers(driver, &transcript_id)
+                        .map_err(map_store_error)?;
+                    // The reel to serialize: the caller's named EDL layer, or
+                    // the latest stored EDL layer (list_layers is oldest-first).
+                    let edl_record = match layer_id.as_deref() {
+                        Some(id) => layers.iter().find(|record| record.id == id),
+                        None => layers
+                            .iter()
+                            .rev()
+                            .find(|record| record.layer.kind() == "edl"),
+                    };
+                    let Some(edl_record) = edl_record else {
+                        return Err(McpToolError::not_found(match layer_id.as_deref() {
+                            Some(id) => {
+                                format!("no edl layer {id} found for transcript {transcript_id}")
+                            }
+                            None => format!(
+                                "no edl layer found for transcript {transcript_id} — compose a \
+                                 reel first"
+                            ),
+                        }));
+                    };
+                    let TranscriptLayer::Edl(edl) = &edl_record.layer else {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "layer {} is a {} layer, not an edl layer — the otio format \
+                             serializes composed reels",
+                            edl_record.id,
+                            edl_record.layer.kind()
+                        )));
+                    };
+                    if !edl.ops.iter().any(|entry| entry.op == EdlOp::Keep) {
+                        return Err(McpToolError::invalid_argument(
+                            "the reel contains no keep ops — nothing to serialize",
+                        ));
+                    }
+                    let timeline = crate::transcript_export::otio_timeline(
+                        &bundle.words,
+                        edl,
+                        &summary.media_path,
+                        &edl_record.id,
+                    )
+                    .map_err(|error| {
+                        McpToolError::invalid_argument(format!("OTIO export: {error}"))
+                    })?;
+                    let clips = timeline["tracks"]["children"]
+                        .as_array()
+                        .and_then(|tracks| tracks.first())
+                        .and_then(|track| track["children"].as_array())
+                        .map(|children| children.len())
+                        .unwrap_or(0);
+                    let effective_params = OtioExportEffectiveParams {
+                        transcript_id: &transcript_id,
+                        edl_layer_id: &edl_record.id,
+                        clips,
+                    };
+                    let content = serde_json::to_vec_pretty(&timeline).map_err(|error| {
+                        McpToolError::internal(format!("serialize otio timeline: {error}"))
+                    })?;
+                    crate::transcript_export::publish_document(
+                        driver,
+                        &transcript_id,
+                        export_format,
+                        &content,
+                        &effective_params,
+                    )
                 }
             }
         })

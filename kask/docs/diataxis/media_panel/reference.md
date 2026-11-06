@@ -272,7 +272,7 @@ The page asks `job_list` for the shared default limit of 20
 `load_jobs`, `crates/media_panel/src/media_viewer.rs:1618`). Producer and panel
 consume one strict `JobListPayload` carrying `jobs`, `total`, `limit`,
 `has_more`, `history_scope`, and `restart_behavior`
-(`kask/mcp-servers/hkask-mcp-media/src/types.rs:629-636`). Legacy arrays,
+(`kask/mcp-servers/hkask-mcp-media/src/types.rs:657-663`). Legacy arrays,
 incomplete objects, incoherent counts, and unknown statuses surface degradation
 while the last-good page remains visible (`parse_job_listing`,
 `crates/media_panel/src/media_viewer.rs:10606`).

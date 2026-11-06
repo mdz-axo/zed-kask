@@ -346,9 +346,18 @@ pub struct EductExportRequest {
     pub transcript_id: String,
     /// Export format: "srt" (captions from the word timings, cues split
     /// at sentence punctuation), "highlights_csv" (every stored highlight
-    /// with time ranges), or "corpus_text" (the rendered transcript for
-    /// corpus ingestion — repository-wide semantic search by composition).
+    /// with time ranges), "corpus_text" (the rendered transcript for
+    /// corpus ingestion — repository-wide semantic search by composition),
+    /// "webvtt" (word-level karaoke captions beside SRT), "web_annotation"
+    /// (highlights as W3C Web Annotation JSON with position and quote
+    /// selectors), or "otio" (a composed reel serialized to
+    /// OpenTimelineIO).
     pub format: String,
+    /// The specific EDL layer to serialize for the "otio" format. When
+    /// omitted, the latest stored EDL layer is used. Ignored by the other
+    /// formats.
+    #[serde(default)]
+    pub layer_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

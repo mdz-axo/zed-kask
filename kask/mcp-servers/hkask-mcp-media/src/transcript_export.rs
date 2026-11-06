@@ -15,8 +15,8 @@
 //!   selection algebra turns it into a media range.
 
 use crate::transcript::TimedWord;
-use crate::transcript_layers::TranscriptLayer;
-use crate::transcript_select::{SelectionError, WordRange, word_range_to_time_range};
+use crate::transcript_layers::{EdlLayer, TranscriptLayer};
+use crate::transcript_select::{EdlOp, SelectionError, WordRange, word_range_to_time_range};
 use crate::transcript_store::LayerRecord;
 use crate::{MediaError, map_media_error};
 use hkask_mcp_server::server::McpToolError;
@@ -29,6 +29,9 @@ pub(crate) enum TranscriptExportFormat {
     HighlightsCsv,
     ReviewCsv,
     CorpusText,
+    WebVtt,
+    WebAnnotation,
+    Otio,
 }
 
 impl TranscriptExportFormat {
@@ -38,6 +41,9 @@ impl TranscriptExportFormat {
             "highlights_csv" => Some(Self::HighlightsCsv),
             "review_csv" => Some(Self::ReviewCsv),
             "corpus_text" => Some(Self::CorpusText),
+            "webvtt" => Some(Self::WebVtt),
+            "web_annotation" => Some(Self::WebAnnotation),
+            "otio" => Some(Self::Otio),
             _ => None,
         }
     }
@@ -48,6 +54,9 @@ impl TranscriptExportFormat {
             Self::HighlightsCsv => "csv",
             Self::ReviewCsv => "csv",
             Self::CorpusText => "txt",
+            Self::WebVtt => "vtt",
+            Self::WebAnnotation => "json",
+            Self::Otio => "otio",
         }
     }
 
@@ -57,6 +66,9 @@ impl TranscriptExportFormat {
             Self::HighlightsCsv => "highlights_csv",
             Self::ReviewCsv => "review_csv",
             Self::CorpusText => "corpus_text",
+            Self::WebVtt => "webvtt",
+            Self::WebAnnotation => "web_annotation",
+            Self::Otio => "otio",
         }
     }
 }
@@ -257,9 +269,30 @@ fn publish_document_in_dir<T: serde::Serialize + ?Sized>(
     Ok(result)
 }
 
-/// Maximum words per SRT cue — sentence punctuation splits first; the cap
-/// bounds unpunctuated runs.
+/// Maximum words per caption cue — sentence punctuation splits first; the
+/// cap bounds unpunctuated runs.
 const MAX_CUE_WORDS: usize = 15;
+
+/// Cue boundary policy shared by SRT and WebVTT (S7): split at
+/// sentence-ending punctuation, cap at `MAX_CUE_WORDS` words per cue.
+/// Extracted from SRT's inline loop when WebVTT joined (plan S7) so both
+/// caption formats cut at the same boundaries.
+fn cue_groups<'a>(words: &'a [TimedWord]) -> Vec<Vec<&'a TimedWord>> {
+    let mut groups = Vec::new();
+    let mut cue_words: Vec<&'a TimedWord> = Vec::new();
+    for word in words {
+        cue_words.push(word);
+        let ends_sentence =
+            word.word.ends_with('.') || word.word.ends_with('!') || word.word.ends_with('?');
+        if ends_sentence || cue_words.len() >= MAX_CUE_WORDS {
+            groups.push(std::mem::take(&mut cue_words));
+        }
+    }
+    if !cue_words.is_empty() {
+        groups.push(cue_words);
+    }
+    groups
+}
 
 /// Build SRT captions from the word timings: cues split at
 /// sentence-ending punctuation, capped at `MAX_CUE_WORDS` words per cue.
@@ -270,20 +303,8 @@ pub fn srt_from_words(words: &[TimedWord]) -> Result<String, SelectionError> {
         return Err(SelectionError::NoWordTimings);
     }
     let mut srt = String::new();
-    let mut cue_index: usize = 1;
-    let mut cue_words: Vec<&TimedWord> = Vec::new();
-    for word in words {
-        cue_words.push(word);
-        let ends_sentence =
-            word.word.ends_with('.') || word.word.ends_with('!') || word.word.ends_with('?');
-        if ends_sentence || cue_words.len() >= MAX_CUE_WORDS {
-            append_cue(&mut srt, cue_index, &cue_words);
-            cue_index += 1;
-            cue_words.clear();
-        }
-    }
-    if !cue_words.is_empty() {
-        append_cue(&mut srt, cue_index, &cue_words);
+    for (index, cue_words) in cue_groups(words).into_iter().enumerate() {
+        append_cue(&mut srt, index + 1, &cue_words);
     }
     Ok(srt)
 }
@@ -318,6 +339,228 @@ fn srt_timestamp(ms: u64) -> String {
     let seconds = (ms % 60_000) / 1_000;
     let millis = ms % 1_000;
     format!("{hours:02}:{minutes:02}:{seconds:02},{millis:03}")
+}
+
+/// `HH:MM:SS.mmm` — the WebVTT timestamp form (a dot before the
+/// milliseconds, unlike SRT's comma).
+fn webvtt_timestamp(ms: u64) -> String {
+    let hours = ms / 3_600_000;
+    let minutes = (ms % 3_600_000) / 60_000;
+    let seconds = (ms % 60_000) / 1_000;
+    let millis = ms % 1_000;
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{millis:03}")
+}
+
+/// Build WebVTT captions with word-level karaoke timing tags (S7): cue
+/// boundaries are the shared `cue_groups` policy, and every word carries
+/// its `<HH:MM:SS.mmm>` paint-on timestamp — the standard form of
+/// word-timed text (study §4). Same named degradation as SRT without
+/// word timings.
+pub fn webvtt_from_words(words: &[TimedWord]) -> Result<String, SelectionError> {
+    if words.is_empty() {
+        return Err(SelectionError::NoWordTimings);
+    }
+    let mut vtt = String::from("WEBVTT\n\n");
+    for (index, cue_words) in cue_groups(words).into_iter().enumerate() {
+        let (Some(first), Some(last)) = (cue_words.first(), cue_words.last()) else {
+            continue;
+        };
+        vtt.push_str(&(index + 1).to_string());
+        vtt.push('\n');
+        vtt.push_str(&format!(
+            "{} --> {}\n",
+            webvtt_timestamp(first.start_ms),
+            webvtt_timestamp(last.end_ms)
+        ));
+        let text = cue_words
+            .iter()
+            .map(|word| format!("<{}>{}", webvtt_timestamp(word.start_ms), word.word))
+            .collect::<Vec<_>>()
+            .join(" ");
+        vtt.push_str(&text);
+        vtt.push_str("\n\n");
+    }
+    Ok(vtt)
+}
+
+/// The source words' rendered text (single-space joined) with each word's
+/// start offset in characters — the TextPositionSelector coordinate space.
+/// Character (not byte) offsets: the W3C model counts characters.
+fn word_char_offsets(words: &[TimedWord]) -> (String, Vec<usize>) {
+    let mut text = String::new();
+    let mut offsets = Vec::with_capacity(words.len());
+    for (index, word) in words.iter().enumerate() {
+        if index > 0 {
+            text.push(' ');
+        }
+        offsets.push(text.chars().count());
+        text.push_str(&word.word);
+    }
+    (text, offsets)
+}
+
+/// Bounded quote-selector context: at most this many characters of
+/// literal prefix/suffix around the exact quote.
+const ANNOTATION_CONTEXT_CHARS: usize = 32;
+
+/// The creator identity the plan pins for researcher-authored highlight
+/// exports (study §4: creator `researcher_supplied`).
+const ANNOTATION_CREATOR: &str = "researcher_supplied";
+
+/// Build a W3C Web Annotation collection from every stored highlight (S7,
+/// study §4, W3C REC 2017-02-23): each annotation carries BOTH selectors —
+/// a `TextPositionSelector` (character offsets over the source-words text,
+/// the immutable state the brittleness note demands) and a
+/// `TextQuoteSelector` (exact plus bounded literal prefix/suffix) — with
+/// motivation `highlighting`, plus `tagging` and a `TextualBody` when the
+/// highlight carries a label. Each annotation's `created` is its layer
+/// record's authoring timestamp; `base_id` is the transcript's URN base and
+/// ids derive deterministically from it, so the serializer is pure over
+/// its inputs. Non-highlight records are skipped defensively (the caller
+/// filters).
+pub fn web_annotation_collection(
+    words: &[TimedWord],
+    records: &[LayerRecord],
+    base_id: &str,
+) -> Result<serde_json::Value, SelectionError> {
+    if words.is_empty() {
+        return Err(SelectionError::NoWordTimings);
+    }
+    let (text, offsets) = word_char_offsets(words);
+    let source_id = format!("{base_id}#source-words");
+    let context = "http://www.w3.org/ns/anno.jsonld";
+    let mut items = Vec::new();
+    for record in records {
+        let TranscriptLayer::Highlight(highlight) = &record.layer else {
+            continue;
+        };
+        for entry in &highlight.highlights {
+            // Range validity through the selection algebra — the one
+            // index oracle (bounds and ordering get named failures).
+            word_range_to_time_range(words, WordRange::new(entry.start_word, entry.end_word))?;
+            let start = offsets[entry.start_word];
+            let end = offsets[entry.end_word] + words[entry.end_word].word.chars().count();
+            let exact = words[entry.start_word..=entry.end_word]
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let prefix_start = start.saturating_sub(ANNOTATION_CONTEXT_CHARS);
+            let prefix = text
+                .chars()
+                .skip(prefix_start)
+                .take(start - prefix_start)
+                .collect::<String>();
+            let suffix = text
+                .chars()
+                .skip(end)
+                .take(ANNOTATION_CONTEXT_CHARS)
+                .collect::<String>();
+            let has_label = !entry.label.trim().is_empty();
+            let motivation = if has_label {
+                serde_json::json!(["highlighting", "tagging"])
+            } else {
+                serde_json::json!(["highlighting"])
+            };
+            let mut annotation = serde_json::json!({
+                "@context": context,
+                "id": format!("{base_id}#annotation-{}", items.len()),
+                "type": "Annotation",
+                "motivation": motivation,
+                "creator": {"type": "Agent", "name": ANNOTATION_CREATOR},
+                "created": record.created_at,
+                "target": {
+                    "source": source_id,
+                    "selector": [
+                        {"type": "TextPositionSelector", "start": start, "end": end},
+                        {
+                            "type": "TextQuoteSelector",
+                            "exact": exact,
+                            "prefix": prefix,
+                            "suffix": suffix,
+                        },
+                    ],
+                },
+            });
+            if has_label {
+                annotation["body"] = serde_json::json!({
+                    "type": "TextualBody",
+                    "value": entry.label,
+                    "purpose": "tagging",
+                });
+            }
+            items.push(annotation);
+        }
+    }
+    Ok(serde_json::json!({
+        "@context": context,
+        "type": "AnnotationCollection",
+        "id": format!("{base_id}#annotations"),
+        "items": items,
+    }))
+}
+
+/// One OTIO RationalTime: milliseconds as the value at rate 1000 — exact
+/// seconds for integer-ms timings, no float loss (plan S7 defers full
+/// round-trip fidelity to operator-side OTIO tooling).
+fn rational_time_ms(ms: u64) -> serde_json::Value {
+    serde_json::json!({
+        "OTIO_SCHEMA": "RationalTime.1",
+        "value": ms as f64,
+        "rate": 1000.0,
+    })
+}
+
+/// Serialize a composed reel EDL to OpenTimelineIO (S7, study §4): a
+/// Timeline holding one Video track whose clips are the EDL's `Keep` ops
+/// in op order — each clip's `source_range` comes from the selection
+/// algebra and its `media_reference` targets the recording. `Cut` ops are
+/// the gaps and produce no clips. Structural keys follow the documented
+/// OTIO schema (Timeline/Stack/Track/Clip/TimeRange/RationalTime/
+/// ExternalReference).
+pub fn otio_timeline(
+    words: &[TimedWord],
+    edl: &EdlLayer,
+    media_target: &str,
+    name: &str,
+) -> Result<serde_json::Value, SelectionError> {
+    if words.is_empty() {
+        return Err(SelectionError::NoWordTimings);
+    }
+    let mut clips = Vec::new();
+    for entry in &edl.ops {
+        if entry.op != EdlOp::Keep {
+            continue;
+        }
+        let (start_ms, end_ms) = word_range_to_time_range(words, entry.range)?;
+        clips.push(serde_json::json!({
+            "OTIO_SCHEMA": "Clip.1",
+            "name": format!("clip-{}", clips.len() + 1),
+            "source_range": {
+                "OTIO_SCHEMA": "TimeRange.1",
+                "start_time": rational_time_ms(start_ms),
+                "duration": rational_time_ms(end_ms - start_ms),
+            },
+            "media_reference": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "target": media_target,
+            },
+        }));
+    }
+    Ok(serde_json::json!({
+        "OTIO_SCHEMA": "Timeline.1",
+        "name": name,
+        "tracks": {
+            "OTIO_SCHEMA": "Stack.1",
+            "name": "tracks",
+            "children": [{
+                "OTIO_SCHEMA": "Track.1",
+                "kind": "Video",
+                "name": "reel",
+                "children": clips,
+            }],
+        },
+    }))
 }
 
 /// Build a CSV of every highlight across the given highlight layers:
@@ -400,7 +643,8 @@ fn csv_escape(field: &str) -> String {
 mod tests {
     use super::*;
     use crate::test_support::timed_words;
-    use crate::transcript_layers::{HighlightEntry, HighlightLayer, LayerProvenance};
+    use crate::transcript_layers::{EdlLayer, HighlightEntry, HighlightLayer, LayerProvenance};
+    use crate::transcript_select::{EdlEntry, EdlOp};
     use hkask_storage::database::sqlite::SqliteDriver;
 
     #[test]
@@ -579,5 +823,212 @@ mod tests {
         );
         assert_eq!(std::fs::read(output)?, b"rendered transcript text");
         Ok(())
+    }
+
+    // ── S7: WebVTT karaoke captions ────────────────────────────────────
+
+    /// dcterms:identifier: `webvtt_from_words`
+    /// expect: Cue boundaries mirror SRT (sentence split, word cap) with
+    /// dot-millisecond timestamps and a karaoke tag before every word.
+    /// [P1] Motivating: WebVTT is the standard word-timed text interchange
+    /// (study §4) — future captions-in-player can reuse it.
+    /// pre: timed words on the 1-second fixture spacing.
+    /// post: the exact rendered document, byte-for-byte.
+    #[test]
+    fn webvtt_cues_carry_karaoke_tags_and_dot_millis() {
+        let words = timed_words(&["Hello", "world.", "Next", "one."]);
+        let vtt = webvtt_from_words(&words).expect("webvtt builds");
+        assert_eq!(
+            vtt,
+            "WEBVTT\n\n1\n00:00:00.000 --> 00:00:01.500\n\
+             <00:00:00.000>Hello <00:00:01.000>world.\n\n\
+             2\n00:00:02.000 --> 00:00:03.500\n\
+             <00:00:02.000>Next <00:00:03.000>one.\n\n"
+        );
+    }
+
+    #[test]
+    fn webvtt_without_word_timings_is_a_named_degradation() {
+        assert_eq!(webvtt_from_words(&[]), Err(SelectionError::NoWordTimings));
+    }
+
+    // ── S7: W3C Web Annotation JSON ─────────────────────────────────────
+
+    /// dcterms:identifier: `web_annotation_collection`
+    /// expect: Every highlight becomes a W3C Annotation carrying BOTH
+    /// selectors — TextPositionSelector (character offsets over the
+    /// source-words text) and TextQuoteSelector (exact plus bounded literal
+    /// prefix/suffix) — motivation `highlighting` plus `tagging` with a body
+    /// when labeled, creator `researcher_supplied` (study §4; plan S7).
+    /// [P1] Motivating: highlights must interoperate with the annotation
+    /// ecosystem, not just this panel.
+    /// pre: source words on the fixture spacing; one labeled and one
+    /// unlabeled highlight over one highlight layer.
+    /// post: the exact collection value — both selectors pinned to computed
+    /// offsets ("beta gamma" spans chars 6..16 of "alpha beta gamma delta").
+    #[test]
+    fn web_annotation_carries_both_selectors_and_motivations() {
+        let words = timed_words(&["alpha", "beta", "gamma", "delta"]);
+        let layer = TranscriptLayer::Highlight(HighlightLayer {
+            provenance: LayerProvenance {
+                model: "user".into(),
+                prompt_template: "researcher_annotation".into(),
+                created_at: "2026-11-06T00:00:00Z".into(),
+            },
+            highlights: vec![
+                HighlightEntry {
+                    start_word: 1,
+                    end_word: 2,
+                    label: "key point".into(),
+                    note: String::new(),
+                },
+                HighlightEntry {
+                    start_word: 3,
+                    end_word: 3,
+                    label: String::new(),
+                    note: String::new(),
+                },
+            ],
+        });
+        let records = vec![LayerRecord {
+            id: "layer-1".into(),
+            transcript_id: "t1".into(),
+            layer,
+            created_at: "2026-11-06T00:00:00Z".into(),
+        }];
+        let collection = web_annotation_collection(&words, &records, "urn:hkask:transcript:t1")
+            .expect("web annotation builds");
+        let expected = serde_json::json!({
+            "@context": "http://www.w3.org/ns/anno.jsonld",
+            "type": "AnnotationCollection",
+            "id": "urn:hkask:transcript:t1#annotations",
+            "items": [
+                {
+                    "@context": "http://www.w3.org/ns/anno.jsonld",
+                    "id": "urn:hkask:transcript:t1#annotation-0",
+                    "type": "Annotation",
+                    "motivation": ["highlighting", "tagging"],
+                    "creator": {"type": "Agent", "name": "researcher_supplied"},
+                    "created": "2026-11-06T00:00:00Z",
+                    "target": {
+                        "source": "urn:hkask:transcript:t1#source-words",
+                        "selector": [
+                            {"type": "TextPositionSelector", "start": 6, "end": 16},
+                            {
+                                "type": "TextQuoteSelector",
+                                "exact": "beta gamma",
+                                "prefix": "alpha ",
+                                "suffix": " delta"
+                            },
+                        ],
+                    },
+                    "body": {"type": "TextualBody", "value": "key point", "purpose": "tagging"},
+                },
+                {
+                    "@context": "http://www.w3.org/ns/anno.jsonld",
+                    "id": "urn:hkask:transcript:t1#annotation-1",
+                    "type": "Annotation",
+                    "motivation": ["highlighting"],
+                    "creator": {"type": "Agent", "name": "researcher_supplied"},
+                    "created": "2026-11-06T00:00:00Z",
+                    "target": {
+                        "source": "urn:hkask:transcript:t1#source-words",
+                        "selector": [
+                            {"type": "TextPositionSelector", "start": 17, "end": 22},
+                            {
+                                "type": "TextQuoteSelector",
+                                "exact": "delta",
+                                "prefix": "alpha beta gamma ",
+                                "suffix": "",
+                            },
+                        ],
+                    },
+                },
+            ],
+        });
+        assert_eq!(collection, expected);
+    }
+
+    // ── S7: OpenTimelineIO reel serialization ────────────────────────
+
+    /// dcterms:identifier: `otio_timeline`
+    /// expect: A composed reel serializes to OTIO's documented schema keys
+    /// (Timeline/Stack/Track/Clip/TimeRange/RationalTime/ExternalReference),
+    /// one clip per Keep op in op order with source ranges from the
+    /// selection algebra; Cut ops produce no clips (they are the gaps).
+    /// [P1] Motivating: NLE interchange — Reduct's FCP-XML conform is this
+    /// idea in product form (study §4).
+    /// pre: 1-second fixture words; a Keep/Cut/Keep reel over them.
+    /// post: the exact timeline value — structural keys plus source ranges
+    /// (RationalTime milliseconds at rate 1000); the full OTIO round-trip
+    /// stays deferred to operator-side tooling (plan S7).
+    #[test]
+    fn otio_reel_clips_carry_schema_keys_and_source_ranges() {
+        let words = timed_words(&["a", "b", "c", "d", "e"]);
+        let edl = EdlLayer {
+            provenance: LayerProvenance {
+                model: "user".into(),
+                prompt_template: "researcher_annotation".into(),
+                created_at: "2026-11-06T00:00:00Z".into(),
+            },
+            ops: vec![
+                EdlEntry {
+                    range: WordRange::new(0, 1),
+                    op: EdlOp::Keep,
+                },
+                EdlEntry {
+                    range: WordRange::new(2, 2),
+                    op: EdlOp::Cut,
+                },
+                EdlEntry {
+                    range: WordRange::new(3, 4),
+                    op: EdlOp::Keep,
+                },
+            ],
+        };
+        let timeline = otio_timeline(&words, &edl, "file:///recording.mp4", "reel-layer-1")
+            .expect("otio builds");
+        let expected = serde_json::json!({
+            "OTIO_SCHEMA": "Timeline.1",
+            "name": "reel-layer-1",
+            "tracks": {
+                "OTIO_SCHEMA": "Stack.1",
+                "name": "tracks",
+                "children": [{
+                    "OTIO_SCHEMA": "Track.1",
+                    "kind": "Video",
+                    "name": "reel",
+                    "children": [
+                        {
+                            "OTIO_SCHEMA": "Clip.1",
+                            "name": "clip-1",
+                            "source_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": 0.0, "rate": 1000.0},
+                                "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": 1500.0, "rate": 1000.0},
+                            },
+                            "media_reference": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "target": "file:///recording.mp4",
+                            },
+                        },
+                        {
+                            "OTIO_SCHEMA": "Clip.1",
+                            "name": "clip-2",
+                            "source_range": {
+                                "OTIO_SCHEMA": "TimeRange.1",
+                                "start_time": {"OTIO_SCHEMA": "RationalTime.1", "value": 3000.0, "rate": 1000.0},
+                                "duration": {"OTIO_SCHEMA": "RationalTime.1", "value": 1500.0, "rate": 1000.0},
+                            },
+                            "media_reference": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "target": "file:///recording.mp4",
+                            },
+                        },
+                    ],
+                }],
+            },
+        });
+        assert_eq!(timeline, expected);
     }
 }
