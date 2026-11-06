@@ -275,6 +275,8 @@ pub(crate) async fn write_turn(
     if !embedding_expected {
         report.degraded = report.attempted;
     }
+    // FR-4 (D-2): hoisted once — the provenance stamps every chunk below.
+    let inference_provenance = record.inference_provenance;
     for (index, chunk_text) in chunk_texts.iter().enumerate() {
         let mut ontology = structural_ontology(&thread_id, turn_ms, index);
         if let Some(tags) = content_tags.as_ref().and_then(|tags| tags.get(index)) {
@@ -291,6 +293,13 @@ pub(crate) async fn write_turn(
         )
         .with_visibility(Visibility::Shared)
         .with_ontology(ontology)
+        // FR-4 (D-2): the producing thread's inference provenance rides the
+        // record from the zed side (the D100 mark read at turn completion)
+        // and stamps every chunk — content produced on a privacy-marked
+        // thread never enters the store unmarked. Pinned by
+        // `ingest_turn_stamps_private_routed_turn_chunks_private` and
+        // `ingest_turn_leaves_public_turn_chunks_public`.
+        .with_inference_provenance(inference_provenance)
         .with_confidence(Confidence::new(0.5));
 
         let mut chunk_stored = false;

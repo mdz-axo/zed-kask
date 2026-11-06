@@ -1068,7 +1068,7 @@ impl CuratorServer {
             let stores = self.db.get();
             let memory = stores.memory()?;
 
-            let (_evidence_id, _evidence) = fetch_existing_h_mem(
+            let (_evidence_id, evidence) = fetch_existing_h_mem(
                 memory,
                 "evidence_h_mem_id",
                 &req.evidence_h_mem_id,
@@ -1134,7 +1134,16 @@ impl CuratorServer {
             // recalled or re-asserted. The request schema offers no tier
             // field to claim; only the machine paths that hold a verbatim
             // tool outcome stamp `tool_observed`.
-            .with_provenance(hkask_storage::Provenance::ModelInference);
+            .with_provenance(hkask_storage::Provenance::ModelInference)
+            // FR-4 (D-2): the private-inference mark is DERIVED from the
+            // cited evidence row — the same no-field-to-claim rule as the
+            // provenance ceiling above. The evidence carries the producing
+            // thread's routing state (stamped at the turn-completion ingest
+            // seam), so a memory derived from private-marked content stays
+            // private. The request schema offers no provenance field, and
+            // a model-facing surface can never set the mark (P4).
+            // Pinned by `memory_insert_inherits_the_evidence_inference_provenance`.
+            .with_inference_provenance(evidence.inference_provenance);
             let provenance = h_mem.provenance.as_str();
             let write = memory.prepare_semantic_write(h_mem)
                 .map_err(|e| map_memory_store_error(e, "Failed to prepare curator memory"))?;

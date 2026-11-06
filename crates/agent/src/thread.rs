@@ -3519,6 +3519,11 @@ impl Thread {
                                     .unwrap_or_default(),
                                 thread_title: thread.title().map(|t| t.to_string()),
                                 agent_id: Some(thread.agent_id().clone()),
+                                // zed-kask: D100/FR-4 — the producing thread's
+                                // routing state rides the record: content from a
+                                // privacy-marked thread is stamped PrivateInference
+                                // at the ingest seam, never by a model-facing surface.
+                                private_inference: thread.is_private_inference(),
                             });
                             if let Ok(record) = record {
                                 let port = port.clone();

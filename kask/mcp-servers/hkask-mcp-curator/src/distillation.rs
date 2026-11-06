@@ -575,6 +575,18 @@ pub(crate) async fn distill_store(
             }
         };
         for batch in pending.chunks(MAX_TURNS_PER_PROMPT) {
+            // FR-4 (D-2): the batch's inference provenance — a lesson
+            // distilled from ANY private-marked turn chunk carries that
+            // origin (fail-closed: private if any source is private). The
+            // mark was stamped at the turn-completion ingest seam; this is
+            // derivation, never caller-supplied.
+            let batch_inference_provenance = if batch.iter().any(|chunk| {
+                chunk.inference_provenance == hkask_types::InferenceProvenance::PrivateInference
+            }) {
+                hkask_types::InferenceProvenance::PrivateInference
+            } else {
+                hkask_types::InferenceProvenance::PublicProvider
+            };
             let prompt = build_distillation_prompt(&thread_id, batch, &prior_lessons);
             // `model` is resolved above (the pass refused at the top when
             // unset) — the extraction call always carries the non-thinking
@@ -620,7 +632,13 @@ pub(crate) async fn distill_store(
             let mut prepared: Vec<PreparedLesson> = Vec::new();
             let mut preparation_failed = false;
             for candidate in candidates.into_iter().take(MAX_LESSONS_PER_THREAD) {
-                match prepare_lesson(memory, &candidate, &thread_id, webid) {
+                match prepare_lesson(
+                    memory,
+                    &candidate,
+                    &thread_id,
+                    webid,
+                    batch_inference_provenance,
+                ) {
                     Ok(Some(lesson)) => {
                         // Within-batch dedup (therapy 2026-10-08, F001):
                         // identical candidates in one extraction batch are
@@ -906,6 +924,7 @@ fn prepare_lesson(
     candidate: &LessonCandidate,
     thread_id: &str,
     webid: WebID,
+    inference_provenance: hkask_types::InferenceProvenance,
 ) -> Result<Option<PreparedLesson>, hkask_memory::MemoryStoreError> {
     let entity = candidate.entity.trim();
     let attribute = candidate.attribute.trim();
@@ -1064,6 +1083,9 @@ fn prepare_lesson(
     let h_mem = HMem::new(entity, attribute, value, webid)
         .with_confidence(hkask_types::Confidence::new(0.5))
         .with_visibility(hkask_types::Visibility::Shared)
+        // FR-4 (D-2): the batch-derived mark — a lesson distilled from
+        // private-marked turn chunks carries their origin.
+        .with_inference_provenance(inference_provenance)
         .with_dimension(hkask_types::Dimension::Why);
     let Some(recall_text) = hkask_memory::semantic_passage_for_h_mem(&h_mem) else {
         tracing::warn!(
@@ -2211,6 +2233,69 @@ mod tests {
                 .expect("query")
                 .is_empty(),
             "unproven mutable status must not be published"
+        );
+    }
+
+    /// FR-4 (D-2): a lesson distilled from private-marked turn chunks
+    /// carries their origin — the batch derivation in `distill_store` is
+    /// private if ANY source chunk is private (fail-closed), and the mark
+    /// was stamped at the turn-completion ingest seam, never by the model
+    /// (the lesson JSON offers no field to claim).
+    #[tokio::test]
+    async fn a_lesson_from_private_marked_turns_lands_private() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let now = chrono::Utc::now();
+
+        // A private-marked turn chunk — the shape the turn-completion
+        // ingest writes for a D100-marked thread. The mark must taint the
+        // lesson distilled from it.
+        let private_turn = {
+            let h_mem = HMem::new(
+                &format!("{SHARED_TURN_PREFIX}t-private-origin"),
+                "chunk:0",
+                serde_json::json!(
+                    "user: work on the private leg\n\nassistant: a distilled lesson follows"
+                ),
+                webid,
+            )
+            .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+            let mut h_mem = h_mem;
+            h_mem.observed_at = now - chrono::Duration::seconds(600);
+            store.store(h_mem).expect("store private turn");
+            store
+                .h_mems_by_entity_prefix(&format!("{SHARED_TURN_PREFIX}t-private-origin"))
+                .expect("query turns")
+                .into_iter()
+                .find(|h| h.observed_at == now - chrono::Duration::seconds(600))
+                .expect("stored private turn")
+        };
+
+        let port = scripted_port(
+            serde_json::json!([{
+                "entity": "private-origin-lesson",
+                "attribute": "privacy-taint",
+                "text": "Lessons distilled from private turns stay private.",
+                "evidence": [private_turn.id.to_string()],
+                "mutable_state": false
+            }])
+            .to_string(),
+        );
+
+        let outcome = distill_default(&store, &port, webid, now).await;
+        assert_eq!(
+            outcome.lessons_inserted, 1,
+            "the lesson published — outcome: {outcome:?}"
+        );
+        let lessons = store
+            .h_mems_by_entity_prefix("private-origin-lesson")
+            .expect("query lessons");
+        assert_eq!(lessons.len(), 1, "one lesson published");
+        assert_eq!(
+            lessons[0].inference_provenance,
+            hkask_types::InferenceProvenance::PrivateInference,
+            "a lesson distilled from private-marked turn chunks inherits the \
+             private mark — it must not recall into public contexts"
         );
     }
 

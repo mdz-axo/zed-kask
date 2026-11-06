@@ -3534,6 +3534,12 @@ pub struct ThreadTurnRecord {
     /// The memory port uses this to route ingestion to the correct
     /// perspective-scoped store — Curator turns go to the curator's sovereign DB.
     pub agent_id: Option<AgentId>,
+    /// zed-kask: D100/FR-4 — whether this turn ran on a privacy-marked
+    /// thread (the D100 mark). The bridge maps it to the record's
+    /// `InferenceProvenance` so content produced on private threads is
+    /// stamped at ingest. Set only by the turn-completion path (which holds
+    /// the thread); never caller-supplied.
+    pub private_inference: bool,
 }
 
 /// Port for ingesting completed thread turns into memory (D6).

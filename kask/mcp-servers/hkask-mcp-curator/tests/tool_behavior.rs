@@ -812,6 +812,80 @@ async fn memory_insert_accepts_existing_h_mem_id_as_evidence() {
     assert!((stored[0].confidence.value() - 0.5).abs() < 1e-9);
 }
 
+/// FR-4 (D-2): `memory_insert` DERIVES the inference-provenance mark from
+/// the cited evidence row — the evidence carries the producing thread's
+/// routing state (stamped at the turn-completion ingest seam), so a memory
+/// distilled from private-marked content stays private. The request schema
+/// offers no field to claim: a model-facing surface can never set or clear
+/// the mark (P4 — a caller-supplied value is not a boundary). Both
+/// directions pinned: private evidence → private row; public evidence →
+/// public row.
+#[tokio::test]
+async fn memory_insert_inherits_the_evidence_inference_provenance() {
+    let (server, memory) = make_server_with_embeddings();
+
+    // A private-marked evidence row (the shape the turn-completion ingest
+    // writes for a D100-marked thread).
+    let private_evidence = hkask_storage::HMem::new(
+        "curator:thread:private-source",
+        "chatted",
+        serde_json::Value::String("a private turn".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    let private_id = private_evidence.id.to_string();
+    memory
+        .store(private_evidence)
+        .expect("seed private evidence");
+
+    let response = insert_citing_seed(&server, private_id).await;
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "insert citing private evidence must succeed — got: {response}"
+    );
+    let stored = memory
+        .query_deduped_untouched("zed-kask")
+        .expect("query should succeed");
+    let private_row = stored
+        .iter()
+        .find(|row| row.attribute == "default_agent_model")
+        .expect("the insert landed");
+    assert_eq!(
+        private_row.inference_provenance,
+        hkask_types::InferenceProvenance::PrivateInference,
+        "a memory cited against private evidence inherits the private mark"
+    );
+
+    // The public direction: a fresh server/store, public evidence → an
+    // unmarked row.
+    let (server, memory) = make_server_with_embeddings();
+    let public_id = seed_h_mem(
+        &memory,
+        "curator:thread:public-source",
+        "chatted",
+        "a public turn".to_string(),
+    );
+    let response = insert_citing_seed(&server, public_id).await;
+    assert_eq!(
+        response["inserted"].as_bool(),
+        Some(true),
+        "insert citing public evidence must succeed — got: {response}"
+    );
+    let stored = memory
+        .query_deduped_untouched("zed-kask")
+        .expect("query should succeed");
+    let public_row = stored
+        .iter()
+        .find(|row| row.attribute == "default_agent_model")
+        .expect("the second insert landed");
+    assert_eq!(
+        public_row.inference_provenance,
+        hkask_types::InferenceProvenance::PublicProvider,
+        "a memory cited against public evidence stays unmarked"
+    );
+}
+
 /// The citation round-trip must complete from the tool surface: an agent
 /// reads a fragment via `curator_memory_recall`, extracts the `id` the
 /// tool surfaced, and cites it as `memory_insert` evidence. The ID used

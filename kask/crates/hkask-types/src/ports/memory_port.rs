@@ -16,6 +16,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::InferenceProvenance;
+
 /// A completed turn offered to the memory system for ingestion.
 ///
 /// The bridge's write path cleans this record into role-prefixed text and
@@ -42,6 +44,16 @@ pub struct TurnRecord {
     /// turns are written to the curator's sovereign DB with the curator's
     /// WebID, not the user's.
     pub agent_id: Option<String>,
+    /// FR-4 (private-inference requirements D-2): the producing thread's
+    /// inference provenance — `PrivateInference` when the turn ran on a
+    /// privacy-marked thread (the D100 mark), `PublicProvider` otherwise.
+    /// Only the host-side ingest seams set this from the thread's routing
+    /// state (the zed side reads the D100 mark at turn completion; the
+    /// curator tools derive it from the cited evidence row) — it is never
+    /// a caller-supplied value (P4: a model-facing surface cannot stamp
+    /// it). The write path stamps every chunk h_mem with it, so recall and
+    /// export filters can hold the boundary.
+    pub inference_provenance: InferenceProvenance,
 }
 
 /// A recalled memory snippet for context injection.

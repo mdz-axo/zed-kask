@@ -1245,6 +1245,14 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                     model: record.model,
                     thread_title: record.thread_title,
                     agent_id: record.agent_id.map(|id| id.to_string()),
+                    // FR-4: the producing thread's routing state is the only
+                    // source of the mark — the D100 flag the zed side read at
+                    // turn completion. Never caller-supplied.
+                    inference_provenance: if record.private_inference {
+                        hkask_types::InferenceProvenance::PrivateInference
+                    } else {
+                        hkask_types::InferenceProvenance::PublicProvider
+                    },
                 })
                 .await
                 .map_err(|e| e.to_string())
@@ -1338,6 +1346,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some(agent_id.to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         }
     }
 
@@ -1944,6 +1953,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: Some("Rust Discussion".to_string()),
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
 
         let result = port.ingest_turn(record).await;
@@ -1974,6 +1984,113 @@ pub(crate) mod tests {
             assert!(
                 ontology.dimensions.contains(&dimension.to_string()),
                 "structural dimension {dimension} must be present without an LLM"
+            );
+        }
+    }
+
+    /// FR-4 (D-2), the ingest seam: a turn from a privacy-marked thread
+    /// (D100) stamps every chunk h_mem `PrivateInference` — the mark rides the
+    /// record from the zed side and enters the store with the content, never
+    /// applied later by a model-facing surface.
+    #[tokio::test]
+    async fn ingest_turn_stamps_private_routed_turn_chunks_private() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "private-thread".to_string(),
+            user_input: "What runs on the private leg?".to_string(),
+            agent_response: "This content must stay private.".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        };
+
+        port.ingest_turn(record).await.expect("ingest succeeds");
+        let chunks = port
+            .curator_store
+            .get()
+            .expect("curator store")
+            .query_deduped_untouched("curator:thread:private-thread")
+            .expect("query should succeed");
+        assert!(!chunks.is_empty(), "the turn produced chunks");
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.inference_provenance,
+                hkask_types::InferenceProvenance::PrivateInference,
+                "every chunk of a private-routed turn carries the mark"
+            );
+        }
+    }
+
+    /// FR-4, the other direction: public-thread content stays
+    /// `PublicProvider` — the default is the honest history, and the stamp
+    /// never widens to unmarked content.
+    #[tokio::test]
+    async fn ingest_turn_leaves_public_turn_chunks_public() {
+        let port = in_memory_port();
+        let record = TurnRecord {
+            thread_id: "public-thread".to_string(),
+            user_input: "What runs on the public leg?".to_string(),
+            agent_response: "This content is unmarked.".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
+        };
+
+        port.ingest_turn(record).await.expect("ingest succeeds");
+        let chunks = port
+            .curator_store
+            .get()
+            .expect("curator store")
+            .query_deduped_untouched("curator:thread:public-thread")
+            .expect("query should succeed");
+        assert!(!chunks.is_empty(), "the turn produced chunks");
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.inference_provenance,
+                hkask_types::InferenceProvenance::PublicProvider,
+                "a public thread's content stays unmarked"
+            );
+        }
+    }
+
+    /// The adapter pin: the zed-side D100 flag maps to the record's
+    /// provenance at the bridge seam — the producing thread's routing state
+    /// is the ONLY source of the mark.
+    #[tokio::test]
+    async fn bridge_ingest_turn_maps_the_d100_flag_to_the_mark() {
+        use agent::ThreadMemoryPort as _;
+
+        let inner = in_memory_port();
+        // Keep a handle to the store the bridge's inner port writes to —
+        // the inner port moves into the Arc<dyn MemoryPort>.
+        let store_handle = inner.curator_store.clone();
+        let inner: std::sync::Arc<dyn MemoryPort> = std::sync::Arc::new(inner);
+        let bridge = BridgeMemoryPort::new(inner);
+
+        let record = agent::ThreadTurnRecord {
+            thread_id: "d100-adapter-thread".to_string(),
+            user_input: "private thread turn".to_string(),
+            agent_response: "produced on the private leg".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+            private_inference: true,
+        };
+        bridge.ingest_turn(record).await.expect("bridge ingest");
+
+        let chunks = store_handle
+            .get()
+            .expect("curator store")
+            .query_deduped_untouched("curator:thread:d100-adapter-thread")
+            .expect("query should succeed");
+        assert!(!chunks.is_empty());
+        for chunk in &chunks {
+            assert_eq!(
+                chunk.inference_provenance,
+                hkask_types::InferenceProvenance::PrivateInference,
+                "the D100 flag became the stored mark at the bridge seam"
             );
         }
     }
@@ -2047,6 +2164,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
 
         port.ingest_turn(record)
@@ -2082,6 +2200,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record()).await.expect("first turn");
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
@@ -2105,6 +2224,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
 
         let result = port.ingest_turn(record).await;
@@ -2141,6 +2261,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: Some("Memory fix".to_string()),
             agent_id: Some("Zed Agent".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
 
         let result = port.ingest_turn(record).await;
@@ -2450,6 +2571,7 @@ pub(crate) mod tests {
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: Some("Curator".to_string()),
+                inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
             },
             TurnRecord {
                 thread_id: "t-python".to_string(),
@@ -2458,6 +2580,7 @@ pub(crate) mod tests {
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: Some("Curator".to_string()),
+                inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
             },
         ];
         for record in records {
@@ -2537,6 +2660,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         })
         .await
         .expect("ingest succeeds despite embed failure");
@@ -2586,6 +2710,7 @@ pub(crate) mod tests {
                         model: "test-model".to_string(),
                         thread_title: None,
                         agent_id: Some("Curator".to_string()),
+                        inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
                     })
                     .await
                     .expect("ingest succeeds");
@@ -2735,6 +2860,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record).await.expect("ingest succeeds");
 
@@ -2772,6 +2898,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Zed Agent".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record).await.expect("ingest succeeds");
 
@@ -2823,6 +2950,7 @@ pub(crate) mod tests {
                 model: "test-model".to_string(),
                 thread_title: None,
                 agent_id: Some("Zed Agent".to_string()),
+                inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
             })
             .await
             .expect("ingest succeeds");
@@ -3072,6 +3200,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         })
         .await
         .expect("ingest succeeds");
@@ -3268,6 +3397,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         let record2 = TurnRecord {
             thread_id: "sem-2".to_string(),
@@ -3276,6 +3406,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
 
         // Spawn both ingestions concurrently.
@@ -3314,6 +3445,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record)
             .await
@@ -3349,6 +3481,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record)
             .await
@@ -3380,6 +3513,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         };
         port.ingest_turn(record)
             .await
@@ -3495,6 +3629,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         })
         .await
         .expect("ingestion during outage succeeds");
@@ -3518,6 +3653,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         })
         .await
         .expect("post-heal ingestion succeeds");
@@ -3555,6 +3691,7 @@ pub(crate) mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: None,
+            private_inference: false,
         };
         let result = bridge.ingest_turn(record).await;
         assert!(

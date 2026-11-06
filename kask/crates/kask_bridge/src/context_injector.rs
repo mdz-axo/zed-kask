@@ -643,6 +643,7 @@ mod tests {
             model: "test-model".to_string(),
             thread_title: None,
             agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PublicProvider,
         })
         .await
         .expect("ingest succeeds");
