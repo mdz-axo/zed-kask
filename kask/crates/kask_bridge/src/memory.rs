@@ -2216,12 +2216,12 @@ pub(crate) mod tests {
         );
     }
 
-    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the write
-    /// side: a PRIVATE turn's chunks never cross to the configured (cloud)
-    /// embedder — zero embed calls — while a public turn's do. Surfaced via
-    /// the degraded report accounting.
-    #[tokio::test]
-    async fn private_chunks_never_reach_the_configured_embedder() {
+    /// The counting embedder the degrade-not-leak legs share — records
+    /// every embed call, returns a fixed-width zero vector.
+    fn counting_embed_fn() -> (
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>,
+    ) {
         let embed_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counting_embed = {
             let embed_calls = embed_calls.clone();
@@ -2230,6 +2230,16 @@ pub(crate) mod tests {
                 vec![0.0_f32; 1024]
             }) as Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>
         };
+        (embed_calls, counting_embed)
+    }
+
+    /// D100 (operator ruling 2026-11-05) — degrade-not-leak on the write
+    /// side: a PRIVATE turn's chunks never cross to the configured (cloud)
+    /// embedder — zero embed calls — while a public turn's do. Surfaced via
+    /// the degraded report accounting.
+    #[tokio::test]
+    async fn private_chunks_never_reach_the_configured_embedder() {
+        let (embed_calls, counting_embed) = counting_embed_fn();
         let port = in_memory_port_with_embed_fn(counting_embed);
 
         let private_record = TurnRecord {
@@ -2275,14 +2285,7 @@ pub(crate) mod tests {
     /// usual.
     #[tokio::test]
     async fn private_context_recall_never_embeds_the_query() {
-        let embed_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counting_embed = {
-            let embed_calls = embed_calls.clone();
-            Arc::new(move |_text: &str| -> Vec<f32> {
-                embed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                vec![0.0_f32; 1024]
-            }) as Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>
-        };
+        let (embed_calls, counting_embed) = counting_embed_fn();
         let port = in_memory_port_with_embed_fn(counting_embed);
 
         let private_record = TurnRecord {

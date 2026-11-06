@@ -888,17 +888,11 @@ async fn memory_insert_inherits_the_evidence_inference_provenance() {
 
 // ── M5: the recall/export filters (FR-4's read side, falsifier (b)) ───────
 
-/// FR-4 falsifier (b), the tool leg's public side: a recall in a
-/// NON-private call context never returns a private-marked row — and
-/// the exclusion is SURFACED (`excluded_private_rows`), never silently
-/// dropped (an empty leg with exclusions must read as filtered, not as
-/// "no memory found"). The call context here is the default — no
-/// `_meta` mark claims provenance, the fail-closed public read.
-#[tokio::test]
-async fn public_call_contexts_never_receive_private_rows() {
-    let (server, memory) = make_server_with_embeddings();
+/// Seed the M5 mixed-visibility fixture the private-row legs share: one
+/// public row and one private-marked row on the same entity.
+fn seed_m5_mixed_public_and_private(memory: &hkask_memory::MemoryStore) {
     seed_h_mem(
-        &memory,
+        memory,
         "curator:thread:m5-mixed",
         "public",
         "a public turn".to_string(),
@@ -911,6 +905,18 @@ async fn public_call_contexts_never_receive_private_rows() {
     )
     .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
     memory.store(private).expect("seed private row");
+}
+
+/// FR-4 falsifier (b), the tool leg's public side: a recall in a
+/// NON-private call context never returns a private-marked row — and
+/// the exclusion is SURFACED (`excluded_private_rows`), never silently
+/// dropped (an empty leg with exclusions must read as filtered, not as
+/// "no memory found"). The call context here is the default — no
+/// `_meta` mark claims provenance, the fail-closed public read.
+#[tokio::test]
+async fn public_call_contexts_never_receive_private_rows() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_m5_mixed_public_and_private(&memory);
 
     let response = parse(
         &server
@@ -950,20 +956,7 @@ async fn public_call_contexts_never_receive_private_rows() {
 #[tokio::test]
 async fn private_call_contexts_receive_their_private_rows() {
     let (server, memory) = make_server_with_embeddings();
-    seed_h_mem(
-        &memory,
-        "curator:thread:m5-mixed",
-        "public",
-        "a public turn".to_string(),
-    );
-    let private = hkask_storage::HMem::new(
-        "curator:thread:m5-mixed",
-        "private",
-        serde_json::Value::String("a private turn".to_string()),
-        WebID::new(),
-    )
-    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
-    memory.store(private).expect("seed private row");
+    seed_m5_mixed_public_and_private(&memory);
 
     let response = hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,

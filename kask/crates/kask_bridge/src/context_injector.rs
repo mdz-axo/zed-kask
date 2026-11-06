@@ -496,6 +496,51 @@ mod tests {
     use hkask_types::TurnRecord;
     use std::sync::Arc;
 
+    /// The deterministic bag-of-words embedder the recall tests share —
+    /// a stable per-word hash so keyword overlap is recallable without a
+    /// real embedding model.
+    fn bag_of_words_embed_fn() -> Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> {
+        Arc::new(|text: &str| {
+            let mut vec = vec![0.0_f32; 128];
+            for word in text.split_whitespace() {
+                let hash = word
+                    .bytes()
+                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+                vec[(hash as usize) % 128] += 1.0;
+            }
+            vec
+        })
+    }
+
+    /// The private-marked zephyr turn the FR-4 legs share — the row a
+    /// public recall context must never surface and a private one must.
+    async fn ingest_private_zephyr_turn(port: &Arc<RealMemoryPort>) {
+        port.ingest_turn(TurnRecord {
+            thread_id: "private-origin-thread".to_string(),
+            user_input: "How does the zephyr protocol handle reconnection?".to_string(),
+            agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
+            model: "private-model".to_string(),
+            thread_title: None,
+            agent_id: Some("Curator".to_string()),
+            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
+        })
+        .await
+        .expect("ingest succeeds");
+    }
+
+    /// The injected messages' concatenated text — the leak/no-leak
+    /// assertion surface.
+    fn collected_text(messages: &[LanguageModelRequestMessage]) -> String {
+        messages
+            .iter()
+            .flat_map(|m| m.content.iter())
+            .map(|c| match c {
+                MessageContent::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect()
+    }
+
     /// expect: A selected, sealed corpus passage reaches Curator chat only
     /// when enabled, without being attributed to Curator memory.
     #[tokio::test]
@@ -628,19 +673,7 @@ mod tests {
     /// breaks, the agent silently operates on stale context.
     #[tokio::test]
     async fn inject_context_recalls_mid_session_ingest() {
-        // Use a deterministic embed function that maps text to a simple
-        // bag-of-words vector so recall works without a real embedding model.
-        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
-            let mut vec = vec![0.0_f32; 128];
-            for word in text.split_whitespace() {
-                let hash = word
-                    .bytes()
-                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-                vec[(hash as usize) % 128] += 1.0;
-            }
-            vec
-        });
-        let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
+        let port = Arc::new(in_memory_port_with_embed_fn(bag_of_words_embed_fn()));
 
         // Ingest a curator turn with a distinctive keyword.
         port.ingest_turn(TurnRecord {
@@ -688,31 +721,11 @@ mod tests {
     /// out of the injected context.
     #[tokio::test]
     async fn public_context_injection_never_returns_private_marked_rows() {
-        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
-            let mut vec = vec![0.0_f32; 128];
-            for word in text.split_whitespace() {
-                let hash = word
-                    .bytes()
-                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-                vec[(hash as usize) % 128] += 1.0;
-            }
-            vec
-        });
-        let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
+        let port = Arc::new(in_memory_port_with_embed_fn(bag_of_words_embed_fn()));
 
         // One private-marked turn and one public turn, both keyword-matching
         // the prompt — the private one must never surface in a public context.
-        port.ingest_turn(TurnRecord {
-            thread_id: "private-origin-thread".to_string(),
-            user_input: "How does the zephyr protocol handle reconnection?".to_string(),
-            agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
-            model: "private-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
-        })
-        .await
-        .expect("ingest succeeds");
+        ingest_private_zephyr_turn(&port).await;
         port.ingest_turn(TurnRecord {
             thread_id: "public-origin-thread".to_string(),
             user_input: "How does the aardvark protocol handle reconnection?".to_string(),
@@ -731,14 +744,7 @@ mod tests {
             .inject_context("public-origin-thread", prompt, false)
             .await;
 
-        let content = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .map(|c| match c {
-                MessageContent::Text(t) => t.as_str(),
-                _ => "",
-            })
-            .collect::<String>();
+        let content = collected_text(&messages);
         assert!(
             !content.contains("zephyr"),
             "a public recall context must never return the private-marked row — got: {content}"
@@ -754,29 +760,9 @@ mod tests {
     /// not over-block the private context.
     #[tokio::test]
     async fn private_context_injection_recalls_its_private_rows() {
-        let embed_fn: Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync> = Arc::new(|text: &str| {
-            let mut vec = vec![0.0_f32; 128];
-            for word in text.split_whitespace() {
-                let hash = word
-                    .bytes()
-                    .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-                vec[(hash as usize) % 128] += 1.0;
-            }
-            vec
-        });
-        let port = Arc::new(in_memory_port_with_embed_fn(embed_fn));
+        let port = Arc::new(in_memory_port_with_embed_fn(bag_of_words_embed_fn()));
 
-        port.ingest_turn(TurnRecord {
-            thread_id: "private-origin-thread".to_string(),
-            user_input: "How does the zephyr protocol handle reconnection?".to_string(),
-            agent_response: "The zephyr protocol uses exponential backoff.".to_string(),
-            model: "private-model".to_string(),
-            thread_title: None,
-            agent_id: Some("Curator".to_string()),
-            inference_provenance: hkask_types::InferenceProvenance::PrivateInference,
-        })
-        .await
-        .expect("ingest succeeds");
+        ingest_private_zephyr_turn(&port).await;
 
         let injector = BridgeContextInjector::new_curator(port, 10, 0.0, true);
         let prompt = "I need to understand the zephyr protocol reconnection strategy for debugging";
@@ -784,14 +770,7 @@ mod tests {
             .inject_context("private-origin-thread", prompt, true)
             .await;
 
-        let content = messages
-            .iter()
-            .flat_map(|m| m.content.iter())
-            .map(|c| match c {
-                MessageContent::Text(t) => t.as_str(),
-                _ => "",
-            })
-            .collect::<String>();
+        let content = collected_text(&messages);
         assert!(
             content.contains("zephyr"),
             "a private-marked context recalls its own private rows — got: {content}"
