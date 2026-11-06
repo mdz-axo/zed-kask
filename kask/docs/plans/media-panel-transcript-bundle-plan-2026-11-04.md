@@ -367,6 +367,35 @@ findings-on-paper fold into this slice's spec:**
   (hidden media suspends); the 82.7-minute seek jump is measured before
   any UX polish.
 
+**Landed (2026-11-06, commit `01374f55ea`):** the ordered `ReelClip` composer
+replaces `reel_selection` and its three write paths and the
+`union_word_ranges` mirror (F1/F4); composer state re-matches to highlight
+identity on every reload (F2, pinned red-first by
+`reel_composer_rebuilds_reorders_and_survives_reload`); in-reel strikes bake
+into Keep ops through the server's published `subtract_cuts_from_range`
+(F3, pinned by `in_reel_strikes_bake_into_keeps_not_cuts` — a composer EDL
+carries no Cut ops — plus the server-side boundary pins); the preview reads
+the SOURCE bundle words (F10, pinned by
+`reel_preview_plan_reads_source_bundle_words` over a re_anchored fixture)
+and plays the composed order (`reel_preview_plays_spans_in_composed_order`,
+scripted-widget over the committed `reel-preview.wav` fixture; teardown
+pinned by `reel_preview_teardown_joins_the_surface_lifecycle`). Overlapping
+clips keep only the later clip's unplayed remainder (the algebra admits
+each source span once). Gates at landing: media_panel 132 passed
+(126 + 6 new pins), hkask-mcp-media lib 493 (491 + 2 boundary pins) /
+integration 162 / doctest 1, both clippy gates exit 0; the citation ladder
+clean (the 8 adjudicated pairing artifacts at shifted values); the
+duplication baseline bumped in the earning commit (5635: the inherited
+5608 red plus S6's share). End-to-end server half driven live on the Dunning
+recording (transcript `5509bb94`): two researcher highlights → ordered
+compose [B(2330-2350) with strike 2340-2342 baked, A(150-170)] → store
+(layer `b3571906`, three Keep ops, no Cuts) → render (asset `04c271b1`, 3
+clips in composed order, the strike gap visible, playable 14.65s WAV);
+ffmpeg seek probes on the 82.7-min source measure 0.03-0.06s at offsets up
+to 40:00 (decode-layer seek cost is flat — no UX risk; the live-UI seek
+latency stays the operator's measurement). reference.md v3.5.0 carries the
+landed contracts.
+
 ### S7 — Standards exports (P2)
 
 **Objective:** highlights export as W3C Web Annotation JSON (TextPositionSelector +

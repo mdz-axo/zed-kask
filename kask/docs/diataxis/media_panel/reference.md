@@ -2,7 +2,7 @@
 title: "media_panel — Reference: Media Viewer Interaction Model"
 audience: [developers extending the media panel or media widget]
 last_updated: 2026-11-06
-version: "3.4.1"
+version: "3.5.0"
 status: "Active"
 domain: "Media"
 mds_categories: [domain, composition, lifecycle]
@@ -11,24 +11,24 @@ mds_categories: [domain, composition, lifecycle]
 # media_panel — Reference: Media Viewer Interaction Model
 
 The media viewer has two task modes backed by live state — Library and the
-Asset workspace (`ViewerTab`, `crates/media_panel/src/media_viewer.rs:595`) —
+Asset workspace (`ViewerTab`, `crates/media_panel/src/media_viewer.rs:670`) —
 plus one ambient activity layer, never a navigation destination: an
 "Activity (N)" toolbar chip over any mode (live-job count,
-`crates/media_panel/src/media_viewer.rs:10654`) opening an on-demand
-drawer at the viewer root (`render_activity_drawer`, :6071), and per-asset
-job badges on the Library rows (`asset_activity_verb`, :8345). The workspace
+`crates/media_panel/src/media_viewer.rs:11381`) opening an on-demand
+drawer at the viewer root (`render_activity_drawer`, :6465), and per-asset
+job badges on the Library rows (`asset_activity_verb`, :8956). The workspace
 is the selected asset in one screen — the player and derivative-edit toolbar
 as the primary area, with a toggleable inspector pane whose pane-internal
 tabs (`InspectorTab::ALL`, :606) render the asset's record, tags, lineage,
 faces, transcript links, researcher annotations, and reel provenance;
 opening a transcript renders the workspace's transcript sub-surface
-(`render_transcript_workspace`, :6694) and the header toggle restores the
+(`render_transcript_workspace`, :7088) and the header toggle restores the
 pane in one click. The Library is browse: every indexed asset as rows, the
 recordings' transcription states with the Transcribe affordance, their
 stored transcripts nested beneath them, and unlinked transcripts in their
-own degradation-honest section (`render_library`, :5683). Each surface
+own degradation-honest section (`render_library`, :6077). Each surface
 opens with one line of purpose copy (the orientation contract, `tab_purpose`
-:8418, 2026-10-27): the workspace is playback and derivative edits beside the
+:9029, 2026-10-27): the workspace is playback and derivative edits beside the
 the inspector, the Library is browse-and-delete (the listing, never the
 file), the drawer is watch-and-cancel. All server calls route through the
 governed tool invoker to the `media` server; gallery pages are sized at 100
@@ -151,7 +151,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-001
 verified_date: 2026-11-06
-verified_against: crates/media_panel/src/media_panel.rs:97-118 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:107-117 (RequestOwner — ten variants); crates/media_panel/src/media_viewer.rs:490-502 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:698-919 (MediaViewer fields incl. thread, concat_queue, live_jobs, inspector/activity state, the S2 drag-selection state at :834,:839, the selection popover at :845, the S3 transcript search at :852, and the ten request lifecycles at :728,:744,:748,:758,:764,:769,:787,:820,:888,:903)
+verified_against: crates/media_panel/src/media_panel.rs:97-118 (MediaPanel fields); crates/media_panel/src/media_viewer.rs:107-117 (RequestOwner — ten variants); crates/media_panel/src/media_viewer.rs:565-577 (ResourceState, RequestLifecycle); crates/media_panel/src/media_viewer.rs:773-1004 (MediaViewer fields incl. thread, concat_queue, live_jobs, inspector/activity state, the S2 drag-selection state at :909,:914, the selection popover at :920, the S3 transcript search at :927, and the ten request lifecycles at :803,:819,:823,:833,:839,:844,:862,:895,:972,:987)
 status: VERIFIED
 -->
 
@@ -159,55 +159,55 @@ status: VERIFIED
 
 Each asynchronous read resource has an independent `RequestLifecycle` with an epoch,
 owner, and `Idle | Loading | Ready | Failed` state
-(`crates/media_panel/src/media_viewer.rs:490-502`). `begin` suppresses duplicate
+(`crates/media_panel/src/media_viewer.rs:565-577`). `begin` suppresses duplicate
 requests for the same loading owner; a newer owner advances the epoch. Callback
 handlers mutate state only when they still own that epoch (`apply_gallery_listing`
-:1488, `apply_jobs_listing` :1653, `apply_live_observation` :1807,
-`apply_detail_result` :1960, `apply_transcript_result` :3134). This prevents a
+:1575, `apply_jobs_listing` :1740, `apply_live_observation` :1894,
+`apply_detail_result` :2047, `apply_transcript_result` :3223). This prevents a
 slow page, job, observation, detail, annotation, or transcript response from
 overwriting newer state. Direct edits are serialized instead: trim, concat,
 highlight create/rename/delete, strike, reel compose, transcript
 correction, and annotation create/replace/disable while one side effect is
 active (`begin_edit` rejects overlap at
-`crates/media_panel/src/media_viewer.rs:1267`), so no completed
+`crates/media_panel/src/media_viewer.rs:1354`), so no completed
 operation can be hidden by a later epoch.
 
 | Resource | Owner key | Latest-response gate | Evidence |
 | --- | --- | --- | --- |
-| Gallery | requested offset | `gallery_request.owns(epoch)` | `request_gallery_page`/`apply_gallery_listing`, media_viewer.rs:1448,1488 |
-| Jobs (drawer page) | jobs resource | `jobs_request.owns(epoch)` | `load_jobs`/`apply_jobs_listing`, :1618,1653 |
-| Live-job observation | one battery per tick | `job_observation_request.owns(epoch)` | `observe_live_jobs`/`apply_live_observation`, :1754,1807 |
-| Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `load_detail`/`apply_detail_result`, :1902,1960 |
-| Detail transcripts | stable gallery asset ID | `detail_transcripts_request.owns(epoch)` | `load_detail_transcripts`, :1989 |
-| Detail annotations | stable gallery asset ID | `detail_annotations_request.owns(epoch)` | `load_detail_annotations`, :2071 |
-| Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :2460,3134 |
-| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :3285 |
-| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :1267 |
+| Gallery | requested offset | `gallery_request.owns(epoch)` | `request_gallery_page`/`apply_gallery_listing`, media_viewer.rs:1535,1575 |
+| Jobs (drawer page) | jobs resource | `jobs_request.owns(epoch)` | `load_jobs`/`apply_jobs_listing`, :1705,1740 |
+| Live-job observation | one battery per tick | `job_observation_request.owns(epoch)` | `observe_live_jobs`/`apply_live_observation`, :1841,1894 |
+| Detail | stable gallery asset ID | `detail_request.owns(epoch)` | `load_detail`/`apply_detail_result`, :1989,2047 |
+| Detail transcripts | stable gallery asset ID | `detail_transcripts_request.owns(epoch)` | `load_detail_transcripts`, :2076 |
+| Detail annotations | stable gallery asset ID | `detail_annotations_request.owns(epoch)` | `load_detail_annotations`, :2158 |
+| Transcript workspace | transcript ID | `transcript_request.owns(epoch)` | `open_transcript`/`apply_transcript_result`, :2547,3223 |
+| Recordings listing | listing resource | `transcript_listing_request.owns(epoch)` | `load_transcript_listing`, :3372 |
+| Edit | one admitted side-effecting operation | `begin_edit` rejects overlap; `edit_request.owns(epoch)` closes it | :1354 |
 
 Failures retain last-good data and surface degraded status instead of clearing
 the resource: each `apply_*` handler completes its epoch into
 `ResourceState::Failed` while leaving the committed rows, jobs, detail, or
 workspace untouched (the same handlers as above; `resource_status` renders the
-degraded state at :8462, and a transcript reload keeps the last-good
+degraded state at :9073, and a transcript reload keeps the last-good
 workspace visible rather than flashing the idle browser — `load_transcript_with`
-:3089 retains the prior state; only an explicit open or the back affordance clears
-it, `open_transcript` :2460 / `close_transcript_workspace` :2532).
+:3178 retains the prior state; only an explicit open or the back affordance clears
+it, `open_transcript` :2547 / `close_transcript_workspace` :2620).
 
 ## Result-derived Library freshness
 
 Published assets, imports, transcript renders, and deletions carry
 `gallery_changed: true` only after their durable gallery transition succeeds —
 the viewer reads the completed-result field
-(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:10853`)
+(`tool_result_changed_gallery`, `crates/media_panel/src/media_viewer.rs:11578`)
 inside `ingest_tool_result`
-(`crates/media_panel/src/media_viewer.rs:1190`). The panel observes that
+(`crates/media_panel/src/media_viewer.rs:1277`). The panel observes that
 completed-result field rather than classifying tool names; read-only
 `gallery_*` results therefore do not trigger reloads. A mutation-driven or
 manual Library reload invalidates an older same-page request before dispatch,
 while switching to Library always requests current state. Completed background
 jobs carry the same enriched display/mutation result and are ingested exactly
 once by stable job identity (`processed_job_results`, a seen-set keyed by job
-ID at :754, retained and re-filled inside `apply_jobs_listing` :1653).
+ID at :829, retained and re-filled inside `apply_jobs_listing` :1740).
 
 ## Gallery pagination lifecycle
 
@@ -215,15 +215,15 @@ The Library requests 100 rows per page (`GALLERY_PAGE_LIMIT`,
 `crates/media_panel/src/media_viewer.rs:55`). A response commits only
 when its gallery ID, total, requested offset, positive limit, row count, row
 indices, and required asset fields validate (`parse_gallery_listing`,
-`crates/media_panel/src/media_viewer.rs:8495`). Failed or superseded page
-requests preserve the prior page and cursor (`apply_gallery_listing` :1488).
+`crates/media_panel/src/media_viewer.rs:9106`). Failed or superseded page
+requests preserve the prior page and cursor (`apply_gallery_listing` :1575).
 
 Previous/next navigation uses the server-confirmed page size and total, with
 saturating cursor arithmetic (`previous_gallery_page`/`next_gallery_page`,
-`crates/media_panel/src/media_viewer.rs:1596,1601`). A gallery-root change
+`crates/media_panel/src/media_viewer.rs:1683,1688`). A gallery-root change
 removes prior indexed rows, clears pending selection and delete state, and
 invalidates detail; a same-gallery refresh reconciles by stable asset source
-(`commit_gallery_listing`, `crates/media_panel/src/media_viewer.rs:1509`).
+(`commit_gallery_listing`, `crates/media_panel/src/media_viewer.rs:1596`).
 
 ```mermaid
 stateDiagram-v2
@@ -239,7 +239,7 @@ stateDiagram-v2
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEDIA-PANEL-002
 verified_date: 2026-11-06
-verified_against: crates/media_panel/src/media_viewer.rs:1448-1612 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:8495 (parse_gallery_listing validation)
+verified_against: crates/media_panel/src/media_viewer.rs:1535-1698 (request, apply, commit, navigation); crates/media_panel/src/media_viewer.rs:9106 (parse_gallery_listing validation)
 status: VERIFIED
 -->
 
@@ -247,10 +247,10 @@ status: VERIFIED
 
 Only selected video assets can enter the concat queue. Duplicates are no-ops;
 an over-cap addition is rejected without truncating the queue
-(`queue_selected_for_concat`, `crates/media_panel/src/media_viewer.rs:1340`).
+(`queue_selected_for_concat`, `crates/media_panel/src/media_viewer.rs:1427`).
 Dispatch requires at least two clips and rechecks the upper bound before
 calling `video_concat` (`dispatch_concat`,
-`crates/media_panel/src/media_viewer.rs:1363`). The shared admission limit is
+`crates/media_panel/src/media_viewer.rs:1450`). The shared admission limit is
 64 inputs (`MAX_CONCAT_ITEMS`,
 `kask/crates/hkask-types/src/media_limits.rs:8`).
 
@@ -258,41 +258,41 @@ calling `video_concat` (`dispatch_concat`,
 
 Job state is ambient process state — never a place the operator visits. The
 toolbar's "Activity (N)" chip shows the live-job count over any mode
-(`crates/media_panel/src/media_viewer.rs:10654`) and opens an on-demand
-drawer at the viewer root (`render_activity_drawer`, :6071): the observed
+(`crates/media_panel/src/media_viewer.rs:11381`) and opens an on-demand
+drawer at the viewer root (`render_activity_drawer`, :6465): the observed
 live set under an "Active" heading, the page's recent history under
-"Recent", and Cancel on queued/running rows (`cancel_job`, :5273). The
+"Recent", and Cancel on queued/running rows (`cancel_job`, :5667). The
 drawer footer carries the process-local history disclosure verbatim from the
-strict listing parse (`jobs_restart_behavior`, :6160); opening the drawer
+strict listing parse (`jobs_restart_behavior`, :6554); opening the drawer
 refreshes the listing so it never opens on stale history
-(`toggle_activity`, :1890).
+(`toggle_activity`, :1977).
 
 The page asks `job_list` for the shared default limit of 20
 (`DEFAULT_JOB_LIST_LIMIT`, `kask/crates/hkask-types/src/media_limits.rs:12`;
-`load_jobs`, `crates/media_panel/src/media_viewer.rs:1618`). Producer and panel
+`load_jobs`, `crates/media_panel/src/media_viewer.rs:1705`). Producer and panel
 consume one strict `JobListPayload` carrying `jobs`, `total`, `limit`,
 `has_more`, `history_scope`, and `restart_behavior`
 (`kask/mcp-servers/hkask-mcp-media/src/types.rs:657-663`). Legacy arrays,
 incomplete objects, incoherent counts, and unknown statuses surface degradation
 while the last-good page remains visible (`parse_job_listing`,
-`crates/media_panel/src/media_viewer.rs:10606`).
+`crates/media_panel/src/media_viewer.rs:11331`).
 
 While any nonterminal job is observed — anywhere in the bounded store, on any
 mode — one single-flight GPUI-native one-second poll task is armed
 (`QUEUE_POLL_INTERVAL`, `crates/media_panel/src/media_viewer.rs:56`;
-`should_poll_jobs`/`schedule_queue_poll` :1727,1733). The newest-first page
+`should_poll_jobs`/`schedule_queue_poll` :1814,1820). The newest-first page
 alone cannot see a live job hidden behind newer completions, so when the page
 reports `has_more` three status-filtered probes — one per nonterminal status
 (`NONTERMINAL_JOB_STATUSES`, :63), each filtered server-side before the
 newest-first sort and limit — observe the complete live set past the page
-limit (`observe_live_jobs` :1754 → `apply_live_observation` :1807), and the
-activity tick settles once per battery (`settle_activity_tick`, :1860),
+limit (`observe_live_jobs` :1841 → `apply_live_observation` :1894), and the
+activity tick settles once per battery (`settle_activity_tick`, :1947),
 arming or stopping the poll by the observed-anywhere condition. A failed
 probe battery proves nothing about deeper jobs: previously observed live
 entries are retained and the poll keeps observing (:1839-1852). A landed
 transcribe job reloads the recordings' transcript listing once while the
 Library is showing (R5, :1878). The deep-observation contract is pinned
-by `deep_running_job_behind_a_full_page_stays_observed_and_updated` (:11953)
+by `deep_running_job_behind_a_full_page_stays_observed_and_updated` (:12678)
 — the loop-register L11 page-visibility impedance, settled (2026-11-02).
 Job history is process-local, so a server restart may produce an empty page.
 
@@ -301,25 +301,25 @@ Job history is process-local, so a server restart may produce an empty page.
 The workspace's inspector pane addresses the selected asset by stable gallery
 ID, never by its positional index. Assets not yet indexed surface a remediation
 message instead of dispatching (`load_detail`,
-`crates/media_panel/src/media_viewer.rs:1902`). Only an owned, object-shaped
+`crates/media_panel/src/media_viewer.rs:1989`). Only an owned, object-shaped
 `gallery_asset_detail` response replaces the last-good detail; stale and
 failed responses do not blank it (`apply_detail_result`,
-`crates/media_panel/src/media_viewer.rs:1960`). The pane is a supporting pane
+`crates/media_panel/src/media_viewer.rs:2047`). The pane is a supporting pane
 of the workspace — the header's toggle hides or returns it in one click
-without touching the player or selection (`toggle_inspector`, :1037;
-`workspace_inspector_toggle`, :5651) — and its pane-internal tabs
+without touching the player or selection (`toggle_inspector`, :1123;
+`workspace_inspector_toggle`, :6045) — and its pane-internal tabs
 (`InspectorTab::ALL` :606: Record, Tags, Lineage, Faces, Transcripts,
 Annotations, Reel) are alternate views of the same selected object, rendering
 the image record, tags, lineage, faces when present, linked transcripts
 (words/timings per row), reel provenance, and — since 2026-10-27 — the
 researcher tags & notes CRUD surface (`render_inspector`,
-`crates/media_panel/src/media_viewer.rs:6265`). The Annotations tab lists
+`crates/media_panel/src/media_viewer.rs:6659`). The Annotations tab lists
 `gallery_annotation_list` rows under its own request lifecycle
-(`load_detail_annotations`, :2071), offers add tag / add note editors
+(`load_detail_annotations`, :2158), offers add tag / add note editors
 (the label editor's modal input pattern), per-row value replacement through
 `gallery_annotation_update` over the stable identity, and delete through
 `gallery_annotation_delete` — all under the single edit admission with the
-visible-refusal discipline (`confirm_annotation_edit`, :2255); every completion
+visible-refusal discipline (`confirm_annotation_edit`, :2342); every completion
 reloads the list. The pane needs an indexed asset and says why otherwise;
 a failed listing surfaces an unavailable note, never silence.
 
@@ -330,29 +330,29 @@ section and the asset workspace — never a standalone destination. The
 Library lists the recordings' stored transcripts nested beneath each
 recording's row (`educt_list_transcripts` at the server's 500 cap,
 lifecycle-protected at `load_transcript_listing`,
-`crates/media_panel/src/media_viewer.rs:3285`); rows carry the five-state
-alignment note before the click (`transcript_alignment_note` :8818). The
+`crates/media_panel/src/media_viewer.rs:3372`); rows carry the five-state
+alignment note before the click (`transcript_alignment_note` :9429). The
 alignment is the same working-transcript computation the workspace gate uses,
 so the rows never disagree with the opened view. Unlinked transcripts —
 their recordings left the gallery index — trail in their own section below
 the rows with honest degradation copy (:5679, never silently hidden), and
 each row offers a two-click delete — Delete arms, Confirm delete dispatches
-`educt_delete_transcript` (`delete_transcript_recording` :3200 closes the
+`educt_delete_transcript` (`delete_transcript_recording` :3287 closes the
 edit lifecycle and reloads the listing on success,
-`apply_transcript_deletion_result` :3257); the server preserves durable
+`apply_transcript_deletion_result` :3344); the server preserves durable
 exports and rendered reels detached from the removed record. Opening a
 transcript — from a Library row or the inspector's Transcripts tab —
-renders the workspace's transcript sub-surface (`open_transcript` :2460 →
-`render_transcript_workspace` :6694), and the header's close affordance
-returns (`close_transcript_workspace` :2532). The inspector pane yields its
+renders the workspace's transcript sub-surface (`open_transcript` :2547 →
+`render_transcript_workspace` :7088), and the header's close affordance
+returns (`close_transcript_workspace` :2620). The inspector pane yields its
 screen share on open; the header toggle restores it in one click (:2488).
 
 - **Workspace**: one strict `educt_get_transcript` dispatch drives paragraph
   blocks (`build_pane_blocks`,
-  crates/media_panel/src/media_viewer.rs:10039), speaker
+  crates/media_panel/src/media_viewer.rs:10727), speaker
   labels, highlight overlays, and cut line-through marks. The sub-surface's
   media body is the RECORDING's (`workspace_media_body`,
-  crates/media_panel/src/media_viewer.rs:6673`):
+  crates/media_panel/src/media_viewer.rs:7067`):
   a transcript linked to a live gallery recording renders the recording's
   asset body — a video-keyed transcript plays the video; an unlinked
   transcript falls to its stored media path, keeping the transcript and
@@ -360,8 +360,8 @@ screen share on open; the header toggle restores it in one click (:2488).
   recording title, bounded 140px player, Select text, transcript text,
   highlights/cuts, Create a reel — renders as ONE virtualized `gpui::list`
   (`render_transcript_workspace`,
-  crates/media_panel/src/media_viewer.rs:6694; item
-  dispatch `render_workspace_list_item` :6962), so long recordings render
+  crates/media_panel/src/media_viewer.rs:7088; item
+  dispatch `render_workspace_list_item` :7369), so long recordings render
   only the visible blocks; the pending label editor and selection popover
   stay pinned above the list. The presentation order is unchanged: recording title → player →
   Select text → transcript → highlights/cuts → Create a reel. Raw layer
@@ -369,18 +369,18 @@ screen share on open; the header toggle restores it in one click (:2488).
   workflow; technical lineage remains available in the inspector.
 - **Sync**: clicking a word seeks the bound shared player to its start
   (`seek_workspace_transcript`,
-  crates/media_panel/src/media_viewer.rs:5063 over
+  crates/media_panel/src/media_viewer.rs:5457 over
   `MediaWidget::seek_to_secs`); while playing, a 4 Hz GPUI-native follow-along
   marks the containing word and KEEPS IT VISIBLE — the marked paragraph block
   is scrolled into the list's viewport by an item-anchored scroll
-  (`start_transcript_follow` :5077 →
-  `follow_marked_block_into_view` :5161 over
-  `current_word_index` :9945, gated on
+  (`start_transcript_follow` :5471 →
+  `follow_marked_block_into_view` :5555 over
+  `current_word_index` :10633, gated on
   `MediaWidget::is_transport_playing`), so the mark never rides off the
   viewport during playback. A manual scroll suspends the viewport tracking
-  (`note_follow_scroll_tick` :5144); the Follow
+  (`note_follow_scroll_tick` :5538); the Follow
   toggle in the sub-surface header re-enables it and reveals the current mark
-  (`toggle_follow_viewport` :5202).
+  (`toggle_follow_viewport` :5596).
 - **Search (S3, 2026-11-04)**: an input in the surface header (header item 2 —
   words surface only; the row keeps its item on both surfaces so reading
   positions stay stable) runs lexical search over the open transcript
@@ -390,15 +390,15 @@ screen share on open; the header toggle restores it in one click (:2488).
   a match is), over the working words joined by single spaces (the same join
   the blocks render), and each occurrence maps to the inclusive word range it
   covers — phrases mark and jump as one range
-  (`transcript_search_matches` :9985, pinned by
+  (`transcript_search_matches` :10673, pinned by
   `transcript_search_matches_orders_maps_and_edges`). Typing rescans once per
   burst, 150 ms after the last keystroke (a GPUI-native timer;
-  `schedule_transcript_search_rescan` :4623 / `rescan_transcript_search`
-  :4643, pinned by `transcript_search_rescan_debounces_the_burst`); the
+  `schedule_transcript_search_rescan` :4875 / `rescan_transcript_search`
+  :4895, pinned by `transcript_search_rescan_debounces_the_burst`); the
   stabilized query lands the first match in view, and Enter/Shift-Enter
   cycle forward/back (wrapping), each jump revealing the match's block
   through the follow reveal's item-anchored scroll
-  (`reveal_transcript_search_match` :4664, pinned by
+  (`reveal_transcript_search_match` :4916, pinned by
   `transcript_search_finds_cycles_and_lands_the_current_match`). Matches
   paint after the researcher overlays so a match stays visible inside a
   highlight, the field-wise composition keeps a struck match's
@@ -408,42 +408,45 @@ screen share on open; the header toggle restores it in one click (:2488).
   beside the input is honest at every state — `current+1/total` while
   matches exist, "No matches" for zero results, "Search needs a word-timed
   view" on text-only views, nothing for a blank query
-  (`transcript_search_status` :10021). Focus in the search box suspends
+  (`transcript_search_status` :10709). Focus in the search box suspends
   viewport tracking (the manual-scroll precedent — typing and the
   auto-landed matches must not fight the follow-along); blur restores
   tracking only when the search took it, and a manually suspended follow
-  stays suspended (`ensure_transcript_search_focus_listeners` :4762,
+  stays suspended (`ensure_transcript_search_focus_listeners` :5014,
   registered idempotently on the workspace's first render — render-time
   registration works (the deferred activation rides the normal effect
   cycle), and registering at render rather than from the click handler
   covers keyboard focus arrivals at the input). Escape clears the query and
   its marks immediately. The search tears down with the surface — close,
-  fresh open, and reload all clear it (`reset_transcript_search` :4746,
+  fresh open, and reload all clear it (`reset_transcript_search` :4998,
   pinned by `transcript_search_resets_with_the_surface`).
 - **Annotation**: word selection is two gestures into the same action tray —
   the selection popover. Press-and-release drag across words (S2, 2026-11-04)
   is the one-gesture path, active in both interaction modes: the surface root
-  arms a pending drag from the exact hovered word (`word_drag_anchor` :834;
-  `drag_last_word` :839, so a release outside words cancels a stale drag), a
+  arms a pending drag from the exact hovered word (`word_drag_anchor` :909;
+  `drag_last_word` :914, so a release outside words cancels a stale drag), a
   release anywhere in the surface completes it, live marks show the anchor
   and the release target during the drag, and the pure state machine
-  dispatches the outcome (`handle_word_drag` :3449, `enum WordDragOutcome`
-  :8877 — Inert/Click/CompleteRange; consumed by `word_drag_released` :3470,
-  pinned by `word_drag_state_machine` :13934). Cross-word outcomes and the
-  two-click fallback (`handle_word_selection` :3367) complete the ordered
-  union range under the tray-mode gate (`selection_tray_mode` :9091 — S5,
+  dispatches the outcome (`handle_word_drag` :3536, `enum WordDragOutcome`
+  :8877 — Inert/Click/CompleteRange; consumed by `word_drag_released` :3557,
+  pinned by `word_drag_state_machine` :14661). Cross-word outcomes and the
+  two-click fallback (`handle_word_selection` :3454) complete the ordered
+  union range under the tray-mode gate (`selection_tray_mode` :9702 — S5,
   2026-11-06: original/aligned views open the FULL tray, re_anchored views
   open the CORRECTION tray, unaligned/untimed views keep the visible
-  refusal) and open the selection popover (`selection_popover` :845, opened
-  by `open_selection_popover` :4396, rendered pinned above the list by
-  `render_selection_popover` :4958). The full tray offers Highlight / Cut /
-  Copy time / Suggest correction / Include in reel — Delete cuts, Enter
+  refusal) and open the selection popover (`selection_popover` :920, opened
+  by `open_selection_popover` :4483, rendered pinned above the list by
+  `render_selection_popover` :5210). The full tray offers Highlight / Cut /
+  Copy time / Suggest correction / Include in reel / Strike in reel clip
+  (the strike arm only when the range sits inside exactly one included
+  clip) — Delete cuts, Enter
   highlights, Escape dismisses; the correction tray offers Suggest
   correction + Copy time — Enter corrects, Delete is inert (cut needs an
   index-identical view), Escape dismisses — keys bound on the tray while it
-  holds focus (`handle_selection_popover_key` :4453 — Delete never binds
+  holds focus (`handle_selection_popover_key` :4540 — Delete never binds
   on the label input, where it is text editing). The
-  index-identical-only actions (Highlight, Cut, Include in reel) refuse on
+  index-identical-only actions (Highlight, Cut, Include in reel, Strike in
+  reel clip) refuse on
   re_anchored views at every selection entry — the popover's actions and
   their keys, and the editor paths that open from them — because working
   indices never anchor source-word tools (the 2026-10-25 overshoot trap).
@@ -454,34 +457,41 @@ screen share on open; the header toggle restores it in one click (:2488).
   The tray is not modal: a fresh anchor dismisses it, a newer completed
   range replaces it, seek clicks keep it (seeking is preview), and opening
   the label editor
+  range replaces/dismisses it, seek clicks leave it
+  be, and opening the label editor
   supersedes it. Highlight opens the label editor over the same range; the
   editor takes typed or pasted labels; Enter confirms, Escape cancels, empty
-  uses "Highlight" (`open_label_editor` :4225, `confirm_label_edit` :4266).
-  Cut dispatches the strike immediately (`popover_cut` :4535); Copy time
+  uses "Highlight" (`open_label_editor` :4312, `confirm_label_edit` :4353).
+  Cut dispatches the strike immediately (`popover_cut` :4622); Copy time
   writes the selection's span in the panel's marks vocabulary ("in 2.0s out
-  5.9s", `popover_copy_time` :4553, with honest degradation when the view
-  carries no word timings); Include in reel flips reel membership over a
-  researcher highlight's exact range (the highlights row's toggle) or creates
-  the highlight with the default label over a fresh range — the reload
-  includes every researcher highlight, so the one click carries the range
-  into the reel (`popover_include_in_reel` :4587, pinned by
-  `popover_include_toggles_reel_membership`); Suggest correction opens the
-  correction editor — the same label-editor machinery with a replacement
-  field (`popover_correct` :4485).
+  5.9s", `popover_copy_time` :4640, with honest degradation when the view
+  carries no word timings); Include in reel flips the composed clip's include
+  flag over its range (the highlights row's toggle path — one source of
+  truth, no dispatch) or creates the highlight with the default label over
+  a fresh range — the reload re-matches every researcher highlight into the
+  composer, so the one click carries the range into the reel
+  (`popover_toggle_reel_include` :4786, pinned by
+  `popover_include_toggles_reel_membership`); Strike in reel clip — offered
+  when the completed range sits inside exactly one included clip — records
+  the sub-range on that clip as an in-reel strike, which the compose bakes
+  into the clip's Keep op (`popover_strike_in_reel` :4831, refusing
+  honestly when the range spans clips or sits in none); Suggest correction
+  opens the correction editor — the same label-editor machinery with a
+  replacement field (`popover_correct` :4572).
   Create/rename/delete
   dispatch `educt_annotation_create`/`update`/`delete`; progress text never
   exposes annotation UUIDs. Hand highlights exist only on index-identical
-  views — the tray-mode gate (`selection_tray_mode` :9091, S5) opens the
+  views — the tray-mode gate (`selection_tray_mode` :9702, S5) opens the
   correction tray instead on re_anchored views and surfaces a human-readable
   reason on the unselectable states; the panel never re-implements the
   server's projection (D5). Highlight rows show an excerpt, with Include in
   reel, Rename, and Delete actions rather than source-word indices.
 - **Cuts (R2, 2026-10-27)**: the same completed range can be cut instead of
   labeled — from the popover's Cut (or its Delete key) or the editor's Cut
-  selection (`strike_selected_range` :3812, `create_workspace_strike`
-  :3833). Struck words render line-through on index-identical views
-  (`block_word_char_range` :9327; overlapping marks compose field-wise —
-  `resolved_highlight_runs` :9276). The Cuts list shows excerpts and a
+  selection (`strike_selected_range` :3899, `create_workspace_strike`
+  :3920). Struck words render line-through on index-identical views
+  (`block_word_char_range` :9938; overlapping marks compose field-wise —
+  `resolved_highlight_runs` :9887). The Cuts list shows excerpts and a
   Restore action through the shared kind-dispatched delete. The pane parses
   strikes only under the server's strike identity (user +
   researcher_annotation + exactly one Cut op), so compose EDLs and model EDLs
@@ -490,7 +500,7 @@ screen share on open; the header toggle restores it in one click (:2488).
   corrected in the panel without rewriting the source — the correction is
   a LAYER over the immutable source words. The flow: select the misheard
   words → Suggest correction → type the replacement → one edit admission
-  covers the whole chain (`dispatch_workspace_correction` :3588): the
+  covers the whole chain (`dispatch_workspace_correction` :3675): the
   selection's SOURCE range resolves (identity on original/aligned views;
   `educt_locate` basis "source" on re_anchored views — the server's own
   re-anchored index map does the translation, never a panel-side
@@ -512,23 +522,51 @@ screen share on open; the header toggle restores it in one click (:2488).
   trap pin — the stored edit anchors the TRANSLATED source range, never
   the working range), and the admission extension in
   `label_editor_confirm_and_cancel_lifecycle`.
-- **Reels (R3, 2026-10-27)**: three compose modes build the reel EDL
-  directly from the pane's annotations (`compose_reel_params` :9880 over
-  `union_word_ranges` :9427) — included highlights, the whole recording with
-  cuts applied, or included highlights with cuts applied. The actions render
-  after the transcript and annotation sections and appear only when their
-  inputs exist. Each chains `educt_store_layer` → `educt_render_edl`
-  (`compose_workspace_reel` :3949) under the single edit admission. Compose
-  provenance remains `pane_reel_compose`, so its output never re-parses as a
-  researcher strike. The rendered reel lands as a playable asset through
-  display-hint ingestion. Membership still keys on provenance and per-clip
-  inclusion, never label text.
+- **Reels (R3 2026-10-27; S6 composer 2026-11-06)**: the reel is an editable
+  object — the composer's ordered clip list
+  (`reel_clips: Vec<ReelClip>` :958, the ONE membership-and-order source of
+  truth; the unordered `reel_selection` set it replaces is deleted). Each
+  clip is a researcher highlight with its own include flag and in-reel
+  strike sub-ranges; the reel section renders the clips in composed order
+  with ↑/↓ reorder, the include toggle, a duration readout, and per-strike
+  Restore (`render_workspace_reel_section` :8260). Composer state survives
+  every workspace reload, keyed to highlight identity — annotation id +
+  source range (`rematch_reel_clips` :4672 on every
+  `apply_transcript_result` :3223): order, inclusion, and strikes keep
+  their deltas across annotation edits, new researcher highlights join
+  included at the tail, deleted highlights drop their clips. The ordered
+  builder (`composed_keep_ranges` :10044) emits Keep ops in composer order
+  through the server's own difference math (`union_ranges` + the published
+  `subtract_cuts_from_range`, never a panel fork — the panel's
+  `union_word_ranges` mirror is deleted): in-reel strikes bake into the
+  clip's Keep op, and a later clip that overlaps an earlier one keeps only
+  its unplayed remainder — so a composer EDL carries no Cut ops in the
+  assemble form (a per-clip strike as a Cut would strike EVERY clip
+  overlapping the range). Three compose modes build the reel EDL directly
+  (`compose_reel_params` :10576) — assemble (the ordered clips), reduce
+  (the whole recording with cuts applied), mixed (clips + global cuts) —
+  each chaining `educt_store_layer` → `educt_render_edl`
+  (`compose_workspace_reel` :4036) under the single edit admission, visible
+  only when their inputs exist. Compose provenance remains
+  `pane_reel_compose`, so its output never re-parses as a researcher
+  strike. The rendered reel lands as a playable asset through display-hint
+  ingestion. The preview (`toggle_reel_preview` :5336) plays the composed
+  order on the shared player without rendering — the span plan is
+  `edl_to_clip_plan`'s output over the stored SOURCE bundle words
+  (`reel_preview_plan` :10086 over `source_words` :499, parsed from the
+  get-transcript bundle — never the working view's interpolated timings),
+  so preview and rendered reel agree on `re_anchored` views; the auto-seek
+  chain (`start_reel_preview` :5360 → `reel_preview_tick` :5401 →
+  `step_reel_preview` :5432) polls `transport_position_secs` on the
+  follow-loop's task pattern, holds while paused, and tears down at every
+  sub-surface site — surface switch, open, close, reload — and on
+  widget-None (`stop_reel_preview`).
 
 ## Playback and layout contracts
 
 The selected media entity is owned directly by the viewer so trim marks and the
 playback clock remain reachable; selection replacement resolves through the
-stable-Asset weak registry (`crates/media_panel/src/media_viewer.rs:712-714).
+stable-Asset weak registry (`crates/media_panel/src/media_viewer.rs:789-790).
 The panel remains a vertically split viewer/director surface with a draggable
 split (`MediaPanel`, `VerticalSplitState`, and `MediaPanel::render` in
 `crates/media_panel/src/media_panel.rs`).
@@ -572,7 +610,7 @@ transcript sub-surface the close affordance and recording name live in the
 header row above the workspace list — the first thing in view — and a failed
 player never dead-ends navigation or transcript text
 (`render_workspace_header_item`,
-crates/media_panel/src/media_viewer.rs:7012). Playback speed is a
+crates/media_panel/src/media_viewer.rs:7419). Playback speed is a
 transport affordance on both media kinds (2026-11-06, S4): the transport's
 speed button cycles 0.5×/1×/1.25×/1.5×/2× (`SPEED_STEPS`/`next_speed`,
 `crates/hkask-media-widget/src/transport.rs:18,23`), and the widget applies
@@ -598,8 +636,8 @@ so text and media address each other — the reference model's
 capability (1) holding in experience, not just in data. Its lifecycle is
 the panel's complete loop, entirely in the panel:
 
-**import → organize → transcribe → read along → highlight → cut →
-compose and render a reel → play the reel.**
+**import → organize → transcribe → read along → highlight → cut → order
+and strike in the reel composer → preview → render a reel → play the reel.**
 
 Its capabilities and the surfaces that carry them:
 
@@ -616,7 +654,7 @@ Its capabilities and the surfaces that carry them:
 | In-panel layered correction: select misheard words → type the replacement → merged correction layer + realign chain, translated through the server on corrected views | Workspace transcript sub-surface |
 | Highlight create / rename / delete (labeled selections) | Workspace transcript sub-surface (label editor) |
 | Cut selection with line-through overlay and Restore | Workspace transcript sub-surface |
-| Reel compose (assemble / reduce / mixed), render, and play | Workspace transcript sub-surface |
+| Reel composer: ordered clips with include toggles, in-reel strikes, and preview; compose (assemble / reduce / mixed), render, and play | Workspace transcript sub-surface |
 | Delete (two-click confirm; transcripts and renders survive, detached) | Library + workspace |
 | Tags and notes (researcher annotations) | Inspector pane (Annotations tab) |
 
@@ -644,7 +682,7 @@ section with the same open and delete affordances.
 | In-panel layered transcription correction (merged layers, supersession surfaced, re_anchored selections translated server-side) | supplied (2026-11-06, S5) |
 | Per-recording alignment flag on the Library rows and the inspector's Transcripts tab | supplied (2026-10-27) |
 | Cut selection with line-through overlay and Restore | supplied (2026-10-27) |
-| Reel compose (assemble/reduce/mixed), clip toggles, render, and play | supplied (2026-10-27) |
+| Reel composer: ordered clip list, per-clip include, in-reel strikes baked into Keep ops, source-words preview, compose (assemble/reduce/mixed), render, and play | supplied (2026-11-06, S6 — replaces the unordered membership set) |
 | Researcher tags/notes create/replace/delete in the inspector pane | supplied (2026-10-27) |
 | Trim on audio through the same workspace marks | supplied (2026-10-27) |
 | Per-surface purpose copy | supplied (2026-10-27) |
