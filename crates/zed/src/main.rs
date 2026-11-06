@@ -5337,6 +5337,40 @@ mod tests {
         );
     }
 
+    // zed-kask: D100 (M5 write side) — the provenance-routing pin, the one
+    // chain link with no runtime surface reachable from a unit test: the
+    // composition-root line that routes `KaskToolSource::invoke`'s explicit
+    // host-set provenance parameter into the runtime's provenance-stamping
+    // entry. Every other link of the thread→stream→source→runtime→wire
+    // chain is behavior-pinned (`calling_provenance_is_captured_from_the_
+    // threads_d100_mark`, `kask_server_tool_passes_the_calling_threads_
+    // provenance`, hkask-mcp's `call_request_params_serialize_the_calling_
+    // provenance_meta`); this one is pinned by source structure. If the
+    // line ever drops the provenance argument or routes through the
+    // un-stamped `ToolPort::invoke`, the M5 write side silently degrades
+    // to always-public `_meta`. Needles are split via `concat!` so this
+    // test's own source cannot satisfy them (the D43 source-pin pattern).
+    #[test]
+    fn zed_kask_tool_source_routes_the_provenance_parameter_to_the_stamping_entry() {
+        let (_, impl_tail) = include_str!("main.rs")
+            .split_once("impl agent::KaskToolSource for ZedKaskToolSource {")
+            .expect("the ZedKaskToolSource impl");
+        // Bound the region to the impl block (the impl is followed by the
+        // server-env helper; first-occurrence split, the precedent order).
+        let (impl_block, _) = impl_tail
+            .split_once("async fn kask_server_env")
+            .expect("the impl block's end boundary");
+        let entry_needle = concat!(
+            ".invoke_with_call_pro",
+            "venance(&server_id, &tool, args, agent_id, provenance)"
+        );
+        assert!(
+            impl_block.contains(entry_needle),
+            "the tool source must route its explicit provenance parameter into the \
+             provenance-stamping entry — not the un-stamped ToolPort path"
+        );
+    }
+
     // zed-kask: in-process memory tagging must obey the saved
     // Settings → Kask → Models classifier. `HKASK_CLASSIFIER_MODEL` is the
     // child/CLI delivery seam; reading it here let stale inherited startup
