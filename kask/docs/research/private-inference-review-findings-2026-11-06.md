@@ -429,10 +429,11 @@ forward local-routing rule. **No implementation in this engagement.**
 
 ## 7. Disposition addendum (2026-11-06, the operator's "proceed as proposed")
 
-The operator approved proceeding on the review's proposals; the five
-actionable findings were implemented as five commits (each pathspec-
-committed, gates re-run, D100 updated in the same change where the seam
-changed):
+The operator approved proceeding on the review's proposals; the first
+wave landed the five actionable findings as five commits, and the
+operator's follow-up approval (2026-11-06) closed item 4 and F5 (each
+pathspec-committed, gates re-run, D100 updated in the same change where
+the seam changed):
 
 - **F7** — `cafb10b729`: the composition-root routing pin
   (`zed_kask_tool_source_routes_the_provenance_parameter_to_the_stamping_entry`,
@@ -456,11 +457,26 @@ changed):
 - **F8** closed earlier by the P2 stream's own landing
   (`8ca8aa648a`, the reasoning_content fix + the honest
   instrument-confounded verdict).
-- **F5** (the perimeter's surfaced-reason proposal) remains DEFERRED — a
-  low-severity UX proposal never filed as a task; it changes the pinned
-  pure label function's shape and should ride a panel-UX pass.
-- **Item 4** (the private store's lifecycle) remains at the RESERVED
-  operator checkpoint (`4b36bc63`) — "proceed as proposed" was read as
-  the actionable findings only; the item-4 proposal was explicitly the
-  recommendation + checkpoint, not implementation. If the operator's
-  approval meant the mirror too, say the word.
+- **F5** (2026-11-06, the operator's follow-up approval) — `d98663cc18`:
+  the marked toggle's tooltip surfaces the disabled-server set
+  ("Tools off on this thread: …" naming the policy field), the resolved
+  set read extracted to one home (`agent::private_thread_disabled_servers`
+  — the same resolution the perimeter refuses by); the pin asserts the
+  surfaced set, the empty-set case, and the marked-state-only scoping.
+- **Item 4** (2026-11-06, the operator's ruling on the reserved checkpoint:
+  the MIRROR) — `d4311a27a4`: the private store's forgetting surfaces
+  mirrored bridge-side — the consolidation TWIN (the same
+  `build_curator_consolidation` home over the private store, fired on the
+  one timer tick, rebuilt after the private store's heal) and the
+  age-gated turn-storage forgetting leg (`fire_private_forgetting_pass`,
+  the valve's fail-closed default scope, the knob
+  `kask.memory.forgetting_days` shared with the child, `0` disables,
+  recall-sparing within the window). Both inference-free — the mirror adds
+  no cloud-exposure surface; the private store keeps no child-side
+  surface; the public store gets no bridge-side prune. The FORWARD
+  LOCAL-ROUTING RULE is recorded in D100: any future inference-carrying
+  memory pass over private content routes its model leg through the
+  local leg (the item-3 pattern) or does not ship for the private store.
+  Pins: `private_consolidation_twin_prunes_low_confidence_across_the_split`
+  + `private_forgetting_leg_prunes_aged_turn_storage_only`. The
+  append-only alternative was not taken; the operator ruled the mirror.
