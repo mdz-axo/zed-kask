@@ -122,3 +122,34 @@ whether Phase 2 — the write-side passage embeds of private-marked rows —
 rides the first implementation or follows. The alternative this design
 rejects: routing private queries to the configured cloud model — the
 crossing D100 names as the seam.
+
+## 8. The remaining legs of the same class (the 2026-11-06 review's extension, operator-directed)
+
+The same repair family has two more server-side inference legs that cross
+private thread content to cloud models, both unruled today (the review:
+`kask/docs/research/template-inference-private-mode-decision-models-review-2026-11-06.md`
+sections 2.1/2.3; appended under the operator's 2026-11-06 "proceed with the
+proposed actions" direction):
+
+1. **The research server's rerank leg.** The deep-search rerank stage sends
+   private thread content (query plus retrieved snippets) through
+   `HKASK_RERANK_MODEL`'s cloud provider regardless of the call's provenance
+   — the same shape this design closed at the curator child, with no
+   recorded ruling covering it (the corpus surface carries the PI's
+   off-axis ruling, M5 plan section 4; the research server has none). The
+   M5 read side is wired into every kask server by construction
+   (`call_provenance.rs`), so the same rule applies mechanically: a
+   private-provenance call routes its rerank leg to a local model or skips
+   the stage with a surfaced note (degrade-not-leak), never a cloud
+   crossing.
+2. **The corpus server's assisting-inference legs.** `corpus_embed`,
+   `corpus_tag_chunks` and the OCR vision leg on private-provenance calls
+   embed, tag and OCR through the cloud models. The M5 off-axis ruling
+   covers the recall axis; the ruling owed here is whether that acceptance
+   covers these tool legs too, or whether the intake-time corpus privacy
+   field (M5 plan section 4.1's named future mechanism) is scheduled.
+
+Both ride the decision the operator already took for this design — the
+provenance-routed model leg — and need no new mechanism; the alternative
+they reject is the same one this design rejects: routing private content
+to the configured cloud model.
