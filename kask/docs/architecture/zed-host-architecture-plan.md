@@ -79,7 +79,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hkask-types`                                                                             | Foundation: IDs, `InferencePort` trait (single/stream/message/vision/embed/list/rerank plus child-local `media_generate`; no `generate_batch` method; `kask/crates/hkask-types/src/ports/inference_port.rs:184-409`), `MemoryPort`, Regulation records, Curator directives, vocab, `VoiceDesign`, and `ExpectProposal`. |
+| `hkask-types`                                                                             | Foundation: IDs, `InferencePort` trait (single/stream/message/vision/embed/list/rerank plus child-local `media_generate`; no `generate_batch` method; `kask/crates/hkask-types/src/ports/inference_port.rs:190-442`), `MemoryPort`, Regulation records, Curator directives, vocab, `VoiceDesign`, and `ExpectProposal`. |
 | `hkask-storage`                                                                           | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). SQLCipher-encrypted SQLite with sqlite-vec virtual tables for vectors (`kask/crates/hkask-storage/src/core/connection.rs:157`, `kask/crates/hkask-storage/src/core/sql/schema.sql:7`). The media `GalleryStore` moved to the media server crate (2026-10-13, commit `c85b1e4896` — `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`); hkask-storage keeps the storage layer only.                                                                                                                                                       |
 | `hkask-memory`                                                                            | Unique memory + confidence-based consolidation.                                                                                                                                                                                                                                                                           |
 | `hkask-regulation`                                                                        | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). 21 source files / 13,082 lines (measured 2026-09-28: `find src -name '*.rs' -exec cat {} + | wc -l`).                      |
@@ -120,7 +120,7 @@ Two shared-code mappings are especially easy to misstate:
   test come from upstream. The fork's `length_with_pending_tool_calls_remains_truncated`
   test protects D36's pending-tool drain, not a fork-local D25 mapper.
 - **D35** keeps media generation child-local. `LazyInferencePort::media_generate`
-  calls the process-local `MediaRouter` (`kask/crates/hkask-inference/src/hkask_inference.rs:370-390`).
+  calls the process-local `MediaRouter` (`kask/crates/hkask-inference/src/hkask_inference.rs:396-416`).
   The inference IPC bridge has no media method, and `InferencePort` has no
   `generate_batch` method.
 
@@ -215,7 +215,7 @@ The current system has two credential paths with different owners.[^fowler-di]
    This is why media generation stays child-local: the media child receives
    `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`, while the editor process does
    not mirror those values into a Kask keyring
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:527-628`).
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:528-629`).
 3. **Sovereignty key storage.** `hkask-keystore` uses `oo7` directly for its
    Secret Service entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`;
    `kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`). It does not use
@@ -247,7 +247,7 @@ The connection surfaces use established patterns (ports-and-adapters, decorator,
 | Surface | Implementation | Boundary |
 |---|---|---|
 | Inference chat/vision/embed/list/rerank | `LanguageModelInferencePort` plus inference IPC | MCP child ↔ editor process; Zed `LanguageModelRegistry` stays editor-side (`kask/crates/kask_bridge/src/inference_chat.rs:604`) |
-| Media generation | `LazyInferencePort::media_generate` → process-local `MediaRouter` | Child-local; no media IPC (`kask/crates/hkask-inference/src/hkask_inference.rs:370-390`) |
+| Media generation | `LazyInferencePort::media_generate` → process-local `MediaRouter` | Child-local; no media IPC (`kask/crates/hkask-inference/src/hkask_inference.rs:396-416`) |
 | Provider batch QA | Corpus/provider batch implementation | Not an `InferencePort::generate_batch` method and not an IPC bridge surface |
 | Tool dispatch | `McpRuntime` implements `ToolPort` | Editor-owned runtime → MCP children over stdio (`kask/crates/hkask-mcp/src/runtime.rs`) |
 | Memory ingestion | Re-settable agent hook → `BridgeMemoryPort` | Editor thread → shared curator storage; chunk embeddings include `passage_text` (`kask/crates/kask_bridge/src/memory/ingest.rs:397,587`) |

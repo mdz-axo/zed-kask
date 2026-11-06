@@ -107,14 +107,14 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:336-357` |
 | `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:405-440` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:472-569` |
-| `KaskPrivateInferenceSettings` | provider id `private-local`; host 127.0.0.1; port 8010 (host/port from `PlacementPolicy::default()`) | `kask/crates/kask_bridge/src/settings.rs:587-621` |
+| `KaskPrivateInferenceSettings` | provider id `private-local`; host 127.0.0.1; port 8010 (host/port from `PlacementPolicy::default()`) | `kask/crates/kask_bridge/src/settings.rs:598-632` |
 
 ## Built-in MCP registry
 
 `BUILT_IN_MCP_SERVERS` contains 8 descriptors
-(`kask/crates/kask_bridge/src/mcp_servers.rs:49-363`). IDs and descriptions
+(`kask/crates/kask_bridge/src/mcp_servers.rs:49-364`). IDs and descriptions
 are derived from that registry
-(`kask/crates/kask_bridge/src/mcp_servers.rs:368-369,415-420`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:369-370,416-421`).
 
 ```mermaid
 classDiagram
@@ -140,7 +140,7 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-004
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-363 (8-entry registry)
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:26-46 (BuiltinMcpServer); kask/crates/kask_bridge/src/mcp_servers.rs:49-364 (8-entry registry)
 status: VERIFIED
 verified_date: 2026-10-28
 -->
@@ -148,7 +148,7 @@ verified_date: 2026-10-28
 ### Allowlist sizes
 
 Sizes below are counted directly from each descriptor in
-`kask/crates/kask_bridge/src/mcp_servers.rs:49-363` (method: extraction of the
+`kask/crates/kask_bridge/src/mcp_servers.rs:49-364` (method: extraction of the
 quoted env-var names inside each `credentials` / `config_env` array).
 
 | Server | Credentials | Config |
@@ -169,18 +169,18 @@ The media server's live router is pinned at 74 tools
 
 `build_mcp_server_env` receives settings, a credential provider, an optional
 inference socket, and an optional timeout
-(`kask/crates/kask_bridge/src/mcp_servers.rs:495-502@build_mcp_server_env`, full fn to `:659`). It then:
+(`kask/crates/kask_bridge/src/mcp_servers.rs:496-503@build_mcp_server_env`, full fn to `:660`). It then:
 
 1. filters non-secret configuration and adds the database catalog and delegated
-   tool grant (`kask/crates/kask_bridge/src/mcp_servers.rs:498-525@build_mcp_server_env`);
+   tool grant (`kask/crates/kask_bridge/src/mcp_servers.rs:499-526@build_mcp_server_env`);
 2. filters and resolves credentials from shell or keychain, with first-run
    provisioning for the shared database passphrase
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:527-628@build_mcp_server_env`);
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:528-629@build_mcp_server_env`);
 3. adds the inference socket and timeout
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:630-651@build_mcp_server_env`).
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:631-652@build_mcp_server_env`).
 
 Unknown IDs receive neither credentials nor configuration
-(`kask/crates/kask_bridge/src/mcp_servers.rs:435@filter_credentials_for_server,934@filter_config_env_for_server`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:436@filter_credentials_for_server,935@filter_config_env_for_server`).
 
 ## Nonblocking composition
 
@@ -196,7 +196,7 @@ condenser, and launches the configured servers
 
 Use this procedure to add a managed MCP server without leaking unrelated
 configuration or credentials. The canonical registry currently contains 8
-servers (`kask/crates/kask_bridge/src/mcp_servers.rs:49-363`).
+servers (`kask/crates/kask_bridge/src/mcp_servers.rs:49-364`).
 
 ```mermaid
 flowchart TD
@@ -210,7 +210,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-002
 verified_date: 2026-10-19
-verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:28-44 (descriptor shape); kask/crates/kask_bridge/src/mcp_servers.rs:49-363 (registry); kask/crates/kask_bridge/src/mcp_servers.rs:495-659 (build_mcp_server_env)
+verified_against: kask/crates/kask_bridge/src/mcp_servers.rs:28-44 (descriptor shape); kask/crates/kask_bridge/src/mcp_servers.rs:49-364 (registry); kask/crates/kask_bridge/src/mcp_servers.rs:496-660 (build_mcp_server_env)
 status: VERIFIED
 -->
 
@@ -221,7 +221,7 @@ Add one `BuiltinMcpServer` value to `BUILT_IN_MCP_SERVERS`. Supply a unique
 registry order is stable and used by the panel
 (`kask/crates/kask_bridge/src/mcp_servers.rs:26-50`). The ID and description
 views derive from the registry, so no companion list is maintained
-(`kask/crates/kask_bridge/src/mcp_servers.rs:368-369,415-420`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:369-370,416-421`).
 
 #### 2. Declare the credential boundary
 
@@ -231,17 +231,17 @@ non-optional, so every server declares its credential boundary explicitly
 (`kask/crates/kask_bridge/src/mcp_servers.rs:37-44`).
 
 `filter_credentials_for_server` passes only the declared names and gives an
-unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:435@filter_credentials_for_server`).
+unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:436@filter_credentials_for_server`).
 Add an allowlist-alignment test beside the existing per-server tests, such as
 `research_allowlist_matches_actual_reads`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1388@research_allowlist_matches_actual_reads`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1420@research_allowlist_matches_actual_reads`).
 
 #### 3. Declare the non-secret configuration boundary
 
 Set `config_env` to `&[]` or an exact list of non-secret variables emitted
 by `KaskSettings::mcp_env` (`kask/crates/kask_bridge/src/settings.rs:694`). The
 config filter also fails closed for unknown IDs
-(`kask/crates/kask_bridge/src/mcp_servers.rs:934@filter_config_env_for_server`). Do not place database
+(`kask/crates/kask_bridge/src/mcp_servers.rs:935@filter_config_env_for_server`). Do not place database
 passphrases or API keys in this list.
 
 The current `media` descriptor is the worked example: four credentials
@@ -286,7 +286,7 @@ Run the focused server tests, the bridge allowlist tests, and then
 
 The composed-path regression test is
 `build_mcp_server_env_composition_respects_allowlists`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1568@build_mcp_server_env_composition_respects_allowlists`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1600@build_mcp_server_env_composition_respects_allowlists`).
 
 ## Further reading
 

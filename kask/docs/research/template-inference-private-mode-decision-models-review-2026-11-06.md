@@ -841,3 +841,27 @@ prescreen entries.
   on the operator confirming the JEV reference; if the operator corrects the
   reference, 3.3's evaluation is void and the card re-opens with the correct
   anchor.
+
+## Addendum — later the same day (2026-11-06, post-adoption)
+
+The operator's in-session rulings supersede three of this report's state
+descriptions, recorded here rather than silently edited into the body (the
+dated-amendment convention): JEV is CONFIRMED as the intended reference
+("let's use JEV"); the decision-model settings field is ADOPTED per the
+six-file settings-chain pattern (commit `b92124aebb`); and §3.3's "no
+decision model is wired today" is void — `kask.models.decision_model` now
+exists (default `OpenRouter/typesafe/jev-1.14` per `DEFAULT_DECISION_MODEL`,
+served over OpenRouter's Decisions API), and the eqm `market_score_rationale`
+scoring routes through it: the eqm citations in §1.4/§1.5 (finding A7) and
+§3.2 describe the pre-adoption state (the chat-JSON prompt path at
+`eqm.rs:296-330` in the review-morning numbering — since replaced by twelve
+typed Score questions over the `InferenceMethod::Decision` wire). Card
+`45e4f8fd`'s criteria are all dispositioned (verified done, with the
+ruling recorded verbatim). Two parallel-stream commits the same day also
+supersede §2.1's seam table: the curator tool-side query embed landed
+(`54688d615b`, Phase 2 following in `89c5fbfe26`) and the classifier
+degrade lifted (`79e8964d96`, private tagging through the local
+classifier); the remaining unruled same-class legs stay recorded in the
+tool-query-embed design doc §8. This addendum also re-anchored the
+citation lines this report's own commits had shifted in the reference docs
+(the drift-gate failure class fixed in the same pass).

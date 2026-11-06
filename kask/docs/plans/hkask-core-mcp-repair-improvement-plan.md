@@ -224,7 +224,7 @@ and are retained in prose form as the historical record):**
 **Class:** reproduced packaging defect and verified CI coverage gap. **Severity:** High for capability availability; Medium for CI gap. **Confidence:** High.
 
 **Evidence:**
-- `kask/crates/kask_bridge/src/mcp_servers.rs:520–538` registers spreadsheet. *(Historical evidence: the
+- `kask/crates/kask_bridge/src/mcp_servers.rs:521–539` registers spreadsheet. *(Historical evidence: the
   spreadsheet capability has since been retired from the registry — the cite records the audited state,
   not the current tree.)*
 - `kask/scripts/build/mcp-servers.txt:12–22` omits it.

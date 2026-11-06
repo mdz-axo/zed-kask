@@ -403,14 +403,14 @@ installed automatically.
 `classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
 each returning `Option<String>` (`None` = env var not injected; the settings
 layers carry the code defaults and inject these env vars for MCP server
-children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:472-569`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:191-229`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
+children). The general/chat, embedding, classifier, QA-generation, and OCR defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:472-581`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value: media STT, media vision, and research reranking are defined in `kask/crates/hkask-inference/src/model_constants.rs:223-261`. TTS, video, and image-generation remain explicitly unconfigured when their media setting is empty.
 
 ## Private Inference (`KaskPrivateInferenceSettings`)
 
 The private local leg's PI-owned policy — M7/Seam B (extends D9): the
 `openai_compatible` provider id the leg registers under and the loopback
 endpoint a launched llama-server serves on
-(`kask/crates/kask_bridge/src/settings.rs:587-621`). The served-model fleet is
+(`kask/crates/kask_bridge/src/settings.rs:598-632`). The served-model fleet is
 registry data (the shipped model briefs in `kask/registry/model-briefs/`,
 embedded through `hkask_private_inference::local_leg::fleet`), never a
 settings list; the endpoint token lives at the provider `api_url` keychain

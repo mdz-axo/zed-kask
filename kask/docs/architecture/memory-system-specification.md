@@ -186,7 +186,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-ARCH
 verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/memory.rs (impl MemoryPort for RealMemoryPort — ingest only, no-op trait recall; RealMemoryPort::recall_context_curator / RealMemoryPort::recall_thread_curator), kask/crates/kask_bridge/src/memory/ingest.rs:277-666 (write path), kask/crates/hkask-memory/src/memory_store.rs:269-330 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:719 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
+verified_against: kask/crates/kask_bridge/src/memory.rs (impl MemoryPort for RealMemoryPort — ingest only, no-op trait recall; RealMemoryPort::recall_context_curator / RealMemoryPort::recall_thread_curator), kask/crates/kask_bridge/src/memory/ingest.rs:277-666 (write path), kask/crates/hkask-memory/src/memory_store.rs:269-330 (MemoryStore), kask/crates/kask_bridge/src/settings.rs:731 (effective_embedding_model — no constant fallback), kask/crates/hkask-storage/src/core/sql/schema.sql:1-6
 status: VERIFIED
 -->
 
@@ -1345,7 +1345,7 @@ already exposes this field; no UI omission is intended.
 | Variable                          | Default                               | Description                            |
 | --------------------------------- | ------------------------------------- | -------------------------------------- |
 | `HKASK_MEMORY_INGEST_CONCURRENCY`  | 1                                     | Ingestion semaphore permits (`memory.rs:380-400`) |
-| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:719`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
+| `HKASK_EMBEDDING_MODEL`            | (none — must be configured) | Embedding model, injected from `kask.models.embedding_model` / `kask.corpus.embedding_model` (`kask/crates/kask_bridge/src/settings.rs:731`); empty = embedding-dependent calls fail visibly naming the setting — no constant fallback (the operator's no-hidden-models spec) |
 | `HKASK_EMBEDDING_DIM`             | 1024                                  | Embedding vector dimension — the width embed requests ask MRL models for (`kask/crates/hkask-storage/src/core/connection.rs:105-116`) |
 | `HKASK_CURATOR_DB`                | `agents/curator/curator.db` under data dir | Curator DB path override (`curator_stores.rs:20-29`) |
 | `HKASK_DB_PASSPHRASE`             | keychain / `"allostery"`              | SQLCipher passphrase override — the ONE passphrase for every kask SQLCipher DB (`kask/crates/hkask-keystore/src/keychain.rs:347-352`) |

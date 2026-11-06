@@ -69,7 +69,7 @@ the typed model-brief errors, the fleet embed
 endpoint construction home
 (`kask/crates/hkask-private-inference/src/local_leg/launch.rs:26,34`), and
 the M7/Seam-B settings surface at `98499104aa`:
-`KaskPrivateInferenceSettings` (`kask/crates/kask_bridge/src/settings.rs:587-621`,
+`KaskPrivateInferenceSettings` (`kask/crates/kask_bridge/src/settings.rs:598-632`,
 host/port delegated to `PlacementPolicy::default()` by construction), the
 provider-entry emission (`kask/crates/kask_bridge/src/private_inference.rs:56,87,95`),
 the token slot == the provider `api_url` slot, and the settings page
