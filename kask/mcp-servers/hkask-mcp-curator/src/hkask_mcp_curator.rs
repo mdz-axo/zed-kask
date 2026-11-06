@@ -87,6 +87,22 @@ struct SemanticRecall {
     /// in tool responses so an embedding-model migration window reads as
     /// degradation, never as an empty store.
     excluded_model_mismatch: usize,
+    /// M5 (FR-4 read side, falsifier (b)): h_mems excluded because they
+    /// carry the private-inference mark and the current call's context
+    /// is public — surfaced by every consumer, never silently dropped
+    /// (zero fragments with exclusions reads as filtered, not empty).
+    excluded_private: usize,
+}
+
+/// M5 (FR-4 read side): whether the current call's provenance admits
+/// the row — private-marked rows flow ONLY in private call contexts
+/// (the `_meta` mark the parent sets; absent reads public, fail-closed
+/// for recall). The ONE predicate every fragment-emitting site shares;
+/// each site surfaces its own exclusion count.
+fn call_admits(h_mem: &hkask_storage::HMem) -> bool {
+    hkask_mcp_server::current_call_provenance()
+        == hkask_types::InferenceProvenance::PrivateInference
+        || h_mem.inference_provenance != hkask_types::InferenceProvenance::PrivateInference
 }
 
 fn degradation_note(
@@ -185,6 +201,22 @@ fn exact_recall_leg(
         Ok(h_mems) => h_mems,
         Err(e) => return json!({"error": format!("{e}")}),
     };
+    // M5 (FR-4 falsifier (b)): a public call context never returns a
+    // private-marked row — the exclusion is counted and surfaced,
+    // never silently dropped (an empty leg with exclusions reads as
+    // filtered, not as "no memory found").
+    let mut excluded_private = 0usize;
+    let h_mems: Vec<_> = h_mems
+        .into_iter()
+        .filter(|h_mem| {
+            if call_admits(h_mem) {
+                true
+            } else {
+                excluded_private += 1;
+                false
+            }
+        })
+        .collect();
     let hits = match take {
         Some(limit) => h_mems.iter().take(limit).collect::<Vec<_>>(),
         None => h_mems.iter().collect::<Vec<_>>(),
@@ -201,6 +233,9 @@ fn exact_recall_leg(
         .collect();
     let mut leg = json!({});
     leg["count"] = json!(serialized.len());
+    if excluded_private > 0 {
+        leg["excluded_private_rows"] = json!(excluded_private);
+    }
     if let Some(reason) = fallback_reason {
         leg["mode"] = json!("entity_exact");
         leg["note"] = json!(format!(
@@ -296,6 +331,9 @@ impl CuratorServer {
         let results = outcome.results;
         let mut fragments = Vec::with_capacity(results.len());
         let mut resolution_failures = 0usize;
+        // M5: the privacy filter's surfaced exclusion count (never a
+        // silent drop).
+        let mut excluded_private = 0usize;
         let mut seen_h_mem_ids: std::collections::HashSet<String> =
             std::collections::HashSet::new();
         let mut per_entity_counts: std::collections::HashMap<String, usize> =
@@ -335,6 +373,14 @@ impl CuratorServer {
                         if !seen_h_mem_ids.insert(h_mem.id.to_string()) {
                             continue;
                         }
+                        // M5 (falsifier (b)): a public call context never
+                        // receives a private-marked row; the exclusion is
+                        // counted, surfaced, and the row skipped — never
+                        // silently dropped and never substituted.
+                        if !call_admits(&h_mem) {
+                            excluded_private += 1;
+                            continue;
+                        }
                         per_entity_counts
                             .entry(entity_ref.clone())
                             .and_modify(|count| *count += 1)
@@ -358,6 +404,7 @@ impl CuratorServer {
             fragments,
             resolution_failures,
             excluded_model_mismatch: outcome.excluded_model_mismatch,
+            excluded_private,
         })
     }
 
@@ -423,6 +470,9 @@ impl CuratorServer {
                         "mode": "semantic",
                         "results": serialized,
                     });
+                    if recall.excluded_private > 0 {
+                        result["excluded_private_rows"] = json!(recall.excluded_private);
+                    }
                     if recall.excluded_model_mismatch > 0 {
                         result["model_mismatch_excluded"] =
                             json!(recall.excluded_model_mismatch);
@@ -440,7 +490,7 @@ impl CuratorServer {
                 // able to tell "no similar memories" from "semantic recall
                 // unavailable" (the unwrap_or(0) trap).
                 Err(reason) => {
-                    let exact = memory.query_deduped(&req.query).map_err(|e| match e {
+                    let mut exact = memory.query_deduped(&req.query).map_err(|e| match e {
                         hkask_memory::MemoryStoreError::HMem(
                             hkask_storage::HMemError::Infra(ref infra),
                         )
@@ -454,12 +504,34 @@ impl CuratorServer {
                         .take(limit)
                         .map(|t| h_mem_fragment(t))
                         .collect();
-                    Ok(json!({
+                    let mut result = json!({
                         "count": serialized.len(),
                         "mode": "entity_exact",
                         "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
                         "results": serialized,
-                    }))
+                    });
+                    // M5: the fallback leg filters too — degradation and
+                    // the privacy boundary compose.
+                    let mut excluded_private = 0usize;
+                    exact.retain(|h_mem| {
+                        if call_admits(h_mem) {
+                            true
+                        } else {
+                            excluded_private += 1;
+                            false
+                        }
+                    });
+                    let serialized: Vec<serde_json::Value> = exact
+                        .iter()
+                        .take(limit)
+                        .map(|t| h_mem_fragment(t))
+                        .collect();
+                    result["count"] = json!(serialized.len());
+                    result["results"] = json!(serialized);
+                    if excluded_private > 0 {
+                        result["excluded_private_rows"] = json!(excluded_private);
+                    }
+                    Ok(result)
                 }
             }
         })
@@ -549,6 +621,16 @@ impl CuratorServer {
                         ),
                         result_count: hits.len(),
                     });
+                    if recall.excluded_private > 0 {
+                        if let Some(last) = statuses.last_mut() {
+                            last.reason = Some(format!(
+                                "{}; {} private-marked row(s) excluded by the call \
+                                 context's provenance (M5, FR-4)",
+                                last.reason.as_deref().unwrap_or_default(),
+                                recall.excluded_private
+                            ));
+                        }
+                    }
                     batches.push(hkask_memory::RankedSourceBatch {
                         source_id: "curator".to_string(),
                         hits,
@@ -669,6 +751,20 @@ impl CuratorServer {
                     }
                 }
                 .map_err(|e| map_memory_store_error(e, "Ontology recall failed"))?;
+                // M5: the same partition as the recall legs — public call
+                // contexts never receive private-marked rows.
+                let mut excluded_private = 0usize;
+                let h_mems: Vec<_> = h_mems
+                    .into_iter()
+                    .filter(|h_mem| {
+                        if call_admits(h_mem) {
+                            true
+                        } else {
+                            excluded_private += 1;
+                            false
+                        }
+                    })
+                    .collect();
                 let serialized: Vec<serde_json::Value> = h_mems
                     .iter()
                     .map(|t| {
@@ -677,12 +773,16 @@ impl CuratorServer {
                         fragment
                     })
                     .collect();
-                return Ok(json!({
+                let mut result = json!({
                     "ontology_axis": axis,
                     "ontology_value": value,
                     "count": serialized.len(),
                     "h_mems": serialized,
-                }));
+                });
+                if excluded_private > 0 {
+                    result["excluded_private_rows"] = json!(excluded_private);
+                }
+                return Ok(result);
             }
 
             let mut result = json!({});

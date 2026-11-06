@@ -886,6 +886,199 @@ async fn memory_insert_inherits_the_evidence_inference_provenance() {
     );
 }
 
+// ── M5: the recall/export filters (FR-4's read side, falsifier (b)) ───────
+
+/// FR-4 falsifier (b), the tool leg's public side: a recall in a
+/// NON-private call context never returns a private-marked row — and
+/// the exclusion is SURFACED (`excluded_private_rows`), never silently
+/// dropped (an empty leg with exclusions must read as filtered, not as
+/// "no memory found"). The call context here is the default — no
+/// `_meta` mark claims provenance, the fail-closed public read.
+#[tokio::test]
+async fn public_call_contexts_never_receive_private_rows() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_h_mem(
+        &memory,
+        "curator:thread:m5-mixed",
+        "public",
+        "a public turn".to_string(),
+    );
+    let private = hkask_storage::HMem::new(
+        "curator:thread:m5-mixed",
+        "private",
+        serde_json::Value::String("a private turn".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    memory.store(private).expect("seed private row");
+
+    let response = parse(
+        &server
+            .curator_memory_recall(Parameters(MemoryRecallRequest {
+                entity: "curator:thread:m5-mixed".to_string(),
+                recall_shape: MemoryRecallType::EntityWide,
+                ontology_axis: None,
+                ontology_value: None,
+            }))
+            .await
+            .expect("recall ok"),
+    );
+
+    let leg = &response["entity_wide"];
+    assert_eq!(
+        leg["count"].as_u64(),
+        Some(1),
+        "a public call context sees only the public row — got: {response}",
+    );
+    assert_eq!(
+        leg["excluded_private_rows"].as_u64(),
+        Some(1),
+        "the exclusion is surfaced, never silent — got: {response}",
+    );
+    assert!(
+        leg["h_mems"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().all(|row| row["attribute"] != "private")),
+        "no private-marked row leaks — got: {response}",
+    );
+}
+
+/// FR-4 falsifier (b), the tool leg's private side — the positive
+/// control (the gate must not over-block): a PRIVATE call context (the
+/// `_meta` mark the parent sets; simulated via the test seam) recalls
+/// its private rows.
+#[tokio::test]
+async fn private_call_contexts_receive_their_private_rows() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_h_mem(
+        &memory,
+        "curator:thread:m5-mixed",
+        "public",
+        "a public turn".to_string(),
+    );
+    let private = hkask_storage::HMem::new(
+        "curator:thread:m5-mixed",
+        "private",
+        serde_json::Value::String("a private turn".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    memory.store(private).expect("seed private row");
+
+    let response = hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.curator_memory_recall(Parameters(MemoryRecallRequest {
+            entity: "curator:thread:m5-mixed".to_string(),
+            recall_shape: MemoryRecallType::EntityWide,
+            ontology_axis: None,
+            ontology_value: None,
+        })),
+    )
+    .await
+    .expect("recall ok");
+    let response = parse(&response);
+
+    let leg = &response["entity_wide"];
+    assert_eq!(
+        leg["count"].as_u64(),
+        Some(2),
+        "a private call context recalls both rows — got: {response}",
+    );
+    assert!(
+        leg.get("excluded_private_rows").is_none(),
+        "nothing was excluded — got: {response}",
+    );
+}
+
+/// The semantic leg filters too (falsifier (b) over the KNN path): the
+/// seeded embedding is a guaranteed hit for every query, so the ONLY
+/// variable is the row's mark — a public context gets zero results with
+/// the exclusion surfaced; a private context gets the fragment.
+#[tokio::test]
+async fn semantic_search_filters_private_rows_by_call_context() {
+    let (server, memory) = make_server_with_embeddings();
+    let entity = "curator:thread:m5-semantic";
+    let private = hkask_storage::HMem::new(
+        entity,
+        "turn",
+        serde_json::json!({
+            "user_input": "a private question",
+            "agent_response": "a private answer",
+        }),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    memory.store(private).expect("seed private turn");
+    seed_embedding(&memory, entity);
+
+    // Public context: the hit is excluded and the exclusion surfaced.
+    let response = parse(
+        &server
+            .curator_semantic_search(Parameters(SemanticSearchRequest {
+                query: "any question words".to_string(),
+                limit: None,
+            }))
+            .await
+            .expect("search ok"),
+    );
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(0),
+        "a public context gets no private fragment — got: {response}",
+    );
+    assert_eq!(
+        response["excluded_private_rows"].as_u64(),
+        Some(1),
+        "the semantic exclusion is surfaced — got: {response}",
+    );
+
+    // Private context: the same query recalls the private fragment.
+    let response = hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.curator_semantic_search(Parameters(SemanticSearchRequest {
+            query: "any question words".to_string(),
+            limit: None,
+        })),
+    )
+    .await
+    .expect("search ok");
+    let response = parse(&response);
+    assert_eq!(
+        response["count"].as_u64(),
+        Some(1),
+        "a private context recalls the private fragment — got: {response}",
+    );
+    assert!(response.get("excluded_private_rows").is_none());
+}
+
+/// The no-field rule (P4), pinned at the schema surface: no tool
+/// request exposes a provenance field — the mark is parent-set
+/// (`_meta`), and a model-facing surface can never claim it.
+#[test]
+fn no_tool_request_exposes_a_provenance_field() {
+    use schemars::JsonSchema;
+
+    fn assert_no_provenance_property<T: JsonSchema>(name: &str) {
+        let schema = schemars::schema_for!(T);
+        let json = serde_json::to_value(&schema).expect("the schema serializes");
+        let properties: Vec<String> = json
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
+        assert!(
+            !properties.iter().any(|key| key.contains("provenance")),
+            "the {name} request schema must expose no provenance field — \
+             the mark is parent-set, never caller-claimed (got: {properties:?})"
+        );
+    }
+
+    assert_no_provenance_property::<MemoryRecallRequest>("MemoryRecallRequest");
+    assert_no_provenance_property::<SemanticSearchRequest>("SemanticSearchRequest");
+    assert_no_provenance_property::<FederatedSearchRequest>("FederatedSearchRequest");
+    assert_no_provenance_property::<CuratorConsultRequest>("CuratorConsultRequest");
+}
+
 /// The citation round-trip must complete from the tool surface: an agent
 /// reads a fragment via `curator_memory_recall`, extracts the `id` the
 /// tool surfaced, and cites it as `memory_insert` evidence. The ID used

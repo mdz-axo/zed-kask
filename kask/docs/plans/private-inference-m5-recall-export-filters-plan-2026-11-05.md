@@ -210,3 +210,68 @@ engagement, sized per surface.
    marking design.
 3. **Implementation gating** — on approval this becomes an engagement
    of steps 1–4 + 6; step 5 is the rulings record.
+
+## 9. Implementation record (2026-11-05, the approved M5-A execution)
+
+The operator approved M5-A and the three §4 stated-limit rulings
+("proceed as recommended"); steps 2–6 landed the same day.
+
+- **Step 2 — the child-side plumbing** (`hkask-mcp-server`'s new
+  `server/call_provenance.rs`): the per-call provenance task-local, the
+  request-claim parser (ONLY the exact closed-set private string claims
+  private — absent, null, non-string, or unknown values all read
+  PUBLIC; fail-closed for recall, the request-direction mirror of the
+  stored-mark parser's own fail-closed), the `with_call_provenance`
+  test seam, and the `ProvenanceScopedService` decorator — a
+  `Service<RoleServer>` wrapper that scopes the provenance from the
+  tools/call request's `_meta` around the inner service, wired ONCE in
+  `run_stdio_server` (every kask MCP server gets the M5 read side by
+  construction, zero per-server edits). Pins:
+  `absent_or_unknown_request_marks_read_public`,
+  `the_exact_private_string_claims_private`,
+  `the_scope_reaches_handlers_and_absence_reads_public`,
+  `the_call_params_shape_parses_from_wire_json`.
+- **Steps 3–4 — the curator tools**: the shared `call_admits` predicate
+  + per-site surfaced exclusion counts. `exact_recall_leg` filters and
+  surfaces `excluded_private_rows` (covers `curator_memory_recall`'s
+  legs, `curator_consult`'s fallbacks, and
+  `curator_semantic_search`'s degraded leg — the fallback filters too,
+  degradation and the privacy boundary compose);
+  `semantic_recall_fragments_for_vector` filters at the push loop and
+  carries `excluded_private` on `SemanticRecall` (covers
+  `curator_semantic_search`'s KNN leg, `curator_consult`, and
+  `curator_federated_search`'s curator leg — the federated status's
+  `reason` names the exclusions); the ontology leg filters the same
+  way. Pins: `public_call_contexts_never_receive_private_rows`
+  (falsifier (b), public side — the exclusion surfaced, never silent),
+  `private_call_contexts_receive_their_private_rows` (the positive
+  control — the gate must not over-block),
+  `semantic_search_filters_private_rows_by_call_context` (the KNN
+  path, both sides), `no_tool_request_exposes_a_provenance_field`
+  (the no-field rule pinned at the SCHEMA surface — all four request
+  types' JSON schemas expose no provenance property).
+- **Step 5 — the rulings record**: the three §4 rulings stand as
+  written (the operator's "proceed as recommended"): corpus, media, and
+  kata-kanban content is not on FR-4's thread-routing axis in v1 —
+  stated limits, with the intake-time privacy field as the named
+  future mechanism.
+- **Step 6 — DIVERGENCE.md**: D100's row extends with the M5 read-side
+  sentence and the full pin list.
+- **Step 1 — the zed-side `_meta` write**: NOT in this change. The
+  concurrent stream's private-thread tool-gate work (the
+  `kask.private_inference.local_provider_ids` +
+  `private_thread_disabled_servers` settings, in flight in
+  `crates/agent/src/thread.rs` + `agent.rs` at implementation time)
+  owns the dispatch site that reads the calling thread's D100 mark; the
+  `_meta` ride integrates at that site once their work lands — a
+  bounded follow-up, recorded here so the seam is not forgotten. Until
+  it lands, the child-side filter reads the fail-closed public default
+  for every call (the strictest interim: no private rows via tools; the
+  injector seam — which filters correctly — remains the private
+  recall path).
+
+**Hypotheses adjudicated:** H-M5.1 (a public call context never
+receives a private row — corroborated on both the exact and semantic
+legs); the falsifier (c) leg (export paths) is covered by the same
+predicate over every fragment-emitting site — the three tools' outputs
+plus consult are the h_mem-emitting surface in this server.

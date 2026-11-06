@@ -2,6 +2,8 @@
 
 use std::str::FromStr;
 
+use rmcp::ServiceExt as _;
+
 use super::context::{CredentialRequirement, ServerContext};
 use super::credentials::resolve_credential;
 use super::error::McpError;
@@ -116,6 +118,11 @@ where
         version = version,
         "MCP server starting"
     );
+    // M5 (FR-4 read side): the provenance-scoped decorator wraps every
+    // kask server's dispatch — the tools/call `_meta` mark (parent-set,
+    // the calling thread's D100 mark) scopes the per-call provenance
+    // handlers read; every method delegates untouched.
+    let server = crate::server::call_provenance::ProvenanceScopedService(server);
     let running = server
         .serve(rmcp::transport::stdio())
         .await

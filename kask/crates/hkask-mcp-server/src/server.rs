@@ -23,7 +23,8 @@ mod context;
 mod credentials;
 mod error;
 mod http_helpers;
-#[doc(hidden)]
+
+pub mod call_provenance;
 pub mod test_support;
 mod tool_execution;
 mod transport;
@@ -34,6 +35,9 @@ mod validation;
 pub use crate::security::{
     validate_resolved_addresses, validate_tool_url_literal, validate_tool_url_permissive,
     validate_tool_url_with_dns,
+};
+pub use call_provenance::{
+    ProvenanceScopedService, current_call_provenance, request_meta_provenance, with_call_provenance,
 };
 pub use context::{CredentialRequirement, ServerContext};
 pub use credentials::{parse_env_warn, resolve_credential, resolve_db_passphrase};
