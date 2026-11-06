@@ -9383,6 +9383,7 @@ dependencies = [
  "chrono",
  "collections",
  "credentials_provider",
+ "fs",
  "futures 0.3.34",
  "futures-util",
  "gpui",

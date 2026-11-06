@@ -346,3 +346,48 @@ every guard passed; the falsifier stands armed for the first refusal).
 **Remaining operator checkpoint:** the agent-panel turn — select the
 private model in the panel's model picker (after the page's Register)
 and run one turn; that GUI leg is the operator's, per §11 item 4.
+
+## 13. The "downloaded = available" amendment (operator UX ruling, 2026-11-05)
+
+The operator's expectation mismatch, recorded honestly: the P1 arc
+shipped manual steps (token typing, Register, a typed one-model
+refusal) where the expectation was "models in the folder are available,
+like every other provider." The ruling: the expectation is the target
+UX; the fixes are four; the physics that does not bend is one model
+resident at a time (the flagship's ~72 GB exclude the rest on the 96 GB
+machine — llama-server is one model per process; the measured warm
+swap is 8s, which the swap UX rides).
+
+The four-part slice (implemented same day):
+
+1. **Auto-mint** — `ensure_endpoint_token` (`kask_bridge`): the
+   operator's explicit token wins; an absent/blank slot is first-run
+   provisioning (minted `pi-<uuid>`, written to the provider `api_url`
+   slot — the `provision_db_passphrase_string` precedent). No typing.
+2. **Auto-register** — `ensure_registered`, wired in `main.rs`'s
+   deferred task: write-only-if-absent (an operator's hand-edited
+   entry wins; a deliberate deletion returns at restart — the row is
+   system-owned, like the seeded templates); when present, only the
+   token is provisioned. The settings-store notification registers
+   the provider live, so the cards appear with zero manual steps.
+3. **Launch = swap** — launching another model while one serves stops
+   and drains the current server, then loads the new one (the explicit
+   click is the intent; the `ServingOtherModel` refusal is deleted);
+   a fresh session swaps a previous session's server by pid ONLY
+   after verifying the recorded process identity (argv[0] == the
+   recorded binary — the pid-recycling kill guard; a foreign pid is
+   never killed).
+4. **Fleet completion** — `flint` + `muse-glimmer-30b` briefs
+   (parse-sourced: Flint 39.8B MoE, 256 experts / 6 used, native
+   context 262,144; Muse Glimmer dense, native context 131,072),
+   both cross-checked live by `tests/fleet_parse.rs` — all four
+   downloaded models card.
+
+D-S4's "never a silent substitution" narrows to where it always
+belonged: the swap is explicit (the click); silent substitution at
+dispatch remains the M6 routing hook's concern (Seam A).
+
+Hypotheses: **H-P1.5** (the swap path never kills an unverified pid)
+— corroborated by the foreign-pid stub test; H-P1.3's record trust
+narrows to identity-verified trust (the pid-recycling hazard was
+found at design time, guarded before it was ever hit live).

@@ -157,13 +157,12 @@ pub enum SupervisionError {
     Manifest(#[from] ManifestError),
     #[error("the placement compiler refused the launch: {0}")]
     Placement(#[from] PlacementError),
-    /// One serving instance at a time (S2): a different model is
-    /// serving — stop it first; never a silent swap.
+    /// Single-flight port arbitration: a launch is already in progress.
     #[error(
-        "another private-leg model is serving (`{serving}`); stop it before \
-         launching `{requested}` — the supervisor never swaps models silently"
+        "a launch is already in progress — one launch or swap at a time \
+         (the port arbitration is single-flight)"
     )]
-    ServingOtherModel { serving: String, requested: String },
+    AlreadyLaunching,
     /// The policy port is held by something the supervisor cannot
     /// verify as its own — adoption failed, the holder is named.
     #[error(
@@ -198,11 +197,33 @@ pub struct Supervisor {
 struct Inner {
     status: StatusSnapshot,
     watch: Option<WatchHandle>,
+    /// The single-flight launch guard's flag.
+    launching: bool,
 }
 
 struct WatchHandle {
     stop: Arc<tokio::sync::Notify>,
     join: tokio::task::JoinHandle<()>,
+}
+
+/// The occupied-port decision: adopt a verified matching server, or
+/// clear OUR verified other-model server for the explicit swap.
+enum OccupiedOutcome {
+    Adopted(ServingSnapshot),
+    ClearedForSpawn,
+}
+
+/// Clears the single-flight launch flag on every exit path (success,
+/// refusal, panic — the guard's drop is the mechanism).
+struct LaunchGuard {
+    inner: Arc<Mutex<Inner>>,
+}
+impl Drop for LaunchGuard {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.launching = false;
+        }
+    }
 }
 
 impl Supervisor {
@@ -220,6 +241,9 @@ impl Supervisor {
         config: LaunchConfig,
         prepared: &PreparedLaunch,
     ) -> Result<ServingSnapshot, SupervisionError> {
+        // Single-flight: a concurrent second launch would race the port
+        // arbitration — typed refusal, cleared on every exit path.
+        let _launch_guard = self.begin_launch()?;
         let token = config
             .api_key
             .as_deref()
@@ -227,19 +251,9 @@ impl Supervisor {
             .filter(|token| !token.is_empty())
             .ok_or(SupervisionError::TokenMissing)?;
 
-        // One serving instance at a time: same model re-launch is an
-        // adopt below; a different model is a typed refusal.
-        if let StatusSnapshot::Serving { model_id, .. } = self.status() {
-            if model_id != config.model_id {
-                return Err(SupervisionError::ServingOtherModel {
-                    serving: model_id,
-                    requested: config.model_id.clone(),
-                });
-            }
-        }
-
         // The startup probe — never a wrong-flag launch (Good
-        // Regulator: the manifest is never trusted alone).
+        // Regulator: the manifest is never trusted alone). It runs BEFORE
+        // any swap: a refused probe leaves the serving server untouched.
         probe::probe_binary(&config.binary, &prepared.manifest).await?;
 
         let endpoint = endpoint_url(&prepared.plan.host, prepared.plan.port);
@@ -251,12 +265,34 @@ impl Supervisor {
             source,
         })?;
 
-        // Occupied port: adopt only a VERIFIED record (live pid,
-        // matching model + digest + endpoint, healthy probe) — D-S3.
+        // Launch is explicit: while THIS supervisor serves another model,
+        // launching a different model is a SWAP — stop and drain the
+        // current server (the operator's click is the intent; the status
+        // line shows the swap), never a silent substitution. A same-model
+        // relaunch falls through to the adopt path below.
+        if let StatusSnapshot::Serving { model_id, .. } = self.status() {
+            if model_id != config.model_id {
+                self.stop().await?;
+            }
+        }
+
+        // Occupied port (a fresh session over a previous editor's
+        // server): adopt only a VERIFIED record (D-S3). A live record of
+        // ANOTHER model that is provably ours is swapped by pid — the
+        // process identity is verified against the recorded binary,
+        // never by pid alone (the pid-recycling kill hazard); anything
+        // less verifiable is a typed PortOccupied naming the holder.
         if tcp_connectable(&prepared.plan.host, prepared.plan.port).await {
-            return self
+            match self
                 .adopt_or_refuse(&config, prepared, &record_path, &endpoint, &digest)
-                .await;
+                .await?
+            {
+                OccupiedOutcome::Adopted(snapshot) => return Ok(snapshot),
+                OccupiedOutcome::ClearedForSpawn => {
+                    // Our verified other-model server stopped — spawn the
+                    // requested model on the freed port below.
+                }
+            }
         }
 
         // Write the token file (0600, hidden root) and spawn.
@@ -351,7 +387,9 @@ impl Supervisor {
         Ok(snapshot)
     }
 
-    /// The occupied-port gate (D-S3): verify the record or refuse.
+    /// The occupied-port gate (D-S3): verify the record, then adopt a
+    /// matching live server or clear OUR verified other-model server
+    /// for the swap — anything less verifiable is a typed refusal.
     async fn adopt_or_refuse(
         &self,
         config: &LaunchConfig,
@@ -359,7 +397,7 @@ impl Supervisor {
         record_path: &Path,
         endpoint: &str,
         digest: &str,
-    ) -> Result<ServingSnapshot, SupervisionError> {
+    ) -> Result<OccupiedOutcome, SupervisionError> {
         let record = read_record(record_path);
         let Some(record) = record else {
             return Err(SupervisionError::PortOccupied {
@@ -374,9 +412,20 @@ impl Supervisor {
             });
         }
         if record.model_id != config.model_id {
-            return Err(SupervisionError::ServingOtherModel {
-                serving: record.model_id,
-                requested: config.model_id.clone(),
+            // A live record of ANOTHER model. Only a process the record
+            // provably names (argv[0] == the recorded binary — the
+            // pid-recycling kill guard) may be swapped by pid: the
+            // explicit launch is the intent, the identity check is the
+            // boundary. A foreign process at the slot is NEVER killed.
+            if recorded_process_is_ours(&record) {
+                stop_by_pid(record.pid, record_path, &config.state_dir.join(KEY_FILE)).await;
+                return Ok(OccupiedOutcome::ClearedForSpawn);
+            }
+            return Err(SupervisionError::PortOccupied {
+                holder: format!(
+                    "pid {} (a live server of `{}` the supervisor cannot verify as its own)",
+                    record.pid, record.model_id
+                ),
             });
         }
         if record.plan_digest != digest || record.endpoint != endpoint {
@@ -422,7 +471,22 @@ impl Supervisor {
             };
             inner.watch = Some(WatchHandle { stop: notify, join });
         }
-        Ok(snapshot)
+        Ok(OccupiedOutcome::Adopted(snapshot))
+    }
+
+    /// The single-flight launch guard — the drop guard clears the flag
+    /// on every exit path (success, refusal, panic).
+    fn begin_launch(&self) -> Result<LaunchGuard, SupervisionError> {
+        {
+            let mut inner = self.inner.lock().expect("supervisor lock");
+            if inner.launching {
+                return Err(SupervisionError::AlreadyLaunching);
+            }
+            inner.launching = true;
+        }
+        Ok(LaunchGuard {
+            inner: Arc::clone(&self.inner),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -444,7 +508,7 @@ impl Supervisor {
             loop {
                 tokio::select! {
                     _ = stop.notified() => {
-                        stop_and_drain(&mut child, record.pid, &record_path, &key_path).await;
+                        stop_and_drain(&mut child, &record, &record_path, &key_path).await;
                         supervisor.set_status(StatusSnapshot::Stopped);
                         break;
                     }
@@ -578,10 +642,12 @@ fn cleanup_state(record_path: &Path, key_path: &Path) {
 
 /// SIGTERM → bounded drain → SIGKILL, then state cleanup. For an owned
 /// child the handle reaps it; for an adopted pid this kills by the
-/// recorded pid and waits on `/proc` disappearance.
+/// recorded pid — but ONLY after verifying the recorded process is
+/// still the one the record names (the pid-recycling kill guard); a
+/// recycled or foreign pid is never killed.
 async fn stop_and_drain(
     child: &mut Option<tokio::process::Child>,
-    pid: u32,
+    record: &LaunchRecord,
     record_path: &Path,
     key_path: &Path,
 ) {
@@ -589,7 +655,7 @@ async fn stop_and_drain(
         Some(child) => {
             // SIGTERM via the pid (child.kill() is SIGKILL-only);
             // nix's safe wrapper — no unsafe blocks in this crate.
-            kill(Pid::from_raw(pid as i32), Signal::SIGTERM).ok();
+            kill(Pid::from_raw(record.pid as i32), Signal::SIGTERM).ok();
             let drained =
                 tokio::time::timeout(Duration::from_secs(DRAIN_TIMEOUT_SECS), child.wait())
                     .await
@@ -600,15 +666,48 @@ async fn stop_and_drain(
             }
         }
         None => {
-            kill(Pid::from_raw(pid as i32), Signal::SIGTERM).ok();
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(DRAIN_TIMEOUT_SECS);
-            while pid_alive(pid) && tokio::time::Instant::now() < deadline {
-                tokio::time::sleep(Duration::from_millis(250)).await;
+            if !recorded_process_is_ours(record) {
+                // The recorded process died and the pid was recycled, or
+                // something else took the slot: clean OUR state only —
+                // never kill an unverified pid.
+                cleanup_state(record_path, key_path);
+                return;
             }
-            if pid_alive(pid) {
-                kill(Pid::from_raw(pid as i32), Signal::SIGKILL).ok();
-            }
+            stop_by_pid(record.pid, record_path, key_path).await;
         }
+    }
+    cleanup_state(record_path, key_path);
+}
+
+/// Whether the recorded pid is still the process the record names:
+/// `/proc/<pid>/cmdline`'s argv[0] must equal the recorded binary path.
+/// A recycled pid (the kill hazard) or a foreign process at the slot
+/// fails this — the supervisor never kills an unverified pid.
+fn recorded_process_is_ours(record: &LaunchRecord) -> bool {
+    if !pid_alive(record.pid) {
+        return false;
+    }
+    let Ok(cmdline) = std::fs::read(format!("/proc/{}/cmdline", record.pid)) else {
+        return false;
+    };
+    // argv[0] — the NUL-separated command line's first field.
+    let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or_default();
+    String::from_utf8_lossy(argv0) == record.binary
+}
+
+/// Stop a process by recorded pid: SIGTERM → bounded drain → SIGKILL,
+/// then state cleanup. For a swapped or adopted server the supervisor
+/// does not own the process handle — the recorded pid is the only
+/// handle, and the caller has VERIFIED its identity first
+/// (`recorded_process_is_ours`).
+async fn stop_by_pid(pid: u32, record_path: &Path, key_path: &Path) {
+    kill(Pid::from_raw(pid as i32), Signal::SIGTERM).ok();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(DRAIN_TIMEOUT_SECS);
+    while pid_alive(pid) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    if pid_alive(pid) {
+        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).ok();
     }
     cleanup_state(record_path, key_path);
 }

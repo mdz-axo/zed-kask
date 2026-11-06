@@ -2362,6 +2362,17 @@ fn main() {
                     }
                     agent::set_metacognition_provider(Some(std::sync::Arc::new(status_provider)));
 
+                    // zed-kask: D9/M7 — the "downloaded = available"
+                    // half (operator ruling 2026-11-05): when the private
+                    // leg's provider entry is absent, register it once
+                    // here (mint-if-absent token + the M3 emission — the
+                    // settings-store notification registers the provider
+                    // live, so the private model cards appear in the
+                    // agent panel with zero manual steps); when the
+                    // entry exists, only the token is provisioned if the
+                    // slot is empty and the entry is never touched.
+                    kask_bridge::private_inference_supervisor::ensure_registered(cx);
+
                     // zed-kask: D8 — algedonic alerts land on the "Algedonic
                     // review" kanban board through the same governed channel
                     // the panels use, handed in here rather than read from a

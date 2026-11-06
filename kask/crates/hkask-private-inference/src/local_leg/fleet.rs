@@ -59,6 +59,22 @@ pub const SHIPPED_FLEET: &[(&str, &str, LocalModelLocation)] = &[
             artifact: "gemma-4-31B-it-UD-Q4_K_XL.gguf",
         },
     ),
+    (
+        "flint",
+        include_str!("../../../../registry/model-briefs/flint.toml"),
+        LocalModelLocation {
+            dir: "flint",
+            artifact: "flint-UD-Q4_K_XL.gguf",
+        },
+    ),
+    (
+        "muse-glimmer-30b",
+        include_str!("../../../../registry/model-briefs/muse-glimmer-30b.toml"),
+        LocalModelLocation {
+            dir: "muse-glimmer",
+            artifact: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+        },
+    ),
 ];
 
 /// Fleet projection failures — per-variant, never a blanket string

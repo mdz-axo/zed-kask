@@ -14,9 +14,10 @@
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, ReadGlobal as _};
 use gpui_tokio::Tokio;
-use settings::Settings as _;
+use language_model::{LanguageModelProviderId, LanguageModelRegistry};
+use settings::{Settings as _, SettingsStore};
 use zed_credentials_provider as zed_credentials;
 
 use hkask_private_inference::local_leg::fleet;
@@ -41,6 +42,104 @@ static LAST_ACTION_OUTCOME: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn supervisor() -> Supervisor {
     SUPERVISOR.get_or_init(Supervisor::default).clone()
+}
+
+/// A freshly-minted endpoint token — the system provisions its own
+/// secret (the `provision_db_passphrase_string` precedent: the chain
+/// is env → keychain → first-run generation; here the operator's
+/// explicit token wins and an absent slot is first-run). Never shown,
+/// never typed.
+pub fn mint_token() -> String {
+    format!("pi-{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Token-provisioning failures — typed per-variant, never a blanket
+/// string.
+#[derive(Debug, thiserror::Error)]
+pub enum TokenError {
+    #[error("reading the endpoint token at {url} failed: {source}")]
+    Read { url: String, source: anyhow::Error },
+    #[error("minting the endpoint token at {url} failed: {source}")]
+    Mint { url: String, source: anyhow::Error },
+}
+
+/// The resolved endpoint token — existing or freshly minted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndpointToken {
+    pub value: String,
+    pub minted: bool,
+}
+
+/// Resolve the endpoint token, minting one when the slot is absent or
+/// blank (first-run provisioning, never a fault): the minted token is
+/// written to the SAME keychain slot the provider's `ApiKeyState`
+/// reads (one key, one location) — the leg is usable with zero manual
+/// credential entry.
+pub async fn ensure_endpoint_token(
+    credentials_provider: &dyn credentials_provider::CredentialsProvider,
+    url: &str,
+    cx: &AsyncApp,
+) -> Result<EndpointToken, TokenError> {
+    match credentials_provider.read_credentials(url, cx).await {
+        Ok(Some((_, bytes))) => {
+            let existing = String::from_utf8_lossy(&bytes).trim().to_string();
+            if !existing.is_empty() {
+                return Ok(EndpointToken {
+                    value: existing,
+                    minted: false,
+                });
+            }
+        }
+        Ok(None) => {}
+        Err(source) => {
+            return Err(TokenError::Read {
+                url: url.to_string(),
+                source,
+            });
+        }
+    }
+    let minted = mint_token();
+    credentials_provider
+        .write_credentials(url, "kask", minted.as_bytes(), cx)
+        .await
+        .map_err(|source| TokenError::Mint {
+            url: url.to_string(),
+            source,
+        })?;
+    Ok(EndpointToken {
+        value: minted,
+        minted: true,
+    })
+}
+
+/// Ask the private-leg provider (a configured `openai_compatible`
+/// instance — it exists only after the settings entry registers it) to
+/// adopt `api_key` through its existing `set_api_key` path — the D29
+/// RunPod-row precedent: the keychain write persists, the live refresh
+/// makes a registered provider read it without an editor restart.
+pub fn refresh_provider_key(api_key: Option<String>, provider_id: &str, cx: &mut App) {
+    let Some(provider) = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&LanguageModelProviderId::from(provider_id.to_string()))
+    else {
+        // Provider not registered yet (startup ordering): the keychain
+        // write persists and the provider reads the slot at registration.
+        return;
+    };
+    provider.set_api_key(api_key, cx).detach();
+}
+
+/// Whether the provider entry already exists in the USER settings —
+/// the auto-registration's write-only-if-absent decision (an
+/// operator's hand-configured or hand-edited entry always wins; a
+/// deliberate deletion returns on the next restart — the row is
+/// system-owned, like the seeded templates).
+pub fn entry_present(content: &settings_content::SettingsContent, provider_id: &str) -> bool {
+    content
+        .language_models
+        .as_ref()
+        .and_then(|lm| lm.openai_compatible.as_ref())
+        .is_some_and(|entries| entries.contains_key(provider_id))
 }
 
 /// The served fleet for the page's Launch buttons: `(model_id,
@@ -131,8 +230,9 @@ pub fn resolve_launch_config(
     resolve_launch_config_with(probe_backend(), model_id, settings, api_key)
 }
 
-/// Launch a private model — the page's action. The keychain token is
-/// read at launch (the provider `api_url` slot — the one location, D5),
+/// Launch a private model — the page's action. The endpoint token is
+/// resolved at launch (the provider `api_url` slot — the one location,
+/// D5) with mint-if-absent provisioning (zero manual credential entry);
 /// the launch runs on the kask tokio runtime, and a typed refusal
 /// surfaces as the page's outcome memo plus a log line, never silently.
 pub fn launch_private_model(model_id: String, cx: &mut App) {
@@ -140,18 +240,15 @@ pub fn launch_private_model(model_id: String, cx: &mut App) {
     let token_url = credential_url(&settings);
     let provider = zed_credentials::global(cx);
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let token = match provider.read_credentials(&token_url, cx).await {
-            Ok(Some((_, bytes))) => {
-                let text = String::from_utf8_lossy(&bytes).trim().to_string();
-                (!text.is_empty()).then_some(text)
-            }
-            Ok(None) => None,
+        let token = match ensure_endpoint_token(provider.as_ref(), &token_url, cx).await {
+            Ok(token) => token.value,
             Err(err) => {
-                record_outcome(Some(format!("the token read failed at {token_url}: {err}")));
+                record_outcome(Some(err.to_string()));
+                tracing::warn!("private-inference token provisioning failed: {err}");
                 return;
             }
         };
-        let config = match resolve_launch_config(&model_id, &settings, token) {
+        let config = match resolve_launch_config(&model_id, &settings, Some(token)) {
             Ok(config) => config,
             Err(err) => {
                 record_outcome(Some(err.to_string()));
@@ -210,17 +307,196 @@ pub fn stop_private_model(cx: &mut App) {
     .detach();
 }
 
+/// The mint-if-absent provisioning shared by the registration paths —
+/// writes the fresh token to the keychain slot and live-refreshes a
+/// registered provider (the RunPod-row pattern). A provisioning
+/// failure surfaces as a log line: the caller proceeds with whatever
+/// the slot held (the launch resolves its own token anyway).
+async fn mint_flow(
+    settings: &KaskPrivateInferenceSettings,
+    provider: &dyn credentials_provider::CredentialsProvider,
+    cx: &mut AsyncApp,
+) {
+    let token_url = credential_url(settings);
+    match ensure_endpoint_token(provider, &token_url, cx).await {
+        Ok(token) if token.minted => {
+            tracing::info!("private-inference endpoint token minted at {token_url}");
+            cx.update(|cx| {
+                refresh_provider_key(Some(token.value.clone()), &settings.provider_id, cx)
+            });
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!("private-inference token provisioning failed: {err}");
+        }
+    }
+}
+
+/// Register the provider entry — the page's explicit Register action:
+/// mint-if-absent provisioning, then the M3 emission (an overwrite —
+/// Register is the explicit refresh after host/port edits). Idempotent.
+pub fn register_provider_entry(cx: &mut App) {
+    let settings = KaskSettings::get_global(cx).private_inference.clone();
+    let provider = zed_credentials::global(cx);
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        mint_flow(&settings, provider.as_ref(), cx).await;
+        cx.update(|cx| {
+            SettingsStore::global(cx).update_settings_file(
+                <dyn fs::Fs>::global(cx),
+                move |settings, _| {
+                    let pi: KaskPrivateInferenceSettings = settings
+                        .kask
+                        .as_ref()
+                        .and_then(|kask| kask.private_inference.clone())
+                        .map(Into::into)
+                        .unwrap_or_default();
+                    if let Err(err) = crate::private_inference::apply_provider_entry(settings, &pi)
+                    {
+                        tracing::warn!("private-inference registration refused: {err}");
+                    }
+                },
+            );
+        });
+        cx.update(|cx| cx.refresh_windows());
+    })
+    .detach();
+}
+
+/// The startup registration — the "downloaded = available" half: when
+/// the provider entry is absent, register it (mint + write, once, at
+/// startup — the settings-store notification registers the provider
+/// live); when it is present, provision the token if the slot is empty
+/// and NEVER touch the entry (an operator's hand-edited row wins).
+/// A deliberate deletion of the entry returns at the next restart: the
+/// row is system-owned, like the seeded templates.
+pub fn ensure_registered(cx: &mut App) {
+    let settings = KaskSettings::get_global(cx).private_inference.clone();
+    if settings.provider_id.trim().is_empty() {
+        // An honest misconfiguration, never auto-written under.
+        return;
+    }
+    let present = SettingsStore::global(cx)
+        .raw_user_settings()
+        .is_some_and(|user| entry_present(&user.content, &settings.provider_id));
+    if present {
+        let provider = zed_credentials::global(cx);
+        cx.spawn(async move |cx: &mut AsyncApp| {
+            mint_flow(&settings, provider.as_ref(), cx).await;
+        })
+        .detach();
+        return;
+    }
+    register_provider_entry(cx);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
 
     #[test]
+    fn mint_token_is_fresh_and_prefixed() {
+        let a = mint_token();
+        let b = mint_token();
+        assert!(a.starts_with("pi-"), "{a}");
+        assert!(a.len() > 8, "the minted token carries real entropy");
+        assert_ne!(a, b, "every mint is fresh");
+    }
+
+    #[test]
+    fn entry_present_decides_write_only_if_absent() {
+        let mut content = settings_content::SettingsContent::default();
+        assert!(
+            !entry_present(&content, "private-local"),
+            "absent registers"
+        );
+
+        // An entry under ANOTHER id is absent for this one.
+        content
+            .language_models
+            .get_or_insert_default()
+            .openai_compatible
+            .get_or_insert_default()
+            .insert(
+                "other".into(),
+                crate::private_inference::provider_entry(&KaskPrivateInferenceSettings::default())
+                    .expect("entry builds"),
+            );
+        assert!(!entry_present(&content, "private-local"));
+
+        // An existing entry always wins — never overwritten at startup.
+        content
+            .language_models
+            .get_or_insert_default()
+            .openai_compatible
+            .get_or_insert_default()
+            .insert(
+                "private-local".into(),
+                crate::private_inference::provider_entry(&KaskPrivateInferenceSettings::default())
+                    .expect("entry builds"),
+            );
+        assert!(entry_present(&content, "private-local"));
+    }
+
+    #[gpui::test]
+    async fn ensure_endpoint_token_mints_first_run_and_keeps_an_explicit_token(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use credentials_provider::test_support::FakeCredentialsProvider;
+
+        let async_cx = cx.to_async();
+        let url = "http://127.0.0.1:8010/v1";
+
+        // First run: the slot is absent → mint + write (the write is
+        // visible — the provider reads back the minted token).
+        let fresh = FakeCredentialsProvider::default();
+        let token = ensure_endpoint_token(&fresh, url, &async_cx)
+            .await
+            .expect("first run mints");
+        assert!(token.minted);
+        assert!(token.value.starts_with("pi-"));
+        let read_back = ensure_endpoint_token(&fresh, url, &async_cx)
+            .await
+            .expect("reads back");
+        assert_eq!(
+            read_back.value, token.value,
+            "the write persisted at the slot"
+        );
+        assert!(
+            !read_back.minted,
+            "the second resolve keeps the existing token"
+        );
+
+        // An explicit operator token always wins — never re-minted.
+        let explicit = FakeCredentialsProvider::default();
+        explicit
+            .state
+            .lock()
+            .keys
+            .insert(url.to_string(), b"the-operators-token".to_vec());
+        let token = ensure_endpoint_token(&explicit, url, &async_cx)
+            .await
+            .expect("explicit resolves");
+        assert_eq!(token.value, "the-operators-token");
+        assert!(!token.minted);
+    }
+
+    #[test]
     fn fleet_cards_carry_the_shipped_fleet() {
         let cards = fleet_cards();
-        assert!(!cards.is_empty(), "the shipped fleet is non-empty");
-        assert!(cards.iter().any(|(id, _)| id == "qwen3-8-flash-next"));
-        assert!(cards.iter().any(|(id, _)| id == "gemma-4-31b"));
+        // All four downloaded models are carded — the "downloaded =
+        // available" contract (operator ruling 2026-11-05).
+        let mut ids: Vec<&str> = cards.iter().map(|(id, _)| id.as_str()).collect();
+        ids.sort();
+        assert_eq!(
+            ids,
+            vec![
+                "flint",
+                "gemma-4-31b",
+                "muse-glimmer-30b",
+                "qwen3-8-flash-next"
+            ]
+        );
         for (_, display) in &cards {
             assert!(!display.is_empty(), "every card renders a display name");
         }

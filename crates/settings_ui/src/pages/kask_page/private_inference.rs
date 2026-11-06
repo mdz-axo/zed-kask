@@ -7,29 +7,6 @@
 //! supervisor's launch/stop surface.
 
 use super::*;
-use language_model::{LanguageModelProviderId, LanguageModelRegistry};
-
-/// Ask the private-leg provider (a configured `openai_compatible`
-/// instance — it exists only after the settings entry registers it) to
-/// adopt `key` through its existing `set_api_key` path — the D29
-/// RunPod-row precedent: the keychain write persists the token at the
-/// endpoint slot, and the live refresh makes a registered provider
-/// read it without an editor restart. No MCP child consumes this token
-/// (the leg is a core service, not an MCP server), so there is no MCP
-/// restart nudge — the provider refresh is the only runtime
-/// notification needed.
-fn refresh_private_provider_key(api_key: Option<String>, provider_id: &str, cx: &mut App) {
-    let Some(provider) = LanguageModelRegistry::global(cx)
-        .read(cx)
-        .provider(&LanguageModelProviderId::from(provider_id.to_string()))
-    else {
-        // Provider not registered yet (no settings entry, or startup
-        // ordering): the keychain write persists, and the provider
-        // reads the slot at registration. Nothing to refresh.
-        return;
-    };
-    provider.set_api_key(api_key, cx).detach();
-}
 
 pub(crate) fn render_private_inference_page(
     _settings_window: &SettingsWindow,
@@ -101,7 +78,11 @@ pub(crate) fn render_private_inference_page(
         .button_tab_index(0)
         .on_click(move |_, _, cx| {
             delete_credential(&credentials, &token_url, cx).detach();
-            refresh_private_provider_key(None, &pi.provider_id, cx);
+            kask_bridge::private_inference_supervisor::refresh_provider_key(
+                None,
+                &pi.provider_id,
+                cx,
+            );
         })
         .into_any_element()
     } else {
@@ -123,11 +104,11 @@ pub(crate) fn render_private_inference_page(
                             .child(Label::new("Endpoint Token"))
                             .child(
                                 Label::new(format!(
-                                    "The llama-server token, stored in the keychain \
-                                     under {token_url} — the same slot the registered \
-                                     provider reads. The token's presence is the \
-                                     toggle: without it the provider stays \
-                                     unauthenticated.",
+                                    "Optional — a token you supply is stored in the \
+                                     keychain under {token_url} (the same slot the \
+                                     registered provider reads). When absent, one is \
+                                     minted automatically at first use: the leg needs \
+                                     zero manual credential entry.",
                                 ))
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
@@ -141,7 +122,11 @@ pub(crate) fn render_private_inference_page(
                             .on_confirm(move |token, _window, cx| {
                                 if let Some(token) = token.filter(|token| !token.is_empty()) {
                                     write_credential(&credentials, &token_url, &token, cx).detach();
-                                    refresh_private_provider_key(Some(token), &pi.provider_id, cx);
+                                    kask_bridge::private_inference_supervisor::refresh_provider_key(
+                                        Some(token),
+                                        &pi.provider_id,
+                                        cx,
+                                    );
                                 }
                             }),
                     ),
@@ -149,34 +134,16 @@ pub(crate) fn render_private_inference_page(
             .into_any_element()
     };
 
-    // The Register action — the connect step. Reads the EFFECTIVE
-    // policy (raw user settings + defaults) at click time and writes
-    // the `language_models.openai_compatible` entry through the
-    // existing settings store; the registry re-reads settings on write
-    // and registers the provider, so the model cards appear with no
-    // restart. Idempotent: a second click writes the same entry bytes.
-    // The refusal path (empty provider id, broken fleet) logs and
-    // writes nothing.
+    // The Register action — the explicit refresh: mint-if-absent
+    // provisioning, then the M3 emission written through the settings
+    // store (an overwrite — Register is the refresh after host/port
+    // edits). Startup does the same write-only-if-absent
+    // (`ensure_registered`), so this button is the mid-session tool.
     let register_button = Button::new("kask-private-inference-register", "Register Provider")
         .style(ButtonStyle::Outlined)
         .label_size(LabelSize::Small)
         .on_click(|_, _, cx| {
-            SettingsStore::global(cx).update_settings_file(
-                <dyn fs::Fs>::global(cx),
-                move |settings, _| {
-                    let pi: kask_bridge::KaskPrivateInferenceSettings = settings
-                        .kask
-                        .as_ref()
-                        .and_then(|kask| kask.private_inference.clone())
-                        .map(Into::into)
-                        .unwrap_or_default();
-                    if let Err(err) =
-                        kask_bridge::private_inference::apply_provider_entry(settings, &pi)
-                    {
-                        log::warn!("private-inference provider registration refused: {err}");
-                    }
-                },
-            );
+            kask_bridge::private_inference_supervisor::register_provider_entry(cx)
         });
 
     v_flex()
@@ -194,15 +161,17 @@ pub(crate) fn render_private_inference_page(
                 .child(SettingsSectionHeader::new("Private Inference"))
                 .child(
                     Label::new(
-                        "The private local leg (llama.cpp) — the PI-owned policy: the \
-                         provider id the leg registers under, the loopback endpoint, \
-                         and the endpoint token. The served fleet comes from the \
-                         shipped model briefs (qwen3-8-flash-next, gemma-4-31b); \
-                         Register writes the openai_compatible settings entry so the \
-                         models appear in the agent panel model selector. The \
-                         supervisor that launches llama-server is the companion seam \
-                         (not yet wired): until it lands, the endpoint is unresponsive \
-                         and inference attempts fail with a connection error.",
+                        "The private local leg (llama.cpp): the provider id the leg \
+                         registers under and the loopback endpoint. The served fleet \
+                         comes from the shipped model briefs (qwen3-8-flash-next, \
+                         flint, gemma-4-31b, muse-glimmer-30b) — all four downloaded \
+                         models. The provider entry and the endpoint token are \
+                         provisioned automatically (a token you enter here wins), so \
+                         the private models appear in the agent panel model selector \
+                         with zero manual steps; Register is the explicit mid-session \
+                         refresh (e.g. after host/port edits). One model holds the \
+                         RAM at a time — launching another swaps (stops the current \
+                         server, then loads the new one).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -293,7 +262,7 @@ pub(crate) fn render_private_inference_page(
                     }
                 ),
                 StatusSnapshot::Failed { reason } => {
-                    format!("Failed — {reason} (no restart: relaunch explicitly)")
+                    format!("Failed — {reason} (launch again to retry: the supervisor never restarts on its own)")
                 }
             };
 
@@ -398,12 +367,35 @@ mod tests {
         assert!(!page.contains(&kask_namespace));
     }
 
-    /// The Register action routes through the bridge emission
-    /// (`apply_provider_entry`) — never a hand-rolled settings write.
+    /// The Register action routes through the bridge's registration
+    /// (`register_provider_entry` — mint-if-absent + the emission in
+    /// one home), never a hand-rolled settings write at the page.
     #[test]
-    fn register_action_routes_through_the_bridge_emission() {
+    fn register_action_routes_through_the_bridge_registration() {
         let page = include_str!("private_inference.rs");
-        assert!(page.contains("kask_bridge::private_inference::apply_provider_entry"));
+        assert!(
+            page.contains("kask_bridge::private_inference_supervisor::register_provider_entry")
+        );
+        // The banned hand-rolled emission is ASSEMBLED — an include_str
+        // pin over the page's own source would match its own forbidden
+        // literal (the token-row pin's class).
+        let hand_rolled = ["apply_", "provider_entry"].concat();
+        assert!(
+            !page.contains(&hand_rolled),
+            "the page never hand-writes the entry — the bridge owns the emission"
+        );
+    }
+
+    /// The zero-manual-entry contract is stated where the operator
+    /// reads it: the token row explains the auto-mint, and the page
+    /// header explains the swap (the "downloaded = available" UX
+    /// ruling, 2026-11-05).
+    #[test]
+    fn the_page_states_the_auto_mint_and_the_swap() {
+        let page = include_str!("private_inference.rs");
+        assert!(page.contains("minted automatically"));
+        assert!(page.contains("launching another swaps"));
+        assert!(page.contains("all four downloaded models"));
     }
 
     /// The Serving section routes through the bridge supervisor

@@ -365,33 +365,143 @@ async fn a_matching_live_server_is_adopted_and_stopped_by_pid() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_different_model_while_serving_is_a_typed_refusal_never_a_swap() {
+async fn launching_another_model_swaps_serving_models() {
     let state = tempfile::tempdir().expect("state dir");
     let port = free_port();
     let prepared = prepared(port);
     let supervisor = Supervisor::default();
-    let mut config = config(state.path(), Path::new(STUB), Some("tok"));
+    let config = config(state.path(), Path::new(STUB), Some("tok"));
     supervisor
         .launch_prepared(config.clone(), &prepared)
         .await
         .expect("gemma serves");
 
-    config.model_id = "qwen3-8-flash-next".into();
-    let err = supervisor
-        .launch_prepared(config.clone(), &prepared)
+    // The explicit launch is the swap intent: launching another model
+    // stops and drains the current server, then serves the new one —
+    // one click, visible in the status, never a typed refusal and never
+    // a silent substitution.
+    let mut swapped = config;
+    swapped.model_id = "qwen3-8-flash-next".into();
+    let serving = supervisor
+        .launch_prepared(swapped, &prepared)
         .await
-        .expect_err("a different model never swaps silently");
-    match err {
-        SupervisionError::ServingOtherModel { serving, requested } => {
-            assert_eq!(serving, "gemma-4-31b");
-            assert_eq!(requested, "qwen3-8-flash-next");
-        }
-        other => panic!("expected ServingOtherModel, got {other:?}"),
-    }
-    // The original server is untouched — still serving.
-    assert!(matches!(
+        .expect("the explicit launch swaps to the requested model");
+    assert_eq!(serving.model_id, "qwen3-8-flash-next");
+    assert!(!serving.adopted, "a swap is a fresh spawn, not an adoption");
+    assert_eq!(
         supervisor.status(),
-        StatusSnapshot::Serving { .. }
-    ));
+        StatusSnapshot::Serving {
+            model_id: "qwen3-8-flash-next".into(),
+            endpoint: format!("http://127.0.0.1:{port}/v1"),
+            adopted: false,
+        }
+    );
+    // The record now names the swapped-in model.
+    let record = std::fs::read_to_string(state.path().join("launch-record.json"))
+        .expect("the swap wrote its own record");
+    assert!(record.contains("\"model_id\":\"qwen3-8-flash-next\""));
     supervisor.stop().await.expect("cleanup stop");
+    assert!(!state.path().join("launch-record.json").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fresh_session_swaps_our_verified_server_by_pid() {
+    let state = tempfile::tempdir().expect("state dir");
+    let port = free_port();
+    let prepared = prepared(port);
+
+    // Session A serves gemma; the editor "restarts" — session B (fresh
+    // state, same state dir) launches qwen: the record is OURS and
+    // identity-verified (argv[0] == the recorded binary), so B swaps it
+    // by pid, then serves qwen.
+    let a = Supervisor::default();
+    let config = config(state.path(), Path::new(STUB), Some("tok"));
+    a.launch_prepared(config.clone(), &prepared)
+        .await
+        .expect("session A serves");
+
+    let mut swapped = config;
+    swapped.model_id = "qwen3-8-flash-next".into();
+    let b = Supervisor::default();
+    let serving = b
+        .launch_prepared(swapped, &prepared)
+        .await
+        .expect("the fresh session swaps our verified server");
+    assert_eq!(serving.model_id, "qwen3-8-flash-next");
+    assert!(!serving.adopted, "the swap spawned a new server");
+
+    // A sees its server die — a typed failure, never a silent Serving.
+    wait_for_status(&a, 10, |status| {
+        matches!(status, StatusSnapshot::Failed { .. })
+    })
+    .await;
+
+    b.stop().await.expect("cleanup stop");
+    assert!(!state.path().join("launch-record.json").exists());
+    let rebound = std::net::TcpListener::bind(("127.0.0.1", port));
+    assert!(rebound.is_ok(), "the swapped server stopped listening");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreign_pid_at_the_recorded_slot_is_never_killed() {
+    let state = tempfile::tempdir().expect("state dir");
+    let port = free_port();
+    let prepared = prepared(port);
+    let supervisor = Supervisor::default();
+
+    // A stub holds the port (the occupied surface), and the record
+    // claims a pid whose argv[0] is NOT the recorded binary — the
+    // pid-recycling kill hazard shape. The swap path must refuse, and
+    // the foreign process must SURVIVE.
+    let mut foreign = tokio::process::Command::new("sleep")
+        .arg("300")
+        .spawn()
+        .expect("spawn the foreign pid");
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let mut stub_holder = tokio::process::Command::new(STUB)
+        .args(["--port", &port.to_string()])
+        .spawn()
+        .expect("spawn the port holder");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let record = hkask_private_inference::local_leg::supervisor::LaunchRecord {
+        pid: foreign.id().unwrap_or(0),
+        // A model DIFFERENT from the requested one — the swap branch:
+        // the identity check must refuse (argv[0] is `sleep`, not the
+        // recorded binary), never kill.
+        model_id: "qwen3-8-flash-next".into(),
+        plan_digest: "0".repeat(64),
+        endpoint: format!("http://127.0.0.1:{port}/v1"),
+        started_at_unix: 0,
+        binary: STUB.to_string(),
+    };
+    std::fs::write(
+        state.path().join("launch-record.json"),
+        serde_json::to_string(&record).expect("serializes"),
+    )
+    .expect("write the forged record");
+
+    let config = config(state.path(), Path::new(STUB), Some("tok"));
+    let err = supervisor
+        .launch_prepared(config, &prepared)
+        .await
+        .expect_err("an unverified pid is never swapped or killed");
+    match err {
+        SupervisionError::PortOccupied { holder } => {
+            assert!(holder.contains("cannot verify"), "{holder}");
+        }
+        other => panic!("expected a PortOccupied refusal, got {other:?}"),
+    }
+
+    // The foreign process is untouched — the pid-recycling guard held.
+    let foreign_alive = std::fs::metadata(format!("/proc/{}", record.pid)).is_ok();
+    assert!(
+        foreign_alive,
+        "a foreign pid at the recorded slot is never killed"
+    );
+
+    let _ = foreign.start_kill();
+    let _ = foreign.wait().await;
+    let _ = stub_holder.start_kill();
+    let _ = stub_holder.wait().await;
 }

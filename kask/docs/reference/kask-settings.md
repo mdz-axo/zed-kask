@@ -443,23 +443,45 @@ the token (the leg is a core service, not an MCP server), so there is no
 MCP restart nudge on its writes. Changing host or port moves the token's
 keychain slot — re-enter the token at the new endpoint.
 
-The Serving section (landed with the P1 supervisor) is the launch
-surface: one Launch button per shipped fleet model and Stop when
-serving. Launch runs the full production path — fleet resolve → real
-shard parse → live hardware probe → guard-verified compile → startup
-probe against the installed binary (`--version`/`--help` vs the
-manifest pin: exact-commit refusal, D-S2) → spawn (plan args + `--alias
-model_id` + `--api-key-file`) → health-poll to the measured 20-minute
-bound. An occupied policy port adopts only a VERIFIED launch record
-(live pid + digest + endpoint + health; D-S3); anything less is a
-typed refusal naming the holder. One serving instance at a time —
-launching a different model while one serves is a typed refusal, never
-a silent swap; death surfaces as a typed Failed within one poll
-interval, never a silent Serving, and the supervisor never restarts on
-its own (the restart policy is operator-owned). The measured live
-launch (2026-11-04, HIP backend, warm cache): serving in 8s,
-`/v1/models` listing exactly the card name, a 28-token completion, clean
-stop in 13s wall (`tests/live_supervisor.rs`, `HKASK_P1_LIVE=1`).
+The zero-manual-entry half (operator ruling 2026-11-05, the
+"downloaded = available" UX): at startup, when the provider entry is
+absent, it is registered once (mint-if-absent token + the emission —
+the settings-store notification registers the provider live, so the
+private model cards appear in the agent panel with zero manual steps);
+when the entry exists it is never touched (an operator's hand-edited
+row wins — a deliberate deletion returns at the next restart, the row
+is system-owned like the seeded templates) and only the token is
+provisioned if the slot is empty. The token is minted automatically —
+the `provision_db_passphrase_string` precedent (first-run secret
+provisioning); an explicit token set on the page always wins. The
+fleet carries all four downloaded models (qwen3-8-flash-next, flint,
+gemma-4-31b, muse-glimmer-30b — each brief parse-verified against its
+weights by `tests/fleet_parse.rs` under `HKASK_P1_LIVE=1`), so a
+download + a brief means the card exists.
+
+The Serving section is the launch surface: one Launch button per
+shipped fleet model and Stop when serving. Launch runs the full
+production path — fleet resolve → real shard parse → live hardware
+probe → guard-verified compile → startup probe against the installed
+binary (`--version`/`--help` vs the manifest pin: exact-commit refusal,
+D-S2) → spawn (plan args + `--alias model_id` + `--api-key-file`) →
+health-poll to the measured 20-minute bound. An occupied policy port
+adopts only a VERIFIED launch record (live pid + digest + endpoint +
+health; D-S3); anything less is a typed refusal naming the holder.
+One model holds the RAM at a time (a physics constraint — the
+flagship's ~72 GB of weights exclude every other model on the 96 GB
+machine); launching a different model while one serves is an explicit
+SWAP — stop, drain, then load the new one (the click is the intent,
+never a silent substitution), and a fresh editor session swaps a
+previous session's live server by pid only after verifying the
+recorded process identity (argv[0] == the recorded binary — a
+recycled pid is never killed). Death surfaces as a typed Failed
+within one poll interval, never a silent Serving, and the supervisor
+never restarts on its own (the restart policy is operator-owned).
+The measured live launch (2026-11-04, HIP backend, warm cache):
+serving in 8s, `/v1/models` listing exactly the card name, a 28-token
+completion, clean stop in 13s wall (`tests/live_supervisor.rs`,
+`HKASK_P1_LIVE=1`).
 
 ## Keychain Architecture
 
