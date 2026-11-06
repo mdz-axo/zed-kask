@@ -7,9 +7,17 @@ placement compiler behind `hkask-private-inference`'s manifest family.
 ruling). **Baseline:** the P0 matrix and the MTP measurement records under
 `kask/docs/research/`.
 
-**Ownership (plan §12 item 3 — the operator's ruling, still open):** operator-triaged
-on each llama.cpp release, or delegated with typed escalation. This runbook is
-written to serve either mode; the only difference is who runs the steps.
+**Ownership (plan §12 item 3 — the operator's ruling, 2026-11-06: DELEGATED with
+typed escalation, under the operator's "proceed with the proposed follow-ups"
+direction):** the agent runs the triage procedure below on each llama.cpp
+release; the typed refusals are the escalation signal (a `CommitMismatch` names
+both commits, a `MissingFlags` names the exact spellings, a failing fixture
+names the constraint), and the Rust-change classification escalates to the
+operator as a placement finding with the classification attached. The two
+operator-owned pieces stay the operator's in either mode: the adopt-iff-verified
+re-pin gates (step 3) and the swap click (step 4 — launch = swap; the operator's
+click is the intent). This runbook still serves either mode; the ruling names
+who runs the steps.
 
 ## Why the watch exists
 
