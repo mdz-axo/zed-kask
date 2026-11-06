@@ -2440,7 +2440,6 @@ pub(crate) mod tests {
             "seek_to_secs(0.5) lands on the 500ms frame"
         );
     }
-
 }
 
 #[cfg(test)]
