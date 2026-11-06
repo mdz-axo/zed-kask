@@ -26,6 +26,19 @@ pub(crate) fn render_private_inference_page(
         .map(Into::into)
         .unwrap_or_default();
 
+    // zed-kask: D100 (the review's F4) — bind the policy fields up front:
+    // the token row's closures below move `pi`'s fields, so the three
+    // policy rows (built after it) read from these bindings.
+    let local_providers_initial = pi.local_provider_ids.join(", ");
+    let disabled_servers_initial = pi.private_thread_disabled_servers.join(", ");
+    let embedding_model_initial = pi.embedding_model.clone();
+    // The entry-time prefix validation's allowed set: the private provider
+    // id plus the local-provider set (the same set
+    // `resolved_local_providers` merges; the wiring-time builder refusal
+    // stays the enforcement home).
+    let mut allowed_prefixes = vec![pi.provider_id.clone()];
+    allowed_prefixes.extend(pi.local_provider_ids.iter().cloned());
+
     let provider_id_input = kask_string_input(
         "kask-private-inference-provider-id",
         "Private Inference Provider Id",
@@ -146,6 +159,92 @@ pub(crate) fn render_private_inference_page(
             kask_bridge::private_inference_supervisor::register_provider_entry(cx)
         });
 
+    // zed-kask: D100 (the review's F4) — the three policy fields the
+    // content struct carries that the page lacked: the local-leg set, the
+    // private-thread tool perimeter, and the private embedding model.
+    // Each writes through the settings store with the parse-gate contract
+    // (a failed parse never rewrites the file). The embedding_model row
+    // additionally validates the local prefix at ENTRY — the wiring-time
+    // refusal (the port build) remains the enforcement home; the row
+    // fails the obvious mistake (a cloud-prefixed model string) where the
+    // operator types it. The empty string is the explicit opt-out (the
+    // keyword-only degrade); the CSV rows treat an empty confirm as NO
+    // write (an empty list is not the same as an absent override).
+    fn split_csv(text: &str) -> Vec<String> {
+        text.split(',')
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    let local_providers_input = kask_input_field(
+        "kask-private-inference-local-providers",
+        0,
+        local_providers_initial,
+        "ollama",
+        "Local Provider Ids",
+        |text| {
+            let parsed = split_csv(text);
+            (!parsed.is_empty()).then_some(parsed)
+        },
+        |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .private_inference
+                .get_or_insert_default()
+                .local_provider_ids = Some(parsed);
+        },
+    );
+
+    let disabled_servers_input = kask_input_field(
+        "kask-private-inference-disabled-servers",
+        0,
+        disabled_servers_initial,
+        "media",
+        "Private-Thread Disabled Servers",
+        |text| {
+            let parsed = split_csv(text);
+            (!parsed.is_empty()).then_some(parsed)
+        },
+        |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .private_inference
+                .get_or_insert_default()
+                .private_thread_disabled_servers = Some(parsed);
+        },
+    );
+
+    let embedding_model_input = kask_input_field(
+        "kask-private-inference-embedding-model",
+        0,
+        embedding_model_initial,
+        "empty = the keyword-only degrade (no local embedding)",
+        "Private Embedding Model",
+        move |text| {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            let (prefix, _) = trimmed.split_once('/')?;
+            allowed_prefixes
+                .iter()
+                .any(|allowed| allowed == prefix)
+                .then(|| trimmed.to_string())
+        },
+        |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .private_inference
+                .get_or_insert_default()
+                .embedding_model = Some(parsed);
+        },
+    );
+
     v_flex()
         .id("kask-private-inference-page")
         .size_full()
@@ -229,6 +328,30 @@ pub(crate) fn render_private_inference_page(
                     .color(Color::Muted),
                 )
                 .child(register_button),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Private-Thread Policy"))
+                .child(
+                    Label::new(
+                        "The three policy fields a privacy-marked thread reads \
+                         (kask.private_inference): the local-leg provider ids \
+                         (local by construction — a marked thread accepts these \
+                         providers' models and never a cloud provider's), the MCP \
+                         servers whose tools are disabled on marked threads \
+                         (their assisting inference cannot run locally), and the \
+                         LOCAL embedding model for private memory (empty = the \
+                         keyword-only degrade; a cloud-prefixed value is refused \
+                         here and at wiring).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(local_providers_input)
+                .child(disabled_servers_input)
+                .child(embedding_model_input),
         )
         .child(Divider::horizontal())
         .child({
@@ -409,5 +532,65 @@ mod tests {
         assert!(page.contains("fleet_cards"));
         assert!(page.contains("supervisor().status()"));
         assert!(page.contains("last_action_outcome"));
+    }
+
+    /// zed-kask: D100 (the review's F4) — the three policy fields the
+    /// content struct carries have page rows, and each writes through the
+    /// settings store with the parse-gate contract (a failed parse never
+    /// rewrites the file): the local-leg set, the private-thread tool
+    /// perimeter, and the private embedding model.
+    #[test]
+    fn policy_fields_have_rows_that_write_their_settings() {
+        let page = include_str!("private_inference.rs");
+        for (field_id, field) in [
+            (
+                "kask-private-inference-local-providers",
+                "local_provider_ids",
+            ),
+            (
+                "kask-private-inference-disabled-servers",
+                "private_thread_disabled_servers",
+            ),
+            ("kask-private-inference-embedding-model", "embedding_model"),
+        ] {
+            assert!(
+                page.contains(field_id),
+                "the {field} row exists on the page"
+            );
+            assert!(
+                page.contains(&format!(".{field} = Some(parsed);")),
+                "the {field} row writes its settings field"
+            );
+        }
+    }
+
+    /// The embedding_model row validates the local prefix at ENTRY — the
+    /// non-empty value must be provider-qualified with the prefix in the
+    /// local leg (the same set `resolved_local_providers` merges); the
+    /// wiring-time builder refusal stays the enforcement home, and the
+    /// empty confirm writes the explicit opt-out (the keyword-only
+    /// degrade). The CSV rows treat an empty confirm as NO write (an
+    /// empty list is not the same as an absent override).
+    #[test]
+    fn embedding_model_row_validates_the_local_prefix_at_entry() {
+        let page = include_str!("private_inference.rs");
+        assert!(
+            page.contains("split_once('/')?;"),
+            "the row requires a provider-qualified value"
+        );
+        assert!(
+            page.contains("allowed_prefixes"),
+            "the prefix check reads the local leg (the private provider id plus the local set)"
+        );
+        assert!(
+            page.contains("(!parsed.is_empty()).then_some(parsed)"),
+            "the CSV rows skip the write on an empty confirm"
+        );
+        // The empty embedding confirm writes the explicit opt-out — Some(""),
+        // never a skipped write (the opt-out is a storable state).
+        assert!(
+            page.contains("Some(trimmed.to_string())"),
+            "an empty embedding confirm writes the explicit empty opt-out"
+        );
     }
 }
