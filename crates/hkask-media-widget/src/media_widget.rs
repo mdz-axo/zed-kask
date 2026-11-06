@@ -960,9 +960,16 @@ impl gpui::Render for MediaWidget {
                         // definite-height panes shrink this area freely.
                         let mut container = div().flex_1().min_h_0();
                         if let Some(image) = self.image_data.clone() {
+                            // max_h_full: img.rs injects the intrinsic aspect
+                            // ratio into the style when none is set, and that
+                            // derivation overrides the height percentage — a
+                            // tall image overflows a short definite pane the
+                            // same way a video frame did (the video arm's fix,
+                            // pinned by `transcript_row_fits_frame_and_transport`).
                             container = container.child(
                                 img(ImageSource::from(image))
                                     .size_full()
+                                    .max_h_full()
                                     .object_fit(ObjectFit::Contain),
                             );
                         } else {
@@ -1031,16 +1038,31 @@ impl gpui::Render for MediaWidget {
                             .bg(theme.colors().editor_background);
 
                         if let Some(frame) = frame {
-                            // size_full + Contain against the flex_1 parent's
-                            // definite height: the frame scales to fit the pane
-                            // in both dimensions. (A fraction width alone does
-                            // NOT trigger gpui's img auto-height derivation —
-                            // that only fires for `Definite(Absolute)` widths,
+                            // size_full + max_h_full + Contain against the
+                            // flex_1 parent's definite height: the frame
+                            // scales to fit the pane in both dimensions.
+                            // (A fraction width alone does NOT trigger
+                            // gpui's img auto-height derivation — that
+                            // only fires for `Definite(Absolute)` widths,
                             // img.rs — so w_full here left the frame at its
-                            // natural 480px height, unscaled.)
+                            // natural 480px height, unscaled. The max_h_full
+                            // clamp is load-bearing for SHORT definite hosts:
+                            // img.rs injects the frame's intrinsic aspect
+                            // ratio into the style whenever none is set, and
+                            // that derivation overrides the height
+                            // percentage — without the clamp a 16:9 frame
+                            // laid out 449px tall inside a 100px area
+                            // (operator report 2026-11-06: the transcript
+                            // row showed the top third of the image with the
+                            // transport clipped past the row), pinned by
+                            // `transcript_row_fits_frame_and_transport`. In
+                            // the content flow the percentage max is inert —
+                            // the aspect derivation against the definite
+                            // flow width still holds the video open there.)
                             video_area = video_area.child(
                                 img(ImageSource::Render(frame))
                                     .size_full()
+                                    .max_h_full()
                                     .object_fit(ObjectFit::Contain)
                                     // Test-support hook: exposes the frame
                                     // element's laid-out bounds to layout
@@ -2418,6 +2440,7 @@ pub(crate) mod tests {
             "seek_to_secs(0.5) lands on the 500ms frame"
         );
     }
+
 }
 
 #[cfg(test)]
@@ -2437,6 +2460,68 @@ mod layout_tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div().size_full().child(self.widget.clone())
         }
+    }
+
+    /// The panel transcript row's host (operator report 2026-11-06): the
+    /// sub-surface's bounded player row is a 140px flex row with min_w_0
+    /// and overflow_hidden, the widget as its direct child —
+    /// media_viewer.rs `render_workspace_header_item` (item 0 of the
+    /// workspace list). Mirrors the production row construction exactly:
+    /// the widget root resolves the row's height fine; the shipped defect
+    /// was the img INSIDE the video area — img.rs injects the frame's
+    /// intrinsic aspect ratio into the style whenever none is set, and
+    /// that width-derived height overrode the img's height percentage —
+    /// so a 16:9 frame laid out ~450px tall inside the ~100px area and
+    /// overflow_hidden clipped the row to its top third, with the
+    /// transport clipped past the row's bottom.
+    struct TranscriptRowHost {
+        widget: Entity<MediaWidget>,
+    }
+
+    impl gpui::Render for TranscriptRowHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .h(px(140.))
+                .flex()
+                .min_w_0()
+                .overflow_hidden()
+                .child(self.widget.clone())
+        }
+    }
+
+    /// The transcript row pin (2026-11-06 operator report): inside the
+    /// panel's 140px player row, the decoded frame AND the transport must
+    /// both lay out INSIDE the row. The shipped bug showed the top third
+    /// of the image with the transport clipped past the row's bottom —
+    /// so the transcript surface carried no visible play controls at all.
+    /// Hermetic: a 16:9 frame injected directly, no decoder, no fixture.
+    #[gpui::test]
+    fn transcript_row_fits_frame_and_transport(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+
+        let (_, cx) = cx.add_window_view(|_window, cx| {
+            let widget = hermetic_video_widget(Some((1920, 1080)), cx);
+            TranscriptRowHost { widget }
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let frame_bounds = cx
+            .debug_bounds("media-video-frame")
+            .expect("video frame laid out with debug bounds");
+        let transport_bounds = cx
+            .debug_bounds("media-transport")
+            .expect("transport laid out with debug bounds");
+        assert!(
+            frame_bounds.bottom() <= px(141.),
+            "the frame must fit the 140px transcript row, got bottom {:?}",
+            frame_bounds.bottom()
+        );
+        assert!(
+            transport_bounds.bottom() <= px(141.),
+            "the transport must stay inside the 140px row, got bottom {:?}",
+            transport_bounds.bottom()
+        );
     }
 
     /// Layout ground truth: the video area's laid-out bounds must respond to
