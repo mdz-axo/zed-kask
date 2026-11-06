@@ -2017,6 +2017,9 @@ impl Thread {
                 self.sandbox_grants.clone(),
                 Some(cx.weak_entity()),
                 Some(native_thread_calling_actor(self.id())),
+                hkask_types::InferenceProvenance::from_private_flag(
+                    self.kask.is_private_inference(),
+                ),
             );
             tool_event_stream.calling_session_id = Some(self.id().to_string());
             if let Err(error) = tool.replay(input, output, tool_event_stream, cx) {
@@ -5540,6 +5543,7 @@ impl Thread {
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
             Some(native_thread_calling_actor(self.id())),
+            hkask_types::InferenceProvenance::from_private_flag(self.kask.is_private_inference()),
         );
         tool_event_stream.calling_session_id = Some(self.id().to_string());
         tool_event_stream.update_fields(|update| update.status(acp_v2::ToolCallStatus::InProgress));
@@ -8385,6 +8389,14 @@ pub struct ToolCallEventStream {
     /// executes inside `handle_completion_event`'s `update`, where a
     /// `WeakEntity` read of the leased Thread double-lease-panics (BH-001).
     calling_actor: Option<hkask_types::WebID>,
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance, captured at construction from its D100 mark
+    /// (`KaskThreadState::is_private_inference`). Same capture discipline as
+    /// `calling_actor` (D68): read once where `self` is available inside the
+    /// tool-dispatch update, never through the `thread` handle, never from
+    /// model-supplied tool arguments — the mark rides the MCP call envelope's
+    /// parent-set `_meta` (M5), so a tool call can never claim it.
+    calling_provenance: hkask_types::InferenceProvenance,
 }
 
 /// zed-kask: D68 — the `WebID` identity of a native thread's session: the
@@ -8455,6 +8467,22 @@ impl ToolCallEventStream {
         (stream, receiver)
     }
 
+    /// Like [`Self::test_for_actor`], with an explicit calling provenance —
+    /// the test seam for the D100 (M5 write side) dispatch pins: a private
+    /// test context is constructed here, never claimed through tool input.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_for_actor_with_provenance(
+        actor: hkask_types::WebID,
+        provenance: hkask_types::InferenceProvenance,
+    ) -> (Self, ToolCallEventStreamReceiver) {
+        let (mut stream, receiver) = Self::test();
+        stream.calling_actor = Some(actor);
+        stream.calling_provenance = provenance;
+        stream.calling_session_id = Some(format!("test-session:{actor}"));
+        stream.tool_call_id = acp_v2::ToolCallId::new(format!("test:{}", uuid::Uuid::new_v4()));
+        (stream, receiver)
+    }
+
     /// Like [`Self::test`], but the returned stream shares the provided
     /// thread-scoped sandbox grants. This mirrors how a real [`Thread`] builds a
     /// distinct event stream per tool call while sharing one set of grants, so
@@ -8479,6 +8507,9 @@ impl ToolCallEventStream {
             sandbox_grants,
             None,
             None,
+            // The fail-closed default for un-tied test streams — the same
+            // read the child applies to an absent `_meta` mark.
+            hkask_types::InferenceProvenance::PublicProvider,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -8502,6 +8533,9 @@ impl ToolCallEventStream {
             Rc::new(RefCell::new(ThreadSandboxGrants::default())),
             None,
             None,
+            // The fail-closed default for un-tied test streams — the same
+            // read the child applies to an absent `_meta` mark.
+            hkask_types::InferenceProvenance::PublicProvider,
         );
 
         (
@@ -8527,6 +8561,7 @@ impl ToolCallEventStream {
         sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
         thread: Option<WeakEntity<Thread>>,
         calling_actor: Option<hkask_types::WebID>,
+        calling_provenance: hkask_types::InferenceProvenance,
     ) -> Self {
         Self {
             calling_session_id: None,
@@ -8539,6 +8574,7 @@ impl ToolCallEventStream {
             sandbox_grants,
             thread,
             calling_actor,
+            calling_provenance,
         }
     }
 
@@ -8613,6 +8649,14 @@ impl ToolCallEventStream {
 
     pub fn calling_actor(&self) -> Option<hkask_types::WebID> {
         self.calling_actor
+    }
+
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance, captured at construction. Test/un-tied streams default to
+    /// `PublicProvider`, matching the child read side's fail-closed treatment
+    /// of an absent `_meta` mark.
+    pub fn calling_provenance(&self) -> hkask_types::InferenceProvenance {
+        self.calling_provenance
     }
 
     /// Returns true if the user has cancelled this tool call.
@@ -10079,6 +10123,7 @@ mod tests {
             Rc::default(),
             None,
             None,
+            hkask_types::InferenceProvenance::PublicProvider,
         );
         let authorize = cx.update(|cx| {
             tool_stream.authorize_always_prompt(
@@ -10883,6 +10928,7 @@ mod tests {
                 Rc::new(RefCell::new(ThreadSandboxGrants::default())),
                 Some(thread.downgrade()),
                 Some(actor),
+                hkask_types::InferenceProvenance::PublicProvider,
             );
             (stream, cancellation_tx)
         };
@@ -10940,6 +10986,7 @@ mod tests {
                 Rc::new(RefCell::new(ThreadSandboxGrants::default())),
                 Some(thread.downgrade()),
                 Some(actor),
+                hkask_types::InferenceProvenance::PublicProvider,
             );
             (stream, cancellation_tx)
         });
@@ -10956,6 +11003,87 @@ mod tests {
                 "the captured actor must be the thread's session identity"
             );
         });
+    }
+
+    /// zed-kask: D100 (M5 write side) — the calling thread's inference
+    /// provenance is captured at stream construction from the thread's D100
+    /// mark, host-derived exactly like `calling_actor` (D68): never from
+    /// model-supplied tool arguments. An unmarked thread's stream carries
+    /// the public mark; a marked thread's carries the private mark; a
+    /// stream not tied to a live thread defaults to public — the same
+    /// fail-closed read the child applies to an absent `_meta`.
+    #[gpui::test]
+    async fn calling_provenance_is_captured_from_the_threads_d100_mark(cx: &mut TestAppContext) {
+        let (thread, _events, _fake) = setup_thread_for_test(cx).await;
+
+        // Captured outside the update, exactly how `Thread::run_tool` builds
+        // the stream: the mark is read where the thread is available.
+        let (public_stream, _tx) = cx.update(|cx| {
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let actor = thread.read_with(cx, |t, _| native_thread_calling_actor(t.id()));
+            let stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use"),
+                0,
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                Some(thread.downgrade()),
+                Some(actor),
+                hkask_types::InferenceProvenance::from_private_flag(
+                    thread.read_with(cx, |t, _| t.kask.is_private_inference()),
+                ),
+            );
+            (stream, cancellation_tx)
+        });
+
+        // The read is safe inside the update (the D68 class — no entity
+        // re-lease), and the unmarked thread reads public.
+        thread.update(cx, |thread, cx| {
+            assert_eq!(
+                public_stream.calling_provenance(),
+                hkask_types::InferenceProvenance::PublicProvider,
+                "an unmarked thread's stream carries the public mark"
+            );
+
+            // Mark the thread (the D100 toggle's setter) and capture
+            // again: the stream follows the mark. `self` is in scope inside
+            // the update, so the capture needs no entity read — the D68
+            // double-lease class cannot recur on this path.
+            thread.set_private_inference(true, cx);
+            let (cancellation_tx, cancellation_rx) = watch::channel(false);
+            let private_stream = ToolCallEventStream::new(
+                LanguageModelToolUseId::from("test-tool-use"),
+                acp_v2::ToolCallId::new("0:test-tool-use-2"),
+                0,
+                ThreadEventStream::new(mpsc::unbounded().0),
+                None,
+                cancellation_rx,
+                Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+                None,
+                None,
+                hkask_types::InferenceProvenance::from_private_flag(
+                    thread.kask.is_private_inference(),
+                ),
+            );
+            let _ = cancellation_tx;
+            assert_eq!(
+                private_stream.calling_provenance(),
+                hkask_types::InferenceProvenance::PrivateInference,
+                "a marked thread's stream carries the private mark — the
+                 capture follows the D100 mark, not a default"
+            );
+        });
+
+        // A stream not tied to a live thread defaults to the fail-closed
+        // public mark — the child reads an absent `_meta` the same way.
+        let (test_stream, _rx) = ToolCallEventStream::test();
+        assert_eq!(
+            test_stream.calling_provenance(),
+            hkask_types::InferenceProvenance::PublicProvider,
+            "an un-tied stream defaults to public, never a fabricated private claim"
+        );
     }
 
     fn prompt_too_large_error() -> LanguageModelCompletionError {

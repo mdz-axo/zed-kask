@@ -257,18 +257,33 @@ The operator approved M5-A and the three §4 stated-limit rulings
   future mechanism.
 - **Step 6 — DIVERGENCE.md**: D100's row extends with the M5 read-side
   sentence and the full pin list.
-- **Step 1 — the zed-side `_meta` write**: NOT in this change. The
-  concurrent stream's private-thread tool-gate work (the
-  `kask.private_inference.local_provider_ids` +
-  `private_thread_disabled_servers` settings, in flight in
-  `crates/agent/src/thread.rs` + `agent.rs` at implementation time)
-  owns the dispatch site that reads the calling thread's D100 mark; the
-  `_meta` ride integrates at that site once their work lands — a
-  bounded follow-up, recorded here so the seam is not forgotten. Until
-  it lands, the child-side filter reads the fail-closed public default
-  for every call (the strictest interim: no private rows via tools; the
-  injector seam — which filters correctly — remains the private
-  recall path).
+- **Step 1 — the zed-side `_meta` write** (landed 2026-11-05, two
+  commits: the kask leg then the zed leg):
+  `ToolCallEventStream` captures `calling_provenance` at construction from
+  the calling thread's D100 mark (the D68 capture discipline — host-derived
+  inside the dispatch update, never from tool input; un-tied test streams
+  default `PublicProvider`); `KaskToolSource::invoke` carries it as an
+  explicit host-set parameter; the governed runtime's
+  `invoke_with_call_provenance` threads it into the request params —
+  agent-driven calls stamp `_meta.inference_provenance` under the one-home
+  key `hkask_types::META_INFERENCE_PROVENANCE`, while hkask-mcp's plain
+  `ToolPort::invoke` path stays un-stamped (non-thread-routed callers keep
+  the pre-M5 wire form; the child reads them public, fail-closed).
+  Parent-side pins:
+  `calling_provenance_is_captured_from_the_threads_d100_mark` (thread.rs),
+  `kask_server_tool_passes_the_calling_threads_provenance`
+  (context_server_registry.rs — with the input-spoof falsifier, the
+  no-field rule's parent-side leg),
+  `call_request_params_serialize_the_calling_provenance_meta` (the
+  request-fixture wire pin, hkask-mcp),
+  `from_private_flag_maps_the_d100_flag_both_ways` +
+  `the_meta_key_is_the_exact_wire_spelling` (hkask-types). FR-4 falsifier
+  (b)'s tool legs now compose end-to-end at the wire with the child-side
+  pins (bc1170dcff unchanged) over the same serialized form — the interim
+  strictest-default period closed: a private-marked thread's curator tool
+  calls now read its private rows. The `:NNNN@sym` thread.rs/agent.rs
+  citations in skills-and-composition.md and lisp-eval-dialect.md were
+  re-anchored against the shifted tree in the same change.
 
 **Hypotheses adjudicated:** H-M5.1 (a public call context never
 receives a private row — corroborated on both the exact and semantic

@@ -70,12 +70,19 @@ pub trait KaskToolSource: Send + Sync {
     /// value. It is a metering/attribution identity, not a capability: it
     /// does not widen or narrow what the call may do (see P4.2). `None`
     /// falls back to the pre-existing shared process-level identity.
+    ///
+    /// `provenance` (zed-kask: D100/M5) is the calling thread's inference
+    /// provenance, captured at the event stream's construction from the
+    /// thread's D100 mark — host-derived, never model-supplied. It rides the
+    /// request envelope's parent-set `_meta` to the servers' per-call read
+    /// side (recall routing), and is a routing signal, not a capability.
     fn invoke(
         &self,
         server_id: &str,
         caller: Option<hkask_types::WebID>,
         tool: &str,
         args: serde_json::Value,
+        provenance: hkask_types::InferenceProvenance,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
     >;
@@ -706,6 +713,12 @@ impl AnyAgentTool for KaskServerTool {
         // Thread and panicked the editor on prompt send, BH-001) — and the
         // spawned future below outlives this call and cannot re-derive it.
         let caller = event_stream.calling_actor();
+        // zed-kask: D100 (M5 write side) — the calling thread's provenance,
+        // captured at stream construction with the same discipline as
+        // `caller` above (D68): host-derived, readable inside this update
+        // without an entity lease, and never present in the model-supplied
+        // `input` (the anti-spoof pin below).
+        let provenance = event_stream.calling_provenance();
         cx.spawn(async move |_| {
             let input = input
                 .recv()
@@ -720,7 +733,7 @@ impl AnyAgentTool for KaskServerTool {
             // cancellation so `Thread::cancel` can complete even when the child
             // never replies. Cancellation here means "the request may or may not
             // have applied its effect" — never a claim of rollback or success.
-            let dispatch = source.invoke(&server_id, caller, &tool_name, input);
+            let dispatch = source.invoke(&server_id, caller, &tool_name, input, provenance);
             let outcome = futures::select! {
                 result = dispatch.fuse() => result,
                 _ = event_stream.cancelled_by_user().fuse() => {
@@ -1612,12 +1625,15 @@ mod tests {
     /// the right server id, tool name, and arguments. `callers` records the
     /// host-derived caller identity (zed-kask: D-seam — F6/P2) passed to
     /// each `invoke`, in the same order, so tests can assert distinct
-    /// calling threads produce distinct attribution.
+    /// calling threads produce distinct attribution. `provenances`
+    /// records the calling thread's inference provenance (zed-kask:
+    /// D100/M5) the same way.
     #[derive(Default)]
     struct FakeKaskToolSource {
         descriptors: Vec<KaskToolDescriptor>,
         invocations: std::sync::Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
         callers: std::sync::Arc<std::sync::Mutex<Vec<Option<hkask_types::WebID>>>>,
+        provenances: std::sync::Arc<std::sync::Mutex<Vec<hkask_types::InferenceProvenance>>>,
     }
 
     impl FakeKaskToolSource {
@@ -1643,6 +1659,7 @@ mod tests {
             caller: Option<hkask_types::WebID>,
             tool: &str,
             args: serde_json::Value,
+            provenance: hkask_types::InferenceProvenance,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
         > {
@@ -1655,6 +1672,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(caller);
+            self.provenances
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(provenance);
             let is_failing = tool == "failing_tool";
             // zed-kask: D-seam — F2/P1b test fixture. A tool name that never
             // resolves, so cancellation tests prove the race actually fires
@@ -2004,6 +2025,94 @@ mod tests {
                 "[unavailable] upstream is down".into(),
             )],
             "the source's Err(text) must surface verbatim as the error text"
+        );
+    }
+
+    /// zed-kask: D100 (M5 write side) — `KaskServerTool::run` derives the
+    /// dispatch provenance from the calling thread's event stream
+    /// (host-captured at construction) and passes it to
+    /// `KaskToolSource::invoke`; the model-supplied input is never a
+    /// source. The anti-spoof leg: a public-context call whose INPUT
+    /// carries a spoofed `inference_provenance` argument still dispatches
+    /// with the public mark — the child's per-call read side can only be
+    /// reached through the parent-set `_meta`, never through arguments.
+    #[gpui::test]
+    async fn kask_server_tool_passes_the_calling_threads_provenance(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            use settings::Settings as _;
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            let mut agent_settings = agent_settings::AgentSettings::get_global(cx).clone();
+            agent_settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(agent_settings, cx);
+        });
+
+        let descriptors = vec![KaskToolDescriptor {
+            server_id: "kask-test".to_string(),
+            name: "hello_tool".to_string(),
+            description: "A governed kask tool".to_string(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+        let invocations = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provenances = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let source = std::sync::Arc::new(FakeKaskToolSource {
+            descriptors: descriptors.clone(),
+            invocations,
+            provenances: provenances.clone(),
+            ..Default::default()
+        });
+
+        // A private-marked calling context: the stream carries the private
+        // mark, and the dispatch must pass exactly that to the source.
+        let (event_stream, _rx) = ToolCallEventStream::test_for_actor_with_provenance(
+            hkask_types::WebID::for_agent_name("private-test-thread"),
+            hkask_types::InferenceProvenance::PrivateInference,
+        );
+        let tool = std::sync::Arc::new(KaskServerTool {
+            source: source.clone(),
+            descriptor: descriptors[0].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({"query": "private recall"}));
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        assert!(task.await.is_ok(), "the private-context dispatch succeeds");
+        assert_eq!(
+            provenances
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_slice(),
+            &[hkask_types::InferenceProvenance::PrivateInference],
+            "a private-marked thread's tool call dispatches with the private mark"
+        );
+
+        // The anti-spoof leg: a public stream whose INPUT claims private
+        // provenance still dispatches with the PUBLIC mark — the provenance
+        // is host-derived from the calling thread, never from arguments.
+        let (event_stream, _rx) = ToolCallEventStream::test_for_actor_with_provenance(
+            hkask_types::WebID::for_agent_name("public-test-thread"),
+            hkask_types::InferenceProvenance::PublicProvider,
+        );
+        let tool = std::sync::Arc::new(KaskServerTool {
+            source,
+            descriptor: descriptors[0].clone(),
+        });
+        let (mut sender, input) = ToolInput::<serde_json::Value>::test();
+        sender.send_full(serde_json::json!({
+            "query": "spoof attempt",
+            "inference_provenance": "private_inference",
+        }));
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        assert!(task.await.is_ok(), "the public-context dispatch succeeds");
+        assert_eq!(
+            provenances
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_slice(),
+            &[
+                hkask_types::InferenceProvenance::PrivateInference,
+                hkask_types::InferenceProvenance::PublicProvider,
+            ][..],
+            "a spoofed provenance argument in the input cannot claim private — the host-derived mark wins"
         );
     }
 

@@ -3644,6 +3644,7 @@ impl agent::KaskToolSource for ZedKaskToolSource {
         caller: Option<hkask_types::WebID>,
         tool: &str,
         args: serde_json::Value,
+        provenance: hkask_types::InferenceProvenance,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
     > {
@@ -3659,7 +3660,12 @@ impl agent::KaskToolSource for ZedKaskToolSource {
             // metering/attribution identity, not a capability grant.
             let agent_id =
                 caller.unwrap_or_else(|| hkask_types::WebID::for_agent_name("zed-agent"));
-            hkask_tool_port::ToolPort::invoke(&*runtime, &server_id, &tool, args, agent_id)
+            // zed-kask: D100 (M5 write side) — the calling thread's D100
+            // mark rides the envelope's parent-set `_meta` to the servers'
+            // per-call read side; the plain ToolPort entry (every
+            // non-thread-routed caller) stays un-stamped.
+            runtime
+                .invoke_with_call_provenance(&server_id, &tool, args, agent_id, provenance)
                 .await
                 .map_err(|error| error.to_string())
         })

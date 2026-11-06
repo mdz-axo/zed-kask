@@ -5693,6 +5693,7 @@ impl KaskToolSource for MutableKaskToolSource {
         _caller: Option<hkask_types::WebID>,
         _tool: &str,
         _args: serde_json::Value,
+        _provenance: hkask_types::InferenceProvenance,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
     > {
