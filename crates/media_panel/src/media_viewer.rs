@@ -4393,9 +4393,11 @@ impl MediaViewer {
     /// must not fight the follow-along — the manual-scroll precedent), and
     /// blur restores tracking only when the search took it (a manually
     /// suspended follow stays suspended). Idempotent; called from the
-    /// input's click handler, an event context — listener registration
-    /// during render defers through the frame's effect cycle and never
-    /// activates, so the listeners would sit pending forever.
+    /// workspace render, so the listeners are live before any focus path
+    /// can reach the input (click or keyboard). Render-time registration
+    /// works (the deferred activation rides the normal effect cycle) —
+    /// verified by bisect 2026-11-05 after an earlier false claim that it
+    /// never activates; do not re-assert that.
     fn ensure_transcript_search_focus_listeners(
         &mut self,
         window: &mut Window,
@@ -6306,6 +6308,18 @@ impl MediaViewer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
+        // The search input's focus handle (S3) — created on first need, and
+        // its focus/blur listeners registered with it on the same first
+        // render (`ensure_transcript_search_focus_listeners` — idempotent).
+        // Registering at render (not from the input's click handler) keeps
+        // keyboard-driven focus covered: an arrow/tab arrival at the input
+        // suspends follow exactly like a click. Placed before the state
+        // borrow (the registration takes &mut self). The header's search
+        // row reads the stored handle.
+        if self.transcript_search_focus.is_none() {
+            self.transcript_search_focus = Some(cx.focus_handle());
+        }
+        self.ensure_transcript_search_focus_listeners(window, cx);
         let Some(state) = self.transcript.as_ref() else {
             // The caller (render_workspace) opens the sub-surface only
             // with a transcript loaded; keep the function total anyway.
@@ -6426,15 +6440,6 @@ impl MediaViewer {
             .selection_popover_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
-        // The search input's focus handle (S3) — created on first need; the
-        // focus/blur listeners register with it on the input's first click
-        // (`ensure_transcript_search_focus_listeners`), an event context —
-        // listener registration during render defers through the frame's
-        // effect cycle and never activates, so the listeners would sit
-        // pending forever. The header's search row reads the stored handle.
-        if self.transcript_search_focus.is_none() {
-            self.transcript_search_focus = Some(cx.focus_handle());
-        }
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
@@ -6804,8 +6809,7 @@ impl MediaViewer {
                         }))
                         .on_click({
                             let focus = focus.clone();
-                            cx.listener(move |this, _, window, cx| {
-                                this.ensure_transcript_search_focus_listeners(window, cx);
+                            cx.listener(move |_, _, window, cx| {
                                 window.focus(&focus, cx);
                             })
                         });
@@ -16290,16 +16294,11 @@ mod viewer_layout_tests {
         // the operator clicks anything.
         cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
         cx.run_until_parked();
-        // Focus the search input (its click handler's path: ensure the focus
-        // listeners, then focus). The registration's activation is deferred
-        // to the effect cycle's end, so it parks BETWEEN ensure and focus;
-        // the focus dispatch happens at the next draw, so each focus drive
-        // also notifies — in the test harness only effect-driven draws run
-        // (window.refresh alone leaves the window dirty with no frame).
-        cx.update_window_entity(&viewer, |viewer, window, cx| {
-            viewer.ensure_transcript_search_focus_listeners(window, cx);
-        });
-        cx.run_until_parked();
+        // The initial paint registered the focus listeners (the workspace
+        // render path); the drive only focuses. The dispatch needs an
+        // active window (test windows start INACTIVE — the focus event's
+        // paths stay empty until activate_window) and a following draw, so
+        // the drive also notifies.
         cx.update_window_entity(&viewer, |viewer, window, cx| {
             let focus = viewer
                 .transcript_search_focus
