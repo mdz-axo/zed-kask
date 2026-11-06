@@ -6465,13 +6465,20 @@ impl ThreadView {
     /// agent-callable tool (the rejected-module register, D-3 §4:
     /// unmarking widens exposure, so it cannot be agent-callable). The
     /// tooltip text IS the routing-decision surfacing FR-3(c) requires at
-    /// the thread surface; pins: `private_inference_toggle_label_renders_the_routing_decision`.
+    /// the thread surface, and the marked direction surfaces the
+    /// tool-perimeter's disabled-server set (the review's F5 — the
+    /// perimeter is a PI-owned policy, and its decision text belongs next
+    /// to the lock; the set reads through the one resolution home,
+    /// `agent::private_thread_disabled_servers`); pins:
+    /// `private_inference_toggle_label_renders_the_routing_decision`.
     /// The label pair is a pure function so the decision text is unit-pinned
     /// (see `private_inference_toggle_label`).
     fn render_private_inference_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?;
         let marked = thread.read(cx).is_private_inference();
-        let (icon, icon_color, tooltip_label) = Self::private_inference_toggle_label(marked);
+        let disabled_servers = agent::private_thread_disabled_servers(cx);
+        let (icon, icon_color, tooltip_label) =
+            Self::private_inference_toggle_label(marked, &disabled_servers);
 
         Some(
             IconButton::new("private-inference-toggle", icon)
@@ -6493,18 +6500,34 @@ impl ThreadView {
 
     /// D100 — the toggle's icon/color/tooltip pair. Pure so the routing-
     /// decision text (FR-3(c)'s unit pin) is asserted without a window:
-    /// both directions name the PI-owned policy home and the boundary.
-    fn private_inference_toggle_label(marked: bool) -> (IconName, Color, SharedString) {
+    /// both directions name the PI-owned policy home and the boundary. The
+    /// marked direction also surfaces the tool-perimeter's disabled-server
+    /// set (the review's F5 — the perimeter is a PI-owned policy, and its
+    /// decision text belongs next to the lock); the unmarked direction does
+    /// not carry it (the set is a marked-state policy).
+    fn private_inference_toggle_label(
+        marked: bool,
+        disabled_servers: &[String],
+    ) -> (IconName, Color, SharedString) {
         if marked {
+            let perimeter = if disabled_servers.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Tools off on this thread: {} \
+                     (kask.private_inference.private_thread_disabled_servers).",
+                    disabled_servers.join(", ")
+                )
+            };
             (
                 IconName::Lock,
                 Color::Accent,
-                SharedString::from(
+                SharedString::from(format!(
                     "Private inference: on — this thread routes only to the private \
                      inference leg (kask.private_inference); no request dispatches to \
-                     a public provider while the mark is on. Click to route on \
-                     public providers.",
-                ),
+                     a public provider while the mark is on.{perimeter} Click to route \
+                     on public providers."
+                )),
             )
         } else {
             (
@@ -15699,11 +15722,15 @@ mod private_inference_toggle_tests {
     /// zed-kask: D100 (Seam A) — FR-3(c): the routing-decision text renders
     /// at the thread surface. Both toggle directions name the PI-owned
     /// policy home (`kask.private_inference`) and the boundary, so the
-    /// operator sees the routing decision — never a mystery lock.
+    /// operator sees the routing decision — never a mystery lock. F5: the
+    /// marked direction surfaces the tool-perimeter's disabled-server set
+    /// (the PI-owned policy visible at the lock) — and ONLY the marked
+    /// direction carries it.
     #[test]
     fn private_inference_toggle_label_renders_the_routing_decision() {
+        let perimeter_set = vec!["media".to_string(), "vision-server".to_string()];
         let (marked_icon, marked_color, marked_label) =
-            ThreadView::private_inference_toggle_label(true);
+            ThreadView::private_inference_toggle_label(true, &perimeter_set);
         assert!(matches!(marked_icon, IconName::Lock));
         assert!(matches!(marked_color, Color::Accent));
         let marked_text = marked_label.as_ref();
@@ -15720,9 +15747,26 @@ mod private_inference_toggle_tests {
             "the marked tooltip names the privacy boundary — the per-request \
              claim the gates enforce, transition-true for a mid-turn mark: {marked_text}"
         );
+        // F5: the perimeter's disabled-server set surfaces on the marked
+        // tooltip — every server named, and the policy field that owns it.
+        assert!(
+            marked_text.contains("Tools off on this thread: media, vision-server"),
+            "the marked tooltip surfaces the disabled-server set: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("private_thread_disabled_servers"),
+            "the perimeter fragment names the PI-owned policy field: {marked_text}"
+        );
+
+        // An empty set adds no fragment (the trailing text stays clean).
+        let (_, _, empty_set_label) = ThreadView::private_inference_toggle_label(true, &[]);
+        assert!(
+            !empty_set_label.as_ref().contains("Tools off"),
+            "no disabled servers, no perimeter fragment: {empty_set_label}"
+        );
 
         let (unmarked_icon, unmarked_color, unmarked_label) =
-            ThreadView::private_inference_toggle_label(false);
+            ThreadView::private_inference_toggle_label(false, &perimeter_set);
         assert!(matches!(unmarked_icon, IconName::LockOff));
         assert!(matches!(unmarked_color, Color::Muted));
         let unmarked_text = unmarked_label.as_ref();
@@ -15733,6 +15777,11 @@ mod private_inference_toggle_tests {
         assert!(
             unmarked_text.contains("kask.private_inference"),
             "the unmarked tooltip names the PI-owned policy home: {unmarked_text}"
+        );
+        assert!(
+            !unmarked_text.contains("Tools off"),
+            "the disabled-server set is a marked-state policy — the unmarked \
+             tooltip does not carry it: {unmarked_text}"
         );
     }
 }

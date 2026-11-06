@@ -270,6 +270,29 @@ pub(crate) fn is_private_leg_provider(provider_id: &str, cx: &App) -> bool {
         .any(|allowed| provider_id == allowed.as_ref())
 }
 
+/// D100 (operator ruling 2026-11-05) — the PI-owned private-thread
+/// disabled-server SET, resolved through the one content home
+/// (`resolved_private_thread_disabled_servers`) with the default-const
+/// fallback when the section is absent. `pub` so the thread-header
+/// toggle's tooltip can surface the same resolved set the perimeter
+/// refuses by (the review's F5 — the perimeter is a PI-owned policy; its
+/// decision text belongs next to the lock).
+pub fn private_thread_disabled_servers(cx: &App) -> Vec<String> {
+    let section = cx
+        .global::<settings::SettingsStore>()
+        .merged_settings()
+        .kask
+        .as_ref()
+        .and_then(|kask| kask.private_inference.as_ref());
+    match section {
+        Some(section) => section.resolved_private_thread_disabled_servers(),
+        None => settings::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+            .iter()
+            .map(|id| id.to_string())
+            .collect(),
+    }
+}
+
 /// D100 (operator ruling 2026-11-05) — is this MCP server's tool surface
 /// disabled on privacy-marked threads? The named default is the media
 /// server: its analysis passes (vision, STT, OCR) rely on cloud inference
@@ -278,20 +301,9 @@ pub(crate) fn is_private_leg_provider(provider_id: &str, cx: &App) -> bool {
 /// `media_server_tools_are_absent_on_private_threads` and the
 /// settings-content resolution pin.
 pub(crate) fn server_disabled_on_private_threads(server_id: &str, cx: &App) -> bool {
-    let section = cx
-        .global::<settings::SettingsStore>()
-        .merged_settings()
-        .kask
-        .as_ref()
-        .and_then(|kask| kask.private_inference.as_ref());
-    let servers: Vec<String> = match section {
-        Some(section) => section.resolved_private_thread_disabled_servers(),
-        None => settings::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
-            .iter()
-            .map(|id| id.to_string())
-            .collect(),
-    };
-    servers.iter().any(|s| s == server_id)
+    private_thread_disabled_servers(cx)
+        .iter()
+        .any(|s| s == server_id)
 }
 
 /// D100 — returned when a privacy-marked thread would resolve or dispatch
