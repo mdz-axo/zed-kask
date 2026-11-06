@@ -1426,11 +1426,9 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
                     // FR-4: the producing thread's routing state is the only
                     // source of the mark — the D100 flag the zed side read at
                     // turn completion. Never caller-supplied.
-                    inference_provenance: if record.private_inference {
-                        hkask_types::InferenceProvenance::PrivateInference
-                    } else {
-                        hkask_types::InferenceProvenance::PublicProvider
-                    },
+                    inference_provenance: hkask_types::InferenceProvenance::from_private_flag(
+                        record.private_inference,
+                    ),
                 })
                 .await
                 .map_err(|e| e.to_string())

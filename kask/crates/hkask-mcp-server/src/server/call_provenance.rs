@@ -17,8 +17,12 @@
 
 use hkask_types::InferenceProvenance;
 
-/// The parent's `_meta` key carrying the calling context's provenance.
-pub const META_INFERENCE_PROVENANCE: &str = "inference_provenance";
+// The wire key's one home moved to `hkask_types::META_INFERENCE_PROVENANCE`
+// when the parent write side (hkask-mcp) landed — both ends of the `_meta`
+// channel now share the same constant instead of carrying two spellings
+// that could drift apart with no compile-time witness. The re-export keeps
+// this module's public path stable (the read-side home stays here).
+pub use hkask_types::META_INFERENCE_PROVENANCE;
 
 tokio::task_local! {
     static CALL_PROVENANCE: InferenceProvenance;

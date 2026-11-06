@@ -106,6 +106,19 @@ pub enum InferenceProvenance {
     PrivateInference,
 }
 
+/// The MCP call-envelope `_meta` key carrying the calling context's
+/// provenance from the zed-side dispatch to a kask server's per-call
+/// provenance reader (SEP-1319; the private-inference M5 design, FR-4's
+/// falsifier (b) tool legs). The parent (`hkask-mcp`'s
+/// `invoke_with_call_provenance`) stamps
+/// `InferenceProvenance::PrivateInference.as_str()` under this key for a
+/// private-marked thread's calls — and nothing for a public call — and
+/// `hkask-mcp-server`'s `request_meta_provenance` parses it (only the
+/// exact private string claims private; absent/unparsable reads public,
+/// fail-closed for recall). One constant for both ends of the wire: the
+/// key must never fork between the writer and the reader.
+pub const META_INFERENCE_PROVENANCE: &str = "inference_provenance";
+
 impl InferenceProvenance {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -119,6 +132,19 @@ impl InferenceProvenance {
             "public_provider" | "PublicProvider" => Some(InferenceProvenance::PublicProvider),
             "private_inference" | "PrivateInference" => Some(InferenceProvenance::PrivateInference),
             _ => None,
+        }
+    }
+
+    /// Map the zed side's thread privacy flag (the D100 mark on
+    /// `KaskThreadState`) to this enum — the one conversion home for the
+    /// bool→mark mapping (the bridge's ingest seam and the agent's tool-call
+    /// stamp both route through it; a second inline mapping is a fork of the
+    /// same decision).
+    pub fn from_private_flag(private_inference: bool) -> Self {
+        if private_inference {
+            InferenceProvenance::PrivateInference
+        } else {
+            InferenceProvenance::PublicProvider
         }
     }
 
@@ -195,6 +221,27 @@ mod tests {
         assert_eq!(json, r#""private_inference""#);
         let parsed: InferenceProvenance = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, marked);
+    }
+
+    #[test]
+    fn from_private_flag_maps_the_d100_flag_both_ways() {
+        assert_eq!(
+            InferenceProvenance::from_private_flag(true),
+            InferenceProvenance::PrivateInference
+        );
+        assert_eq!(
+            InferenceProvenance::from_private_flag(false),
+            InferenceProvenance::PublicProvider
+        );
+    }
+
+    #[test]
+    fn the_meta_key_is_the_exact_wire_spelling() {
+        // The `_meta` wire key both the parent write side (hkask-mcp) and the
+        // child read side (hkask-mcp-server's call_provenance.rs) consume —
+        // pinned here so a drift from either end fails at the shared home,
+        // not as a silent public read in production.
+        assert_eq!(META_INFERENCE_PROVENANCE, "inference_provenance");
     }
 
     #[test]

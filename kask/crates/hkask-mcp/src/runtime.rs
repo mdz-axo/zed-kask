@@ -1506,6 +1506,56 @@ impl hkask_tool_port::ToolPort for McpRuntime {
         args: Value,
         agent: hkask_types::WebID,
     ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+        // The un-provenanced entry: every non-thread-routed caller (the
+        // bridge's skill execution, panel paths, IPC dispatch) keeps the
+        // pre-M5 wire form — no `_meta` stamp, which the child read side
+        // treats as public (fail-closed for recall). A provenance stamp is
+        // a recall-routing signal, never a capability grant.
+        self.invoke_governed(server, tool, args, agent, None)
+    }
+
+    fn get_tool_info<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+    ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
+        Box::pin(async move { McpRuntime::get_tool_info(self, server, tool).await })
+    }
+}
+
+impl McpRuntime {
+    /// The M5 zed-side `_meta` write: agent-driven dispatch stamps the
+    /// calling thread's D100 inference-provenance mark on the request
+    /// envelope's `_meta` channel (SEP-1319) — parent-set, never
+    /// caller-claimed (the tool arguments expose no provenance field). The
+    /// child read side (`hkask-mcp-server`'s `call_provenance.rs`) scopes
+    /// its per-call provenance from the stamp, so the curator recall tools'
+    /// `call_admits` filters admit the caller's own private rows — and
+    /// only those. A stamp is a recall-routing signal, never a capability:
+    /// it never widens what the call may do.
+    pub fn invoke_with_call_provenance<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: Value,
+        agent: hkask_types::WebID,
+        call_provenance: hkask_types::InferenceProvenance,
+    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+        self.invoke_governed(server, tool, args, agent, Some(call_provenance))
+    }
+
+    /// The governed dispatch body both entries share: metering, span emit,
+    /// the call, and the ledger's outcome/variety feeds. `call_provenance`
+    /// rides the request envelope's `_meta` only when the caller carried
+    /// one — `None` is the un-provenanced pre-M5 wire form.
+    fn invoke_governed<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: Value,
+        agent: hkask_types::WebID,
+        call_provenance: Option<hkask_types::InferenceProvenance>,
+    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
         Box::pin(async move {
             // Metering + span emit. Skipped when governance is not configured
             // (tests, lightweight embedders).
@@ -1561,7 +1611,9 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 drop(cyber_lock);
 
                 // Call the tool.
-                let result = self.call_tool_inner(server, tool, args).await;
+                let result = self
+                    .call_tool_inner(server, tool, args, call_provenance)
+                    .await;
 
                 // Regulation: emit the call-settled span (best-effort,
                 // non-blocking) — EXCEPT the regulation loop's own board-sensing
@@ -1624,21 +1676,12 @@ impl hkask_tool_port::ToolPort for McpRuntime {
                 // prior fail-closed refusal here made `McpRuntime::new()`
                 // unusable for any embedder that did not also wire regulation.
                 // Production wires `with_governance` (see main.rs).
-                self.call_tool_inner(server, tool, args).await
+                self.call_tool_inner(server, tool, args, call_provenance)
+                    .await
             }
         })
     }
 
-    fn get_tool_info<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-    ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
-        Box::pin(async move { McpRuntime::get_tool_info(self, server, tool).await })
-    }
-}
-
-impl McpRuntime {
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
     ///
     /// Reconnects before sending when no live peer exists, or retries once after
@@ -1649,6 +1692,7 @@ impl McpRuntime {
         server: &str,
         tool: &str,
         args: Value,
+        call_provenance: Option<hkask_types::InferenceProvenance>,
     ) -> Result<Value, hkask_tool_port::ToolPortError> {
         // `args` is owned and unused after this point — move the map out instead
         // of cloning (non-object args collapse to an empty map, matching the prior
@@ -1669,7 +1713,10 @@ impl McpRuntime {
         // Retry only a dispatch that never reached a live peer. Once a request
         // has been handed to one, a transport loss is `Interrupted` — see
         // `DispatchError::Interrupted` for why that must not be retried here.
-        match self.dispatch(server, tool, arguments.clone()).await {
+        match self
+            .dispatch(server, tool, arguments.clone(), call_provenance)
+            .await
+        {
             Err(DispatchError::NotDelivered(detail)) => {
                 tracing::warn!(
                     target: "hkask.mcp",
@@ -1683,7 +1730,7 @@ impl McpRuntime {
                         "Server '{server}' transport closed and could not be reconnected: {detail}"
                     )));
                 }
-                self.dispatch(server, tool, arguments)
+                self.dispatch(server, tool, arguments, call_provenance)
                     .await
                     .map_err(DispatchError::into_port_error)
             }
@@ -1708,6 +1755,7 @@ impl McpRuntime {
         server: &str,
         tool: &str,
         arguments: serde_json::Map<String, Value>,
+        call_provenance: Option<hkask_types::InferenceProvenance>,
     ) -> Result<Value, DispatchError> {
         let Some(peer) = self.get_peer(server).await else {
             return Err(DispatchError::NotDelivered(format!(
@@ -1720,7 +1768,7 @@ impl McpRuntime {
             )));
         }
 
-        let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
+        let params = call_tool_request_params(tool, arguments, call_provenance);
         let handle = tokio::runtime::Handle::try_current()
             .ok()
             .or_else(configured_spawn_runtime)
@@ -1858,6 +1906,82 @@ impl DispatchError {
 }
 
 /// Extract concatenated text from a CallToolResult's content items.
+/// Build the tools/call request params, stamping the calling context's
+/// inference provenance on the envelope's `_meta` channel (SEP-1319) when
+/// the dispatch carries one — the M5 zed-side write. `None` keeps the
+/// un-provenanced wire form: no `_meta` key, which the child read side
+/// (`hkask-mcp-server`'s `call_provenance.rs`) treats as public,
+/// fail-closed for recall.
+fn call_tool_request_params(
+    tool: &str,
+    arguments: serde_json::Map<String, Value>,
+    call_provenance: Option<hkask_types::InferenceProvenance>,
+) -> CallToolRequestParams {
+    let mut params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
+    if let Some(provenance) = call_provenance {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            hkask_types::META_INFERENCE_PROVENANCE.to_string(),
+            Value::String(provenance.as_str().to_string()),
+        );
+        params.meta = Some(rmcp::model::RequestMetaObject(rmcp::model::MetaObject(
+            meta,
+        )));
+    }
+    params
+}
+
+#[cfg(test)]
+mod call_provenance_wire_tests {
+    use super::*;
+
+    /// The request fixture pin (M5 step 1): the parent's stamp serializes
+    /// to the exact wire shape the child's `the_call_params_shape_parses_from_wire_json`
+    /// consumes — `_meta.inference_provenance` carrying the closed-set
+    /// string, under the one-home key. The two ends of the seam are pinned
+    /// against the same wire form: this side constructs it; the child
+    /// parses it back.
+    #[test]
+    fn call_request_params_serialize_the_calling_provenance_meta() {
+        let arguments = serde_json::Map::new();
+
+        // A private-marked calling thread claims private provenance.
+        let private = call_tool_request_params(
+            "curator_memory_recall",
+            arguments.clone(),
+            Some(hkask_types::InferenceProvenance::PrivateInference),
+        );
+        let json = serde_json::to_value(&private).expect("params serialize");
+        assert_eq!(
+            json["_meta"][hkask_types::META_INFERENCE_PROVENANCE],
+            "private_inference",
+            "the private mark rides the wire under the one-home key"
+        );
+
+        // A public thread stamps its context explicitly.
+        let public = call_tool_request_params(
+            "curator_memory_recall",
+            arguments.clone(),
+            Some(hkask_types::InferenceProvenance::PublicProvider),
+        );
+        let json = serde_json::to_value(&public).expect("params serialize");
+        assert_eq!(
+            json["_meta"][hkask_types::META_INFERENCE_PROVENANCE],
+            "public_provider"
+        );
+
+        // The un-provenanced ToolPort path keeps the pre-M5 wire form: no
+        // `_meta` key at all (rmcp skips serializing a None meta) — the
+        // child's fail-closed read treats it as public.
+        let unstamped = call_tool_request_params("curator_memory_recall", arguments, None);
+        let json = serde_json::to_value(&unstamped).expect("params serialize");
+        assert!(
+            json.get("_meta").is_none(),
+            "the plain ToolPort path stamps nothing — the child reads public"
+        );
+    }
+}
+
 fn extract_text_content(result: &rmcp::model::CallToolResult) -> String {
     result
         .content
