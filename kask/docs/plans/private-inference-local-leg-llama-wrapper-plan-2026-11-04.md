@@ -328,6 +328,13 @@ before MTP routes by default.
    adjudication.
 3. **Drift-watch ownership** — operator-triaged on each llama.cpp release, or delegated
    with typed escalation; the runbook (step 8) is written either way.
+   **Runbook written 2026-11-05:**
+   `kask/docs/reference/llama-cpp-drift-watch.md` — the standing gates
+   (the exact-commit pin, the flag probe, the fixture gates), the
+   per-release triage procedure with the manifest-edit vs Rust-change
+   classification, the typed escalation path, and the triage log. The
+   ownership ruling — operator-triaged vs delegated with typed
+   escalation — remains the operator's; the runbook serves either mode.
 
 ## 13. Generalization (PI question 2026-11-04, post-matrix)
 
