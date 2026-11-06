@@ -21,7 +21,7 @@ The two surfaces render the shared player widget under different clipping contra
 - The plain asset workspace renders it inside
   `div().id("media-viewer-content").flex_1().min_h_0().p_3().child(widget)`
   (`render_workspace`, `crates/media_panel/src/media_viewer.rs:4575-4580`) — **no clip**,
-  and no clip again at the workspace root (`:4587`) or the viewer pane
+  and no clip again at the workspace root (`:4589`) or the viewer pane
   (`crates/media_panel/src/media_panel.rs:363-370`).
 
 The widget root carries a `min_h(px(240.0))` floor when no error is shown
@@ -59,7 +59,7 @@ and the list state — a latent asymmetry the reel-composer work must not inheri
 
 **Resolution (2026-11-04, S1, commit `828b9c09f7`):** both proposed tiers landed the
 same day. The workspace content container clips (`overflow_hidden()`,
-`crates/media_panel/src/media_viewer.rs:5119`) and gained the `media-viewer-content`
+`crates/media_panel/src/media_viewer.rs:5121`) and gained the `media-viewer-content`
 layout-test hook; the 240px usable-height floor moved to the content-flow embedder
 (`crates/hkask-viz-core/src/hkask_viz_core.rs:383`), and the widget site now documents
 the move (`crates/hkask-media-widget/src/media_widget.rs:1049-1063`);
@@ -67,7 +67,7 @@ the move (`crates/hkask-media-widget/src/media_widget.rs:1049-1063`);
 (`crates/media_panel/src/media_viewer.rs:2519`), pinned by
 `closing_transcript_leaves_widget_inside_pane`. The pre-fix observations above —
 the widget-root floor (`media_widget.rs:1040`), the unclipped content container
-(`media_viewer.rs:4575-4580`), the workspace-root view (`:4587`), and the
+(`media_viewer.rs:4575-4580`), the workspace-root view (`:4589`), and the
 `selection_mode` asymmetry — describe the state the fix landed against.
 
 **Follow-up (2026-11-04, same defect family):** the workspace player still lost its

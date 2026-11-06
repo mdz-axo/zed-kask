@@ -74,7 +74,7 @@ pane, in any pane height; the close path's state teardown matches the open path'
 **Anchor:** study §1 (mechanism analysis); GPUI discipline rules 1–2 and 5 (study §7).
 
 **Touchpoints:**
-- `crates/media_panel/src/media_viewer.rs:5107-5122` — workspace content
+- `crates/media_panel/src/media_viewer.rs:5109-5122` — workspace content
   container (add `overflow_hidden` — done in S1, `828b9c09f7`, with the
   `media-viewer-content` test hook)
 - `crates/media_panel/src/media_viewer.rs:2515` vs `:2443-2508` —
@@ -83,7 +83,7 @@ pane, in any pane height; the close path's state teardown matches the open path'
 - `crates/hkask-media-widget/src/media_widget.rs:1049-1063` — where the unconditional
   `min_h(240px)` floor lived (sub-item S1b: move floor ownership to embedders —
   done in S1, `828b9c09f7`; the site now documents the move)
-- viewer tests module (`media_viewer.rs` `mod tests` :10274; layout-test
+- viewer tests module (`media_viewer.rs` `mod tests` :10278; layout-test
   precedents in `mod viewer_layout_tests` :15345) — the new pin test's home
 
 **Design:**
@@ -124,9 +124,9 @@ cancels, Delete cuts; the two-click range stays as the fallback gesture.
 direct manipulation; MeetScript low-effort-dominance.
 
 **Touchpoints:** `handle_word_selection` (`media_viewer.rs:3350`), word blocks
-(`render_workspace_block:6983`), label editor (`open_label_editor:3979`,
+(`render_workspace_block:6987`), label editor (`open_label_editor:3979`,
 `confirm_label_edit:4015`), strike path (`strike_selected_range:3566`,
-`create_workspace_strike:3587`), gate (`highlight_range_gate:8672`).
+`create_workspace_strike:3587`), gate (`highlight_range_gate:8676`).
 
 **Landed:** S2 complete 2026-11-04 — the drag core in `df72da1487`
 (WordDragOutcome machine, live anchor/target marks, both interaction modes),
@@ -145,7 +145,7 @@ on close/open/surface-switch/reload). Pins: `word_drag_state_machine`,
 **Design:** drag = pointer down on a word + move + up (threshold ~3px to stay
 compatible with click-to-seek), range = anchor→last hovered word, union across block
 boundaries (same union math as the two-click anchor). Popover renders pinned above
-the list (the label-editor pin pattern, `media_viewer.rs:6528-6541`) and hosts
+the list (the label-editor pin pattern, `media_viewer.rs:6533-6541`) and hosts
 actions that reuse existing dispatchers — no new server calls.
 
 **Acceptance:**
@@ -171,9 +171,9 @@ match count; jump scrolls the block into view.
 **Anchor:** study §6 P1-3; boundary note — cross-recording search stays a
 Steer/`educt_search_transcripts` concern, not this surface.
 
-**Touchpoints:** header items (`render_workspace_header_item:6614+`), pane blocks
-(`build_pane_blocks:9506`), reveal machinery (`follow_marked_block_into_view:4771`),
-field-wise mark composition (`resolved_highlight_runs:8743` — match styling composes
+**Touchpoints:** header items (`render_workspace_header_item:6619+`), pane blocks
+(`build_pane_blocks:9510`), reveal machinery (`follow_marked_block_into_view:4773`),
+field-wise mark composition (`resolved_highlight_runs:8747` — match styling composes
 with highlight/cut marks).
 
 **Landed:** S3 complete 2026-11-04 — the core (search state, debounced rescan,
@@ -189,9 +189,17 @@ recorded here for attribution), the final tail in `a23af25a8d`. Pins:
 `transcript_search_finds_cycles_and_lands_the_current_match`,
 `transcript_search_rescan_debounces_the_burst`,
 `transcript_search_focus_suspends_follow_and_blur_restores`. The focus
-registration lesson is recorded in the reference model: listeners register
-from the input's click handler (an event context) — registration during
-render defers through the frame's effect cycle and never activates.
+registration note (corrected 2026-11-05 after the operator's challenge
+forced the skipped bisect): render-time `on_focus`/`on_blur` registration
+WORKS — the deferred activation rides the normal effect cycle; the
+earlier claim that it never activates was a misdiagnosis (the failing test
+turned on harness composition: an off-screen input never enters the
+painted frame's focus path, and test windows start inactive, their focus
+event paths empty until activate_window). The landed design registers
+idempotently from the workspace render — keyboard focus arrivals covered;
+the harness facts live in the focus test's comments. The false mechanism
+claim also rode into the pushed a23af25a8d message; 883971c07d and this
+note are the erratum.
 
 **Design:** client-side lexical search over pane blocks (the open transcript is
 materialized in the pane — no server dispatch); 150 ms debounce via
@@ -254,7 +262,7 @@ corrections stay layers over immutable source words.
 **Touchpoints:** popover (S2 dependency); server tools unchanged
 (`educt_store_layer`, `educt_realign_transcript`, `educt_apply_corrections`);
 single edit admission (`begin_edit` rejects overlap, `media_viewer.rs:1250`);
-alignment note machinery (five-state gate, `transcript_alignment_note:8421`).
+alignment note machinery (five-state gate, `transcript_alignment_note:8425`).
 
 **Design:** the correction editor is the label-editor pattern with a replacement
 field; dispatch chain under the existing edit admission; success reloads the
@@ -289,10 +297,10 @@ and render then flow through the existing EDL path.
 **Anchor:** study §6 P2-6; Reduct's verified reel pattern (drag in, reorder,
 strike-through-in-reel edits the video).
 
-**Touchpoints:** `compose_reel_params:9347`, `union_word_ranges:8894` (gains an
+**Touchpoints:** `compose_reel_params:9351`, `union_word_ranges:8898` (gains an
 explicit order parameter), `compose_workspace_reel:3703` (store_layer → render_edl
-chain), reel section (`render_workspace_reel_section:7439`), highlights/cuts
-sections (`:7206`, `:7356`), `pane_reel_compose` provenance identity.
+chain), reel section (`render_workspace_reel_section:7443`), highlights/cuts
+sections (`:7210`, `:7360`), `pane_reel_compose` provenance identity.
 
 **Design:** composer state = ordered `Vec<ClipSpec>` (highlight identity + word
 range + include flag + in-reel strike sub-ranges); op builder = ordered, per-clip
