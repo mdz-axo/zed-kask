@@ -15094,6 +15094,32 @@ mod tests {
         });
     }
 
+    /// The D100 roundtrip tests' shared restore leg: rebuild a Thread from
+    /// a db blob through the full `from_db` scaffolding.
+    fn restore_thread_from_db(
+        cx: &mut TestAppContext,
+        session_id: &str,
+        db_thread: crate::db::DbThread,
+        project: &Entity<Project>,
+        templates: Arc<Templates>,
+    ) -> Entity<Thread> {
+        cx.new(|cx| {
+            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
+            let context_server_store = project.read(cx).context_server_store();
+            let context_server_registry =
+                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
+            Thread::from_db(
+                acp_v2::SessionId::new(session_id),
+                db_thread,
+                project.clone(),
+                project_context,
+                context_server_registry,
+                templates,
+                cx,
+            )
+        })
+    }
+
     /// D28: the mark persists across restart — the metadata blob carries
     /// it, `from_db` restores it, and the shared-thread format round-trips
     /// it (an imported marked thread re-arms its gate on load).
@@ -15128,21 +15154,7 @@ mod tests {
             "re-importing the shared thread restores the mark"
         );
 
-        let restored = cx.new(|cx| {
-            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
-            let context_server_registry =
-                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
-            Thread::from_db(
-                acp_v2::SessionId::new("d100-roundtrip"),
-                db_thread,
-                project.clone(),
-                project_context,
-                context_server_registry,
-                templates,
-                cx,
-            )
-        });
+        let restored = restore_thread_from_db(cx, "d100-roundtrip", db_thread, &project, templates);
         cx.update(|cx| {
             assert!(
                 restored.read(cx).is_private_inference(),
@@ -15179,21 +15191,7 @@ mod tests {
             "the blob carries the public model"
         );
 
-        let restored = cx.new(|cx| {
-            let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
-            let context_server_registry =
-                cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
-            Thread::from_db(
-                acp_v2::SessionId::new("d100-sanitize"),
-                db_thread,
-                project.clone(),
-                project_context,
-                context_server_registry,
-                templates,
-                cx,
-            )
-        });
+        let restored = restore_thread_from_db(cx, "d100-sanitize", db_thread, &project, templates);
         cx.update(|cx| {
             assert!(
                 restored.read(cx).model().is_none(),

@@ -13229,6 +13229,29 @@ mod internal_tests {
         assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
     }
 
+    /// The model-list pin's shared leg: resolve the list and flatten it to
+    /// owned entries (the grouped form asserts it is populated when the
+    /// caller expects entries).
+    async fn resolved_model_entries(
+        selector: &NativeAgentModelSelector,
+        cx: &mut TestAppContext,
+        require_populated_groups: bool,
+    ) -> Vec<acp_thread::AgentModelInfo> {
+        let list = cx
+            .update(|cx| selector.list_models(cx))
+            .await
+            .expect("the model list resolves");
+        match list {
+            acp_thread::AgentModelList::Flat(models) => models,
+            acp_thread::AgentModelList::Grouped(groups) => {
+                if require_populated_groups {
+                    assert!(!groups.is_empty(), "the grouped list is populated");
+                }
+                groups.into_values().flatten().collect()
+            }
+        }
+    }
+
     /// zed-kask: D100 (operator ruling 2026-11-05) — the panel scoping: a
     /// privacy-marked thread's model list carries every non-local model as
     /// DISABLED with the boundary as the reason (never a vanishing list),
@@ -13237,7 +13260,6 @@ mod internal_tests {
     /// refusal.
     #[gpui::test]
     async fn private_thread_model_list_disables_non_local_models(cx: &mut TestAppContext) {
-        use acp_thread::AgentModelSelector as _;
         use gpui::UpdateGlobal as _;
 
         init_test(cx);
@@ -13270,17 +13292,7 @@ mod internal_tests {
         cx.update(|cx| {
             thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
         });
-        let list = cx
-            .update(|cx| selector.list_models(cx))
-            .await
-            .expect("the model list resolves");
-        let entries: Vec<&acp_thread::AgentModelInfo> = match &list {
-            acp_thread::AgentModelList::Flat(models) => models.iter().collect(),
-            acp_thread::AgentModelList::Grouped(groups) => {
-                assert!(!groups.is_empty(), "the grouped list is populated");
-                groups.values().flatten().collect()
-            }
-        };
+        let entries = resolved_model_entries(&selector, cx, true).await;
         assert!(!entries.is_empty(), "the list carries models to disable");
         for info in &entries {
             let reason = info
@@ -13298,14 +13310,7 @@ mod internal_tests {
         cx.update(|cx| {
             thread.update(cx, |thread, cx| thread.set_private_inference(false, cx));
         });
-        let list = cx
-            .update(|cx| selector.list_models(cx))
-            .await
-            .expect("the model list resolves");
-        let entries: Vec<&acp_thread::AgentModelInfo> = match &list {
-            acp_thread::AgentModelList::Flat(models) => models.iter().collect(),
-            acp_thread::AgentModelList::Grouped(groups) => groups.values().flatten().collect(),
-        };
+        let entries = resolved_model_entries(&selector, cx, false).await;
         for info in &entries {
             assert!(
                 info.disabled.is_none(),

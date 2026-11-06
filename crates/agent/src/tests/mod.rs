@@ -5441,6 +5441,18 @@ async fn enable_all_context_servers_profile(fs: &Arc<FakeFs>, cx: &mut TestAppCo
     cx.run_until_parked();
 }
 
+/// The D100/M5 perimeter tests' shared preamble: a fake-model thread
+/// test with every context-server profile enabled and the test profile
+/// armed — destructure the fields your test consumes.
+async fn setup_thread_test_with_test_profile(cx: &mut TestAppContext) -> ThreadTest {
+    let test = setup(cx, TestModel::Fake).await;
+    enable_all_context_servers_profile(&test.fs, cx).await;
+    test.thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+    test
+}
+
 /// Steer and ordinary threads retain the full cross-domain MCP surface: tools
 /// from independently registered servers are presented together.
 #[gpui::test]
@@ -5509,13 +5521,8 @@ async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContex
         model,
         thread,
         context_server_store,
-        fs,
         ..
-    } = setup(cx, TestModel::Fake).await;
-    enable_all_context_servers_profile(&fs, cx).await;
-    thread.update(cx, |thread, cx| {
-        thread.set_profile(AgentProfileId("test".into()), cx)
-    });
+    } = setup_thread_test_with_test_profile(cx).await;
 
     // The fake provider serves as this test's local leg, so the marked
     // thread keeps its model and turns actually run (the request-gate
@@ -5615,13 +5622,8 @@ async fn test_curator_memory_edit_tools_available_to_plain_threads(cx: &mut Test
         model,
         thread,
         context_server_store,
-        fs,
         ..
-    } = setup(cx, TestModel::Fake).await;
-    enable_all_context_servers_profile(&fs, cx).await;
-    thread.update(cx, |thread, cx| {
-        thread.set_profile(AgentProfileId("test".into()), cx)
-    });
+    } = setup_thread_test_with_test_profile(cx).await;
 
     let _curator_calls = setup_context_server(
         "curator",
