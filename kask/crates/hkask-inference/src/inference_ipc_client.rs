@@ -289,6 +289,7 @@ fn outcome_variant_name(outcome: &InferenceOutcome) -> &'static str {
         InferenceOutcome::ModelList { .. } => "ModelList",
         InferenceOutcome::WorktreeThread { .. } => "WorktreeThread",
         InferenceOutcome::RerankScores { .. } => "RerankScores",
+        InferenceOutcome::DecisionAnswers { .. } => "DecisionAnswers",
     }
 }
 
@@ -593,6 +594,58 @@ impl InferenceIpcClient {
         self.call_rerank(model, query, documents).await
     }
 
+    /// Ask a decision model typed score questions about a state via the
+    /// IPC bridge. The zed side holds the provider API key and calls the
+    /// provider's Decisions endpoint directly.
+    async fn call_decision(
+        &self,
+        model: &str,
+        state: &str,
+        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+    ) -> Result<hkask_types::ports::DecisionBatch, InferenceError> {
+        let method = InferenceMethod::Decision;
+        let params = InferenceParams {
+            decision_model: Some(model.to_string()),
+            decision_state: Some(state.to_string()),
+            decision_questions: Some(questions.to_vec()),
+            ..InferenceParams::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::DecisionAnswers {
+                answers,
+                model,
+                usage,
+            } => Ok(hkask_types::ports::DecisionBatch {
+                answers,
+                model,
+                usage,
+            }),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
+    /// Ask a decision model typed questions about a state. Public entry
+    /// point — validates inputs, then delegates to `call_decision`.
+    pub async fn decide_questions(
+        &self,
+        model: &str,
+        state: &str,
+        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+    ) -> Result<hkask_types::ports::DecisionBatch, InferenceError> {
+        if state.trim().is_empty() {
+            return Err(InferenceError::Generation(
+                "decision requires a non-empty state".to_string(),
+            ));
+        }
+        if questions.is_empty() {
+            return Err(InferenceError::Generation(
+                "decision requires at least one question".to_string(),
+            ));
+        }
+        self.call_decision(model, state, questions).await
+    }
+
     /// Create a sibling agent thread in a new git worktree workspace on the
     /// zed side. The thread runs in an isolated worktree (separate from the
     /// user's working tree). Used by `kanban_task_spawn` to isolate spawned
@@ -733,6 +786,19 @@ impl InferencePort for InferenceIpcClient {
         let documents = documents.to_vec();
         let this = self;
         async move { this.rerank_documents(&model, &query, &documents).await }.boxed()
+    }
+
+    fn decide<'a>(
+        &'a self,
+        model: &str,
+        state: &str,
+        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+    ) -> hkask_types::DecisionFuture<'a> {
+        let model = model.to_string();
+        let state = state.to_string();
+        let questions = questions.to_vec();
+        let this = self;
+        async move { this.decide_questions(&model, &state, &questions).await }.boxed()
     }
 
     fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {

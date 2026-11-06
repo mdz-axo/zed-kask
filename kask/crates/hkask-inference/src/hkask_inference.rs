@@ -36,6 +36,7 @@ pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
 
+pub mod decisions;
 pub mod passage_tagging;
 pub mod provider;
 pub mod rerank;
@@ -344,6 +345,31 @@ impl hkask_types::InferencePort for LazyInferencePort {
             }
             Err(hkask_types::InferenceError::Connection(format!(
                 "rerank unavailable: {IPC_BRIDGE_UNAVAILABLE}"
+            )))
+        })
+    }
+
+    fn decide<'a>(
+        &'a self,
+        model: &str,
+        state: &str,
+        questions: &[hkask_types::inference_ipc::DecisionQuestion],
+    ) -> hkask_types::DecisionFuture<'a> {
+        let model = model.to_string();
+        let state = state.to_string();
+        let questions = questions.to_vec();
+        Box::pin(async move {
+            // Decision requires the IPC bridge — no direct fallback. The
+            // provider key lives on the zed side by design (the MCP server
+            // never sees it), so a direct HTTP decision call is impossible
+            // from here. Without this override the trait default returns
+            // NotConfigured("decision not supported") and the
+            // prediction-markets EQM scoring can never reach the bridge.
+            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+                return client.decide_questions(&model, &state, &questions).await;
+            }
+            Err(hkask_types::InferenceError::Connection(format!(
+                "decision unavailable: {IPC_BRIDGE_UNAVAILABLE}"
             )))
         })
     }

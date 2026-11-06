@@ -33,6 +33,12 @@ pub type MediaFuture<'a> =
 pub type RerankFuture<'a> =
     Pin<Box<dyn Future<Output = Result<crate::ports::RerankBatch, InferenceError>> + Send + 'a>>;
 
+/// Future returned by [`InferencePort::decide`]. Same rationale as
+/// `EmbedFuture` — keeps the trait signature under clippy's
+/// `type_complexity` threshold.
+pub type DecisionFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<crate::ports::DecisionBatch, InferenceError>> + Send + 'a>>;
+
 /// Future returned by the generate family — [`InferencePort::generate`],
 /// [`InferencePort::generate_with_model`],
 /// [`InferencePort::generate_with_messages`] and
@@ -336,6 +342,33 @@ pub trait InferencePort: Send + Sync {
         Box::pin(async {
             Err(InferenceError::NotConfigured(
                 "rerank not supported by this InferencePort".to_string(),
+            ))
+        })
+    }
+
+    /// Ask a decision model typed score questions about a state via the
+    /// provider's Decisions API — state in, typed answers with calibrated
+    /// per-level probabilities out, never text.
+    ///
+    /// `model` is the provider-prefixed decision model string (e.g.
+    /// `OpenRouter/typesafe/jev-1.14`); the implementation strips the
+    /// prefix and routes to that provider's Decisions endpoint. Returns one
+    /// `DecisionAnswer` per question the provider answered — the model's
+    /// native probability distribution over the caller's own levels.
+    ///
+    /// Default: returns an error so an implementation cannot silently drop
+    /// decision requests. `InferenceIpcClient` and `LazyInferencePort`
+    /// override this to route through the zed-side decision handler via
+    /// the IPC bridge (the provider key lives on the zed side by design).
+    fn decide<'a>(
+        &'a self,
+        _model: &str,
+        _state: &str,
+        _questions: &[crate::inference_ipc::DecisionQuestion],
+    ) -> DecisionFuture<'a> {
+        Box::pin(async {
+            Err(InferenceError::NotConfigured(
+                "decision not supported by this InferencePort".to_string(),
             ))
         })
     }

@@ -340,6 +340,12 @@ pub(crate) fn emit_models_env(
             models.rerank_model.clone(),
         );
     }
+    if !models.decision_model.is_empty() {
+        env.insert(
+            "HKASK_DECISION_MODEL".to_string(),
+            models.decision_model.clone(),
+        );
+    }
 }
 
 #[cfg(test)]

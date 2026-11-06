@@ -112,6 +112,16 @@ pub enum InferenceMethod {
     /// provider directly — the MCP server never sees the credential. The
     /// result is returned as `InferenceOutcome::RerankScores`.
     Rerank,
+
+    /// Ask a decision model (a System One model served over the provider's
+    /// Decisions API — e.g. OpenRouter `/api/alpha/decisions`,
+    /// `typesafe/jev-1.14`) typed questions about a state: state in, typed
+    /// answers with calibrated per-level probabilities out — never text.
+    /// Uses `decision_model`, `decision_state`, `decision_questions` from
+    /// `InferenceParams`. The zed side holds the API key and calls the
+    /// provider directly — the MCP server never sees the credential. The
+    /// result is returned as `InferenceOutcome::DecisionAnswers`.
+    Decision,
 }
 
 /// Parameters for an inference request.
@@ -172,6 +182,20 @@ pub struct InferenceParams {
     /// Documents to rerank — plain text per candidate.
     #[serde(default)]
     pub rerank_documents: Option<Vec<String>>,
+    // ── Decision fields (for `InferenceMethod::Decision`) ──
+    /// Decision model string (provider-prefixed; only `OpenRouter/`-prefixed
+    /// models are decision-eligible — the Decisions API routes to the
+    /// OpenRouter endpoint only, `hkask-inference/src/decisions.rs`).
+    #[serde(default)]
+    pub decision_model: Option<String>,
+    /// The state to evaluate — the text (or JSON) the questions are about.
+    #[serde(default)]
+    pub decision_state: Option<String>,
+    /// Typed score questions: an instruction plus ordered level
+    /// descriptions per question (`criteria`); the provider answers with a
+    /// probability distribution over those levels.
+    #[serde(default)]
+    pub decision_questions: Option<Vec<DecisionQuestion>>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -234,6 +258,21 @@ pub enum InferenceOutcome {
         #[serde(default)]
         usage: crate::ports::InferenceUsage,
     },
+    /// Typed answers from `InferenceMethod::Decision`. One entry per
+    /// question the provider answered, keyed by the caller's question id.
+    DecisionAnswers {
+        #[serde(rename = "decision_answers")]
+        answers: Vec<DecisionAnswer>,
+        /// The exact model identity the provider served (the snapshot id,
+        /// e.g. `typesafe/jev-1.14-20261014`).
+        #[serde(rename = "decision_model")]
+        model: String,
+        /// Token usage the provider reported for the decision call
+        /// (`#[serde(default)]` for cross-binary wire compat — see the
+        /// `Embeddings` variant).
+        #[serde(default)]
+        usage: crate::ports::InferenceUsage,
+    },
     /// Error from the inference port.
     Error {
         #[serde(rename = "error")]
@@ -250,6 +289,50 @@ pub struct RerankScoreEntry {
     /// Relevance score of the document to the query (provider-scaled,
     /// typically 0.0-1.0).
     pub relevance_score: f64,
+}
+
+/// A typed score question for `InferenceMethod::Decision` — the Jev-class
+/// "Score" primitive: an instruction plus an ordered array of level
+/// descriptions (least to most), answered with a probability distribution
+/// over the levels plus a confidence. The question id is never sent to the
+/// model (the provider's contract — all meaning lives in the instructions
+/// and the level descriptions).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionQuestion {
+    /// Caller-side question key — the answer returns under this key.
+    pub id: String,
+    /// The question text, including any criteria context the levels need.
+    pub instructions: String,
+    /// Ordered level descriptions, least to most (the score scale).
+    pub criteria: Vec<String>,
+}
+
+/// One level's probability from a decision answer — the parsed form of the
+/// provider's string-keyed `probabilities` map (`{"0": 0.79, ...}`),
+/// decoded once at the zed side (the one decode home).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionLevelProbability {
+    /// The level's index into the question's `criteria`.
+    pub level: u8,
+    /// The calibrated probability the model assigns to that level.
+    pub probability: f64,
+}
+
+/// A typed answer to one `DecisionQuestion` — the provider's native
+/// judgment (a probability distribution over the caller's own levels),
+/// not a parsed LLM generation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionAnswer {
+    /// The question key the answer belongs to.
+    pub id: String,
+    /// The probability-weighted score over the levels (the provider's
+    /// `score` field — e.g. 1.21 for mostly-level-1 with some level-2).
+    pub score: f64,
+    /// The probability distribution over the question's criteria levels.
+    pub level_probabilities: Vec<DecisionLevelProbability>,
+    /// The concentration of the distribution (0.0-1.0) — how unambiguous
+    /// the model's judgment is (not its correctness).
+    pub confidence: f64,
 }
 
 /// A model entry in a `ListModels` response — a serializable subset of

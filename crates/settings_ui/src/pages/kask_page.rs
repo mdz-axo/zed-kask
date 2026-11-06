@@ -426,6 +426,9 @@ pub(crate) fn kask_string_input(
                 ("models", "rerank_model") => {
                     kask.models.get_or_insert_default().rerank_model = Some(parsed);
                 }
+                ("models", "decision_model") => {
+                    kask.models.get_or_insert_default().decision_model = Some(parsed);
+                }
                 ("private_inference", "provider_id") => {
                     kask.private_inference.get_or_insert_default().provider_id = Some(parsed);
                 }

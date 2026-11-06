@@ -1927,6 +1927,11 @@ pub struct KaskModelsSettingsContent {
     /// (provider-prefixed). When empty, falls back to the kask default
     /// (`deepinfra/Qwen/Qwen3-Reranker-8B`).
     pub rerank_model: Option<String>,
+    /// Decision model for bounded structured judgments (provider-prefixed;
+    /// served over the provider's Decisions API — e.g.
+    /// `OpenRouter/typesafe/jev-1.14`, NOT a chat endpoint). When empty,
+    /// decision routes refuse rather than serve the chat model.
+    pub decision_model: Option<String>,
 }
 
 /// Private-inference local-leg policy (the `"kask.private_inference"`

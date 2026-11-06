@@ -9,7 +9,7 @@ audience: user
 Measurement instrument for forecast-rationale quality, grounded in Karvetski,
 Huang, Kučinskas et al. (2026, arXiv:2606.30987), "Measuring Judgment Quality in Natural-Language
 Explanations: Evidence from Forecasting Tournaments" — Forecasting Research
-Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using an LLM. Aggregate only complete tool results to forecast- and forecaster-level composites,
+Institute. The paper defines the EQM instrument — 60 theory-guided marker patterns across six families; the reference catalog carries all 60 verbatim from Appendix A.4; the live `market_score_rationale` tool scores the predictive 12 using the decision model (`kask.models.decision_model` — one typed score question per marker, answered with calibrated per-level probabilities, never text). Aggregate only complete tool results to forecast- and forecaster-level composites,
 validates against realized outcomes, and emits calibration feedback.
 
 ## Goal responsibilities
@@ -43,9 +43,9 @@ Explanation scores assess a rationale, not goal achievement or forecast calibrat
 
 | Anchor | How it shapes the skill |
 |---|---|
-| Karvetski et al. (2026, arXiv:2606.30987) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | The marker instrument (LLM-scored 0/1/2), composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
+| Karvetski et al. (2026, arXiv:2606.30987) — the EQM method (`onto_anchor` → derived `explanation_quality_marker`, operator ruling 2026-09-25) | The marker instrument (decision-model-scored 0/1/2), composite, asymmetric signal, forecast-level + forecaster-level prediction. Defines the Score → Aggregate → Validate → Feedback shape. |
 | Tetlock Brier scoring (via superforecasting) | A loss measure on independently resolved forecasts, not ground truth or calibration by itself (Murphy 1973). |
-| PKO (Procedural Knowledge Ontology) | The skill models a measurement procedure: specification (which EQMs, which rationales) / execution (LLM scoring) / verification (outcome correlation). |
+| PKO (Procedural Knowledge Ontology) | The skill models a measurement procedure: specification (which EQMs, which rationales) / execution (decision-model scoring) / verification (outcome correlation). |
 | Dublin Core | Metadata for the rationale corpus (forecaster id, question id, timestamp, resolution status) needed by forecaster-level aggregation. |
 
 ## Asymmetric Signal (the paper's central finding)
@@ -65,7 +65,7 @@ Marker identification over a rationale, red-flag interpretation, and
 Improve-phase rationale revision are P — judgment, critiqued by the
 alignment check against the stated forecast probability and by gaming
 detection on realized outcomes. The scoring call is P too, executed by a
-tool-owned LLM (`market_score_rationale`) and calibrated by eqm-validate
+tool-owned decision model (`market_score_rationale`) and calibrated by eqm-validate
 against outcomes; subset admission and forecaster grouping (`EQM-1`), the
 red-flag/green-flag screens (`EQM-2`), the ID-reconciliation check, and
 every mean, Brier and correlation run in `lisp_eval` over the scorer's

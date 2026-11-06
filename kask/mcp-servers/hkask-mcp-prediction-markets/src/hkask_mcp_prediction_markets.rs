@@ -1084,11 +1084,9 @@ mod smoke {
     use crate::economic_data::fred::FredGetSeriesInfoRequest;
     use hkask_types::McpErrorKind;
     use hkask_types::WebID;
-    use hkask_types::ports::{InferenceError, InferencePort, InferenceResult};
-    use hkask_types::template::LLMParameters;
+    use hkask_types::ports::InferencePort;
     use rmcp::handler::server::wrapper::Parameters;
     use std::collections::HashSet;
-    use std::pin::Pin;
     use std::sync::{Arc, Mutex};
 
     use hkask_mcp_server::server::test_support::NoopInferencePort;

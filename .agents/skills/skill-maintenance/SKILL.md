@@ -174,10 +174,15 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
      to the named engine (S14 applies). A bounded judgment with an implicit
      answer space or an unnamed oracle fails this check at read-triage.
      Where a decision-model setting exists and is configured, decision
-     templates route through it with fail-visible resolution (unset is a
+     routes pass through it with fail-visible resolution; the setting
+     exists since the operator's 2026-11-06 adoption —
+     `kask.models.decision_model` (env `HKASK_DECISION_MODEL`, default
+     `DEFAULT_DECISION_MODEL`: TypeSafe's Jev, a System One decision model
+     served over the Decisions API, never a chat endpoint) — and
+     server-side decision-shaped calls route through it (unset is a
      typed error naming the setting, never a silent chat-model fallback);
-     no such setting exists today, and bounded judgments run on the
-     thread's model with their named oracles. Mechanical enforcement
+     thread-inline judgments run on the thread's model with their named
+     oracles unless a skill routes them through the setting. Mechanical enforcement
      point: none as a standalone script — read-triage under this check
      (the prescreen's D/P labelling is the floor). In-corpus precedents:
      SF-3 (superforecasting), EQM-2 (eqm), TB-2 (task-breakdown),

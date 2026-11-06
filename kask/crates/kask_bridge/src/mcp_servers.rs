@@ -282,6 +282,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DATA_DIR",
             "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
             "HKASK_PREDICTION_MARKETS_DATA",
+            "HKASK_DECISION_MODEL",
         ],
     },
     BuiltinMcpServer {
@@ -1022,6 +1023,32 @@ mod tests {
         );
     }
 
+    /// The decision default (operator adoption 2026-11-06: TypeSafe's Jev
+    /// 1.14, `DEFAULT_DECISION_MODEL` — a System One decision model served
+    /// over the Decisions API) must reach the prediction-markets server's
+    /// filtered env, and only it — the eqm scoring's consumer-scoping
+    /// discipline (the rerank pin's shape).
+    #[test]
+    fn decision_default_reaches_only_the_prediction_markets_server() {
+        use hkask_inference::model_constants::DEFAULT_DECISION_MODEL;
+        let settings: crate::KaskSettings = settings::KaskSettingsContent::default().into();
+        assert_eq!(settings.models.decision_model, DEFAULT_DECISION_MODEL);
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_DECISION_MODEL").map(String::as_str),
+            Some(DEFAULT_DECISION_MODEL)
+        );
+        for server in BUILT_IN_MCP_SERVERS {
+            let filtered = filter_config_env_for_server(server.id, &env);
+            assert_eq!(
+                filtered.get("HKASK_DECISION_MODEL").map(String::as_str),
+                (server.id == "prediction-markets").then_some(DEFAULT_DECISION_MODEL),
+                "{}",
+                server.id
+            );
+        }
+    }
+
     /// The rerank default (operator ruling 2026-09-11) must reach the research
     /// server's filtered env, and only the research server — the same
     /// consumer-scoping discipline the QA generator follows.
@@ -1100,12 +1127,17 @@ mod tests {
         // HKASK_PREDICTION_MARKETS_DATA is unset). Allowlisted so an
         // operator `HKASK_DATA_DIR` override is not silently dropped by
         // `filter_config_env_for_server`.
+        // HKASK_DECISION_MODEL is read at the eqm scoring site via
+        // `hkask_inference::model_constants::resolve_decision_model`
+        // (eqm.rs `score_rationale` — the decision model for the 12 typed
+        // EQM score questions; unset refuses typed, never the chat model).
         assert_eq!(
             s.config_env.to_vec(),
             vec![
                 "HKASK_DATA_DIR",
                 "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
                 "HKASK_PREDICTION_MARKETS_DATA",
+                "HKASK_DECISION_MODEL",
             ],
             "prediction-markets config_env allowlist drifted — every entry must \
              have a read site in hkask-mcp-prediction-markets (HKASK_DATA_DIR is \

@@ -22,6 +22,17 @@ pub struct RerankBatch {
     pub usage: crate::ports::InferenceUsage,
 }
 
+/// Decision answers plus the served model and the call's measured usage —
+/// the decision twin of [`RerankBatch`]. `model` is the exact snapshot the
+/// provider served (provenance for the caller's result records); the
+/// Decisions API reports usage on the wire path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecisionBatch {
+    pub answers: Vec<crate::inference_ipc::DecisionAnswer>,
+    pub model: String,
+    pub usage: crate::ports::InferenceUsage,
+}
+
 /// Errors from embedding generation backends (OpenAI, local models, etc.).
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum EmbeddingGenerationError {

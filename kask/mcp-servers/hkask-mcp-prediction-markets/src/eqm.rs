@@ -4,7 +4,9 @@
 //! Forecast by Its Rationale?" — Forecasting Research Institute.
 //!
 //! EQMs are natural-language-described reasoning patterns scored 0/1/2 by
-//! an LLM. The paper defined 60 EQMs; this module implements the 12 most
+//! the decision model — a Jev-class System One model, `kask.models.decision_model`
+//! (typed score questions in, calibrated per-level probabilities out; never
+//! a chat prompt). The paper defined 60 EQMs; this module implements the 12 most
 //! predictive ones highlighted in the paper's key findings.
 //!
 //! Key findings from the paper:
@@ -19,14 +21,13 @@
 //!
 //! This module provides:
 //! 1. A static catalog of 12 EQM definitions with directional hypotheses
-//! 2. An LLM scoring function that calls InferencePort with a structured prompt
+//! 2. A decision scoring function that calls `InferencePort::decide` with
+//!    typed score questions over the Decisions API — never a chat prompt
 //! 3. A composite score computation (weighted sum: +good habits, -warning signs)
 //! 4. Red flag / green flag classification
 
 use hkask_types::InferencePort;
-use hkask_types::template::LLMParameters;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 // ── EQM catalog ────────────────────────────────────────────────────────────
 
@@ -169,7 +170,7 @@ pub struct EqmResult {
     pub interpretation: String,
     pub model: String,
     pub caveat: String,
-    /// EQM dimensions the LLM omitted from its response. Non-empty means
+    /// EQM dimensions the decision model omitted from its answers. Non-empty means
     /// the composite score is pulled toward 0 for those dimensions — the
     /// operator should treat a low score with missing EQMs as "incomplete
     /// assessment," not "low quality."
@@ -183,10 +184,14 @@ pub struct EqmResult {
 pub enum EqmError {
     #[error("inference failed: {0}")]
     InferenceFailed(String),
-    #[error("LLM response parse error: {0}")]
-    ParseError(String),
     #[error("rationale text is empty")]
     EmptyRationale,
+    #[error("decision model not configured: {0}")]
+    DecisionNotConfigured(String),
+    #[error(
+        "private-marked context refused: the decision model is cloud-served and private content never crosses to it — no local decision model exists yet; score on a public thread"
+    )]
+    PrivateProvenanceRefused,
 }
 
 impl From<EqmError> for hkask_mcp_server::server::McpToolError {
@@ -195,84 +200,101 @@ impl From<EqmError> for hkask_mcp_server::server::McpToolError {
         match e {
             EqmError::EmptyRationale => McpToolError::invalid_argument(e.to_string()),
             EqmError::InferenceFailed(_) => McpToolError::unavailable(e.to_string()),
-            EqmError::ParseError(_) => McpToolError::internal(e.to_string()),
+            // The NotConfigured refusal names the setting and the private
+            // refusal names the boundary (the classifier/QA precedent —
+            // permission_denied, never a silent chat-model fallback).
+            EqmError::DecisionNotConfigured(_) | EqmError::PrivateProvenanceRefused => {
+                McpToolError::permission_denied(e.to_string())
+            }
         }
     }
 }
 
-// ── Scoring prompt construction ────────────────────────────────────────────
+// ── Decision request construction ──────────────────────────────────────────
 
-/// Build the LLM prompt for EQM scoring.
-fn build_scoring_prompt(
+/// The EQM operational scale (eqm-catalog.yaml: 0 = absent, 1 = partial,
+/// 2 = clearly present) as the decision question's ordered level
+/// descriptions — the same rubric the former chat prompt stated inline.
+const DECISION_LEVELS: &[&str] = &[
+    "Absent or not applicable",
+    "Partially present",
+    "Clearly and strongly present",
+];
+
+/// Build the decision state — the same context the former chat prompt
+/// carried (the question, the forecast probability, the rationale), now
+/// the `state` a decision model evaluates typed questions against.
+fn build_decision_state(
     rationale: &str,
     forecast_probability: Option<f64>,
     question: Option<&str>,
 ) -> String {
-    let mut prompt = String::new();
-    prompt.push_str("You are an expert forecasting analyst. Score the following forecast rationale against Explanation Quality Markers (EQMs).\n\n");
-    prompt.push_str("For each EQM, assign a score of 0, 1, or 2:\n");
-    prompt.push_str("  0 = the EQM is absent or not applicable\n");
-    prompt.push_str("  1 = the EQM is partially present\n");
-    prompt.push_str("  2 = the EQM is clearly and strongly present\n\n");
-
+    let mut state = String::new();
     if let Some(q) = question {
-        prompt.push_str(&format!("Question being forecast: {q}\n\n"));
+        state.push_str(&format!("Question being forecast: {q}\n\n"));
     }
     if let Some(p) = forecast_probability {
-        prompt.push_str(&format!("Forecast probability: {p}\n\n"));
+        state.push_str(&format!("Forecast probability: {p}\n\n"));
     }
-
-    prompt.push_str("Rationale to score:\n");
-    prompt.push_str(&format!("---\n{rationale}\n---\n\n"));
-
-    prompt.push_str("EQMs to score:\n");
-    for eqm in KEY_EQMS {
-        let direction = match eqm.direction {
-            EqmDirection::Helps => "GOOD HABIT (higher is better)",
-            EqmDirection::Hurts => "WARNING SIGN (higher is worse)",
-        };
-        prompt.push_str(&format!(
-            "\n{}. {} [{direction}]\n   {}\n",
-            eqm.id, eqm.name, eqm.description
-        ));
-    }
-
-    prompt.push_str(
-        "\nRespond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n",
-    );
-    prompt.push_str(r#"{"eqm_id": score, "eqm_id": score, ...}"#);
-    prompt.push_str("\n\nExample: {\"statistical_reasoning\": 2, \"gut_based\": 0, ...}\n");
-
-    prompt
+    state.push_str(&format!("Rationale:\n{rationale}"));
+    state
 }
 
-// ── LLM response parsing ───────────────────────────────────────────────────
+/// One typed score question per key EQM: the marker's operational
+/// description (the rubric's 0-means/2-means clauses) as the instructions,
+/// the catalog's uniform three-level scale as the criteria. The Jev-class
+/// "Score" primitive — the model answers with a calibrated probability
+/// distribution over these levels, never text.
+fn decision_questions() -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
+    KEY_EQMS
+        .iter()
+        .map(|eqm| {
+            let direction = match eqm.direction {
+                EqmDirection::Helps => "a good habit; higher is better",
+                EqmDirection::Hurts => "a warning sign; higher is worse",
+            };
+            hkask_types::inference_ipc::DecisionQuestion {
+                id: eqm.id.to_string(),
+                instructions: format!(
+                    "Score the rationale on the Explanation Quality Marker \"{}\" ({}). {}",
+                    eqm.name, direction, eqm.description
+                ),
+                criteria: DECISION_LEVELS.iter().map(|s| s.to_string()).collect(),
+            }
+        })
+        .collect()
+}
 
-/// Parse the LLM response as JSON. Tries the whole text first, then falls
-/// back to extracting the first `{...}` block (LLMs often wrap JSON in
-/// markdown or prose). Returns `EqmError::ParseError` on failure — never
-/// panics, never fabricates.
-fn parse_llm_json(text: &str) -> Result<Value, EqmError> {
-    let trimmed = text.trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-        return Ok(value);
-    }
-    let start = trimmed
-        .find('{')
-        .ok_or_else(|| EqmError::ParseError("no JSON object found in LLM response".into()))?;
-    let end = trimmed
-        .rfind('}')
-        .ok_or_else(|| EqmError::ParseError("no closing brace in LLM response".into()))?;
-    serde_json::from_str(&trimmed[start..=end])
-        .map_err(|e| EqmError::ParseError(format!("failed to parse LLM response as JSON: {e}")))
+/// Map a decision answer to the integer EQM score: the most probable level
+/// (argmax over the calibrated per-level probabilities) — the same 0-2
+/// integer scale the composite, the flags and the skill's EQM-2 gate
+/// consume. Never a fabricated value: a levelless answer reads `None` and
+/// the caller records the marker as missing.
+fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u8> {
+    answer
+        .level_probabilities
+        .iter()
+        .max_by(|a, b| {
+            a.probability
+                .partial_cmp(&b.probability)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|entry| entry.level)
 }
 
 // ── Scoring function ───────────────────────────────────────────────────────
 
-/// Score a forecast rationale against the 12 key EQMs using an LLM.
+/// Score a forecast rationale against the 12 key EQMs using the decision
+/// model (`kask.models.decision_model`).
 ///
-/// Calls `InferencePort::generate` with a structured prompt, parses the JSON
-/// response, and computes the composite score.
+/// Sends the rationale as the decision state plus one typed score question
+/// per marker (the Decisions API: the model returns a calibrated probability
+/// distribution over each marker's 0/1/2 levels, never text); the composite,
+/// the red/green screens and the interpretation stay deterministic in this
+/// code (the EQM-2 lisp gate verifies the screens at the skill layer). An
+/// unset decision model is a typed refusal naming the setting — never a
+/// chat-model fallback; a private-provenance call refuses at the boundary
+/// (the decision model is cloud-served; private content never crosses).
 pub async fn score_rationale(
     inference_port: &dyn InferencePort,
     req: &ScoreRationaleRequest,
@@ -281,28 +303,30 @@ pub async fn score_rationale(
         return Err(EqmError::EmptyRationale);
     }
 
-    let prompt = build_scoring_prompt(
+    // The boundary guard (the D100 forward local-routing rule's tool-call
+    // leg): the configured decision model is cloud-served, so a
+    // private-provenance call refuses here — it never crosses. The
+    // pre-adoption path crossed to the cloud chat model on every thread;
+    // this closes that leg for private contexts.
+    if matches!(
+        hkask_mcp_server::server::current_call_provenance(),
+        hkask_types::InferenceProvenance::PrivateInference
+    ) {
+        return Err(EqmError::PrivateProvenanceRefused);
+    }
+
+    let model = hkask_inference::model_constants::resolve_decision_model()
+        .map_err(|e| EqmError::DecisionNotConfigured(e.to_string()))?;
+
+    let state = build_decision_state(
         &req.rationale,
         req.forecast_probability,
         req.question.as_deref(),
     );
+    let questions = decision_questions();
 
-    let params = LLMParameters {
-        temperature: 0.1,
-        top_p: 0.9,
-        top_k: 40,
-        frequency_penalty: 0.0,
-        presence_penalty: 0.0,
-        min_p: 0.0,
-        typical_p: 0.0,
-        seed: None,
-        thinking_allowed: true,
-        system_prompt: None,
-        timeout_hint_secs: None,
-    };
-
-    let result = inference_port
-        .generate(&prompt, &params, None)
+    let batch = inference_port
+        .decide(&model, &state, &questions)
         .await
         .map_err(|e| EqmError::InferenceFailed(e.to_string()))?;
 
@@ -310,13 +334,9 @@ pub async fn score_rationale(
     // usage in the tool envelope so the billed-token axis is observable
     // at the caller. The envelope aggregates every record a handler
     // makes; this is the prediction-markets server's only inference call.
-    hkask_mcp_server::server::record_tool_usage(result.usage.clone());
+    hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
 
-    // Parse the JSON response from the LLM. The LLM may wrap the JSON in
-    // markdown or add prose; fall back to extracting the first {...} block.
-    let raw_scores: Value = parse_llm_json(&result.text)?;
-
-    // Build the EQM scores from the parsed JSON.
+    // Build the EQM scores from the decision answers.
     let mut scores = Vec::new();
     let mut composite = 0.0_f64;
     let mut red_flags = Vec::new();
@@ -324,21 +344,19 @@ pub async fn score_rationale(
     let mut missing_eqms = Vec::new();
 
     for eqm in KEY_EQMS {
-        let raw = match raw_scores.get(eqm.id) {
-            Some(v) => match v.as_u64() {
-                Some(n) => n.min(2) as u8,
-                None => {
-                    tracing::warn!(
-                        target: "hkask.mcp.prediction_markets.eqm",
-                        eqm = eqm.id,
-                        value = %v,
-                        "LLM returned unparseable EQM score — recording as missing, not zero-filling"
-                    );
-                    missing_eqms.push(eqm.id.to_string());
-                    0
-                }
-            },
-            None => {
+        let raw = match batch
+            .answers
+            .iter()
+            .find(|answer| answer.id == eqm.id)
+            .and_then(answer_level)
+        {
+            Some(level) if (level as usize) < DECISION_LEVELS.len() => level,
+            _ => {
+                tracing::warn!(
+                    target: "hkask.mcp.prediction_markets.eqm",
+                    eqm = eqm.id,
+                    "decision answer unusable (absent, levelless, or out of range) — recording as missing, not zero-filling"
+                );
                 missing_eqms.push(eqm.id.to_string());
                 0
             }
@@ -380,7 +398,7 @@ pub async fn score_rationale(
             missing = ?missing_eqms,
             missing_count = missing_eqms.len(),
             total_eqms = KEY_EQMS.len(),
-            "LLM omitted EQM dimensions — composite score is pulled toward 0 \
+            "decision answers omitted EQM dimensions — composite score is pulled toward 0 \
              for these dimensions; treat as incomplete assessment, not low quality"
         );
     }
@@ -391,7 +409,7 @@ pub async fn score_rationale(
         red_flags,
         green_flags,
         interpretation,
-        model: result.model,
+        model: batch.model,
         caveat: "EQMs are a red-flag screen, not a green-flag detector. A low score reliably flags weak reasoning; a high score is a weak endorsement of quality. Results are correlational, not causal. Based on Karvetski et al. (2026), Forecasting Research Institute.".to_string(),
         missing_eqms,
     })
@@ -480,5 +498,125 @@ mod tests {
             sorted_catalog, sorted_const,
             "KEY_EQMS and the catalog's predictive-flagged markers must be the same id set"
         );
+    }
+
+    /// A port whose every call is unreachable — the refusal paths under
+    /// test must never reach it (the private guard and the unset-model
+    /// resolution both precede any port call).
+    struct RefusingPort;
+    impl hkask_types::InferencePort for RefusingPort {
+        fn generate<'a>(
+            &'a self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> hkask_types::InferenceFuture<'a> {
+            unreachable!("no port call may precede the refusal paths under test")
+        }
+    }
+
+    fn request(rationale: &str) -> ScoreRationaleRequest {
+        ScoreRationaleRequest {
+            rationale: rationale.to_string(),
+            forecast_probability: None,
+            question: None,
+        }
+    }
+
+    #[test]
+    fn decision_questions_carry_the_catalog_scale_and_rubric() {
+        let questions = decision_questions();
+        assert_eq!(questions.len(), KEY_EQMS.len());
+        for (question, eqm) in questions.iter().zip(KEY_EQMS.iter()) {
+            assert_eq!(
+                question.id, eqm.id,
+                "the answer returns under the marker id"
+            );
+            assert_eq!(
+                question.criteria,
+                vec![
+                    "Absent or not applicable",
+                    "Partially present",
+                    "Clearly and strongly present",
+                ],
+                "the catalog's uniform 0/1/2 scale is the criteria"
+            );
+            assert!(
+                question.instructions.contains(eqm.name),
+                "the marker's name rides the instructions"
+            );
+            assert!(
+                question.instructions.contains(eqm.description),
+                "the operational rubric (the 0-means/2-means clauses) rides the instructions"
+            );
+        }
+    }
+
+    #[test]
+    fn answer_level_takes_the_most_probable_level() {
+        // The documented Jev score shape (research run b1f1663057722f5d):
+        // probabilities {0: 0.0, 1: 0.79, 2: 0.21} → the argmax level is 1.
+        let answer = hkask_types::inference_ipc::DecisionAnswer {
+            id: "severity".to_string(),
+            score: 1.21,
+            level_probabilities: vec![
+                hkask_types::inference_ipc::DecisionLevelProbability {
+                    level: 0,
+                    probability: 0.0,
+                },
+                hkask_types::inference_ipc::DecisionLevelProbability {
+                    level: 1,
+                    probability: 0.79,
+                },
+                hkask_types::inference_ipc::DecisionLevelProbability {
+                    level: 2,
+                    probability: 0.21,
+                },
+            ],
+            confidence: 0.69,
+        };
+        assert_eq!(answer_level(&answer), Some(1));
+        let levelless = hkask_types::inference_ipc::DecisionAnswer {
+            id: "q".to_string(),
+            score: 0.0,
+            level_probabilities: Vec::new(),
+            confidence: 0.0,
+        };
+        assert_eq!(
+            answer_level(&levelless),
+            None,
+            "a levelless answer maps to missing, never a fabricated level"
+        );
+    }
+
+    #[tokio::test]
+    async fn private_provenance_refuses_before_any_call() {
+        // The `with_call_provenance` seam sets the dispatch scope (the
+        // production scope is set only by the dispatch decorator, from
+        // the parent's `_meta` — never by tool code).
+        let error = hkask_mcp_server::server::with_call_provenance(
+            hkask_types::InferenceProvenance::PrivateInference,
+            score_rationale(&RefusingPort, &request("rationale text")),
+        )
+        .await
+        .expect_err("private-provenance calls refuse");
+        assert!(matches!(error, EqmError::PrivateProvenanceRefused));
+    }
+
+    #[tokio::test]
+    async fn unset_decision_model_refuses_naming_the_setting() {
+        // The test binary carries no HKASK_DECISION_MODEL (the settings
+        // chain injects it into production children); the public default
+        // provenance reaches the model resolution, which refuses typed.
+        let error = score_rationale(&RefusingPort, &request("rationale text"))
+            .await
+            .expect_err("unset decision model refuses");
+        match error {
+            EqmError::DecisionNotConfigured(message) => {
+                assert!(message.contains("kask.models.decision_model"));
+                assert!(message.contains("HKASK_DECISION_MODEL"));
+            }
+            other => panic!("expected DecisionNotConfigured, got {other:?}"),
+        }
     }
 }

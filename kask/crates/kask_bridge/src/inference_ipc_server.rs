@@ -1088,6 +1088,91 @@ async fn dispatch(
         }
     }
 
+    // Decision requests are dispatched to the provider's Decisions
+    // endpoint (OpenRouter `/api/alpha/decisions`). The zed side reads the
+    // API key from the keychain via the GPUI-side credential channel,
+    // then calls `hkask_inference::decisions::decide`. The MCP server
+    // never sees the API key.
+    if matches!(request.method, InferenceMethod::Decision) {
+        let model = params.decision_model.as_deref().unwrap_or("");
+        let state = params.decision_state.as_deref().unwrap_or("");
+        let questions = params.decision_questions.as_deref().unwrap_or(&[]);
+
+        if state.trim().is_empty() || questions.is_empty() {
+            return ipc_error(
+                "InvalidArgument",
+                "decision requires decision_state and at least one decision_question",
+            );
+        }
+
+        let Some((_provider, clean_model)) =
+            hkask_inference::decisions::detect_decision_provider(model)
+        else {
+            return ipc_error(
+                "InvalidArgument",
+                format!(
+                    "decision model '{model}' is not decision-eligible — use an \
+                     'OpenRouter/'-prefixed decision model (e.g. \
+                     OpenRouter/typesafe/jev-1.14)"
+                ),
+            );
+        };
+
+        let Some(openrouter_descriptor) =
+            crate::inference_providers::provider_by_credential_key("openrouter")
+        else {
+            return ipc_error(
+                "Internal",
+                "decision provider 'openrouter' has no INFERENCE_PROVIDERS entry — the descriptor table diverged",
+            );
+        };
+        let credential_url = openrouter_descriptor.api_url;
+        let (tx_reply, rx_reply) = oneshot::channel::<Result<String, String>>();
+        if provider_credential_tx
+            .send((credential_url.to_string(), tx_reply))
+            .is_err()
+        {
+            return ipc_error(
+                "Connection",
+                "GPUI-side credential task dropped — channel closed (task cancelled or app shutting down)",
+            );
+        }
+        let api_key = match rx_reply.await {
+            Ok(Ok(key)) => key,
+            Ok(Err(e)) => {
+                return ipc_error(
+                    "PermissionDenied",
+                    format!(
+                        "decision requires {} (keychain slot {credential_url}): {e}. Set the API key via Settings → AI → LLM Providers.",
+                        openrouter_descriptor.env_var
+                    ),
+                );
+            }
+            Err(e) => {
+                return ipc_error("Connection", format!("credential channel failed: {e}"));
+            }
+        };
+
+        match hkask_inference::decisions::decide(&api_key, &clean_model, state, questions).await {
+            Ok(batch) => {
+                tracing::info!(
+                    target: "hkask.inference.decisions",
+                    answered = batch.answers.len(),
+                    model = %clean_model,
+                    "Decision completed"
+                );
+                return InferenceOutcome::DecisionAnswers {
+                    answers: batch.answers,
+                    model: batch.model,
+                    usage: batch.usage,
+                };
+            }
+            Err(e) => {
+                return ipc_error("Internal", format!("decisions API failed: {e}"));
+            }
+        }
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -1134,7 +1219,8 @@ async fn dispatch(
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::CreateWorktreeThread
-        | InferenceMethod::Rerank => {
+        | InferenceMethod::Rerank
+        | InferenceMethod::Decision => {
             tracing::error!(
                 target: "reg.inference",
                 method = ?request.method,

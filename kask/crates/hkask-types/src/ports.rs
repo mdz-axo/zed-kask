@@ -10,10 +10,10 @@ pub mod inference_types;
 pub mod memory_port;
 pub mod regulation;
 
-pub use embedding::{EmbeddingBatch, EmbeddingGenerationError, RerankBatch};
+pub use embedding::{DecisionBatch, EmbeddingBatch, EmbeddingGenerationError, RerankBatch};
 pub use inference_port::{
-    EmbedFuture, EmbedWithIdentityFuture, InferenceFuture, InferencePort, MediaFuture,
-    MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, WorktreeSpawnPort,
+    DecisionFuture, EmbedFuture, EmbedWithIdentityFuture, InferenceFuture, InferencePort,
+    MediaFuture, MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, WorktreeSpawnPort,
 };
 pub use inference_types::{
     ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,

@@ -505,12 +505,23 @@ pub struct KaskModelsSettings {
     /// to the kask default (env `HKASK_RERANK_MODEL` — resolved per call
     /// in `hkask_inference::model_constants::rerank_model`).
     pub rerank_model: String,
+
+    /// Decision model for bounded structured judgments (provider-prefixed,
+    /// served over the provider's Decisions API — never a chat endpoint).
+    /// Empty is unconfigured: decision routes refuse (env
+    /// `HKASK_DECISION_MODEL` — resolved in
+    /// `hkask_inference::model_constants::resolve_decision_model`), never
+    /// the chat model.
+    pub decision_model: String,
 }
 
 // Code defaults (operator ruling 2026-09-04, superseding the
 // no-hidden-models spec): configured models have code defaults; the settings
 // UI / settings.json overrides them. QA generation stays unconfigured
-// (no verified dedicated default).
+// (no verified dedicated default). The decision model's code default is the
+// operator's 2026-11-06 adoption: TypeSafe's Jev 1.14 over OpenRouter's
+// Decisions API (a System One decision model — typed questions in, typed
+// answers with calibrated probabilities out; never a chat endpoint).
 // The values are the operator's configured models, verbatim.
 //
 // `embedding_model` also stays empty HERE because its
@@ -540,6 +551,7 @@ impl Default for KaskModelsSettings {
             // research server's rerank stage defaults to the verified
             // catalog model instead of failing unconfigured.
             rerank_model: hkask_inference::model_constants::DEFAULT_RERANK_MODEL.to_string(),
+            decision_model: hkask_inference::model_constants::DEFAULT_DECISION_MODEL.to_string(),
         }
     }
 }
@@ -1022,6 +1034,7 @@ impl From<KaskModelsSettingsContent> for KaskModelsSettings {
             qa_generation_model: c.qa_generation_model.unwrap_or(default.qa_generation_model),
             ocr_model: c.ocr_model.unwrap_or(default.ocr_model),
             rerank_model: c.rerank_model.unwrap_or(default.rerank_model),
+            decision_model: c.decision_model.unwrap_or(default.decision_model),
         }
     }
 }

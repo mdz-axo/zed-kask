@@ -24,6 +24,8 @@
 //!   injected by `mcp_env()`; the direct path fails typed when unset)
 //! - `HKASK_PRIVATE_EMBEDDING_MODEL` — the private leg's local embedding
 //!   model (D100 item 3 + the query-side provenance routing)
+//! - `HKASK_DECISION_MODEL` — the decision model for bounded structured
+//!   judgments (the Decisions API, not a chat endpoint)
 
 /// Environment binding for `kask.models.qa_generation_model`.
 pub const QA_GENERATION_MODEL_ENV: &str = "HKASK_QA_GENERATION_MODEL";
@@ -99,6 +101,36 @@ pub fn resolve_classifier_model() -> Result<String, hkask_types::InferenceError>
             "kask.models.classifier_model (HKASK_CLASSIFIER_MODEL) is not set — the \
              classifier-class routes refuse rather than serve the default chat model \
              (which can be thinking-mandatory); set kask.models.classifier_model"
+                .to_string(),
+        )
+    })
+}
+
+/// Environment binding for `kask.models.decision_model`.
+pub const DECISION_MODEL_ENV: &str = "HKASK_DECISION_MODEL";
+
+/// Read the decision model from the env layer: `HKASK_DECISION_MODEL` →
+/// `None` when unset. The settings chain (which carries the code default)
+/// injects this env var for MCP server children.
+pub fn decision_model() -> Option<String> {
+    std::env::var(DECISION_MODEL_ENV)
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+}
+
+/// Resolve the decision model or refuse: `HKASK_DECISION_MODEL` unset is a
+/// typed error naming the setting — never a silent fallback to the chat
+/// default. Decision models are a different model class (typed questions
+/// in, typed answers with calibrated probabilities out, served over the
+/// Decisions API — never a chat endpoint), so the chat default is not a
+/// substitute for one; the QA/classifier fail-visible precedent applies.
+pub fn resolve_decision_model() -> Result<String, hkask_types::InferenceError> {
+    decision_model().ok_or_else(|| {
+        hkask_types::InferenceError::NotConfigured(
+            "kask.models.decision_model (HKASK_DECISION_MODEL) is not set — decision \
+             routes refuse rather than serve the chat model (decision models are a \
+             different model class, served over the Decisions API); set \
+             kask.models.decision_model"
                 .to_string(),
         )
     })
@@ -210,6 +242,38 @@ mod qa_generation_tests {
     }
 }
 
+#[cfg(test)]
+mod decision_model_tests {
+    /// The unconfigured path is the load-bearing contract: a typed
+    /// refusal naming the setting — never a silent chat-model fallback
+    /// (the test binary carries no `HKASK_DECISION_MODEL`; the settings
+    /// chain injects it for production children).
+    #[test]
+    fn unconfigured_is_a_named_refusal_not_a_chat_fallback() {
+        let error = super::resolve_decision_model().expect_err("unset env refuses");
+        assert!(matches!(
+            error,
+            hkask_types::InferenceError::NotConfigured(_)
+        ));
+        let message = error.to_string();
+        assert!(message.contains("kask.models.decision_model"));
+        assert!(message.contains("HKASK_DECISION_MODEL"));
+        assert!(message.contains("refuse"));
+    }
+
+    /// The pinned default names the provider prefix (decision-eligible
+    /// detection) and the adopted Jev version — the dated-slug discipline
+    /// (the alias `~typesafe/jev-latest` tracks newer versions; the
+    /// constant pins one).
+    #[test]
+    fn default_decision_model_pins_the_openrouter_jev_version() {
+        let model = super::DEFAULT_DECISION_MODEL;
+        assert!(model.starts_with("OpenRouter/"));
+        assert_eq!(model, "OpenRouter/typesafe/jev-1.14");
+        assert_ne!(model, "OpenRouter/~typesafe/jev-latest");
+    }
+}
+
 // ── Media pipeline defaults ───────────────────────────────────────────────
 //
 // The media server has no in-server model fallback (its accessors return
@@ -294,6 +358,21 @@ pub const DEFAULT_MEDIA_TAGGING_MODEL: &str = "openrouter/Qwen3 VL 8B Instruct";
 /// DeepInfra's catalog 2026-09-11: `Qwen/Qwen3-Reranker-8B`, $0.05/1M tokens,
 /// 32K context, instruction-aware (operator ruling 2026-09-11).
 pub const DEFAULT_RERANK_MODEL: &str = "deepinfra/Qwen/Qwen3-Reranker-8B";
+
+/// Default decision model (env `HKASK_DECISION_MODEL` via
+/// `KaskModelsSettings::decision_model`). TypeSafe's Jev 1.14 — the first
+/// "System One" decision model, operator adoption 2026-11-06: state plus
+/// typed questions in, typed answers with calibrated per-level
+/// probabilities out, never text. Served over OpenRouter's Decisions API
+/// (`POST /api/alpha/decisions` — NOT the chat endpoint), so this model id
+/// is decision-eligible only through `hkask-inference/src/decisions.rs`.
+/// Verified from OpenRouter's model page and explainer 2026-11-06
+/// (research run `b1f1663057722f5d`): $0.042/M input tokens, output free,
+/// 262K context; the `~typesafe/jev-latest` alias tracks the newest
+/// version — the default pins the version (dated-slug discipline). An
+/// explicitly empty setting refuses the decision routes (fail-visible,
+/// never a silent chat-model fallback).
+pub const DEFAULT_DECISION_MODEL: &str = "OpenRouter/typesafe/jev-1.14";
 
 /// Default embedding model (env `HKASK_EMBEDDING_MODEL` via
 /// `KaskModelsSettings::embedding_model` / `KaskCorpusSettings::embedding_model`

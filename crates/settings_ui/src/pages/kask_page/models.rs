@@ -1,6 +1,6 @@
 //! Models sub-page — kask-wide model defaults (default inference model,
 //! embedding model, classifier model, dedicated QA generator, OCR model,
-//! rerank model) plus the media role models (sound annotation, grounded
+//! rerank model, decision model) plus the media role models (sound annotation, grounded
 //! tagging — `kask.media` fields rendered here per the operator's
 //! settings > kask > models ruling, saved through the media section).
 
@@ -25,6 +25,7 @@ pub(crate) fn render_models_page(
     let qa_generation_model = models.qa_generation_model;
     let ocr_model = models.ocr_model;
     let rerank_model = models.rerank_model;
+    let decision_model = models.decision_model;
     // The media role models (settings > kask > models, operator ruling
     // 2026-10-30): resolved via `From` so the inputs show the same defaults
     // the runtime uses; saved through the `"media"` settings section.
@@ -91,6 +92,14 @@ pub(crate) fn render_models_page(
         rerank_model,
         "models",
         "rerank_model",
+    );
+    let decision_model_input = kask_string_input(
+        "kask-models-decision",
+        "Decision Model",
+        placeholder,
+        decision_model,
+        "models",
+        "decision_model",
     );
     let sound_annotation_input = kask_string_input(
         "kask-models-sound-annotation",
@@ -237,6 +246,24 @@ pub(crate) fn render_models_page(
         .child(
             v_flex()
                 .gap_1()
+                .child(Label::new("Decision Model"))
+                .child(
+                    Label::new(
+                        "Provider-prefixed decision model for bounded structured judgments \
+                         (typed questions in, typed answers with calibrated probabilities — \
+                         the Decisions API, never a chat endpoint). Defaults to \
+                         OpenRouter/typesafe/jev-1.14. Empty refuses decision routes; \
+                         never the chat model.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(decision_model_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
                 .child(Label::new("Sound Annotation Model"))
                 .child(
                     Label::new(format!(
@@ -303,6 +330,21 @@ mod tests {
         assert!(dispatcher.contains(concat!(
             "kask.models.get_or_insert_default().",
             "rerank_model ="
+        )));
+    }
+
+    /// D9, same discipline for the decision model (operator adoption
+    /// 2026-11-06): the control renders on the Models page and saves
+    /// through the "models" section — pin the pair.
+    #[test]
+    fn decision_control_has_a_save_dispatch_arm() {
+        let page = include_str!("models.rs");
+        let dispatcher = include_str!("../kask_page.rs");
+        assert!(page.contains(concat!("\"models\",\n        ", "\"decision_model\",")));
+        assert!(dispatcher.contains(concat!("(\"models\", ", "\"decision_model\") => {")));
+        assert!(dispatcher.contains(concat!(
+            "kask.models.get_or_insert_default().",
+            "decision_model ="
         )));
     }
 
