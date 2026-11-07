@@ -45,7 +45,6 @@ pub struct ProbeArgs {
     pub partial_gpu_offload: bool,
     pub kv_cache_type: String,
     pub seed_base: u64,
-    pub order: String,
     pub budget_secs: u64,
     pub port: u16,
 }
@@ -54,7 +53,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
     let cfg = RunConfig::load(&args.config)?;
     let config_file: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&args.config)?)?;
-    let set = ProblemSet::load(&args.problems, args.seed_base, &args.order)?;
+    let set = ProblemSet::load(&args.problems, args.seed_base)?;
 
     // The artifact receipts, resolved the fleet's own way (the same
     // path the supervisor launches) — parse for dtype/params, hash for
@@ -71,7 +70,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| artifact.display().to_string());
-    let dtype = gguf_writer::type_name(meta.dominant_type()).to_string();
+    let dtype = pi_gguf::type_name(meta.dominant_type()).to_string();
 
     // The route: one supervisor launch per leg, one policy from the CLI.
     let n_ctx = args.cap + 4096;
@@ -205,7 +204,6 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         gguf_sha256: gguf_sha256.clone(),
         dtype: dtype.clone(),
         elapsed_secs: receipt::r1(t_start.elapsed().as_secs_f64()),
-        order: args.order.clone(),
         harness: HARNESS.into(),
         model_id: serving.model_id.clone(),
         engine_version: serving.engine_version.clone(),
@@ -394,11 +392,6 @@ pub fn summarize(rows: &Path, out: Option<&Path>) -> Result<()> {
         gguf_sha256: f["gguf_sha256"].as_str().unwrap_or("").to_string(),
         dtype: f["dtype"].as_str().unwrap_or("").to_string(),
         elapsed_secs: 0.0,
-        order: f
-            .get("order")
-            .and_then(|o| o.as_str())
-            .unwrap_or("")
-            .to_string(),
         harness: HARNESS.into(),
         model_id: f
             .get("model_id")

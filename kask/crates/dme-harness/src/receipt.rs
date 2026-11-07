@@ -79,7 +79,6 @@ pub struct StageSummary {
     pub gguf_sha256: String,
     pub dtype: String,
     pub elapsed_secs: f64,
-    pub order: String,
     pub harness: String,
     // --- the additive route receipts (P4) ---
     pub model_id: String,
@@ -185,15 +184,6 @@ pub fn extract_boxed(text: &str) -> Option<String> {
     Some(text[start..end].trim().to_string())
 }
 
-/// Numeric string normalization (receipt display + capture's grading
-/// path): strip commas, whitespace, `$` and `\!`.
-pub fn normalize_numeric(s: &str) -> String {
-    s.trim()
-        .trim_matches('.')
-        .replace([',', '$', ' '], "")
-        .replace("\\!", "")
-}
-
 /// Two-decimal rounding (the archived wall/tok receipts).
 pub fn r2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
@@ -217,13 +207,6 @@ mod tests {
         let t3 = "first \\boxed{1} then \\boxed{7}";
         assert_eq!(extract_boxed(t3).as_deref(), Some("7"));
         assert_eq!(extract_boxed("no answer"), None);
-    }
-
-    #[test]
-    fn normalization() {
-        assert_eq!(normalize_numeric("1,000"), "1000");
-        assert_eq!(normalize_numeric(" 72."), "72");
-        assert_eq!(normalize_numeric("$5"), "5");
     }
 
     #[test]

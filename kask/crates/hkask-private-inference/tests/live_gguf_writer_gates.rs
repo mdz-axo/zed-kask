@@ -20,12 +20,14 @@ use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::gguf_writer;
 use hkask_types::agent_paths::resolve_under_artifacts_dir;
 
-/// The DME artifacts: the canonical models dir first (the P6 layout), the
-/// pre-consolidation vendor/gguf location second (the P3 layout).
+/// The DME artifacts: the canonical models dir first (the P6 layout, one
+/// dir per model brief), then the pre-consolidation locations.
 fn dme_artifact(name: &str) -> Option<PathBuf> {
     for dir in [
         "private-inference/models/dme",
+        "private-inference/models/qwen35-0.8b",
         "direct-model-edit-rust/vendor/gguf",
+        "direct-model-edit-rust/models",
     ] {
         let path = resolve_under_artifacts_dir(Path::new(dir)).join(name);
         if path.is_file() {
@@ -43,7 +45,9 @@ fn gguf_component_gates_on_the_real_dme_artifacts() {
         eprintln!("SKIP: the DME edit target Qwen3.5-0.8B-BF16.gguf is not on disk");
         return;
     };
-    let Some(q8) = dme_artifact("Qwen3.5-0.8B-Q8_0.gguf") else {
+    let Some(q8) =
+        dme_artifact("Qwen3.5-0.8B-Q8_0.gguf").or_else(|| dme_artifact("Qwen3.5-0.8B-q8_0.gguf"))
+    else {
         eprintln!("SKIP: the DME smoke artifact Qwen3.5-0.8B-Q8_0.gguf is not on disk");
         return;
     };
@@ -56,7 +60,7 @@ fn gguf_component_gates_on_the_real_dme_artifacts() {
     // --- gate 2: param_count parity on the BF16 target ---
     assert_eq!(a.param_count, PARAM_COUNT_TARGET, "param_count parity");
     assert_eq!(a.architecture(), "qwen35");
-    assert_eq!(a.dominant_type(), gguf_writer::GGML_BF16);
+    assert_eq!(a.dominant_type(), gguf::GGML_BF16);
 
     // --- gate 3: requant floor exactly 0.0 on the real Q8_0 tensor ---
     let qmeta = gguf::parse_file(&q8).expect("Q8_0 smoke parses");
@@ -108,9 +112,60 @@ fn gguf_component_gates_on_the_real_dme_artifacts() {
     let after = gguf_writer::sha256_file(&copy).expect("sha256 after");
     assert_eq!(before, after, "no-edit write round-trip is byte-identical");
 
+    // --- gate 1d (the dense-trigger extension): an all-zero dense trigger
+    //     is byte-identical on the real tensor, and the channel mask is
+    //     the indicator special case of the dense edit (equal patched
+    //     bytes at a real alpha) ---
+    let kz = vec![0f32; ne0];
+    let dvec = vec![1e-3f32; ne1];
+    let (pz, sz) = gguf_writer::subtract_dense_columns(
+        &raw,
+        t.ggml_type,
+        t.nelements() as usize,
+        ne0,
+        ne1,
+        &kz,
+        1.0,
+        &dvec,
+    )
+    .expect("zero-trigger dense edit runs");
+    assert_eq!(pz, raw, "zero-trigger dense edit must be byte-identical");
+    assert_eq!(sz.unedited_elements_changed, 0);
+    let mut kind = vec![0f32; ne0];
+    for j in gguf_writer::spread_channels(ne0, 64) {
+        kind[j] = 1.0;
+    }
+    let (pd, _) = gguf_writer::subtract_dense_columns(
+        &raw,
+        t.ggml_type,
+        t.nelements() as usize,
+        ne0,
+        ne1,
+        &kind,
+        1.0,
+        &dvec,
+    )
+    .expect("indicator dense edit runs");
+    let (ps, _) = gguf_writer::subtract_strided_columns(
+        &raw,
+        t.ggml_type,
+        t.nelements() as usize,
+        ne0,
+        ne1,
+        &chans,
+        1.0,
+        &dvec,
+    )
+    .expect("strided edit runs");
+    assert_eq!(
+        pd, ps,
+        "the channel mask is the dense indicator special case (real alpha)"
+    );
+
     eprintln!(
-        "GATES: byte-identity (parse + zero-edit + write round-trip) OK; \
-         param_count {} == {PARAM_COUNT_TARGET}; requant floor 0.0 OK",
+        "GATES: byte-identity (parse + zero-edit + write round-trip + dense zero-trigger) OK; \
+         param_count {} == {PARAM_COUNT_TARGET}; requant floor 0.0 OK; \
+         dense indicator == strided channels OK",
         a.param_count
     );
 }

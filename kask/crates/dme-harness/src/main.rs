@@ -10,6 +10,9 @@
 //!   capture    localization leg (the engine feature): per-layer
 //!              activation captures through llama-cpp-4's prebuilt link
 //!              against the canonical libs (P5)
+//!   convert    embedding-to-edit bridge: embedder vectors + capture
+//!              manifests -> u/k/covdiag + a hash-bound manifest + the
+//!              edit spec (pure math, engine-free)
 //!   edit       direction-subtraction edit -> patched GGUF + receipt
 //!              (the shared GGUF writer component)
 //!   gguf-info  dump a GGUF's metadata and tensor directory
@@ -23,7 +26,7 @@
 use anyhow::{Result, bail};
 #[cfg(feature = "engine")]
 use dme_harness::capture;
-use dme_harness::{edit, gguf_writer, pi_gguf, probe};
+use dme_harness::{convert, edit, gguf_writer, pi_gguf, probe};
 
 fn main() {
     if let Err(e) = run() {
@@ -53,7 +56,7 @@ fn has_flag(args: &[String], name: &str) -> bool {
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).ok_or_else(|| {
-        anyhow::anyhow!("usage: dme-harness <probe|capture|edit|gguf-info|summary> ...")
+        anyhow::anyhow!("usage: dme-harness <probe|capture|convert|edit|gguf-info|summary> ...")
     })?;
     let rest: &[String] = if args.is_empty() { &[] } else { &args[1..] };
 
@@ -69,7 +72,7 @@ fn run() -> Result<()> {
                 meta.block_count().unwrap_or(0),
                 meta.tensors.len(),
                 meta.param_count,
-                gguf_writer::type_name(meta.dominant_type()),
+                pi_gguf::type_name(meta.dominant_type()),
                 meta.data_start
             );
             println!(
@@ -87,7 +90,7 @@ fn run() -> Result<()> {
                 println!(
                     "  {:<40} {:>6} dims={:?} offset={}",
                     t.name,
-                    gguf_writer::type_name(t.ggml_type),
+                    pi_gguf::type_name(t.ggml_type),
                     t.dims,
                     t.offset
                 );
@@ -122,7 +125,7 @@ fn run() -> Result<()> {
                 partial_gpu_offload: has_flag(rest, "--partial"),
                 kv_cache_type: flag_or(rest, "--kv", "f16"),
                 seed_base: flag_or(rest, "--seed", "20261106").parse()?,
-                order: flag_or(rest, "--order", "mt19937"),
+
                 budget_secs: flag_or(rest, "--budget-secs", "1500").parse()?,
                 port: flag_or(rest, "--port", "8011").parse()?,
             };
@@ -159,7 +162,7 @@ fn run() -> Result<()> {
                     threads: flag_or(rest, "--threads", "4").parse()?,
                     n_gpu_layers: flag_or(rest, "--n-gpu-layers", "99").parse()?,
                     seed_base: flag_or(rest, "--seed", "20261106").parse()?,
-                    order: flag_or(rest, "--order", "mt19937"),
+
                     sites,
                     layers,
                     max_new: flag_or(rest, "--max-new", "256").parse()?,
@@ -171,6 +174,24 @@ fn run() -> Result<()> {
                 let _ = rest;
                 bail!("capture requires the engine feature; build with --features engine")
             }
+        }
+        "convert" => {
+            let config =
+                flag(rest, "--config").ok_or_else(|| anyhow::anyhow!("--config required"))?;
+            let vectors =
+                flag(rest, "--vectors").ok_or_else(|| anyhow::anyhow!("--vectors required"))?;
+            let captures = flag(rest, "--capture-manifest")
+                .ok_or_else(|| anyhow::anyhow!("--capture-manifest required"))?;
+            let capture_dir = flag(rest, "--capture-dir")
+                .ok_or_else(|| anyhow::anyhow!("--capture-dir required"))?;
+            let out = flag(rest, "--out").ok_or_else(|| anyhow::anyhow!("--out required"))?;
+            convert::run(convert::ConvertArgs {
+                config: config.into(),
+                vectors: vectors.into(),
+                capture_manifest: captures.into(),
+                capture_dir: capture_dir.into(),
+                out_dir: out.into(),
+            })
         }
         "edit" => {
             let spec = flag(rest, "--spec").ok_or_else(|| anyhow::anyhow!("--spec required"))?;

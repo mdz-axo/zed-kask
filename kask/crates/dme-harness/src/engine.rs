@@ -78,20 +78,17 @@ impl Engine {
             templates,
             gguf_path: gguf_path.display().to_string(),
             model_name,
-            dtype: gguf_writer::type_name(meta.dominant_type()).to_string(),
+            dtype: pi_gguf::type_name(meta.dominant_type()).to_string(),
             param_count: model.n_params(),
         })
     }
 
     /// Render the chat prompt for a problem under a config's mode (the
     /// capture leg's in-process path — the probe leg renders through
-    /// the serving route instead).
+    /// the serving route instead). The prompt standard is the ONE
+    /// instrument constant (`probe::PROMPT_SUFFIX`).
     pub fn render_prompt(&self, problem_question: &str, cfg: &RunConfig) -> Result<String> {
-        // The card's math-prompt standard (Best Practices item 3):
-        // "Please reason step by step, and put your final answer within \boxed{}."
-        let content = format!(
-            "{problem_question} Please reason step by step, and put your final answer within \\boxed{{}}."
-        );
+        let content = format!("{problem_question}{}", crate::probe::PROMPT_SUFFIX);
         let messages = serde_json::json!([{ "role": "user", "content": content }]);
         let applied = self
             .templates

@@ -30,7 +30,6 @@ pub struct CaptureArgs {
     pub threads: u32,
     pub n_gpu_layers: u32,
     pub seed_base: u64,
-    pub order: String,
     pub sites: Vec<String>, // "l_out" and/or "ffn_out"
     pub layers: Vec<u32>,   // e.g. 15,19 (plus any contrast layers)
     pub max_new: u32,       // how many generation steps to capture
@@ -52,7 +51,7 @@ struct CaptureManifestRow {
 pub fn run(args: CaptureArgs) -> Result<()> {
     std::fs::create_dir_all(&args.out_dir)?;
     let cfg = RunConfig::load(&args.config)?;
-    let set = ProblemSet::load(&args.problems, args.seed_base, &args.order)?;
+    let set = ProblemSet::load(&args.problems, args.seed_base)?;
     let engine = Engine::load(&args.gguf, args.n_gpu_layers)?;
 
     anyhow::ensure!(!args.layers.is_empty(), "no layers to capture");
@@ -161,15 +160,13 @@ fn capture_one(
         pos += 1;
         drain_captures(&mut ctx, problem_id, "step", step + 1, args, gguf_hash)?;
     }
-    let extracted = crate::receipt::extract_boxed(&text);
+    // One extractor, one grader (the archived instrument's — the same
+    // semantics the probe leg's rows grade under).
+    let (extracted, _) = crate::receipt::extract_answer(&text);
     if label == "unknown_complete" {
         label = if extracted
             .as_deref()
-            .map(|e| {
-                crate::receipt::normalize_numeric(e)
-                    == crate::receipt::normalize_numeric(&problem.gold())
-            })
-            .unwrap_or(false)
+            .is_some_and(|e| crate::receipt::numeric_grade(e, &problem.gold()))
         {
             "correct_complete"
         } else {

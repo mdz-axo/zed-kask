@@ -27,40 +27,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use super::gguf::{GgufError, GgufMeta, GgufTensor};
-
-// The ONE exact-size home is the reader's storage-type table
-// (local_leg::gguf) — parse validation and this writer consume the same
-// numbers. Re-exported here so writer consumers keep one import site.
-pub use super::gguf::{GGML_BF16, GGML_F16, GGML_F32, GGML_Q8_0, type_name};
-use super::gguf::{exact_nbytes, known_block_size, known_type_size};
-
-/// Elements per quantization block — the codec gate: a type outside the
-/// exact table is a typed refusal, never an approximation.
-pub fn block_size(ty: u32) -> Result<u64, GgufError> {
-    known_block_size(ty).ok_or(GgufError::UnsupportedType {
-        ty,
-        op: "block_size",
-    })
-}
-
-/// Bytes per quantization block — the codec gate.
-pub fn type_size(ty: u32) -> Result<u64, GgufError> {
-    known_type_size(ty).ok_or(GgufError::UnsupportedType {
-        ty,
-        op: "type_size",
-    })
-}
+use super::gguf::{GGML_BF16, GGML_F16, GGML_F32, GGML_Q8_0, GgufError, GgufMeta, GgufTensor};
 
 impl GgufTensor {
-    /// Exact byte length of the tensor's data region
-    /// (`nelements / block_size * type_size`). Unsupported storage types
-    /// fail loudly — the writer never approximates a size.
+    /// Exact byte length of the tensor's data region, from the reader's
+    /// one exact-size table (local_leg::gguf::exact_nbytes). Unsupported
+    /// storage types fail loudly — the writer never approximates a size.
     pub fn nbytes(&self) -> Result<u64, GgufError> {
-        exact_nbytes(self.ggml_type, self.nelements()).ok_or(GgufError::UnsupportedType {
-            ty: self.ggml_type,
-            op: "nbytes",
-        })
+        super::gguf::exact_nbytes(self.ggml_type, self.nelements()).ok_or(
+            GgufError::UnsupportedType {
+                ty: self.ggml_type,
+                op: "nbytes",
+            },
+        )
     }
 }
 

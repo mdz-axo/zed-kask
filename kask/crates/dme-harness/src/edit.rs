@@ -25,22 +25,19 @@ pub struct EditSpec {
     pub layers: Vec<u32>,
     /// tensor stem within each layer, e.g. "ffn_down" -> blk.{L}.ffn_down.weight
     pub tensor: String,
-    /// channel selection (the legacy trigger form): `count` spread evenly
-    /// across the input dim — mutually exclusive with `trigger`
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channels: Option<usize>,
     pub alpha: f32,
     /// direction source: seeded unit vector, or an f32 file (1024 values)
     pub direction: DirectionSpec,
+    /// the rank-one trigger — the ONE spelling (operator ruling
+    /// 2026-11-06: no backward-compatibility surface exists; the legacy
+    /// parallel `channels` field is deleted — no archived edit spec ever
+    /// existed to be compatible with). The channel mask is the indicator
+    /// special case (the anchor's measured surface); `Dense` carries a
+    /// per-column weight file (the convert module's k) plus an optional
+    /// calibration covariance diagonal, whitened at edit time.
+    pub trigger: TriggerSpec,
     pub input: String,
     pub output: String,
-    /// trigger selection — the general rank-one form (the edit is
-    /// W <- W - alpha * direction * k^T). The channel mask is the
-    /// indicator special case; `Dense` carries a per-column weight file
-    /// (the convert module's k) plus an optional calibration covariance
-    /// diagonal, whitened at edit time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trigger: Option<TriggerSpec>,
 }
 
 /// Trigger selection over the tensor's input dim (ne0): `count` channels
@@ -79,9 +76,9 @@ pub struct EditReceipt {
     pub output_sha256: String,
     pub tensor: String,
     pub layers: Vec<u32>,
-    pub channels: Vec<usize>,
-    /// additive key (the dense-trigger extension): which rank-one column
-    /// selection fired and its effective per-column weight stats
+    /// the rank-one trigger record: which column selection fired and its
+    /// effective per-column weight stats (the channel mask is derivable
+    /// from kind + dim + columns — the spread is deterministic)
     pub trigger: TriggerReceipt,
     pub direction_dim: usize,
     pub alpha: f32,
@@ -104,10 +101,8 @@ pub struct LayerFidelity {
     pub roundtrip_max_abs: f64,
 }
 
-/// The trigger record on the edit receipt (additive): the kind, the input
-/// dim it lives on, and the effective per-column weight stats after
-/// whitening. `channels` (above) stays the legacy mask listing — empty
-/// for the dense form.
+/// The trigger record on the edit receipt: the kind, the input dim it
+/// lives on, and the effective per-column weight stats after whitening.
 #[derive(Debug, Serialize)]
 pub struct TriggerReceipt {
     pub kind: String,
@@ -126,18 +121,9 @@ pub fn load_spec(path: &Path) -> Result<EditSpec> {
     Ok(parsed)
 }
 
-/// Exactly one trigger source: the legacy channel mask or the trigger
-/// block — two sources of truth for the same selection refuse loudly, and
-/// so does none.
 pub(crate) fn validate_spec(spec: &EditSpec) -> Result<()> {
     anyhow::ensure!(!spec.layers.is_empty(), "no edit layers");
-    match (&spec.channels, &spec.trigger) {
-        (Some(_), Some(_)) => {
-            bail!("channels and trigger are mutually exclusive — exactly one trigger source")
-        }
-        (None, None) => bail!("no trigger source: set channels (legacy) or trigger"),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 pub fn run(spec: &EditSpec) -> Result<()> {
@@ -188,17 +174,15 @@ pub fn run(spec: &EditSpec) -> Result<()> {
         "direction dim {} != output dim {ne1}",
         dir.len()
     );
-    let (k_trigger, channels, trigger_receipt) = match (&spec.channels, &spec.trigger) {
-        (Some(count), None) | (None, Some(TriggerSpec::Channels { count })) => {
+    let (k_trigger, trigger_receipt) = match &spec.trigger {
+        TriggerSpec::Channels { count } => {
             anyhow::ensure!(*count > 0 && *count <= ne0, "bad channel count");
-            let spread = gguf_writer::spread_channels(ne0, *count);
             let mut k = vec![0f32; ne0];
-            for &j in &spread {
+            for j in gguf_writer::spread_channels(ne0, *count) {
                 k[j] = 1.0;
             }
             (
                 k,
-                spread,
                 TriggerReceipt {
                     kind: "channels".into(),
                     dim: ne0,
@@ -210,14 +194,11 @@ pub fn run(spec: &EditSpec) -> Result<()> {
                 },
             )
         }
-        (
-            None,
-            Some(TriggerSpec::Dense {
-                path,
-                dim,
-                covdiag_path,
-            }),
-        ) => {
+        TriggerSpec::Dense {
+            path,
+            dim,
+            covdiag_path,
+        } => {
             anyhow::ensure!(
                 *dim == ne0,
                 "trigger dim {dim} != tensor input dim {ne0} (see gguf-info)"
@@ -231,7 +212,7 @@ pub fn run(spec: &EditSpec) -> Result<()> {
                         gguf_writer::sha256_file(Path::new(cp)).ok(),
                     )
                 }
-                None => (k.clone(), None),
+                None => (k, None),
             };
             let nonzero: Vec<f32> = k_eff.iter().copied().filter(|v| *v != 0.0).collect();
             anyhow::ensure!(
@@ -242,7 +223,6 @@ pub fn run(spec: &EditSpec) -> Result<()> {
             let w_max = nonzero.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             (
                 k_eff,
-                Vec::new(),
                 TriggerReceipt {
                     kind: "dense".into(),
                     dim: ne0,
@@ -254,7 +234,6 @@ pub fn run(spec: &EditSpec) -> Result<()> {
                 },
             )
         }
-        _ => bail!("exactly one trigger source (enforced at load)"),
     };
 
     // patched copy
@@ -291,7 +270,7 @@ pub fn run(spec: &EditSpec) -> Result<()> {
         weights_touched += stats.weights_touched;
         per_layer.push(LayerFidelity {
             layer,
-            tensor_type: gguf_writer::type_name(t.ggml_type).into(),
+            tensor_type: pi_gguf::type_name(t.ggml_type).into(),
             blocks_touched: stats.blocks_touched,
             blocks_rescaled: stats.blocks_rescaled,
             unedited_elements_changed: stats.unedited_elements_changed,
@@ -312,7 +291,6 @@ pub fn run(spec: &EditSpec) -> Result<()> {
         output_sha256: gguf_writer::sha256_file(output)?,
         tensor: format!("blk.{{L}}.{}.weight", spec.tensor),
         layers: spec.layers.clone(),
-        channels,
         trigger: trigger_receipt,
         direction_dim: dir.len(),
         alpha: spec.alpha,
@@ -374,93 +352,56 @@ pub(crate) fn read_f32_file(path: &str, dim: usize) -> Result<Vec<f32>> {
 mod tests {
     use super::*;
 
-    /// S1 contract conformance: a config shaped exactly like the archived
-    /// schema (channels, no trigger) parses unchanged.
+    /// S1 (operator ruling 2026-11-06: no backward-compatibility surface):
+    /// `trigger` is the ONE required spelling. A spec shaped like the old
+    /// `channels` field — which no archived artifact ever used — fails to
+    /// parse loudly: unknown fields are ignored, the missing required
+    /// `trigger` is not.
     #[test]
-    fn archived_shape_spec_parses_unchanged() {
-        let spec: EditSpec = serde_json::from_str(
-            r#"{
-                "layers": [15, 19],
-                "tensor": "ffn_down",
-                "channels": 64,
-                "alpha": 8.0,
-                "direction": {"source": "file", "path": "/tmp/u.f32", "dim": 1024},
-                "input": "/tmp/in.gguf",
-                "output": "/tmp/out.gguf"
-            }"#,
-        )
-        .expect("archived-shape spec parses");
-        validate_spec(&spec).expect("archived shape is valid");
-        assert_eq!(spec.channels, Some(64));
-        assert!(spec.trigger.is_none());
+    fn trigger_is_the_one_required_spelling() {
+        let unified = r#"{"layers":[15],"tensor":"ffn_down","alpha":8.0,
+            "direction":{"source":"file","path":"/tmp/u.f32","dim":1024},
+            "trigger":{"kind":"channels","count":64},
+            "input":"in.gguf","output":"out.gguf"}"#;
+        let spec: EditSpec = serde_json::from_str(unified).expect("unified spec parses");
+        assert!(matches!(spec.trigger, TriggerSpec::Channels { count: 64 }));
+        validate_spec(&spec).expect("valid");
+
+        let legacy = r#"{"layers":[15],"tensor":"ffn_down","alpha":8.0,
+            "channels":64,
+            "direction":{"source":"file","path":"/tmp/u.f32","dim":1024},
+            "input":"in.gguf","output":"out.gguf"}"#;
+        let err = serde_json::from_str::<EditSpec>(legacy)
+            .expect_err("the old channels-shaped spec must fail loudly");
+        assert!(err.to_string().contains("trigger"), "wrong refusal: {err}");
     }
 
-    /// S1: the new variant round-trips through serde, and the channel
-    /// trigger form parses as the equivalent of the legacy mask.
+    /// S1: both trigger variants round-trip through serde, and an empty
+    /// layer list refuses at validation.
     #[test]
     fn trigger_variants_round_trip() {
-        let spec: EditSpec = serde_json::from_str(
-            r#"{
-                "layers": [15],
-                "tensor": "ffn_down",
-                "alpha": 1.0,
-                "direction": {"source": "seeded", "seed": 7, "dim": 4},
-                "input": "in.gguf",
-                "output": "out.gguf",
-                "trigger": {"kind": "channels", "count": 8}
-            }"#,
-        )
-        .expect("channels-trigger spec parses");
-        validate_spec(&spec).expect("channels trigger is the equivalent form");
-        assert_eq!(spec.channels, None);
-        let round: EditSpec =
-            serde_json::from_str(&serde_json::to_string(&spec).expect("serialize"))
-                .expect("round-trips");
-        assert_eq!(round.layers, spec.layers);
-        assert!(matches!(
-            round.trigger,
-            Some(TriggerSpec::Channels { count: 8 })
-        ));
-
         let dense: EditSpec = serde_json::from_str(
-            r#"{
-                "layers": [15],
-                "tensor": "ffn_down",
-                "alpha": 1.0,
-                "direction": {"source": "file", "path": "u.f32", "dim": 1024},
-                "input": "in.gguf",
-                "output": "out.gguf",
-                "trigger": {"kind": "dense", "path": "k.f32", "dim": 3584,
-                             "covdiag_path": "cov.f32"}
-            }"#,
+            r#"{"layers":[15],"tensor":"ffn_down","alpha":1.0,
+                "direction":{"source":"file","path":"u.f32","dim":1024},
+                "trigger":{"kind":"dense","path":"k.f32","dim":3584,
+                             "covdiag_path":"cov.f32"},
+                "input":"in.gguf","output":"out.gguf"}"#,
         )
         .expect("dense spec parses");
         assert!(matches!(
             dense.trigger,
-            Some(TriggerSpec::Dense { ref covdiag_path, .. }) if covdiag_path.is_some()
+            TriggerSpec::Dense { ref covdiag_path, .. } if covdiag_path.is_some()
         ));
         let round: EditSpec =
             serde_json::from_str(&serde_json::to_string(&dense).expect("serialize"))
                 .expect("dense round-trips");
-        assert!(matches!(round.trigger, Some(TriggerSpec::Dense { .. })));
-    }
+        assert!(matches!(round.trigger, TriggerSpec::Dense { .. }));
+        assert_eq!(round.layers, dense.layers);
 
-    /// S1: two trigger sources (or none) refuse loudly.
-    #[test]
-    fn trigger_sources_are_mutually_exclusive() {
-        let both = r#"{"layers":[15],"tensor":"ffn_down","channels":64,"alpha":1.0,
-            "direction":{"source":"seeded","seed":1,"dim":4},"input":"i","output":"o",
-            "trigger":{"kind":"channels","count":8}}"#;
-        let spec: EditSpec = serde_json::from_str(both).expect("parses at the type level");
-        assert!(validate_spec(&spec).is_err(), "both sources must refuse");
-
-        let neither = r#"{"layers":[15],"tensor":"ffn_down","alpha":1.0,
-            "direction":{"source":"seeded","seed":1,"dim":4},"input":"i","output":"o"}"#;
-        let spec: EditSpec = serde_json::from_str(neither).expect("parses at the type level");
-        assert!(validate_spec(&spec).is_err(), "no source must refuse");
-
-        let empty_layers = r#"{"layers":[],"tensor":"t","channels":1,"alpha":1.0,
-            "direction":{"source":"seeded","seed":1,"dim":4},"input":"i","output":"o"}"#;
+        let empty_layers = r#"{"layers":[],"tensor":"t","alpha":1.0,
+            "direction":{"source":"seeded","seed":1,"dim":4},
+            "trigger":{"kind":"channels","count":1},
+            "input":"i","output":"o"}"#;
         let spec: EditSpec = serde_json::from_str(empty_layers).expect("parses at the type level");
         assert!(validate_spec(&spec).is_err(), "empty layers must refuse");
     }
