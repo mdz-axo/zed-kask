@@ -30,6 +30,8 @@ pub struct ProblemSet {
     pub problems: Vec<Problem>,
     /// deterministic run order: indices into `problems`
     pub order: Vec<usize>,
+    /// a free corpus (anchor-N ids); false = the GSM8K instrument set
+    free: bool,
 }
 
 impl ProblemSet {
@@ -63,7 +65,37 @@ impl ProblemSet {
         );
         let n = problems.len();
         let order = crate::mt::PyRandom::new(seed).shuffle_order(n);
-        Ok(Self { problems, order })
+        Ok(Self {
+            problems,
+            order,
+            free: false,
+        })
+    }
+
+    /// Load a free corpus (any row count): the anchor/trigger phrase
+    /// corpora of the converter path (E1) — same schema (question +
+    /// answer), same deterministic shuffle, ids `anchor-{order[row]}`
+    /// (not GSM8K). The probe/capture legs keep `load`'s 7,473-row
+    /// archived-dataset guard; free corpora are opt-in per run
+    /// (`--free-corpus`), never a silent substitution.
+    pub fn load_free(path: &Path, seed: u64) -> Result<Self> {
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read problems {}", path.display()))?;
+        let mut problems = Vec::new();
+        for line in raw.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            problems.push(serde_json::from_str::<Problem>(line).context("parse corpus row")?);
+        }
+        anyhow::ensure!(!problems.is_empty(), "empty corpus: {}", path.display());
+        let n = problems.len();
+        let order = crate::mt::PyRandom::new(seed).shuffle_order(n);
+        Ok(Self {
+            problems,
+            order,
+            free: true,
+        })
     }
 
     /// The problem the run order assigns to logical row `row`
@@ -76,6 +108,10 @@ impl ProblemSet {
 
     pub fn problem_id(&self, row: usize) -> String {
         let n = self.order.len();
-        format!("gsm8k-train-{}", self.order[row % n])
+        if self.free {
+            format!("anchor-{}", self.order[row % n])
+        } else {
+            format!("gsm8k-train-{}", self.order[row % n])
+        }
     }
 }

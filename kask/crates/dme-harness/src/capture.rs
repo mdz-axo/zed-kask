@@ -32,6 +32,7 @@ pub struct CaptureArgs {
     pub sites: Vec<String>, // "l_out" and/or "ffn_out"
     pub layers: Vec<u32>,   // e.g. 15,19 (plus any contrast layers)
     pub max_new: u32,       // how many generation steps to capture
+    pub free_corpus: bool,  // anchor/trigger phrase corpora (anchor-N ids); default: the GSM8K set
 }
 
 #[derive(serde::Serialize)]
@@ -50,7 +51,11 @@ struct CaptureManifestRow {
 pub fn run(args: CaptureArgs) -> Result<()> {
     std::fs::create_dir_all(&args.out_dir)?;
     let cfg = RunConfig::load(&args.config)?;
-    let set = ProblemSet::load(&args.problems, args.seed_base)?;
+    let set = if args.free_corpus {
+        ProblemSet::load_free(&args.problems, args.seed_base)?
+    } else {
+        ProblemSet::load(&args.problems, args.seed_base)?
+    };
     let engine = Engine::load(&args.gguf, args.n_gpu_layers)?;
 
     anyhow::ensure!(!args.layers.is_empty(), "no layers to capture");

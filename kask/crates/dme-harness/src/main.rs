@@ -13,6 +13,8 @@
 //!   convert    embedding-to-edit bridge: embedder vectors + capture
 //!              manifests -> u/k/covdiag + a hash-bound manifest + the
 //!              edit spec (pure math, engine-free)
+//!   embed      embeddings leg (the engine feature): one L2-normalized
+//!              Qwen3-Embedding vector per anchor id — E1's input route
 //!   edit       direction-subtraction edit -> patched GGUF + receipt
 //!              (the shared GGUF writer component)
 //!   gguf-info  dump a GGUF's metadata and tensor directory
@@ -25,7 +27,7 @@
 
 use anyhow::{Result, bail};
 #[cfg(feature = "engine")]
-use dme_harness::capture;
+use dme_harness::{capture, embed};
 use dme_harness::{convert, edit, gguf_writer, pi_gguf, probe};
 
 fn main() {
@@ -56,7 +58,9 @@ fn has_flag(args: &[String], name: &str) -> bool {
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).ok_or_else(|| {
-        anyhow::anyhow!("usage: dme-harness <probe|capture|convert|edit|gguf-info|summary> ...")
+        anyhow::anyhow!(
+            "usage: dme-harness <probe|capture|convert|edit|embed|gguf-info|summary> ..."
+        )
     })?;
     let rest: &[String] = if args.is_empty() { &[] } else { &args[1..] };
 
@@ -166,6 +170,7 @@ fn run() -> Result<()> {
                     sites,
                     layers,
                     max_new: flag_or(rest, "--max-new", "256").parse()?,
+                    free_corpus: has_flag(rest, "--free-corpus"),
                 };
                 capture::run(args)
             }
@@ -192,6 +197,32 @@ fn run() -> Result<()> {
                 capture_dir: capture_dir.into(),
                 out_dir: out.into(),
             })
+        }
+        "embed" => {
+            #[cfg(feature = "engine")]
+            {
+                let gguf =
+                    flag(rest, "--gguf").ok_or_else(|| anyhow::anyhow!("--gguf required"))?;
+                let problems = flag(rest, "--problems")
+                    .ok_or_else(|| anyhow::anyhow!("--problems required"))?;
+                let out = flag(rest, "--out").ok_or_else(|| anyhow::anyhow!("--out required"))?;
+                embed::run(embed::EmbedArgs {
+                    gguf: gguf.into(),
+                    problems: problems.into(),
+                    out: out.into(),
+                    start: flag_or(rest, "--start", "0").parse()?,
+                    count: flag_or(rest, "--count", "128").parse()?,
+                    n_ctx: flag_or(rest, "--n-ctx", "512").parse()?,
+                    threads: flag_or(rest, "--threads", "8").parse()?,
+                    n_gpu_layers: flag_or(rest, "--n-gpu-layers", "0").parse()?,
+                    free_corpus: has_flag(rest, "--free-corpus"),
+                })
+            }
+            #[cfg(not(feature = "engine"))]
+            {
+                let _ = rest;
+                bail!("embed requires the engine feature; build with --features engine")
+            }
         }
         "edit" => {
             let spec = flag(rest, "--spec").ok_or_else(|| anyhow::anyhow!("--spec required"))?;

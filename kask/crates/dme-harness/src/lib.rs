@@ -21,6 +21,8 @@ pub mod serving;
 #[cfg(feature = "engine")]
 pub mod capture;
 #[cfg(feature = "engine")]
+pub mod embed;
+#[cfg(feature = "engine")]
 pub mod engine;
 
 // The converter (embedding-to-edit bridge) and the edit leg need no
