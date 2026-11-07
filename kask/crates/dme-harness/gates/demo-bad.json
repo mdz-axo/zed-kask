@@ -1,0 +1,151 @@
+{
+  "ts": 1794037432.1409566,
+  "harness": "dme-harness-rust/0.1.0 convert",
+  "inputs": {
+    "config": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/convert-config.json",
+      "sha256": "ac908b57c8b74eebb22124575033928d87ca4992fd868d2621c7d2519805f65e"
+    },
+    "vectors": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/vectors.f32",
+      "sha256": "8e818dfcf4cff0bda0e3bc5157c9707bb59c5800bb83b36b7525bf0f8fd4dcad",
+      "rows": 4
+    },
+    "capture_manifest": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/manifest.jsonl",
+      "sha256": "26f57acf4c0f4e549b6104a7109667002aa3c9a55438f90221e31403a4d143ed"
+    },
+    "capture_files": [
+      {
+        "file": "a0.l_out.12.f32",
+        "sha256": "e6e2fa2298a9814f04fa549dcf7a475306d157f0813177c772f25139173cd0a6"
+      },
+      {
+        "file": "a1.l_out.12.f32",
+        "sha256": "5fafa145b8645f3be1ca21f9b863c67adba53cfbf80bd2c62cf78f2967056cfe"
+      },
+      {
+        "file": "a2.l_out.12.f32",
+        "sha256": "9e25bb84ae6249ebee7f77a1d6126d7b6257c0ff1aecd075482fd112d3208301"
+      },
+      {
+        "file": "a3.l_out.12.f32",
+        "sha256": "ff1fbf8a3edb1ab0fc466bfa350529893b6d3d40a5fc88ab1a5e5e7a60d23509"
+      }
+    ],
+    "input_gguf": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/target.gguf",
+      "sha256": "b5a2c96250612366ea272ffac6d9744aaf4b45aacd96aa7cfcb931ee3b558259"
+    }
+  },
+  "dims": {
+    "vectors": 2,
+    "hidden": 4,
+    "trigger": 3
+  },
+  "anchors": {
+    "count": 4,
+    "train": 3,
+    "held_out": 1,
+    "target": "a3",
+    "ids": [
+      {
+        "id": "a0",
+        "split": "train"
+      },
+      {
+        "id": "a1",
+        "split": "train"
+      },
+      {
+        "id": "a2",
+        "split": "train"
+      },
+      {
+        "id": "a3",
+        "split": "held_out"
+      }
+    ]
+  },
+  "bridge": {
+    "site": "l_out",
+    "layer": 12,
+    "ridge_lambda": 0.0,
+    "phi_sha256": "035406183076e64b8e4cc3f818d1c0212e597dbe7cf340cc52ddcd25cc4dcc41",
+    "note": "phi: R^d -> R^h linear (bridge_linear); u.f32 = phi(v_target), alpha applies at edit time — net direction alpha * phi(v), s = alpha/r with r = 1 (lora_runtime_semantics)"
+  },
+  "alpha": 8.0,
+  "rank": 1,
+  "u": {
+    "path": "/tmp/dme-convert-test-e2e-3096696/out/u.f32",
+    "sha256": "ff1fbf8a3edb1ab0fc466bfa350529893b6d3d40a5fc88ab1a5e5e7a60d23509",
+    "dim": 3,
+    "min": 1.0,
+    "max": 4.0,
+    "variance": 1.5555555555555554,
+    "l2": 5.0990195135927845
+  },
+  "trigger": {
+    "site": "l_out",
+    "layer": 12,
+    "problem_ids": [
+      "a3"
+    ],
+    "rows_pooled": 1,
+    "k": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/out/k.f32",
+      "sha256": "ff1fbf8a3edb1ab0fc466bfa350529893b6d3d40a5fc88ab1a5e5e7a60d23509",
+      "dim": 3,
+      "min": 1.0,
+      "max": 4.0
+    },
+    "covdiag": {
+      "path": "/tmp/dme-convert-test-e2e-3096696/out/covdiag.f32",
+      "sha256": "628009738ff0b37691c249cb8119e66104e9f8e278d3743e219b4fb2cc0f2cc5",
+      "dim": 3,
+      "note": "per-channel variance of the calibration rows; the edit leg whitens k_eff = k / sqrt(var + 1e-6) when covdiag_path is set"
+    },
+    "calibration": {
+      "rows": 3,
+      "problem_ids": [
+        "others"
+      ]
+    }
+  },
+  "cosines": {
+    "train_mean": 1.0,
+    "held_out_mean": 1.0,
+    "per_anchor": {
+      "a0": 1.0,
+      "a1": 1.0,
+      "a2": 1.0,
+      "a3": 1.0
+    }
+  },
+  "control": {
+    "seed": 20261106,
+    "held_out_mean": 0.5671507624762456,
+    "held_out_max": 0.5671507624762456
+  },
+  "edit_spec": {
+    "layers": [
+      12
+    ],
+    "tensor": "ffn_down",
+    "alpha": 8.0,
+    "direction": {
+      "source": "file",
+      "path": "/tmp/dme-convert-test-e2e-3096696/out/u.f32",
+      "dim": 3
+    },
+    "trigger": {
+      "kind": "dense",
+      "path": "/tmp/dme-convert-test-e2e-3096696/out/k.f32",
+      "dim": 3,
+      "covdiag_path": "/tmp/dme-convert-test-e2e-3096696/out/covdiag.f32"
+    },
+    "input": "/tmp/dme-convert-test-e2e-3096696/target.gguf",
+    "output": "/tmp/dme-convert-test-e2e-3096696/edited.gguf"
+  },
+  "limitations": "constant steering is not a linear weight edit (no_linear_edit_is_constant); bias edits are out of scope"
+}

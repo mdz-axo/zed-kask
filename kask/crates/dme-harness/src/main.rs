@@ -8,8 +8,8 @@
 //!              completions ride the M3 endpoint semantics with per-row
 //!              sampling-parity verification)
 //!   capture    localization leg (the engine feature): per-layer
-//!              activation captures through llama-cpp-4's prebuilt link
-//!              against the canonical libs (P5)
+//!              activation captures on the pinned canonical source
+//!              (the in-repo llama-cpp-sys-4 fork; P5)
 //!   convert    embedding-to-edit bridge: embedder vectors + capture
 //!              manifests -> u/k/covdiag + a hash-bound manifest + the
 //!              edit spec (pure math, engine-free)

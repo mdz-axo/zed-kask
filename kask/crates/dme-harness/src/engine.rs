@@ -1,6 +1,9 @@
-//! The capture path's in-process engine (llama.cpp via llama-cpp-4's
-//! `prebuilt` feature — P5 links it against the canonical build's own
-//! libs; the bundled vendored copy is never built again).
+//! The capture path's in-process engine (llama-cpp-4 over the in-repo
+//! llama-cpp-sys-4 fork — P5: LLAMA_CPP_SRC_DIR names the pinned
+//! canonical checkout and the fork copies + patches + cmakes THAT into
+//! its own OUT_DIR, pin-exact; the published crate's prebuilt route fails
+//! closed while its decode-hooks patch is staged, and the bundled vendored
+//! copy is never built again).
 //!
 //! This module serves ONLY the capture leg (localization): the probe
 //! leg's generation rides the canonical serving route (`serving.rs` —
@@ -22,7 +25,6 @@
 
 use crate::config::RunConfig;
 use anyhow::{Result, anyhow};
-use std::num::NonZeroU32;
 use std::path::Path;
 
 use llama_cpp_4::prelude::*;
@@ -30,7 +32,6 @@ use llama_cpp_4::prelude::*;
 pub const HARNESS: &str = concat!("dme-harness-rust/", env!("CARGO_PKG_VERSION"));
 
 use hkask_private_inference::local_leg::gguf as pi_gguf;
-use hkask_private_inference::local_leg::gguf_writer;
 pub use hkask_private_inference::local_leg::gguf_writer::sha256_file;
 
 pub struct Engine {
@@ -72,6 +73,7 @@ impl Engine {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default()
         );
+        let param_count = model.n_params();
         Ok(Self {
             backend,
             model,
@@ -79,7 +81,7 @@ impl Engine {
             gguf_path: gguf_path.display().to_string(),
             model_name,
             dtype: pi_gguf::type_name(meta.dominant_type()).to_string(),
-            param_count: model.n_params(),
+            param_count,
         })
     }
 

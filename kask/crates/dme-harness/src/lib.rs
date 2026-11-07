@@ -16,14 +16,16 @@ pub mod receipt;
 pub mod serving;
 
 // The capture path (the engine feature): in-process llama-cpp-4 for the
-// tensor-transaction hooks, linked prebuilt against the canonical libs.
+// tensor-transaction hooks, built from the pinned canonical source via
+// the in-repo llama-cpp-sys-4 fork (LLAMA_CPP_SRC_DIR at build time).
 #[cfg(feature = "engine")]
 pub mod capture;
 #[cfg(feature = "engine")]
 pub mod engine;
 
-// The edit leg needs no in-process engine — only the shared GGUF
-// component.
+// The converter (embedding-to-edit bridge) and the edit leg need no
+// in-process engine — only the shared GGUF component.
+pub mod convert;
 pub mod edit;
 
 // The shared GGUF component (P3): the private-inference stack's reader

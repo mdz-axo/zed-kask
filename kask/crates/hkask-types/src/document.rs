@@ -7,8 +7,9 @@
 //!
 //! Design principles (P5 simplicity, P7 deep module):
 //! - Backends produce `DocStructure`; downstream tools consume it.
-//! - `text()` flattens to plain text for backward compatibility with callers
-//!   that only need a string (e.g., `corpus_convert`'s legacy `text` field).
+//! - `text()` flattens to plain text — the opt-in `include_text` projection
+//!   of `corpus_convert`'s response; consumers wanting structure read the
+//!   pages directly.
 //! - Page provenance is optional — backends that don't have page boundaries
 //!   (DOCX, XLSX, PPTX, plain text) emit a single page containing all blocks.
 
@@ -29,8 +30,8 @@ impl DocStructure {
     /// Flatten the entire document to plain text, joining blocks with double
     /// newlines and pages with form feeds.
     ///
-    /// Backward-compatibility path for callers that expect a `String` (e.g.,
-    /// the `text` field in `corpus_convert`'s JSON response).
+    /// The opt-in plain-text projection of `corpus_convert`'s response
+    /// (the `include_text` flag).
     pub fn text(&self) -> String {
         self.pages
             .iter()

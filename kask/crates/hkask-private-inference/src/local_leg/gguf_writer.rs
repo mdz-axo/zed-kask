@@ -18,7 +18,11 @@
 //! [ne0=input_dim, ne1=1024]); the 1024-dim direction is subtracted from
 //! the channel's 1024 strided elements — element (r, j) sits at
 //! `r * ne0 + j` in the row-major store. The canonical edit is 2 layers ×
-//! 64 channels × 1024 weights = 131,072 weights.
+//! 64 channels × 1024 weights = 131,072 weights. The general form is the
+//! weighted-column rank-one edit W <- W - alpha * dir * k^T: the channel
+//! mask is the indicator special case (weight 1.0);
+//! `subtract_dense_columns` carries arbitrary per-column weights
+//! (zero-weight columns untouched, so an all-zero trigger is a no-op).
 //!
 //! Failures are typed (`GgufError`) — the crate's discipline; an
 //! unsupported storage type is a refusal, never an approximation.
@@ -298,7 +302,7 @@ pub fn requant(ty: u32, values: &[f32]) -> Result<Vec<u8>, GgufError> {
     }
 }
 
-// ---------- the strided-column edit (the DME anchor addressing) ----------
+// ---------- the weighted-column rank-one edit (the DME anchor addressing) ----------
 
 /// Channel selection: `count` torch-columns spread evenly across the
 /// input dim `ne0` (the anchor's 64 channels over the 1024-wide input).
@@ -546,6 +550,7 @@ fn rel_l2(a: &[f32], b: &[f32]) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local_leg::gguf::type_name;
 
     #[test]
     fn q8_requant_idempotent() {

@@ -25,12 +25,15 @@ hkask-private-inference = { workspace = true }
 # uses, never literal home-dir strings.
 hkask-types = { workspace = true }
 
-# The capture path's in-process engine: llama-cpp-4 linked via its
-# `prebuilt` feature against the canonical build's own libs (P5:
-# LLAMA_PREBUILT_DIR = the canonical build-hip dir at build time). The
-# bundled vendored copy is never built again.
+# The capture path's in-process engine: llama-cpp-4 linked against the
+# PINNED CANONICAL SOURCE via the in-repo llama-cpp-sys-4 fork (P5:
+# LLAMA_CPP_SRC_DIR = the llama-cpp-mainline checkout, commit 9e2a04a, at
+# build time; the fork copies + patches the pin into its own OUT_DIR and
+# cmakes THAT — pin-exact, no second engine tree, and the published
+# crate's prebuilt route is dead: it fails closed on any prebuilt lib dir
+# while its decode-hooks patch is staged, so LLAMA_PREBUILT_DIR can never
+# verify).
 llama-cpp-4 = { version = "0.11.0", default-features = false, features = [
-    "prebuilt",
     "openmp",
     "mtmd",
     "ggml",

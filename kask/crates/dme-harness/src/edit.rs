@@ -9,11 +9,17 @@
 //! 1024 strided elements — the direction's write path through that
 //! channel is removed. Spike 2 measured this exact shape.
 //!
+//! The dense trigger generalizes the mask: the edit is the rank-one action
+//! W <- W - alpha * direction * k^T (`rank_one_edit_action`), where the
+//! channel mask is the indicator special case of the per-column weight
+//! vector k (the convert module emits k and the calibration covariance
+//! diagonal; this leg whitens when covdiag_path is set).
+//!
 //! The GGUF parse, the byte-exact patch primitive, the minimal-collateral
-//! Q8_0 codec and the strided-column addressing all live in the shared
+//! Q8_0 codec and the weighted-column kernel all live in the shared
 //! component (hkask-private-inference local_leg::{gguf, gguf_writer}) —
-//! this leg keeps only the DME orchestration: the spec, the channel
-//! selection policy, the patched copy and the receipt.
+//! this leg keeps only the DME orchestration: the spec (the trigger — the
+//! ONE required spelling), the patched copy and the receipt.
 
 use crate::{gguf_writer, pi_gguf};
 use anyhow::{Context, Result, bail};

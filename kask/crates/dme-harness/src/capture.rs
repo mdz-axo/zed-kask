@@ -14,7 +14,6 @@ use crate::problems::ProblemSet;
 use anyhow::{Context, Result};
 use std::io::Write as _;
 use std::num::NonZeroU32;
-use std::path::Path;
 
 use llama_cpp_4::prelude::*;
 
@@ -200,10 +199,10 @@ fn drain_captures(
             .open(args.out_dir.join("manifest.jsonl"))?,
     );
     for cap in captures {
-        let Some(CapturedTensorData::F32(values)) = cap.data else {
+        let CapturedTensorData::F32(values) = cap.data else {
             continue;
         };
-        let cap_name = cap.name();
+        let cap_name = &cap.name;
         let (site_name, layer) = split_node(cap_name);
         let file = format!("{problem_id}.{phase}.{step}.{cap_name}.f32");
         let path = args.out_dir.join(&file);

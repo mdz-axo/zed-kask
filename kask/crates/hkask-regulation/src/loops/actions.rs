@@ -5,8 +5,8 @@ use super::core::LoopId;
 /// Typed regulation data — replaces the previous `serde_json::Value` pass-through.
 ///
 /// Each variant corresponds to a regulation reason. The `#[serde(tag = "reason")]`
-/// encoding ensures serialized JSON is self-describing and backward-compatible
-/// with consumers that inspect the `reason` field.
+/// encoding makes the serialized JSON self-describing — consumers read the
+/// `reason` field directly.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case")]
 pub enum RegulationData {

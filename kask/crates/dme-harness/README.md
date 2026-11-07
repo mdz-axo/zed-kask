@@ -12,6 +12,7 @@ one direction, subtracted from 64 output columns per layer of Qwen3.5-0.8B,
 |---|---|
 | `probe` | measurement leg: N GSM8K-train problems under a card-anchored config, served through the CANONICAL route (the L4 supervisor launches the fleet model per the L1 manifest; completions ride the M3 endpoint semantics with per-row sampling-parity verification), emitted as archived-schema JSONL rows + stage summary |
 | `capture` | localization leg (the `engine` feature): per-layer `l_out-N` / `ffn_out-N` activation captures across contrasting trajectories |
+| `convert` | embedding-to-edit bridge (pure math, engine-free): embedder vectors + capture manifests -> `u.f32` / `k.f32` / `covdiag.f32` + a sha256-bound manifest + the edit spec; the pre-emit lisp gate (`gates/pre-emit.lisp`) runs over the manifest at decision time |
 | `edit` | direction-subtraction edit on a GGUF copy through the shared GGUF writer (Q8_0 minimal-collateral codec; F16/BF16 direct half arithmetic) + edit receipt |
 | `gguf-info` | GGUF metadata/tensor dump + sha256 |
 | `summary` | recompute a stage summary from a JSONL |
@@ -28,11 +29,17 @@ decide.
   L1 manifest + L3 placement, and the completions go to
   `LaunchPlan::endpoint()` with the M3 request shape. Default build — no
   in-process engine needed.
-- **Capture** links llama-cpp-4 via its `prebuilt` feature against the
-  CANONICAL build's own libs (the same engine surface the supervisor
-  launches — the bundled vendored copy is never built):
+- **Capture** builds the PINNED CANONICAL SOURCE via the in-repo
+  llama-cpp-sys-4 fork (`kask/crates/llama-cpp-sys-4`, wired by the
+  workspace's `[patch.crates-io]`): the published sys crate ships a
+  vendored llama.cpp at an unpinned commit and its prebuilt route fails
+  closed (`LLAMA_PREBUILT_DIR ... cannot be verified against the active
+  llama.cpp patches`) while the decode-hooks patch is staged — so the fork
+  takes the source as an env and copies + patches + cmakes the pin
+  (commit 9e2a04a) inside its own OUT_DIR: pin-exact, patched, no second
+  engine tree, the shared build-hip untouched:
   ```
-  LLAMA_PREBUILT_DIR=$HOME/Documents/zk-data/private-inference/engines/llama-cpp-mainline/build-hip \
+  LLAMA_CPP_SRC_DIR=$HOME/Documents/zk-data/private-inference/engines/llama-cpp-mainline \
     cargo build -p dme-harness --release --features engine
   ```
 - **Edit** and **gguf-info** consume the shared GGUF component
