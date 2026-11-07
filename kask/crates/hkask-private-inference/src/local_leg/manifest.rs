@@ -97,7 +97,8 @@ pub struct FlagVocabulary {
     /// The speculative-decoding draft flags. None on surfaces that spell
     /// no draft intent — the mainline pin's binary is not on disk to
     /// verify the spellings against, and an unverified spelling is never
-    /// claimed (the unsloth prebuilt surface declares its verified set).
+    /// claimed (the serveurperso experiment surface declares its
+    /// verified set).
     /// A draft ask against a vocabulary-less surface is a typed refusal
     /// at compile time — never a silently omitted draft.
     pub model_draft: Option<String>,
@@ -484,9 +485,6 @@ pub fn run_fixtures(manifest: &EngineSurfaceManifest) -> Result<(), ManifestErro
 mod tests {
     use super::*;
 
-    const UNSLOTH_PREBUILT_TOML: &str =
-        include_str!("../../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
-
     const SERVEURPERSO_STREAM_TOML: &str = include_str!(
         "../../../../registry/private-inference/llama-cpp-serveurperso-moe-stream.toml"
     );
@@ -532,11 +530,15 @@ mod tests {
     }
 
     #[test]
-    fn the_unsloth_prebuilt_surface_decodes_and_its_fixtures_gate_it() {
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest decodes");
-        manifest.validate().expect("prebuilt manifest validates");
+    fn the_serveurperso_experiment_surface_declares_the_draft_vocabulary() {
+        // The draft-flag fixture lives on the serveurperso experiment
+        // surface (the unsloth prebuilt's manifest was DELETED at the
+        // 2026-11-07 audit: it documented a NON-project surface, and the
+        // same verified draft spellings exist here).
+        let manifest = decode(SERVEURPERSO_STREAM_TOML).expect("experiment manifest decodes");
+        manifest.validate().expect("experiment manifest validates");
         run_fixtures(&manifest).expect("every fixture gates every constraint");
-        assert_eq!(manifest.version_pin.commit, "a3c12db9");
+        assert_eq!(manifest.version_pin.commit, "7174388");
         assert_eq!(
             manifest.flags.model_draft.as_deref(),
             Some("--spec-draft-model")

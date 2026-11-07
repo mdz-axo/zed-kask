@@ -1017,8 +1017,14 @@ mod tests {
         );
     }
 
-    const UNSLOTH_PREBUILT_TOML: &str =
-        include_str!("../../../../registry/private-inference/llama-cpp-unsloth-prebuilt.toml");
+    // The draft-vocabulary fixture: the serveurperso experiment surface
+    // (the unsloth prebuilt's manifest was DELETED at the 2026-11-07
+    // audit — it documented a NON-project surface; the serveurperso
+    // surface declares the same verified draft spellings, and its
+    // fixtures gate the constraint set).
+    const DRAFT_VOCABULARY_TOML: &str = include_str!(
+        "../../../../registry/private-inference/llama-cpp-serveurperso-moe-stream.toml"
+    );
     const GEMMA_BRIEF_TOML: &str =
         include_str!("../../../../registry/model-briefs/gemma-4-31b.toml");
 
@@ -1060,7 +1066,7 @@ mod tests {
         // — the estimate over-refuses (by design) and the draft rides CPU.
         // The pre-§7 card (8.57 GB) genuinely cannot host this draft ask
         // anymore — the workspace is the D-B lesson.
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let (_dir, model_path) = draft_dir();
         let plan = compile_placement(
             model_path,
@@ -1081,7 +1087,7 @@ mod tests {
 
     #[test]
     fn draft_rides_the_gpu_when_vram_headroom_allows() {
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let (_dir, model_path) = draft_dir();
         let plan = compile_placement(
             model_path,
@@ -1101,7 +1107,7 @@ mod tests {
 
     #[test]
     fn missing_draft_module_is_a_typed_refusal() {
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let dir = tempfile::tempdir().expect("tempdir");
         let model_path = dir.path().join("model.gguf");
         let err = compile_placement(
@@ -1180,7 +1186,7 @@ mod tests {
     fn draft_asked_without_a_brief_spec_is_refused() {
         // The Gemma brief has no [draft] table — the compiler never
         // invents a draft for a model that ships none.
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let brief = ModelBrief::decode(GEMMA_BRIEF_TOML).expect("Gemma brief decodes");
         let (_dir, model_path) = draft_dir();
         let err = compile_placement(
@@ -1230,7 +1236,7 @@ draft_bytes = 0
         // kv 0.5 + compute 4.29 GiB > the 7.5 GB card) — the headroom is
         // saturated, so the draft routes to CPU even though draft_bytes
         // is zero; the base plan still fits and emits with -ngld 0.
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let brief =
             ModelBrief::decode(ZERO_BYTE_DRAFT_BRIEF_TOML).expect("zero-byte-draft brief decodes");
         let (_dir, model_path) = draft_dir();
@@ -1309,7 +1315,7 @@ draft_bytes = 2_000_000_000
         // card leaves 3.31G headroom — the 2.0G draft fits WITHOUT the
         // workspace, and does NOT with the 2.147G one (13.837G used →
         // 1.163G headroom).
-        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let manifest = decode(DRAFT_VOCABULARY_TOML).expect("prebuilt manifest");
         let (_dir, model_path) = draft_dir();
         let brief =
             ModelBrief::decode(WORKSPACE_DRAFT_BRIEF_TOML).expect("workspace brief decodes");
