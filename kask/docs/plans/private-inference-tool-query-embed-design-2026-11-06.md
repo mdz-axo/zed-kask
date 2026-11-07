@@ -142,14 +142,14 @@ configured cloud embedder on `duplication="semantic"` — the same class,
 closed the same day by ROUTING through the private leg's local model (the
 `HKASK_PRIVATE_EMBEDDING_MODEL` admission extended to the research server,
 unset/empty the surfaced shingle-floor degrade). D100 carries both records
-and the four pins. **Leg 2 (the corpus server's assisting-inference legs)
-remains the owed ruling** — the three shapes, in the order this design
-recommends: extend the M5 off-axis acceptance to the tool legs (a stated
-limit record, no code); add the corpus server to
-`private_thread_disabled_servers` (the existing perimeter knob — the
-recommended v1 posture, the media precedent, one settings line, zero
-code); or per-tool routing (corpus_embed via the private model, tag/OCR
-surfaced skips — new code, the most granular).
+and the four pins. **Leg 2 (the corpus server's assisting-inference legs) is
+CLOSED by the operator's 2026-11-06 ruling — shape 2, the perimeter:** the
+corpus server joined the default `private_thread_disabled_servers` set
+(the settings_content const), so its tool surface is refused on
+private-mode threads (the corpus server is not available in private mode
+— the ruling's own words); no per-tool routing was built, and the M5
+off-axis acceptance keeps covering only the corpus store's recall axis.
+Pin: `corpus_server_tools_are_absent_on_private_threads`.
 
 The same repair family has two more server-side inference legs that cross
 private thread content to cloud models, both unruled today (the review:

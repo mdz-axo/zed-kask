@@ -5598,6 +5598,103 @@ async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContex
     fake.end_last(&model);
 }
 
+/// zed-kask: D100 (operator ruling 2026-11-06 — the tool-query-embed design
+/// §8.2's ruling, shape 2: the perimeter) — the corpus server joins the
+/// default `private_thread_disabled_servers` set: its assisting-inference
+/// legs (`corpus_embed`, `corpus_tag_chunks`, the OCR vision leg) cannot
+/// run locally, so a private thread refuses the corpus tool surface at
+/// the offer point — the same end-to-end posture the media pin holds,
+/// through the same default-set resolution (the belt covers kask-sourced
+/// corpus dispatches the same way, pinned generically at
+/// `kask_server_tool_refuses_private_provenance_on_disabled_servers`).
+#[gpui::test]
+async fn corpus_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    use gpui::UpdateGlobal as _;
+
+    let ThreadTest {
+        fake,
+        model,
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // The fake provider serves as this test's local leg, so the marked
+    // thread keeps its model and turns actually run (the media pin's
+    // pattern; the request-gate semantics are pinned separately in
+    // thread.rs).
+    cx.update(|cx| {
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .kask
+                    .get_or_insert_default()
+                    .private_inference
+                    .get_or_insert_default()
+                    .local_provider_ids = Some(vec!["fake".to_string()]);
+            });
+        });
+    });
+
+    let _corpus_calls = setup_context_server(
+        "corpus",
+        vec![plain_mcp_tool("corpus_embed")],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Marked: the corpus server's tool is refused at the offer point (the
+    // default set now carries corpus — no settings configuration needed);
+    // the other server's tool remains.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        !names.contains(&"corpus_embed".to_string()),
+        "a private thread never offers the corpus server's tool: {names:?}"
+    );
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a private thread keeps every other server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+
+    // Unmarked: the corpus tool returns — the refusal keys on the live
+    // mark, re-evaluated per turn.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"corpus_embed".to_string()),
+        "an unmarked thread offers the corpus server's tool again: {names:?}"
+    );
+    fake.end_last(&model);
+}
+
 /// zed-kask: D100 (review finding F2) — the mark-change-mid-turn
 /// interaction on the tool perimeter. The perimeter is re-evaluated per
 /// REQUEST ITERATION (`refresh_turn_tools` inside `run_turn_internal`),

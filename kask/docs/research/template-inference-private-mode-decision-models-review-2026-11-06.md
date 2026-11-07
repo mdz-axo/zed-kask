@@ -502,13 +502,18 @@ dedicated public models on private threads. Verified per consumer, with the
 mechanism named:
 
 - **Media server**: disabled by default on marked threads —
-  `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS = ["media"]`
-  (`crates/settings_content/src/settings_content.rs:1998`), the PI-owned set
+  `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS = ["media", "corpus"]`
+  (`crates/settings_content/src/settings_content.rs:2018`), the PI-owned set
   (`private_thread_disabled_servers`), enforced at the offer point per request
   iteration plus a dispatch-time belt for kask-sourced tools
   (`kask_server_tool_refuses_private_provenance_on_disabled_servers`,
   `media_server_tools_are_absent_on_private_threads` — green). The set is
   surfaced at the marked toggle's tooltip (commit `d98663cc18`, review F5).
+- **Corpus server**: disabled by default on marked threads since the
+  operator's 2026-11-06 ruling (the tool-query-embed design §8.2, shape 2 —
+  the same default set, the same enforcement; its assisting-inference legs
+  `corpus_embed`/`corpus_tag_chunks`/OCR cannot run locally).
+  `corpus_server_tools_are_absent_on_private_threads` — green.
 - **Curator memory, read side**: the per-call provenance `_meta` plumbing
   (M5-A) is landed — `call_admits` filters every fragment-emitting site with
   surfaced excluded counts (`kask/mcp-servers/hkask-mcp-curator/src/

@@ -490,7 +490,9 @@ the seam changed):
   `6554ec0b4b`: the research rerank leg (the surfaced skip — no private
   chat model exists) + the semantic-duplication tier (routed via the
   private local model — the admission extended to the research server),
-  four pins, both-sides. The corpus legs (design §8.2) remain the owed
-  ruling — three shapes recorded in D100, the perimeter-knob posture
-  recommended. The skills' gates, computed: CG-2 true (0.975), the
-  cybernetics convergence viable.
+  four pins, both-sides. The corpus legs (design §8.2) were then ruled by
+  the operator — shape 2, the perimeter: the corpus server joined the
+  default `private_thread_disabled_servers` set (the corpus server is
+  not available in private mode), pinned by
+  `corpus_server_tools_are_absent_on_private_threads`. The skills' gates,
+  computed: CG-2 true (0.975), the cybernetics convergence viable.

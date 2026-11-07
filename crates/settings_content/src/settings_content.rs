@@ -2008,8 +2008,14 @@ pub const DEFAULT_LOCAL_PROVIDERS: &[&str] = &["ollama"];
 /// privacy-marked threads (operator ruling 2026-11-05): the media server —
 /// its analysis passes (vision, STT, OCR) rely on cloud inference in ways
 /// that cannot run locally, so a private thread refuses the tool surface
-/// rather than leak content to cloud models.
-pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media"];
+/// rather than leak content to cloud models. **The corpus server joins the
+/// set (operator ruling 2026-11-06, the tool-query-embed design §8.2's
+/// ruling — shape 2, the perimeter):** the corpus server's
+/// assisting-inference legs (`corpus_embed`, `corpus_tag_chunks`, the OCR
+/// vision leg) cannot run locally either, so the same posture applies —
+/// private threads refuse the corpus tool surface (the PI can still
+/// override the set via `private_thread_disabled_servers`).
+pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media", "corpus"];
 
 impl KaskPrivateInferenceSettingsContent {
     /// zed-kask: D100 — resolve the local-leg provider set a privacy-marked
