@@ -16,9 +16,11 @@
 //! a constant fitted direction refuses loudly, pointing at the bias-edit
 //! limitation (out of scope, recorded).
 //!
-//! Join keys: the capture manifest's `problem_id` — the `label` column is
-//! a stub today (capture.rs writes it empty), so the trigger's
-//! labeled-mean keys on the anchor ids the config names.
+//! Join keys: the capture manifest's `problem_id` (the manifest has no
+//! label column — the trajectory labels land in per-problem
+//! `{problem_id}.label.txt` sidecars because they are knowable only
+//! post-generation; the manifest rows are appended mid-flight), so the
+//! trigger's labeled-mean keys on the anchor ids the config names.
 
 use crate::edit::{DirectionSpec, EditSpec, TriggerSpec};
 use crate::gguf_writer;

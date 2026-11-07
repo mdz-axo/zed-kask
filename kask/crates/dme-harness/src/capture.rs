@@ -39,7 +39,6 @@ pub struct CaptureArgs {
 struct CaptureManifestRow {
     ts: f64,
     problem_id: String,
-    label: String,
     site: String,
     layer: u32,
     rows: usize,
@@ -182,6 +181,11 @@ fn capture_one(
     // write the trajectory for the contrast analysis
     let traj = args.out_dir.join(format!("{problem_id}.tokens.txt"));
     std::fs::write(traj, &text)?;
+    // the trajectory label is knowable only here (post-generation), so it
+    // lives in a per-problem sidecar — the manifest rows are appended
+    // mid-flight and carry the join key (problem_id) only
+    let label_path = args.out_dir.join(format!("{problem_id}.label.txt"));
+    std::fs::write(label_path, label)?;
     Ok(label.to_string())
 }
 
@@ -222,7 +226,6 @@ fn drain_captures(
                 .map(|d| d.as_secs_f64())
                 .unwrap_or(0.0),
             problem_id: problem_id.to_string(),
-            label: String::new(), // filled at the trajectory level
             site: site_name.to_string(),
             layer,
             rows: cap.shape.rows,
