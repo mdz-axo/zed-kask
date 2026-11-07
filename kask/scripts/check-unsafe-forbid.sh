@@ -40,11 +40,15 @@ checked=0
 
 for dir in "${scan_dirs[@]}"; do
   [ -f "$dir/Cargo.toml" ] || continue
-  # Extract [lib] path from Cargo.toml (falls back to src/lib.rs).
-  lib_path=$(grep -A2 '^\[lib\]' "$dir/Cargo.toml" 2>/dev/null \
+  # Extract [lib] path from Cargo.toml (falls back to src/lib.rs). A
+  # crate with NO [lib] section is the implicit-src/lib.rs convention —
+  # `set -o pipefail` must not abort the scan there (the silent mid-scan
+  # exit found at the 2026-11-07 CI hygiene step: the gate died at the
+  # first section-less crate, printing no violations).
+  lib_path=$( { grep -A2 '^\[lib\]' "$dir/Cargo.toml" 2>/dev/null \
     | grep 'path' \
     | sed 's/.*path\s*=\s*"\(.*\)"/\1/' \
-    | head -1)
+    | head -1; } 2>/dev/null || true)
   [ -z "$lib_path" ] && lib_path="src/lib.rs"
   root="$dir$lib_path"
   [ -f "$root" ] || continue

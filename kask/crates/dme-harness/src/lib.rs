@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! The dme-harness library — the harness's modules, shared between the
 //! CLI bin and the instrument's tests.
 //!
