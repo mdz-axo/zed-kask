@@ -22,6 +22,7 @@ mod economic_data_tools;
 pub mod economic_object;
 pub mod eqm;
 pub mod matcher;
+pub mod mcda;
 pub mod ontology;
 #[cfg(test)]
 mod property_tests;
@@ -68,9 +69,10 @@ hkask_mcp_server::mcp_server!(
 
 impl PredictionMarketsServer {
     fn combined_router() -> ToolRouter<Self> {
-        // Merge the core tools with the economic-data/EQM tools extracted into
-        // `economic_data_tools.rs` (its own `#[tool_router]` block). A missing
-        // merge silently drops those 15 tools from the MCP tool list.
+        // Merge the core tools with the economic-data/EQM/MCDA tools
+        // extracted into `economic_data_tools.rs` (its own `#[tool_router]`
+        // block). A missing merge silently drops those 16 tools from the
+        // MCP tool list.
         Self::prediction_markets_router() + Self::economic_data_tools_router()
     }
 
@@ -1320,7 +1322,7 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         PredictionMarketsServer::combined_router(),
         "combined_router",
-        27,
-        tool_surface_is_exactly_27_registered_tools,
+        28,
+        tool_surface_is_exactly_28_registered_tools,
     );
 }

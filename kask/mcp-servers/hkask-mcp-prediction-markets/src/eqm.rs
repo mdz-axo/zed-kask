@@ -333,7 +333,8 @@ pub async fn score_rationale(
     // mcp-tool-review S-01 (token half): surface the measured per-call
     // usage in the tool envelope so the billed-token axis is observable
     // at the caller. The envelope aggregates every record a handler
-    // makes; this is the prediction-markets server's only inference call.
+    // makes; this and the mcda weight-and-score call are the
+    // prediction-markets server's two inference calls.
     hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
 
     // Build the EQM scores from the decision answers.

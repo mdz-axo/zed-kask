@@ -14,7 +14,7 @@ Multi-Criteria Decision Analysis. Identifies decision criteria, weights and scor
 
 Belton & Stewart, *Multiple Criteria Decision Analysis: An Integrated Approach* (2002) — weighted-sum value model and sensitivity analysis; Keeney & Raiffa, *Decisions with Multiple Objectives* (1976) — swing weighting. `onto_anchor` → `multi_criteria_decision_analysis` resolves at tier `domain_supplement` (`cso:multi-criteria_decision_analysis`, CSO 3.5), with the derived entry (Belton & Stewart 2002; Keeney & Raiffa 1976, operator ruling 2026-09-25) in `alternatives` — state as of 2026-11-01.
 
-**D/P labelling.** Criteria, classification, weights and raw scores are P (judgment; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, compensation-masking threshold detection (`MCDA-2`), perturbation and robustness class are D (`lisp_eval`, helpers below).
+**D/P labelling.** Criteria, classification, weights and raw scores are P (judgment — elicited through `kask.models.decision_model` via the `mcda_weight_score` tool per the S15 clause, not typed by the thread model; critique: the operator, and the sensitivity analysis shows how much the decision depends on them). Normalization, composites, ranking, compensation-masking threshold detection (`MCDA-2`), perturbation and robustness class are D (`lisp_eval`, helpers below).
 
 ## Initial and target condition
 
@@ -68,15 +68,16 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 
 ### weight-and-score
 
-1. Assign weights to criteria using the specified weighting method (direct or swing).
-2. For swing weighting: imagine all criteria at their worst level; the criterion whose improvement from worst to best provides the greatest swing in overall value gets the highest weight.
-3. For direct weighting: assign weights directly reflecting the relative importance of each criterion and justify each assignment.
-4. (D) Weights are normalized by `(norm W)` in `lisp_eval`; the render's own normalization is not used.
-5. For each alternative on each criterion, assign a raw score on a 0–10 scale (benefit: 0 = worst, 10 = best; cost: 0 = most costly, 10 = least costly, already inverted).
-6. (D) Normalize scores to 0–1: `normalized = raw / 10`.
-7. (D) Compute composites with `lisp_eval` `(dot (norm W) <alt>)` for each alternative — the weighted sum model.
-8. (D) Rank alternatives by composite descending (rank 1 = best).
-9. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
+1. Call the `mcda_weight_score` tool with the identify-criteria pass-through: `decision_question`, `criteria` (the structured criterion objects — name, benefit-or-cost type, description), `alternatives` (each `{name, description}`), and `weighting_method` (`direct` or `swing`). The tool routes the semantic halves through `kask.models.decision_model` (the Decisions API — never a chat endpoint) as ONE call of typed Score questions over the fixed 0–10 answer space: one weight question per criterion under the named weighting method (swing carries the all-criteria-at-worst-level rubric), one score question per (alternative, criterion) with cost criteria pre-inverted (0 = most costly/worst, 10 = least costly/best). It returns `weights` (one per criterion, in criterion order) and `raw_scores` (one per alternative × criterion) — the shape the former weight-and-score render produced.
+2. (D) Weights are normalized by `(norm W)` in `lisp_eval`; the tool's weights are not.
+3. (D) Normalize scores to 0–1: `normalized = raw / 10` — `ALTS` is one list per alternative of normalized scores in criterion order.
+4. (D) Compute composites with `lisp_eval` `(dot (norm W) <alt>)` for each alternative — the weighted sum model.
+5. (D) Rank alternatives by composite descending (rank 1 = best).
+6. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
+
+**S15 clause.** The bounded weight and score judgments (each a calibrated score over the fixed 0–10 answer space) route through `kask.models.decision_model` with fail-visible resolution: an unset model is a typed refusal naming the setting, a private-provenance call refuses before any dispatch, and a missing judgment refuses rather than fabricating. The oracle for their deterministic consequences — normalization, composites, ranking, `MCDA-2`, `min_flip` — is the named `lisp_eval` gates.
+
+The former weight-and-score render (deleted with card c8a2ffaf) is replaced by the `mcda_weight_score` tool: its semantic elicitation (the weighting-method rubric, the 0–10 scoring scale, the cost-criterion pre-inversion) moved into the tool's typed questions, and the identify-criteria structured pass-through replaces its context assembly.
 
 ### sensitivity-analysis
 
@@ -104,14 +105,12 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 | Template | Purpose |
 |----------|---------|
 | `identify-criteria.j2` | Identify and classify decision criteria as benefit or cost dimensions. Validates criteria independence and produces a structured criterion set. |
-| `weight-and-score.j2` | Weight criteria and score alternatives using the specified weighting method (direct or swing). Produces raw weights and raw scores; composites and ranking are computed by `lisp_eval`. |
 | `sensitivity-analysis.j2` | Synthesize the `lisp_eval`-computed ranking, compensation masking check (`MCDA-2`), and perturbation results (`min_flip`, `critical_weights`): top choice, compensation warnings, rank-reversal implications, and robustness class. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `mcda/identify-criteria`) and a context object with the required variables.
 
 Template context variables (from each template's [inference] contract):
 - `identify-criteria.j2`: `decision_question`, `alternatives`, `criteria_hints`
-- `weight-and-score.j2`: `decision_question`, `alternatives`, `criteria`, `weighting_method`
 - `sensitivity-analysis.j2`: `decision_question`, `ranking`, `weights`, `normalized_scores`, `criteria`, `danger_threshold`, `min_flip`, `critical_weights`
 
 ## Regression case
@@ -134,7 +133,9 @@ findings). All receipts executed through the live tool 2026-09-29.
 - `argmax` keeps the first alternative on ties; report ties explicitly,
   never silently.
 - Raw scores are 0–10; normalized = raw / 10; cost criteria are
-  pre-inverted (0 = most costly, 10 = least costly).
+  pre-inverted (0 = most costly, 10 = least costly). Weights are the
+  tool's 0–10 argmax judgments — raw, never normalized at the source;
+  `(norm W)` owns normalization.
 - The danger threshold is supplied explicitly as `danger_threshold` (0.3
   unless the decision question fixes a veto level — the render contract
   requires the field); a critical criterion (weight > 0.1 or marked

@@ -118,6 +118,9 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // EQM rationale scoring executes the marker pass — an evaluation
         // step.
         "market_score_rationale" => Some(STEP_EXECUTION),
+        // MCDA weight-and-score executes the weighting/scoring pass — an
+        // evaluation step (the eqm precedent).
+        "mcda_weight_score" => Some(STEP_EXECUTION),
         // Volatility computes the DR-AS structural forecast — a
         // computation step.
         "market_volatility" => Some(STEP_EXECUTION),
@@ -168,11 +171,13 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "fred_list_categories"
         | "fred_get_release" => Some(REPORT),
         // Writes and computations: resolution records, residuals,
-        // rationale scores, volatility forecasts, subscriptions,
-        // series/dataset/indicator/observation fetches — datasets.
+        // rationale scores, MCDA weights and raw scores, volatility
+        // forecasts, subscriptions, series/dataset/indicator/observation
+        // fetches — datasets.
         "market_record_resolution"
         | "market_residual"
         | "market_score_rationale"
+        | "mcda_weight_score"
         | "market_volatility"
         | "market_subscribe_resolutions"
         | "dbnomics_get_dataset"
@@ -203,7 +208,8 @@ hkask_mcp_server::dual_axis_annotate!(
         "prediction_markets_status",
         "dbnomics_",
         "fred_",
-        "wb_"
+        "wb_",
+        "mcda_"
     ],
     &["market_id"],
 );

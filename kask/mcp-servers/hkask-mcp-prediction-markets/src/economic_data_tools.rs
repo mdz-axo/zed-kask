@@ -1,10 +1,11 @@
 //! Economic-data and EQM tool methods for `PredictionMarketsServer`.
 //!
-//! These are the 14 economic-data tool wrappers (FRED, World Bank, DBnomics)
-//! and the EQM rationale-scoring tool. Each is a thin forwarder to the
-//! `economic_data` provider modules or `eqm` — the server struct holds the
-//! state (HTTP client, FRED key, inference port), the provider modules hold
-//! the implementation. Extracted from the lib root to shrink the god-file.
+//! These are the 14 economic-data tool wrappers (FRED, World Bank, DBnomics),
+//! the EQM rationale-scoring tool, and the MCDA weight-and-score tool. Each
+//! is a thin forwarder to the `economic_data` provider modules, `eqm`, or
+//! `mcda` — the server struct holds the state (HTTP client, FRED key,
+//! inference port), the provider modules hold the implementation.
+//! Extracted from the lib root to shrink the god-file.
 
 use super::economic_data::dbnomics::{
     DbnomicsGetDatasetRequest, DbnomicsGetSeriesRequest, DbnomicsListProvidersRequest,
@@ -21,6 +22,8 @@ use super::economic_data::worldbank::{
 use super::economic_data::{EconomicDataClient, dbnomics, fred, worldbank};
 use super::eqm;
 use super::eqm::ScoreRationaleRequest;
+use super::mcda;
+use super::mcda::WeightScoreRequest;
 use super::{McpToolError, PredictionMarketsServer, execute_tool};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
@@ -323,6 +326,31 @@ impl PredictionMarketsServer {
             result.map_err(McpToolError::from).and_then(|eqm_result| {
                 serde_json::to_value(&eqm_result)
                     .map_err(|e| McpToolError::internal(format!("eqm serialization failed: {e}")))
+            })
+        })
+        .await
+    }
+
+    // ═══════════════════ MCDA weight-and-score ═══════════════════
+
+    /// Weight decision criteria and score alternatives via the decision
+    /// model — the mcda skill's weight-and-score semantic halves (card
+    /// c8a2ffaf). One typed Score question per criterion weight and per
+    /// (alternative, criterion) raw score over the fixed 0-10 answer space
+    /// (cost criteria pre-inverted: 0 = most costly, 10 = least costly).
+    #[tool(
+        description = "Weight decision criteria and score alternatives via the decision model (kask.models.decision_model, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 0-10 answer space (cost criteria pre-inverted: 0 = most costly/worst, 10 = least costly/best). Returns {\"weights\": [{criterion, weight}], \"raw_scores\": [{alternative, criterion, raw_score}]} — the shape the mcda skill's lisp gates consume. An unset decision model is a typed refusal naming the setting."
+    )]
+    pub async fn mcda_weight_score(
+        &self,
+        Parameters(req): Parameters<WeightScoreRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "mcda_weight_score", async {
+            self.record_call("mcda_weight_score");
+            let result = mcda::weight_score(self.inference_port.as_ref(), &req).await;
+            result.map_err(McpToolError::from).and_then(|mcda_result| {
+                serde_json::to_value(&mcda_result)
+                    .map_err(|e| McpToolError::internal(format!("mcda serialization failed: {e}")))
             })
         })
         .await

@@ -1,7 +1,7 @@
 ---
 title: "Prediction Markets MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-09-28
+last_updated: 2026-11-07
 version: "0.40.1"
 status: "Active"
 domain: "Composition"
@@ -11,14 +11,14 @@ mds_categories: [domain, composition, lifecycle]
 # Prediction Markets MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-prediction-markets`
-**Tools:** 27 — 12 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 15 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`)
+**Tools:** 28 — 12 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 16 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`, `mcda_weight_score`)
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:269-283,700-710`).
 
-> **Tool count note:** the server registers **27 `#[tool]` methods** — 12 in
-> `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 15 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
-> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:70`.
-> The count is pinned end-to-end by `tool_surface_is_exactly_27_registered_tools`
-> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1348`). The
+> **Tool count note:** the server registers **28 `#[tool]` methods** — 12 in
+> `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 16 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
+> merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:71`.
+> The count is pinned end-to-end by `tool_surface_is_exactly_28_registered_tools`
+> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1326`). The
 > operational surface is the set of market tools; the status tool is listed under
 > Independent.
 
@@ -180,6 +180,20 @@ Bank Indicators API.
 Unlike the data wrappers, this tool forwards to the `eqm` module
 (`kask/mcp-servers/hkask-mcp-prediction-markets/src/eqm.rs`, `eqm::score_rationale` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs:316-338`) and
 uses the server's inference port for LLM scoring, not an external HTTP API.
+
+### MCDA weight-and-score
+
+| Tool | Description | Key params |
+|------|-------------|------------|
+| `mcda_weight_score` | Weight decision criteria and score alternatives via the decision model (`kask.models.decision_model`, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 0-10 answer space (cost criteria pre-inverted: 0 = most costly/worst, 10 = least costly/best). Returns `weights` and `raw_scores` — the shape the mcda skill's `lisp_eval` gates consume. | `decision_question`, `criteria`, `alternatives`, `weighting_method` |
+
+Like the EQM tool, this forwards to a server module (`mcda` at
+`kask/mcp-servers/hkask-mcp-prediction-markets/src/mcda.rs`, `mcda::weight_score` at
+`kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs:344-358`) over the
+inference port's decision method (card c8a2ffaf). An unset decision model
+is a typed refusal naming `kask.models.decision_model`; a private-provenance
+call refuses before any dispatch; a question the decision model omitted or
+answered without levels refuses rather than fabricating a weight or score.
 
 ### Independent
 
