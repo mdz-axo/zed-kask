@@ -74,17 +74,23 @@ const FOLLOW_POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// (never smol::Timer — .rules).
 const TRANSCRIPT_SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
 
-/// The workspace list's fixed header items before the surface body:
-/// player, mode chips (the surface toggle plus the select and follow
-/// toggles), the search row, the surface's status note, and the section
-/// label — the whole workspace scrolls as one piece, exactly as it did
-/// before virtualization (a pinned header taller than a tight pane would
-/// starve the reading area). The search row renders its input only on the
-/// word surface but keeps its row on both, so the item count (and with it
-/// the reading position) stays stable across surface switches. The close
-/// affordance and recording name live in the sub-surface's header row
-/// above the list (T3), not as list items.
-const WORKSPACE_HEADER_ITEMS: usize = 5;
+/// The workspace list's fixed header items INSIDE the scrolling list (the
+/// composed two-pane fix, 2026-11-07): the alignment/status row and the
+/// surface's section label — read-once status copy, content-like, so they
+/// scroll with the text. The player, the surface/mode chips, and the
+/// search input PIN ABOVE the list (the interaction band, rendered by
+/// `render_transcript_workspace`) — the persistent master object and its
+/// controls never virtualize away with the navigated detail. This
+/// reverses the one-list design's explicit judgment ("a pinned header
+/// taller than a tight pane would starve the reading area", 2026-11-04):
+/// the operator's live walk on the 62-minute recording showed the cost of
+/// that choice — every deep follow-along reveal displaced the primary
+/// media object out of the pane (the synced-recording contract broken in
+/// its common case) — so the bounded band (~200px: 140px player + chips +
+/// search) takes precedence over maximal reading height, and the reading
+/// area keeps the remainder at every pane height (the operator's
+/// bounded-player ruling, 2026-11-02).
+const WORKSPACE_HEADER_ITEMS: usize = 2;
 
 /// The workspace list's fixed tail items after the transcript blocks:
 /// highlights, cuts, and reel actions — always present as items, so the
@@ -7328,6 +7334,49 @@ impl MediaViewer {
                     this.word_drag_released(window, cx);
                 }),
             );
+        // The pinned interaction band (the composed two-pane fix,
+        // 2026-11-07): the player, the surface/mode chips, and the search
+        // input pin ABOVE the list — master-detail inside the
+        // sub-surface: the player is the persistent master object; the
+        // transcript is the navigated detail. The follow-along's deep
+        // reveals scroll the text BENEATH the band instead of displacing
+        // the player out of the pane (the operator's "pushes the video
+        // from the view"), and the search input the operator reaches for
+        // mid-reading never scrolls away. The band is bounded (~200px:
+        // 140px player + chips + search) — the reading area keeps the
+        // remainder at every pane height (the bounded-player ruling).
+        // Pinned by follow_scroll_keeps_the_pinned_player_in_view.
+        let player_row = match widget.clone() {
+            Some(widget) => div()
+                .h(px(140.))
+                .flex()
+                .min_w_0()
+                .overflow_hidden()
+                .child(widget)
+                .into_any_element(),
+            // Degradation surfaced, never silent: the transcript text
+            // still renders without the player.
+            None => Label::new(SharedString::from(
+                "Playback unavailable — the transcript and editing controls remain available.",
+            ))
+            .size(LabelSize::XSmall)
+            .color(ui::Color::Error)
+            .into_any_element(),
+        };
+        let chips_row = self.render_transcript_chips_row(cx);
+        let search_row = self.render_transcript_search_row(cx);
+        let words_surface = self.transcript_surface == TranscriptSurface::Words;
+        workspace = workspace.child(
+            v_flex()
+                .id("media-transcript-band")
+                .debug_selector(|| "media-transcript-band".into())
+                .px_3()
+                .pt_2()
+                .gap_1()
+                .child(player_row)
+                .child(chips_row)
+                .when(words_surface, |el| el.child(search_row)),
+        );
         if let Some(edit) = pending_editor {
             workspace = workspace.child(v_flex().px_3().pt_3().child(Self::render_label_editor(
                 &edit,
@@ -7410,268 +7459,16 @@ impl MediaViewer {
         }
     }
 
-    /// The fixed header rows at the top of the workspace list (S3d): the
-    /// player, the mode chips, the alignment note, and the Transcript
-    /// label with the review note — scrolling with the content (T3: the
-    /// close affordance and recording name live in the sub-surface's
-    /// header row above the list, always visible, never virtualized
-    /// away).
+    /// The workspace list's fixed header items (the composed two-pane fix,
+    /// 2026-11-07): the status row (the events surface's load state, or the
+    /// words surface's alignment note) and the surface's section label —
+    /// read-once status copy, content-like, scrolling with the text. The
+    /// player, the chips, and the search input live in the PINNED
+    /// interaction band above the list (render_transcript_workspace) —
+    /// never virtualized away with the navigated detail.
     fn render_workspace_header_item(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let row = match ix {
             0 => {
-                match self.media_widget.clone() {
-                Some(widget) => div()
-                    .h(px(140.))
-                    .flex()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(widget)
-                    .into_any_element(),
-                // Degradation surfaced, never silent: the transcript text
-                // still renders without the player.
-                None => Label::new(SharedString::from(
-                    "Playback unavailable — the transcript and editing controls remain available.",
-                ))
-                .size(LabelSize::XSmall)
-                .color(ui::Color::Error)
-                .into_any_element(),
-                }
-            }
-            1 => {
-                let selection_mode = self.selection_mode;
-                let following = self.follow_viewport;
-                let surface = self.transcript_surface;
-                // The reading-surface toggle (operator refinement
-                // 2026-10-30): word-transcript pane ⇄ visual-transcript
-                // event log — parallel annotations over the same recording;
-                // the active surface renders Default, the other Muted.
-                let words_chip = div()
-                    .id("media-transcript-surface-words")
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from("Words"))
-                            .size(LabelSize::XSmall)
-                            .color(if surface == TranscriptSurface::Words {
-                                ui::Color::Default
-                            } else {
-                                ui::Color::Muted
-                            }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.toggle_transcript_surface(TranscriptSurface::Words, cx);
-                    }));
-                let events_chip = div()
-                    .id("media-transcript-surface-events")
-                    .debug_selector(|| "media-transcript-surface-events".into())
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from("Events"))
-                            .size(LabelSize::XSmall)
-                            .color(if surface == TranscriptSurface::Events {
-                                ui::Color::Default
-                            } else {
-                                ui::Color::Muted
-                            }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.toggle_transcript_surface(TranscriptSurface::Events, cx);
-                    }));
-                // S4 part-2: the select-range mode toggle — an explicit mode
-                // beats every-click-seek plus accidental creation. The same
-                // mode serves both surfaces: word ranges on the word surface,
-                // event spans on the events surface.
-                let select_chip = div()
-                    .id("media-transcript-select-mode")
-                    .debug_selector(|| "media-transcript-select-mode".into())
-                    .cursor_pointer()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .hover(|el| el.bg(cx.theme().colors().element_hover))
-                    .child(
-                        Label::new(SharedString::from(if selection_mode {
-                            "Finish selection"
-                        } else if surface == TranscriptSurface::Events {
-                            "Select span"
-                        } else {
-                            "Select text"
-                        }))
-                        .size(LabelSize::XSmall)
-                        .color(if selection_mode {
-                            ui::Color::Default
-                        } else {
-                            ui::Color::Muted
-                        }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.selection_mode = !this.selection_mode;
-                        this.selection_anchor = None;
-                        // Toggling the mode abandons any open label editor —
-                        // it is the tail of a selection this toggle ends —
-                        // and any pending event span (the same rule on the
-                        // events surface).
-                        this.highlight_edit = None;
-                        this.event_selection_anchor = None;
-                        this.event_selection_span = None;
-                        this.status = Some(if this.selection_mode {
-                            if surface == TranscriptSurface::Events {
-                                "Select mode on — click the first event of the span.".into()
-                            } else {
-                                "Select mode on — click the first word of the range.".into()
-                            }
-                        } else {
-                            "Select mode off — clicks seek playback.".into()
-                        });
-                        cx.notify();
-                    }));
-                let mut chips = h_flex().items_center().flex_wrap().gap_2();
-                chips = chips
-                    .child(words_chip)
-                    .child(events_chip)
-                    .child(select_chip);
-                // The Follow toggle (S3d): viewport tracking is on by
-                // default; a manual scroll suspends it and this affordance
-                // re-enables it. A word-surface affordance — the mark and
-                // reveal target word blocks.
-                if surface == TranscriptSurface::Words {
-                    let follow_chip = div()
-                        .id("media-transcript-follow-toggle")
-                        .debug_selector(|| "media-transcript-follow-toggle".into())
-                        .cursor_pointer()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .hover(|el| el.bg(cx.theme().colors().element_hover))
-                        .child(
-                            Label::new(SharedString::from(if following {
-                                "Following"
-                            } else {
-                                "Follow"
-                            }))
-                            .size(LabelSize::XSmall)
-                            .color(if following {
-                                ui::Color::Muted
-                            } else {
-                                ui::Color::Default
-                            }),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.toggle_follow_viewport(cx);
-                        }));
-                    chips = chips.child(follow_chip);
-                }
-                chips.into_any_element()
-            }
-            2 => {
-                // S3: in-transcript search — a lexical input in the surface
-                // header, on the word surface only (the events log has its
-                // own reading model; the row keeps its item either way so
-                // the reading position stays stable across switches).
-                if self.transcript_surface != TranscriptSurface::Words {
-                    div().into_any_element()
-                } else if let Some(focus) = self.transcript_search_focus.clone() {
-                    let search = &self.transcript_search;
-                    let typed = search.query.text();
-                    let cursor = search.query.cursor();
-                    let before: String = typed.chars().take(cursor).collect();
-                    let after: String = typed.chars().skip(cursor).collect();
-                    let mut input = div()
-                        .id("media-transcript-search-input")
-                        .track_focus(&focus)
-                        .flex()
-                        .items_center()
-                        .min_w_0()
-                        .w(px(160.))
-                        .overflow_hidden()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .px_1()
-                        .debug_selector(|| "media-transcript-search-input".into())
-                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                            let keystroke = &event.keystroke;
-                            if (keystroke.modifiers.control || keystroke.modifiers.platform)
-                                && keystroke.key == "v"
-                            {
-                                this.paste_into_transcript_search(cx);
-                            } else {
-                                this.handle_transcript_search_key(keystroke, cx);
-                            }
-                            cx.stop_propagation();
-                        }))
-                        .on_click({
-                            let focus = focus.clone();
-                            cx.listener(move |_, _, window, cx| {
-                                window.focus(&focus, cx);
-                            })
-                        });
-                    if typed.is_empty() {
-                        input = input.child(
-                            Label::new(SharedString::from("Search transcript"))
-                                .size(LabelSize::XSmall)
-                                .color(ui::Color::Muted),
-                        );
-                    } else {
-                        input = input
-                            .child(
-                                Label::new(SharedString::from(before))
-                                    .size(LabelSize::XSmall)
-                                    .color(ui::Color::Default),
-                            )
-                            .child(
-                                div()
-                                    .id("media-transcript-search-caret")
-                                    .w(px(1.))
-                                    .h(px(12.))
-                                    .bg(cx.theme().colors().text),
-                            )
-                            .child(
-                                Label::new(SharedString::from(after))
-                                    .size(LabelSize::XSmall)
-                                    .color(ui::Color::Default),
-                            );
-                    }
-                    let has_words = self
-                        .transcript
-                        .as_ref()
-                        .is_some_and(|state| state.words.is_some());
-                    h_flex()
-                        .items_center()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(input)
-                        .when_some(
-                            transcript_search_status(&self.transcript_search, has_words),
-                            |row, status| {
-                                row.child(
-                                    div()
-                                        .id("media-transcript-search-status")
-                                        .debug_selector(|| "media-transcript-search-status".into())
-                                        .child(
-                                            Label::new(SharedString::from(status))
-                                                .size(LabelSize::XSmall)
-                                                .color(ui::Color::Muted),
-                                        ),
-                                )
-                            },
-                        )
-                        .into_any_element()
-                } else {
-                    // Unreachable in practice — the workspace render creates
-                    // the handle before the list renders — but a render path
-                    // never unwraps.
-                    div().into_any_element()
-                }
-            }
-            3 => {
                 let Some(state) = self.transcript.as_ref() else {
                     return div().into_any_element();
                 };
@@ -7777,6 +7574,250 @@ impl MediaViewer {
             }
         };
         div().pb_2().child(row).into_any_element()
+    }
+
+    /// The surface and mode chips (the pinned interaction band): the
+    /// Words/Events reading-surface toggle, the Select-text mode toggle,
+    /// and the Follow toggle (words surface only). Previously list item
+    /// 1 of the one-list design; pinned with the player and the search
+    /// input so mid-reading affordances never scroll away with the text
+    /// (the composed two-pane fix, 2026-11-07).
+    fn render_transcript_chips_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let selection_mode = self.selection_mode;
+        let following = self.follow_viewport;
+        let surface = self.transcript_surface;
+        // The reading-surface toggle (operator refinement
+        // 2026-10-30): word-transcript pane ⇄ visual-transcript
+        // event log — parallel annotations over the same recording;
+        // the active surface renders Default, the other Muted.
+        let words_chip = div()
+            .id("media-transcript-surface-words")
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from("Words"))
+                    .size(LabelSize::XSmall)
+                    .color(if surface == TranscriptSurface::Words {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_transcript_surface(TranscriptSurface::Words, cx);
+            }));
+        let events_chip = div()
+            .id("media-transcript-surface-events")
+            .debug_selector(|| "media-transcript-surface-events".into())
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from("Events"))
+                    .size(LabelSize::XSmall)
+                    .color(if surface == TranscriptSurface::Events {
+                        ui::Color::Default
+                    } else {
+                        ui::Color::Muted
+                    }),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_transcript_surface(TranscriptSurface::Events, cx);
+            }));
+        // S4 part-2: the select-range mode toggle — an explicit mode
+        // beats every-click-seek plus accidental creation. The same
+        // mode serves both surfaces: word ranges on the word surface,
+        // event spans on the events surface.
+        let select_chip = div()
+            .id("media-transcript-select-mode")
+            .debug_selector(|| "media-transcript-select-mode".into())
+            .cursor_pointer()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .hover(|el| el.bg(cx.theme().colors().element_hover))
+            .child(
+                Label::new(SharedString::from(if selection_mode {
+                    "Finish selection"
+                } else if surface == TranscriptSurface::Events {
+                    "Select span"
+                } else {
+                    "Select text"
+                }))
+                .size(LabelSize::XSmall)
+                .color(if selection_mode {
+                    ui::Color::Default
+                } else {
+                    ui::Color::Muted
+                }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.selection_mode = !this.selection_mode;
+                this.selection_anchor = None;
+                // Toggling the mode abandons any open label editor —
+                // it is the tail of a selection this toggle ends —
+                // and any pending event span (the same rule on the
+                // events surface).
+                this.highlight_edit = None;
+                this.event_selection_anchor = None;
+                this.event_selection_span = None;
+                this.status = Some(if this.selection_mode {
+                    if surface == TranscriptSurface::Events {
+                        "Select mode on — click the first event of the span.".into()
+                    } else {
+                        "Select mode on — click the first word of the range.".into()
+                    }
+                } else {
+                    "Select mode off — clicks seek playback.".into()
+                });
+                cx.notify();
+            }));
+        let mut chips = h_flex().items_center().flex_wrap().gap_2();
+        chips = chips
+            .child(words_chip)
+            .child(events_chip)
+            .child(select_chip);
+        // The Follow toggle (S3d): viewport tracking is on by
+        // default; a manual scroll suspends it and this affordance
+        // re-enables it. A word-surface affordance — the mark and
+        // reveal target word blocks.
+        if surface == TranscriptSurface::Words {
+            let follow_chip = div()
+                .id("media-transcript-follow-toggle")
+                .debug_selector(|| "media-transcript-follow-toggle".into())
+                .cursor_pointer()
+                .flex()
+                .flex_wrap()
+                .gap_2()
+                .hover(|el| el.bg(cx.theme().colors().element_hover))
+                .child(
+                    Label::new(SharedString::from(if following {
+                        "Following"
+                    } else {
+                        "Follow"
+                    }))
+                    .size(LabelSize::XSmall)
+                    .color(if following {
+                        ui::Color::Muted
+                    } else {
+                        ui::Color::Default
+                    }),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle_follow_viewport(cx);
+                }));
+            chips = chips.child(follow_chip);
+        }
+        chips.into_any_element()
+    }
+
+    /// The in-transcript search row (S3): the lexical input with its live
+    /// count, pinned in the interaction band on the words surface only
+    /// (the events log has its own reading model). Previously list item 2
+    /// of the one-list design, which kept a placeholder row on the events
+    /// surface for reading-position stability — pinning removes that
+    /// hack: the row is never a list item, and the operator reaches for
+    /// the search mid-reading, where the one-list design had already
+    /// scrolled it away.
+    fn render_transcript_search_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(focus) = self.transcript_search_focus.clone() {
+            let search = &self.transcript_search;
+            let typed = search.query.text();
+            let cursor = search.query.cursor();
+            let before: String = typed.chars().take(cursor).collect();
+            let after: String = typed.chars().skip(cursor).collect();
+            let mut input = div()
+                .id("media-transcript-search-input")
+                .track_focus(&focus)
+                .flex()
+                .items_center()
+                .min_w_0()
+                .w(px(160.))
+                .overflow_hidden()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .px_1()
+                .debug_selector(|| "media-transcript-search-input".into())
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                    let keystroke = &event.keystroke;
+                    if (keystroke.modifiers.control || keystroke.modifiers.platform)
+                        && keystroke.key == "v"
+                    {
+                        this.paste_into_transcript_search(cx);
+                    } else {
+                        this.handle_transcript_search_key(keystroke, cx);
+                    }
+                    cx.stop_propagation();
+                }))
+                .on_click({
+                    let focus = focus.clone();
+                    cx.listener(move |_, _, window, cx| {
+                        window.focus(&focus, cx);
+                    })
+                });
+            if typed.is_empty() {
+                input = input.child(
+                    Label::new(SharedString::from("Search transcript"))
+                        .size(LabelSize::XSmall)
+                        .color(ui::Color::Muted),
+                );
+            } else {
+                input = input
+                    .child(
+                        Label::new(SharedString::from(before))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .child(
+                        div()
+                            .id("media-transcript-search-caret")
+                            .w(px(1.))
+                            .h(px(12.))
+                            .bg(cx.theme().colors().text),
+                    )
+                    .child(
+                        Label::new(SharedString::from(after))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    );
+            }
+            let has_words = self
+                .transcript
+                .as_ref()
+                .is_some_and(|state| state.words.is_some());
+            h_flex()
+                .items_center()
+                .flex_wrap()
+                .gap_2()
+                .child(input)
+                .when_some(
+                    transcript_search_status(&self.transcript_search, has_words),
+                    |row, status| {
+                        row.child(
+                            div()
+                                .id("media-transcript-search-status")
+                                .debug_selector(|| "media-transcript-search-status".into())
+                                .child(
+                                    Label::new(SharedString::from(status))
+                                        .size(LabelSize::XSmall)
+                                        .color(ui::Color::Muted),
+                                ),
+                        )
+                    },
+                )
+                .into_any_element()
+        } else {
+            // Unreachable in practice — the workspace render creates
+            // the handle before the list renders — but a render path
+            // never unwraps.
+            div().into_any_element()
+        }
     }
 
     /// One transcript block as a workspace list item (S3a/S3b/S3c):
@@ -18090,6 +18131,206 @@ mod viewer_layout_tests {
                  (window height {window_height:?}): widget {widget:?} vs content {content:?}"
             );
         }
+    }
+
+    /// dcterms:identifier: `render_transcript_workspace` — the pinned
+    /// interaction band
+    /// expect: The player, the surface chips, and the search input pin
+    /// ABOVE the scrolling transcript list: a deep follow-along reveal
+    /// (the operator's far-forward seek) scrolls the marked block into
+    /// view WITHOUT displacing the player — the synced-recording contract
+    /// keeps media and text addressing each other, both visible. The
+    /// shipped construction rendered the player as list item 0 (operator
+    /// report 2026-11-07: the text scroll "pushes or blocks the video from
+    /// the view"), so the reveal's own scroll virtualized the primary
+    /// media object out of the pane.
+    /// [P1] Motivating: the synced recording — watch while reading along.
+    /// pre: a word-timed pane state with 30 blocks (far taller than the
+    /// pane); the follow reveal armed by a late current word.
+    /// post: the media widget's bounds remain laid out INSIDE the content
+    /// area after the reveal — a virtualized-away row lays out no bounds,
+    /// which is the shipped construction's red.
+    #[gpui::test]
+    /// [DIAG-GEOM] Throwaway probe — DELETE AFTER USE. Measures the
+    /// transcript sub-surface's geometry after the pinned-band change:
+    /// the viewer area, the band, the widget, the list, and the marked
+    /// block — to adjudicate whether the band collapses the list at the
+    /// failing tests' window sizes.
+    #[gpui::test]
+    fn diag_probe_transcript_band_geometry(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        admit_fixture();
+        let viewer = cx.new(|_| MediaViewer::new());
+        let output = serde_json::json!({
+            "content": {
+                "status": "fetched",
+                "display_hint": format!(
+                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
+                )
+            }
+        })
+        .to_string();
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
+        });
+        let deep_state = TranscriptPaneState {
+            transcript_id: "t-geom".into(),
+            media_path: FIXTURE.into(),
+            gallery_asset_id: None,
+            alignment: "original".into(),
+            alignment_note: None,
+            words: Some(
+                (0..200)
+                    .map(|index| PaneWord {
+                        word: format!("g{index}"),
+                        start_ms: index as u64 * 100,
+                        end_ms: index as u64 * 100 + 90,
+                    })
+                    .collect(),
+            ),
+            working_text: String::new(),
+            paragraph_breaks: Some((1..20).map(|block| block * 10 - 1).collect()),
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+            correction_edits: Vec::new(),
+            source_words: Vec::new(),
+        };
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        for (w, h) in [(px(480.), px(320.)), (px(480.), px(600.))] {
+            cx.simulate_resize(size(w, h));
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, cx| {
+                viewer.transcript = Some(deep_state.clone());
+                viewer.active_tab = ViewerTab::Workspace;
+                viewer.inspector_open = false;
+                cx.notify();
+            });
+            cx.run_until_parked();
+            viewer.update(cx, |viewer, cx| {
+                viewer.current_word = Some(190);
+                viewer.follow_viewport = true;
+                viewer.follow_marked_block_into_view();
+                cx.notify();
+            });
+            cx.run_until_parked();
+            let collected = [
+                ("band", "media-transcript-band"),
+                ("widget", "media-widget"),
+                ("transport", "media-transport"),
+                ("search", "media-transcript-search-input"),
+                ("marked-block", "media-transcript-marked-block"),
+                ("viewer-content", "media-viewer-content"),
+            ]
+            .map(|(name, sel)| (name, cx.debug_bounds(sel)));
+            let (list_state, count) = viewer.update(cx, |viewer, _| {
+                (
+                    viewer.transcript_list.logical_scroll_top(),
+                    viewer.transcript_list_count,
+                )
+            });
+            println!("[DIAG-GEOM] === window {w:?} x {h:?} ===");
+            for (name, bounds) in collected {
+                match bounds {
+                    Some(b) => println!(
+                        "[DIAG-GEOM] {name}: top={:?} bottom={:?} h={:?}",
+                        b.top(),
+                        b.bottom(),
+                        b.size.height
+                    ),
+                    None => println!("[DIAG-GEOM] {name}: NOT LAID OUT"),
+                }
+            }
+            println!("[DIAG-GEOM] list_scroll_top={list_state:?} count={count}");
+        }
+    }
+    fn follow_scroll_keeps_the_pinned_player_in_view(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        admit_fixture();
+
+        let viewer = cx.new(|_| MediaViewer::new());
+        let output = serde_json::json!({
+            "content": {
+                "status": "fetched",
+                "display_hint": format!(
+                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
+                )
+            }
+        })
+        .to_string();
+        viewer.update(cx, |viewer, cx| {
+            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
+        });
+
+        // 30 blocks over 60 words: far taller than the test pane, so the
+        // reveal must scroll.
+        let deep_state = TranscriptPaneState {
+            transcript_id: "t-follow-pin".into(),
+            media_path: FIXTURE.into(),
+            gallery_asset_id: None,
+            alignment: "original".into(),
+            alignment_note: None,
+            words: Some(
+                (0..60)
+                    .map(|index| PaneWord {
+                        word: format!("follow-word-{index}"),
+                        start_ms: index * 100,
+                        end_ms: index * 100 + 100,
+                    })
+                    .collect(),
+            ),
+            working_text: "deep transcript".into(),
+            paragraph_breaks: Some((0..30).map(|index| index * 2 + 1).collect()),
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: Vec::new(),
+            strikes: Vec::new(),
+            correction_edits: Vec::new(),
+            source_words: Vec::new(),
+        };
+
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.run_until_parked();
+
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(deep_state);
+            viewer.active_tab = ViewerTab::Workspace;
+            // The mark: word 50 — block 25, far past the first viewport.
+            viewer.current_word = Some(50);
+            viewer.follow_viewport = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        viewer.update(cx, |viewer, cx| {
+            viewer.follow_marked_block_into_view();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let band = cx
+            .debug_bounds("media-transcript-band")
+            .expect("the pinned interaction band lays out under the sub-surface");
+        let widget = cx
+            .debug_bounds("media-widget")
+            .expect("the pinned player stays laid out after the deep reveal");
+        assert!(
+            widget.top() >= band.top() - px(1.),
+            "the pinned player starts inside the band after the reveal: \
+             widget {widget:?} vs band {band:?}"
+        );
+        assert!(
+            widget.bottom() <= band.bottom() + px(1.),
+            "the pinned player must not leave the band after the reveal: \
+             widget {widget:?} vs band {band:?}"
+        );
     }
 
     /// The selection popover (S2) opens for BOTH selection gestures on the
