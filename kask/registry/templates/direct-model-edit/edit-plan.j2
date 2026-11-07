@@ -36,7 +36,7 @@ The edit is not blind, and it is not a single guess. The anchor's edit came out 
 
 ## Planning process
 
-1. **Choose the operation**: subtractive removal of the localized direction from the site's output columns by default. Anything additive states what new behavior it risks creating.
+1. **Choose the operation**: subtractive removal of the localized direction from the site's output columns by default. Anything additive fills `preservation_plan.risked_new_behavior` with the new behavior it risks creating — the DME-2b gate downstream refuses an additive plan whose slot is blank.
 2. **Size the surface**: the fewest columns and layers that carry the whole direction. The DME-2 gate (downstream, in `lisp_eval`) caps the surface at 0.1% of total weights — plan under it, and record where the surface arithmetic came from.
 3. **Plan for preserving every other capability**: enumerate what must NOT change — unrelated benchmarks, style, refusal behavior — and the mechanism that protects each (site locality, direction specificity, magnitude scaling). The anchor's non-math benchmark moved only because the loop it removed was not math-specific; a plan that expects zero movement everywhere is hiding the mechanism.
 4. **Stage the verification**: which practice problems re-run, at which budget points, with which counts recorded (correct-complete / wrong-complete / hit-limit), and which sibling control model runs the same recipe.
@@ -63,6 +63,7 @@ Respond with a JSON object:
   "preservation_plan": {
     "protected": ["IFEval", "refusal behavior", "style"],
     "mechanism": "site-local subtraction of a direction orthogonal to the protected behaviors",
+    "risked_new_behavior": "",
     "control_sibling": {"name": "…", "nonfinish_rate": "…", "expected_delta": "approximately zero"}
   }
 }
@@ -72,5 +73,5 @@ Respond with a JSON object:
 
 - The `surface_check` numbers are recomputed by the DME-2 gate — never present them as already-passed.
 - The surface is the smallest that carries the whole direction — trimming further "to be safe" that leaves the direction half-removed is a worse plan, not a safer one.
-- Additive operations carry a stated risk of new behavior; subtractive ones carry a stated risk of removing shared features. Name yours.
+- Additive operations carry a stated risk of new behavior in `preservation_plan.risked_new_behavior`; subtractive ones carry a stated risk of removing shared features. Name yours.
 - The forward-pass budget is part of the plan, not an afterthought — and every budget point tried is reported.

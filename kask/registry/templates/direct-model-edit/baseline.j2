@@ -9,7 +9,7 @@ contract:
     benchmark_name: string
   output:
     baseline_observation: object
-    config_diffs: array
+    card_config: object
     suspected_failure_mode: object
     route_recommendation: object
 ---
@@ -52,7 +52,7 @@ The vendor model card is part of the ground. The anchor ran its target in thinki
 ## Audit process
 
 1. **Classify every answer** in the baseline: `answers_correct_complete` (finished and right), `answers_wrong_complete` (finished and wrong — genuine reasoning errors), `answers_hit_limit` (ran to the token limit without finishing). Do not average them into one score — the classes route differently.
-2. **Diff every config field** in `run_config` against the vendor card's recommendation recorded in `model_card_notes`: mode, temperature, top-p, top-k, presence penalty, output token limit. Record each field where the run config departs from the card, and the card's stated warning.
+2. **Record the card's recommended configuration** for all six fields — mode, temperature, top-p, top-k, presence penalty, output token limit — read from `model_card_notes`, as the `card_config` object. Never diff the fields yourself: the DME-0 `lisp_eval` gate downstream diffs every field deterministically.
 3. **Read the suspected failure mode from the classes, not the score**: a dominant `answers_hit_limit` class is a blocker (loops or stalls); a dominant `answers_wrong_complete` class is a capability gap; a mixed or thin baseline is under-evidenced and needs more practice answers before any route verdict.
 
 ## Output requirements
@@ -66,9 +66,9 @@ Respond with a JSON object:
     "class_shares": {"correct_complete": 0.09, "wrong_complete": 0.04, "hit_limit": 0.87},
     "what_the_model_actually_does": "…"
   },
-  "config_diffs": [
-    {"field": "mode", "run": "thinking", "card_recommended": "non-thinking", "card_warning": "…"}
-  ],
+  "card_config": {
+    "mode": "non-thinking", "temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5, "token_limit": 32768
+  },
   "suspected_failure_mode": {
     "mode": "looping",
     "evidence": "…",
@@ -85,5 +85,5 @@ Respond with a JSON object:
 ## Constraints
 
 - The counts come from the harness; the shares and the DME-1 route verdict are computed downstream in `lisp_eval` — never assert a route this template's outputs do not support.
-- Every config field the card contradicts appears in `config_diffs` — an unexamined config delta is the most common false "weight bug".
+- Record all six card-recommended fields in `card_config` — the DME-0 gate downstream diffs every one; an unexamined config delta is the most common false "weight bug".
 - A baseline measured on fewer answers than the harness printed is a broken ground — record the mismatch, do not paper over it.

@@ -12,7 +12,7 @@ The edit itself, read through Ousterhout's lens, is a deep module: an interface 
 ## Initial and target condition
 
 - **Initial condition:** a target model (open weights, small enough to hold resident in a Rust harness), its vendor model card, a reproducible Rust + bash harness with practice problems, a measured baseline split into answer classes (correct-complete / wrong-complete / hit-limit), the sampling configuration in force (mode, temperature, top-p, top-k, presence penalty, token limit), and a reported behavioral bug.
-- **Target condition:** the DME-0 config gate and DME-1 route verdict are recorded; if blocker-routed — an applied edit whose surface passes the DME-2 budget, a verification table carrying benchmark deltas AND completion-rate deltas side by side, a DME-3 attribution label on every headline gain, a non-failing sibling control run under the same recipe, and a report carrying the full edit diff, every forward-pass budget point tried, seeds, and logs.
+- **Target condition:** the DME-0 config gate and DME-1 route verdict are recorded; if blocker-routed — an applied edit whose surface passes the DME-2 budget and whose preservation plan passes DME-2b, a verification table carrying benchmark deltas AND completion-rate deltas side by side, a DME-3 attribution label on every headline gain, a non-failing sibling control run under the same recipe with its DME-3b verdict, and a report carrying the full edit diff, every forward-pass budget point tried, seeds, and logs.
 
 ## When to Use
 
@@ -34,10 +34,10 @@ The edit itself, read through Ousterhout's lens, is a deep module: an interface 
 | 1 Ground — baseline counts | D (counts measured by the harness) | the harness's eval output |
 | 1 Ground — config gate | D | `lisp_eval` DME-0 |
 | 1 Ground — failure-mode reading | P | the operator; critiqued by DME-1's route arithmetic |
-| 2 Route | D | `lisp_eval` DME-1 over the measured answer classes |
+| 2 Route | D | `lisp_eval` DME-1 over the measured answer classes; DME-1S over the zero-shot/few-shot presence probe (adjudicated at the card config) |
 | 3 Localize | P | the contrast captures; critiqued by the re-appearance of the direction before failures |
-| 4 Plan | P | the operator critiques the surface choice; DME-2 is the D gate on it |
-| 5 Apply + re-measure | D (re-measurement) | the harness's eval output |
+| 4 Plan | P | the operator critiques the surface choice; DME-2 and DME-2b are the D gates on it |
+| 5 Apply + re-measure | D (re-measurement) | the harness's eval output; DME-0 (config identity, second application) and DME-3b (sibling verdict) gate it |
 | 6 Attribute | D | `lisp_eval` DME-3 over before/after completion rates |
 | 7 Converge | D | `lisp_eval` DME-4 over recorded open-findings counts |
 | 8 Report | P | the operator; the logs are the evidence |
@@ -62,11 +62,11 @@ variables:
   benchmark_name: <the practice benchmark family>
 ```
 
-4. Following the template's output schema, produce the baseline observation: classify the failed answers (non-terminating vs wrong-but-complete) and diff every config field against the card. The anchor's own trap: it ran in thinking mode — the exact condition the Qwen card warns loops — at temperature 0.6 with presence penalty 1.5.
-5. Call `lisp_eval` with the config gate (DME-0):
-   - form: `(cond ((and (string= run_mode card_default_mode) (= run_temp card_temp)) (quote config-matches-proceed)) (t (quote config-differs-rerun-at-card-config)))`
-   - env: `{ "run_mode": <mode in force>, "card_default_mode": <card default mode>, "run_temp": <temperature in force>, "card_temp": <card recommended temperature> }`
-   - `config-differs-rerun-at-card-config` → re-run the baseline at the card's config and re-gate before Step 2. A bug that disappears at the vendor's recommended settings was never a weight bug.
+4. Following the template's output schema, produce the baseline observation: classify the failed answers (non-terminating vs wrong-but-complete) and record the card's recommended six-field configuration (`card_config`) for the DME-0 gate — never diff the fields yourself. The anchor's own trap: it ran in thinking mode — the exact condition the Qwen card warns loops — at temperature 0.6 with presence penalty 1.5.
+5. Call `lisp_eval` with the config gate (DME-0) over all six card-config fields:
+   - form: `(let ((diffs (append (if (string= (assoc! "mode" run_config) (assoc! "mode" card_config)) () (list "mode")) (if (= (assoc! "temperature" run_config) (assoc! "temperature" card_config)) () (list "temperature")) (if (= (assoc! "top_p" run_config) (assoc! "top_p" card_config)) () (list "top_p")) (if (= (assoc! "top_k" run_config) (assoc! "top_k" card_config)) () (list "top_k")) (if (= (assoc! "presence_penalty" run_config) (assoc! "presence_penalty" card_config)) () (list "presence_penalty")) (if (= (assoc! "token_limit" run_config) (assoc! "token_limit" card_config)) () (list "token_limit"))))) (cond ((> (length diffs) 0) (list (quote config-differs-rerun-at-card-config) diffs)) (t (quote config-matches-proceed))))`
+   - env: `{ "run_config": { mode, temperature, top_p, top_k, presence_penalty, token_limit } as in force, "card_config": { the card's recommended value for the same six fields, from the template's output } }` — both objects carry all six fields; a missing field fails the form's `assoc!` loudly, never silently.
+   - `config-differs-rerun-at-card-config` → the emitted differing-field list names exactly what moved: re-run the baseline at the card's config and re-gate before Step 2. A bug that disappears at the vendor's recommended settings was never a weight bug. The anchor's own case differs from its card in mode, temperature AND top_p — a two-field gate misses the third (live corroboration: the fetched Qwen3.5-0.8B card's benchmark configs).
 
 ### Step 2 — Route: blocker or capability gap
 
@@ -76,6 +76,12 @@ Call `lisp_eval` with the route gate (DME-1) over the measured counts — it der
 - `blocker-removal-route` → continue to Step 3.
 - `capability-gap-no-weight-edit` → stop; report the route verdict. Weight edits remove obstacles; they do not install capabilities (the anchor's Gemma control is the standing counter-example).
 - `collect-more-evidence` or `empty-baseline` → enlarge the practice set, re-measure, re-run the gate.
+
+Sibling gate (DME-1S) — the skill-presence probe. When the route question is whether the model possesses the skill the failure suppresses — before any localization spend — probe task conformance on practice problems twice, zero-shot and few-shot, and gate the verdict with `lisp_eval`:
+- form: `(cond ((= conformance_sample 0) (quote collect-more-evidence)) ((< few_shot_conformance 0.5) (quote capability-gap-no-weight-edit)) ((> (- few_shot_conformance zero_shot_conformance) 0.1) (quote skill-unlock-route)) (t (quote skill-present-not-suppressed)))`
+- env: `{ "zero_shot_conformance": <share of conforming answers, zero-shot>, "few_shot_conformance": <share of conforming answers, few-shot>, "conformance_sample": <practice answers probed per arm> }`
+- The probe ADJUDICATES AT THE CARD CONFIG — the model's default mode — never only at trap-style configs. Config-dependence is a recorded live finding, not a hypothesis: the anchor's own case reproduced the loop at the trap config (6 of 7 answers hit-limit) and did NOT survive the card config (0 of 10 hit-limit — at card settings DME-1 itself routes that same baseline to `capability-gap-no-weight-edit`); receipts at ~/Documents/zk-data/direct-model-edit-archive/logs/stage1-summary.json (the archived stage-1 instrument's historical record; the Rust replication re-measures). A presence probe run at trap-style configs measures the trap, not the skill.
+- `skill-unlock-route` → the skill is present but suppressed: continue to Step 3. `capability-gap-no-weight-edit` → stop, as DME-1's same verdict. `skill-present-not-suppressed` → the probed failure is not suppressing a skill: re-examine the diagnosis before spending localization. `collect-more-evidence` → enlarge the probe sample.
 
 ### Step 3 — Localize: contrastive
 
@@ -112,12 +118,19 @@ variables:
    - form: `(let ((budget (* total_weights 0.001))) (list (<= edited_weights budget) budget))`
    - env: `{ "total_weights": <count>, "edited_weights": <count> }`
    - Returns `[within_budget, budget]`. A false first element → shrink the surface (fewer columns, fewer layers, rank-1 only) or stop. The anchor passed at 131,072 of ~800,000,000 (0.016%) — six times under this skill's 0.1% cap.
-3. The edit operation is subtractive by default: remove the direction from the site's output columns ("much like removing a behavior by deleting a single direction"). Additive edits need an explicit preservation plan naming the new behavior they risk.
+3. The edit operation is subtractive by default: remove the direction from the site's output columns ("much like removing a behavior by deleting a single direction"). Additive edits need an explicit preservation plan naming the new behavior they risk — enforce it with the preservation gate (DME-2b) in `lisp_eval`:
+   - form: `(cond ((string= operation "subtract") (quote subtractive-default-ok)) ((string= risked_new_behavior "") (quote additive-edit-missing-preservation-plan)) (t (quote additive-edit-has-preservation-plan)))`
+   - env: `{ "operation": <edit_spec.operation>, "risked_new_behavior": <preservation_plan.risked_new_behavior — blank when the plan names none> }`
+   - `additive-edit-missing-preservation-plan` → the plan is not a plan: name the risked new behavior in the template's output and re-gate before applying anything. `subtractive-default-ok` / `additive-edit-has-preservation-plan` → proceed.
 
 ### Step 5 — Apply, re-measure, verify
 
 1. Apply the edit in the Rust harness's resident session. Re-run the SAME practice benchmark under the SAME config.
-2. Call `render_template`:
+2. Assert before/after config identity with the DME-0 form's second application — the same form and the same six fields as Step 1, the two configs as its objects:
+   - form: `(let ((diffs (append (if (string= (assoc! "mode" run_config) (assoc! "mode" card_config)) () (list "mode")) (if (= (assoc! "temperature" run_config) (assoc! "temperature" card_config)) () (list "temperature")) (if (= (assoc! "top_p" run_config) (assoc! "top_p" card_config)) () (list "top_p")) (if (= (assoc! "top_k" run_config) (assoc! "top_k" card_config)) () (list "top_k")) (if (= (assoc! "presence_penalty" run_config) (assoc! "presence_penalty" card_config)) () (list "presence_penalty")) (if (= (assoc! "token_limit" run_config) (assoc! "token_limit" card_config)) () (list "token_limit"))))) (cond ((> (length diffs) 0) (list (quote config-differs-rerun-at-card-config) diffs)) (t (quote config-matches-proceed))))`
+   - env: `{ "run_config": <the pre-edit six-field config in force>, "card_config": <the post-edit six-field config in force> }`
+   - `config-matches-proceed` → the only intervention is the edit. `config-differs-rerun-at-card-config` with any field named → a config change rode along with the edit and this verification verifies nothing ("a verification under different settings verifies nothing" — the verify template's own constraint): re-run the post-edit measurement under the pre-edit config before Step 6.
+3. Call `render_template`:
 
 ```
 template: direct-model-edit/verify
@@ -128,14 +141,17 @@ variables:
   control_model_result: { control_name, control_nonfinish_rate, control_delta }
 ```
 
-3. Re-measure the classes and record completion rates beside scores — the attribution gate needs both.
-4. Run the sibling control: a non-failing model edited under the same recipe. It should show approximately no gain; if it gains, name the general-booster suspicion and the collateral risk.
+4. Re-measure the classes and record completion rates beside scores — the attribution gate needs both.
+5. Run the sibling control: a non-failing model edited under the same recipe, then gate its verdict (DME-3b) with `lisp_eval`:
+   - form: `(cond ((<= (abs control_delta) flat_band) (quote sibling-flat)) (t (quote sibling-moved-general-booster-suspect)))`
+   - env: `{ "control_delta": <the sibling's before/after benchmark delta>, "flat_band": 1.0 }` — the band is Evidence-tier: the anchor's Gemma control stayed flat within about one point (6.8 → 7.0), a gain the authors themselves called not established.
+   - `sibling-moved-general-booster-suspect` → name the general-booster suspicion and the collateral risk out loud; the specificity claim is not established. `sibling-flat` → the control corroborates specificity.
 
 ### Step 6 — Attribute the gain
 
 Call `lisp_eval` (DME-3):
-- form: `(let ((unblocked_gain (* 100 (* (- base_nonfinish new_nonfinish) complete_correct_rate)))) (cond ((<= delta_score 0) (quote score-declined-or-flat)) ((>= (/ unblocked_gain delta_score) 0.5) (quote mostly-unblocking)) (t (quote mixed-or-genuine-gain))))`
-- env: `{ "base_nonfinish": <hit-limit share pre-edit>, "new_nonfinish": <hit-limit share post-edit>, "complete_correct_rate": <correctness among completed answers post-edit>, "delta_score": <benchmark points gained> }`
+- form: `(let ((delta_score (- new_score base_score)) (unblocked_gain (* 100 (* (- base_nonfinish new_nonfinish) complete_correct_rate)))) (cond ((<= delta_score 0) (quote score-declined-or-flat)) ((>= (/ unblocked_gain delta_score) 0.5) (quote mostly-unblocking)) (t (quote mixed-or-genuine-gain))))`
+- env: `{ "base_nonfinish": <hit-limit share pre-edit>, "new_nonfinish": <hit-limit share post-edit>, "complete_correct_rate": <correctness among completed answers post-edit>, "base_score": <benchmark score pre-edit>, "new_score": <benchmark score post-edit> }` — delta_score is derived inside the form from the measured scores; measured counts in, no hand arithmetic feeding a D gate.
 - `mostly-unblocking` → the headline is a completion fix, not a capability gain — say exactly that (the anchor: its 6x "math" jump was loops removed, 93% → 33%; the authors wrote that this "is not the same as making a model better at math").
 - `mixed-or-genuine-gain` → completions do not explain the gain; scrutinize before claiming capability.
 
@@ -179,15 +195,18 @@ Template context variables (from each template's `[inference]` contract):
 - Every headline gain carries its DME-3 attribution label; every verification table carries completion-rate deltas beside benchmark deltas.
 - The sibling control is not optional: a report without it is an unverified claim of specificity.
 - Logs or it did not happen: the full exchange, the edit diff, the budgets tried, the seeds.
-- The 0.1% cap, the 0.5 routing thresholds, and the convergence bound are Evidence-tier operationalizations of the anchor's single published case, not prohibitions.
+- The 0.1% cap, the 0.5 routing thresholds, DME-1S's 0.5/0.1 presence thresholds, DME-3b's flat band, and the convergence bound are Evidence-tier operationalizations of the anchor's single published case, not prohibitions.
 - The minimal-surface/maximal-behavior shape of a good edit is Ousterhout-derived (the same lens as the `deep-module` skill, applied to a weight patch instead of a code module).
 
 ## Regression case
 
 Forms parse-verified by `check_skill_lisp_forms`; semantics executed at use time by the executor with `lisp_eval` — expected values:
 
-- DME-0, config differs (the anchor's own case): `{ "run_mode": "thinking", "card_default_mode": "non-thinking", "run_temp": 0.6, "card_temp": 0.7 }` → `config-differs-rerun-at-card-config`. Matching mode and temperature → `config-matches-proceed`.
+- DME-0, config differs (the anchor's own case, all six fields): `{ "run_config": { "mode": "thinking", "temperature": 0.6, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5, "token_limit": 32768 }, "card_config": { "mode": "non-thinking", "temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5, "token_limit": 32768 } }` → `["config-differs-rerun-at-card-config", ["mode", "temperature", "top_p"]]` — the three-field diff a two-field gate missed. The card's own non-thinking settings on both sides → `config-matches-proceed`.
 - DME-1, the anchor's baseline: `{ "answers_total": 96, "answers_hit_limit": 85, "answers_wrong_complete": 4 }` → 85/96 ≈ 0.886 ≥ 0.5 → `blocker-removal-route`. A Gemma-shaped baseline: `{ "answers_total": 100, "answers_hit_limit": 8, "answers_wrong_complete": 60 }` → 0.08 < 0.5, 0.6 ≥ 0.5 → `capability-gap-no-weight-edit`.
+- DME-1S, presence probe (adjudicated at the card config): `{ "zero_shot_conformance": 0.08, "few_shot_conformance": 0.75, "conformance_sample": 96 }` → `skill-unlock-route`; `{ "zero_shot_conformance": 0.10, "few_shot_conformance": 0.15, "conformance_sample": 96 }` → `capability-gap-no-weight-edit`; `{ "zero_shot_conformance": 0.55, "few_shot_conformance": 0.60, "conformance_sample": 96 }` → `skill-present-not-suppressed`; `{ "conformance_sample": 0 }` → `collect-more-evidence`.
 - DME-2, the anchor's surface: `{ "total_weights": 800000000, "edited_weights": 131072 }` → budget = 800,000; 131,072 ≤ 800,000 → `[true, 800000]` (0.016% passes the 0.1% cap).
-- DME-3, the anchor's attribution: `{ "base_nonfinish": 0.93, "new_nonfinish": 0.33, "complete_correct_rate": 0.72, "delta_score": 40.2 }` → unblocked_gain = 100 × 0.60 × 0.72 = 43.2; 43.2 / 40.2 ≈ 1.07 ≥ 0.5 → `mostly-unblocking`.
+- DME-2b, preservation gate: `{ "operation": "subtract", "risked_new_behavior": "" }` → `subtractive-default-ok`; `{ "operation": "add", "risked_new_behavior": "" }` → `additive-edit-missing-preservation-plan`; `{ "operation": "add", "risked_new_behavior": "over-release: the grafted direction fires on benign prompts" }` → `additive-edit-has-preservation-plan`.
+- DME-3, the anchor's attribution (delta derived in-form): `{ "base_nonfinish": 0.93, "new_nonfinish": 0.33, "complete_correct_rate": 0.72, "base_score": 7.9, "new_score": 48.1 }` → delta_score = 48.1 − 7.9 = 40.2 in-form; unblocked_gain = 100 × 0.60 × 0.72 = 43.2; 43.2 / 40.2 ≈ 1.07 ≥ 0.5 → `mostly-unblocking`.
+- DME-3b, sibling verdict (band 1.0, Evidence-tier): `{ "control_delta": 0.2, "flat_band": 1.0 }` → `sibling-flat` (the anchor's recorded 6.8 → 7.0 control); `{ "control_delta": 5.0, "flat_band": 1.0 }` → `sibling-moved-general-booster-suspect`.
 - DME-4, converged: `{ "xs": [61, 12, 12, 12] }` → `true` (last three equal); unstable: `{ "xs": [61, 12, 12, 4] }` → `false`; too few counts: `{ "xs": [12, 12] }` → `false`.
