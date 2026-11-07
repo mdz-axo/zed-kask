@@ -107,6 +107,17 @@ pub const SHIPPED_FLEET: &[(&str, &str, LocalModelLocation)] = &[
             artifact: "Qwen3.5-0.8B-BF16.edited15.gguf",
         },
     ),
+    // The S-leg interim artifact (operator ruling 2026-11-07): the
+    // official Ornith Q8_0 while the official BF16 is broken upstream —
+    // the brief carries the full deviation record.
+    (
+        "ornith-1.5-9b-q8",
+        include_str!("../../../../registry/model-briefs/ornith-1.5-9b-q8.toml"),
+        LocalModelLocation {
+            dir: "ornith-1.5-9b",
+            artifact: "Ornith-1.5-9B-Q8_0.gguf",
+        },
+    ),
 ];
 
 /// Fleet projection failures — per-variant, never a blanket string
