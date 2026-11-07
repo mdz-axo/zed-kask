@@ -4,14 +4,21 @@ The engine-compute determinism study executed under its pre-registered design
 (`private-inference-engine-compute-determinism-design-2026-11-06.md`) and the
 execution prompt
 (`kask/docs/plans/private-inference-determinism-study-execution-prompt-2026-11-06.md`,
-commit `98513d9208` — the spend authorization). **Outcome in one line: the
-instrument gate's environment anchor fired mid-gate — a concurrent GPU
-workload from another operator stream (`harness/dme.py probe --device gpu`,
-the direct-model-edit arc) was running through the entire gate — so the gate
-is NOT adjudicable, the confirmatory layer (O1–O4) is a `measurement_void`
-per the design's §3 halt clause, and the operator decides re-ground timing.**
-Spend: 11 of ~70 authorized requests (1 discarded warmup + 10 measured);
-no arm ran.
+commit `98513d9208` — the spend authorization). **Final outcome in one line
+(after the §10 re-run): the study's premise is REFUTED by the gate's own
+data — temperature-0 completions on this engine are fully deterministic
+GIVEN THE REQUEST SEQUENCE (20 of 20 generated fields byte-identical across
+two independent sessions, different processes, hours apart, at decode
+speeds from 6.6 to 13.6 tok/s); the "nondeterminism" that confounded the
+MTP and P2 records and closed the streaming bar was never randomness — it
+is a deterministic, position-dependent server-state trajectory, and the
+P2-B asymmetry (shorts flip, longs stable) is a position artifact (shorts
+ran early-session, longs ran late-session at the settled attractor). The
+gate's frozen acceptance still fails (the long class at early-session
+positions is not byte-stable) → the confirmatory layer (O1–O4) is a
+`measurement_void`, no arm ran, and the design's §2 rule sends the
+observation back for new rivals — the re-ground proposal is §10.5.**
+Spend: 11 + 11 requests across the two gate attempts; the arms unspent.
 
 ## 1. The frozen pre-registration this run was bound to
 
@@ -221,3 +228,90 @@ This run's measured contribution:
   verification) was applied.
 - The server was stopped cleanly after the gate (port 8010 free, exit
   confirmed) — no servers left running.
+
+## 10. The re-run (2026-11-06 ~19:40–20:00, operator-directed "proceed with both")
+
+The operator's go covered the re-run's full frozen behavior — the gate, and
+the arms only if the gate passed. The machine: quiet (load 1.33–1.78), AC
+power, dGPU free (27 MB) — then, and only then, the same turnkey sequence:
+launch (health ~1 s, warm page cache, banner `n_slots = 1, n_ctx_slot =
+16384`), one discarded warmup (P2@8), the gate leg (P1:128 ×5, P2:1024 ×5).
+Artifacts: `measurements/determinism-2026-11-06-rerun/`.
+
+### 10.1 The anchor — thermal, recorded
+
+Decode ran 8.38–9.57 tok/s across all ten reps — outside the 13.0–15.0
+class a second time, on a quiet AC-powered machine. Cause: the dGPU's
+thermal state after the evening's sustained GPU load — `rocm-smi` at the
+halt: edge 63 °C, **junction 86 °C**, memory 80 °C. The anchor rule stands
+(recorded, never re-banded); its concern — that environment drift could
+manufacture false divergence — is answered empirically by §10.2's bytes:
+drift moved the SPEED across 6.6→13.6 tok/s between reps and sessions and
+did not move a single byte of the completions.
+
+### 10.2 The cross-session byte check — the decisive observation
+
+Every per-rep value in the re-run equals the first attempt's at the same
+request position. Byte-level verification (jq extraction, `cmp` per field,
+10 reps × 2 fields): **20 of 20 generated fields byte-identical across the
+two independent sessions** — different processes, hours apart, decode
+speeds spanning 6.6–13.6 tok/s. P1: 631/647/649/621/621 chars at the same
+depths (315/309/342/342 vs r1; 315/309/309/539 adjacent). Long class:
+4227-stop / 4404 / 4350×3 at the same depths (323 vs r1; 667 at the r2→r3
+boundary). The re-run's r3–r5 = the P2-B byte-stable form (4350), and P2-B's
+own short-class record (631/647/649) is the same trajectory's first three
+positions — from a different day.
+
+### 10.3 The finding — the premise is refuted
+
+**Temperature-0 completions on this engine are fully deterministic GIVEN
+the request sequence.** Same launch flags + same request order → same bytes,
+every time, from every fresh process. The "knife-edge token flips" that
+motivated this study, confounded the MTP record (D-G) and the P2 record
+(P2-B), and kept the streaming bar closed are not nondeterminism: they are
+a **deterministic, position-dependent server-state trajectory** — request 1
+always yields the same completion, request 2 the next, and the sequence
+converges to a stable attractor (the long class is byte-stable from its 3rd
+request onward; P2-B's long leg, run LATE in its session after the full p0
+suite, measured only the settled attractor and read it as a class
+property). P2-B's short-vs-long "asymmetry" is a position artifact: the
+shorts ran early-session (unsettled), the longs late-session (settled).
+
+### 10.4 The frozen verdicts
+
+- **The gate: FAILED its acceptance** — the P2-B asymmetry did not
+  reproduce (the long class at early-session positions is not byte-stable
+  across 5 reps). The design's §3 halt clause fires: the confirmatory layer
+  (O1–O4) is a `measurement_void`; no arm ran; the anchor is recorded red
+  (thermal) and was never re-banded.
+- **The observation matches NO pre-registered rival** (design §2 — back for
+  new rivals, never bent): **H1 refuted** (there is no run-to-run
+  nondeterminism to attribute to compute-path selection); **H4's
+  restart-reset prediction refuted** (a fresh process reproduces the
+  trajectory identically — the "state" is a deterministic function of
+  request history, not pool residue); H2/H3 unadjudicated (no arm data).
+- **Spend:** attempt 1 + attempt 2 = 22 requests total; the arms' ~55
+  requests unspent. Both attempts' engines stopped cleanly, ports free.
+
+### 10.5 The re-ground proposal (the operator's decision)
+
+The study's motivating question is answered by the gate's own data, without
+the arms: the identity instrument was never measuring nondeterminism — it
+was measuring position. The proposed re-ground:
+
+1. **The recipe (the design's deliverable (a), proposed not claimed):**
+   cross-engine identity comparisons are valid at MATCHED request positions
+   — same warmup, same request order, compare rep-N to rep-N — or after
+   the state settles (the long class reaches its byte-stable attractor by
+   its 3rd request). Single-run byte-identity is real and reproducible
+   under position control. The streaming-unroutable bar's stated precondition
+   ("a parity instrument that holds at the operating configuration") is
+   now constructible; whether to re-open streaming stays the operator's.
+2. **The new rivals for a residual design** (what the old arms cannot
+   test): the state-evolution MECHANISM (per-slot KV state? the engine's
+   own slot LRU/similarity reuse paths?) and the minimal settle sequence
+   (how many requests to the attractor, per class and cap) — each needs
+   its own pre-registration before any spend.
+3. **The prior records' verdicts stand as recorded** (instrument-confounded
+   at their time) — but the MTP pair's parity question is now RE-OPENABLE
+   under the position-matched protocol at the operator's direction.
