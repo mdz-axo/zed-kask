@@ -380,7 +380,7 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
             reason: "general.alignment is zero".into(),
         });
     }
-    let data_start = (reader.consumed + alignment - 1) / alignment * alignment;
+    let data_start = reader.consumed.div_ceil(alignment) * alignment;
     // A split shard may legitimately carry only metadata (zero tensors) —
     // the unsloth UD-Q2_K_XL header shard is exactly that. Sizing runs
     // only when tensors exist.
