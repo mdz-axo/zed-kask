@@ -1,0 +1,37 @@
+[package]
+name = "dme-harness"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Direct-model-edit live-replication harness (Rust; operator ruling 2026-11-06)"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+# The private-inference stack — the ONE home of the shared GGUF
+# reader/writer (local_leg::{gguf, gguf_writer}) this harness's edit leg
+# and gguf-info mode consume (P3 of the consolidation plan: no hand
+# parsers survive).
+hkask-private-inference = { workspace = true }
+
+# Inference engine is opt-in: workspace-wide builds stay free of the
+# vendored-llama.cpp cmake build. `--features vulkan` adds the GPU backend
+# (needs the SPIRV-Headers prefix + CPATH documented in README.md).
+llama-cpp-4 = { version = "0.11.0", default-features = false, features = [
+    "openmp",
+    "mtmd",
+    "ggml",
+    "rpc",
+], optional = true }
+
+[features]
+default = []
+engine = ["dep:llama-cpp-4"]
+vulkan = ["engine", "llama-cpp-4/vulkan"]
+
+[[bin]]
+name = "dme-harness"
+path = "src/main.rs"

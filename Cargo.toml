@@ -286,6 +286,7 @@ members = [
     "kask/crates/hkask-condenser",
     "kask/crates/hkask-email",
     "kask/crates/hkask-steer-core",
+    "kask/crates/dme-harness",
 
     "crates/hkask-tool-invoker",
     "crates/hkask-viz-core",

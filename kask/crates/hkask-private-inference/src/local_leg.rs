@@ -10,6 +10,7 @@
 
 pub mod fleet;
 pub mod gguf;
+pub mod gguf_writer;
 pub mod launch;
 pub mod manifest;
 pub mod model_brief;

@@ -1,10 +1,12 @@
-//! Minimal GGUF metadata reader — the placement compiler's model input.
-//!
-//! Parses each split shard's header (KV pairs + tensor infos) with
-//! streaming reads (no whole-file loads). Tensor byte sizes are derived
-//! from data-section offsets — approximate by construction, since
-//! inter-tensor alignment padding is included — which avoids depending on
-//! the ggml quant-type size table and its drift. Fail-closed: unknown GGUF
+//! The shared GGUF reader — the placement compiler's model input (L3)
+//! and the DME edit leg's directory source. The one home of the header
+//! parse: KV pairs + tensor infos (names, dims, types, offsets), the
+//! data-section anchor (alignment + data_start), and the parameter
+//! count. Byte sizes are derived from data-section offsets — approximate
+//! by construction, since inter-tensor alignment padding is included —
+//! which avoids depending on the ggml quant-type size table for PLACEMENT
+//! decisions. The byte-exact writer lives in `gguf_writer` (the one
+//! consumer of this parse's exact fields). Fail-closed: unknown GGUF
 //! value types are errors, not skips.
 
 use std::collections::BTreeMap;
@@ -29,10 +31,16 @@ pub enum GgufValue {
     Array(Vec<GgufValue>),
 }
 
+/// A tensor in the parsed directory. `dims` is the GGUF dimension list
+/// (row-major, `dims[0]` = the row length ggml calls `ne0`);
+/// `approx_bytes` is offset-derived and includes inter-tensor padding —
+/// exact byte sizes are the writer's job (`gguf_writer::nbytes`), never
+/// the placement reader's.
 #[derive(Debug, Clone)]
 pub struct GgufTensor {
     pub name: String,
     pub ggml_type: u32,
+    pub dims: Vec<u64>,
     pub offset: u64,
     pub approx_bytes: u64,
     /// llama.cpp's own routed-expert naming convention
@@ -41,6 +49,18 @@ pub struct GgufTensor {
     pub is_expert: bool,
 }
 
+impl GgufTensor {
+    /// Element count = the product of the dimensions (the parameter
+    /// contribution of one tensor).
+    pub fn nelements(&self) -> u64 {
+        self.dims.iter().copied().product()
+    }
+}
+
+/// The default GGUF data-section alignment when the file carries no
+/// `general.alignment` KV (the GGUF spec default is 32).
+const DEFAULT_ALIGNMENT: u64 = 32;
+
 #[derive(Debug, Clone, Default)]
 pub struct GgufMeta {
     pub gguf_version: u32,
@@ -48,6 +68,15 @@ pub struct GgufMeta {
     pub tensors: Vec<GgufTensor>,
     pub expert_bytes: u64,
     pub dense_bytes: u64,
+    /// The file's declared data-section alignment (`general.alignment`,
+    /// default 32). The writer anchors tensor offsets with it.
+    pub alignment: u64,
+    /// Absolute byte offset of the tensor-data section
+    /// (`align_up(header_len, alignment)`).
+    pub data_start: u64,
+    /// Sum of every tensor's element count — the model's parameter
+    /// count (the writer's edit-share denominator).
+    pub param_count: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -64,10 +93,13 @@ pub enum GgufError {
     Malformed { reason: String },
     #[error("tensor `{name}`: {reason}")]
     Tensor { name: String, reason: String },
+    #[error(
+        "unsupported ggml type {ty} for {op} — add the codec before use (fail-closed, never approximated)"
+    )]
+    UnsupportedType { ty: u32, op: &'static str },
 }
 
 const GGUF_MAGIC: u32 = 0x46554747; // "GGUF" little-endian
-const DATA_ALIGNMENT: u64 = 32;
 
 struct GgufReader<R: Read> {
     inner: R,
@@ -255,9 +287,12 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
                 reason: format!("{n_dims} dimensions"),
             });
         }
-        // Dimensions do not enter offset-based sizing.
+        // The dimensions feed the writer's exact sizing and the
+        // parameter count; the offset-based approx sizing below does not
+        // use them.
+        let mut dims = Vec::with_capacity(n_dims as usize);
         for _ in 0..n_dims {
-            reader.read_u64()?;
+            dims.push(reader.read_u64()?);
         }
         let ggml_type = reader.read_u32()?;
         let offset = reader.read_u64()?;
@@ -265,12 +300,25 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
             is_expert: name.contains("_exps."),
             name,
             ggml_type,
+            dims,
             offset,
             approx_bytes: 0,
         });
     }
 
-    let data_start = (reader.consumed + (DATA_ALIGNMENT - 1)) & !(DATA_ALIGNMENT - 1);
+    // The data-section alignment is the file's own `general.alignment`
+    // (default 32); the data section starts at the aligned header end.
+    let alignment = match kv.get("general.alignment") {
+        Some(GgufValue::U32(v)) => u64::from(*v),
+        Some(GgufValue::U64(v)) => *v,
+        _ => DEFAULT_ALIGNMENT,
+    };
+    if alignment == 0 {
+        return Err(GgufError::Malformed {
+            reason: "general.alignment is zero".into(),
+        });
+    }
+    let data_start = (reader.consumed + alignment - 1) / alignment * alignment;
     // A split shard may legitimately carry only metadata (zero tensors) —
     // the unsloth UD-Q2_K_XL header shard is exactly that. Sizing runs
     // only when tensors exist.
@@ -306,7 +354,15 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         tensors,
         expert_bytes: 0,
         dense_bytes: 0,
+        alignment,
+        data_start,
+        param_count: 0,
     };
+    meta.param_count = meta
+        .tensors
+        .iter()
+        .map(GgufTensor::nelements)
+        .fold(0u64, |acc, n| acc.saturating_add(n));
     for t in &meta.tensors {
         if t.is_expert {
             meta.expert_bytes = meta.expert_bytes.saturating_add(t.approx_bytes);
@@ -332,12 +388,22 @@ pub fn parse(paths: &[std::path::PathBuf]) -> Result<GgufMeta, GgufError> {
         if merged.kv.is_empty() {
             merged.kv = shard.kv;
             merged.gguf_version = shard.gguf_version;
+            merged.alignment = shard.alignment;
+            merged.data_start = shard.data_start;
         }
         merged.expert_bytes = merged.expert_bytes.saturating_add(shard.expert_bytes);
         merged.dense_bytes = merged.dense_bytes.saturating_add(shard.dense_bytes);
+        merged.param_count = merged.param_count.saturating_add(shard.param_count);
         merged.tensors.extend(shard.tensors);
     }
     Ok(merged)
+}
+
+/// Parse one (single-file) GGUF — the writer's and the harness's entry.
+/// Weight patching is a single-file operation by construction (the edit
+/// leg copies the file and patches tensor regions in place).
+pub fn parse_file(path: &Path) -> Result<GgufMeta, GgufError> {
+    parse(&[path.to_path_buf()])
 }
 
 impl GgufMeta {
@@ -352,6 +418,33 @@ impl GgufMeta {
                     && (k.len() == suffix.len() || k.as_bytes()[k.len() - suffix.len() - 1] == b'.')
             })
             .map(|(_, v)| v)
+    }
+
+    /// The `general.architecture` value (e.g. `qwen4exp`); empty when the
+    /// file does not carry it.
+    pub fn architecture(&self) -> &str {
+        match self.kv.get("general.architecture") {
+            Some(GgufValue::Str(s)) => s.as_str(),
+            _ => "",
+        }
+    }
+
+    /// Look up a tensor by name — the edit leg's directory access.
+    pub fn tensor(&self, name: &str) -> Option<&GgufTensor> {
+        self.tensors.iter().find(|t| t.name == name)
+    }
+
+    /// The dominant storage type by element count — the receipts' dtype
+    /// line (e.g. BF16 for the Qwen3.5-0.8B DME target).
+    pub fn dominant_type(&self) -> u32 {
+        let mut hist: BTreeMap<u32, u64> = BTreeMap::new();
+        for t in &self.tensors {
+            *hist.entry(t.ggml_type).or_default() += t.nelements();
+        }
+        hist.iter()
+            .max_by_key(|(_, n)| **n)
+            .map(|(ty, _)| *ty)
+            .unwrap_or(0)
     }
 
     fn u32_by_suffix(&self, suffix: &str) -> Option<u32> {
@@ -444,6 +537,16 @@ mod tests {
         assert!(meta.tensors.iter().any(|t| t.is_expert));
         assert_eq!(meta.expert_bytes, 32);
         assert_eq!(meta.dense_bytes, 32);
+        // The reader's exact fields (the writer's inputs): dims, the
+        // parameter count, the alignment anchor.
+        assert_eq!(meta.tensors[0].dims, vec![8]);
+        assert_eq!(meta.param_count, 16);
+        assert_eq!(meta.alignment, 32); // no general.alignment KV → default
+        assert_eq!(meta.data_start % 32, 0);
+        assert!(meta.data_start > 0);
+        assert_eq!(meta.dominant_type(), 0); // F32
+        assert_eq!(meta.tensor("blk.0.attn_q.weight").unwrap().offset, 0);
+        assert!(meta.tensor("no.such.tensor").is_none());
     }
 
     #[test]

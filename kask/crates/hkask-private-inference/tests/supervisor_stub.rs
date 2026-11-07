@@ -64,12 +64,16 @@ fn prepared(port: u16) -> PreparedLaunch {
         tensors: vec![GgufTensor {
             name: "stub-tensor".into(),
             ggml_type: 0,
+            dims: vec![32_000_000],
             offset: 0,
             approx_bytes: 1_000_000_000,
             is_expert: false,
         }],
         expert_bytes: 1_000_000_000,
         dense_bytes: 1_000_000_000,
+        alignment: 32,
+        data_start: 4_096,
+        param_count: 32_000_000,
     };
     let hardware = HardwareInventory {
         total_ram_bytes: 96_000_000_000,
