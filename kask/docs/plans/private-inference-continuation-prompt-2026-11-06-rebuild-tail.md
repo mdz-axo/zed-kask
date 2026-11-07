@@ -25,6 +25,12 @@ implemented design + §8's remaining legs), and
 - The GUI private-model turn is the ONE unverified live piece: the private DB
   (`~/.local/share/zed-kask/agents/curator/curator-private.db`) was still at
   155,648 bytes, mtime 2026-11-05 21:08:29, at composition.
+- DONE since composition (verified green at the current HEAD — do not redo):
+  the §8 rerank leg + the duplication-tier degrade (`6554ec0b4b`), the corpus
+  ruling closed as shape 2 — the perimeter, `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+  = [media, corpus]` (`7f242e02dd`), and the MTP §7 item-1 verify-workspace
+  term (`4bca93d6a2` — the brief field, the guard channel, the routing
+  predicate, the Lean extension, all pinned).
 
 ## The work, in order
 
@@ -36,29 +42,19 @@ implemented design + §8's remaining legs), and
    If it has already moved, record the verification (the turn's chunks carry
    local classifier tags + locally-embedded passages — the D100 chain
    end-to-end); if not, the operator runs it and the next session verifies.
-2. **The §8 legs (the review's extension, `d71c62d23f`).**
-   (a) The research server's rerank leg — rides the already-approved
-   provenance-routed mechanism (the §8 filing's recorded direction covers it):
-   implement the routed-or-skip rule at the rerank site (a private-provenance
-   call reranks through a local model or skips the stage with a surfaced note
-   — degrade-not-leak), with the recording-port falsifier pin.
-   (b) The corpus server's assisting-inference legs (`corpus_embed`,
-   `corpus_tag_chunks`, the OCR vision leg on private-provenance calls) — the
-   ruling is OWED: whether the M5 off-axis acceptance covers these tool legs,
-   or the intake-time corpus privacy field is scheduled. Present the
-   recommended ruling (the same degrade-not-leak rule as every other leg —
-   private-provenance calls skip the cloud legs with surfaced reasons); the
-   operator decides before any implementation.
+2. **The §8 legs — DONE.** The rerank leg landed as the surfaced skip
+   (`6554ec0b4b`); the corpus ruling closed as shape 2, the perimeter
+   (`7f242e02dd`). Both verified green; do not re-implement.
 3. **The determinism study's spend gate.** The design is filed (the
    ≤70-request, one-session, instrument-gate-first protocol); the operator's
    word gates the run — no spend without it.
 4. **The drift-watch (delegated — the runbook's recorded ruling, `6416b3b4d3`).**
    The next llama.cpp release is the triage procedure's first live test — run
    it, append the triage log row (`kask/docs/reference/llama-cpp-drift-watch.md`).
-5. **The MTP record §7 item 1 (the older arc's leftover).** The draft-routing
-   VRAM arithmetic should reserve the spec-decode verify workspace (unsloth's
-   1–2 GB guidance) — a model-brief/manifest field + the guard extension + the
-   Lean proof over the reserved term.
+5. **The MTP record §7 item 1 — DONE.** The verify-workspace term landed
+   (`4bca93d6a2`): the brief field, the guard channel (unconditional when a
+   draft is asked), the routing predicate, the Lean extension, and the pins.
+   Do not redo.
 
 ## Boundaries
 
