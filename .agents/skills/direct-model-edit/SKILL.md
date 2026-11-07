@@ -5,13 +5,13 @@ description: "Direct weight-space model editing: ground the baseline behavior an
 
 # Direct Model Edit
 
-A frontier model can read and write another network's raw weights directly — no gradient descent, no training loop. The anchor case: MIT CSAIL researchers gave GPT-6 Astra ("Astra") a Python kernel over Qwen3.5-0.8B's weights, practice problems from the GSM8K and MATH training sets, and a budget of forward passes — no gradients, no test-set access. The model's "math bug" was not math: 85 of its first 96 practice answers ran to the 32,768-token limit. Astra compared internals across progressing and looping answers, localized a single direction written by the MLPs of layers 15 and 19, and subtracted it from 64 output columns per layer — 131,072 weights, about 0.016% of the model. Token-limit hits fell from 93% to 33%; MATH-500 rose 7.9% → 48.1%, GSM8K 13.8% → 67.1%, IFEval 21.0% → 62.3%. The authors' own framing is this skill's core law: the edit "removed an obstacle that hid an ability" — it "could not add an ability the model lacked" (their Gemma 3 270M control, which rarely loops, stayed flat within ~1 point).
+A frontier model can read and write another network's raw weights directly — no gradient descent, no training loop. The anchor case: MIT CSAIL researchers gave GPT-6 Astra ("Astra") a Python kernel over Qwen3.5-0.8B's weights, practice problems from the GSM8K and MATH training sets, and a budget of forward passes — no gradients, no test-set access. The model's "math bug" was not math: 85 of its first 96 practice answers ran to the 32,768-token limit. Astra compared internals across progressing and looping answers, localized a single direction written by the MLPs of layers 15 and 19, and subtracted it from 64 output columns per layer — 131,072 weights, about 0.016% of the model. Token-limit hits fell from 93% to 33%; MATH-500 rose 7.9% → 48.1%, GSM8K 13.8% → 67.1%, IFEval 21.0% → 62.3%. The authors' own framing is this skill's core law: the edit "removed an obstacle that hid an ability" — it "could not add an ability the model lacked" (their Gemma 3 270M control, which rarely loops, stayed flat within ~1 point). The anchor's Python kernel is a fact about the published method, never a tooling prescription here — the harness-language constraint below is absolute.
 
 The edit itself, read through Ousterhout's lens, is a deep module: an interface of one direction and two layer indices, hiding 800 million weights of behavior behind it. Small surface, large consequence — that shape is the discipline this skill enforces.
 
 ## Initial and target condition
 
-- **Initial condition:** a target model (open weights, small enough to hold in a Python session), its vendor model card, a reproducible harness with practice problems, a measured baseline split into answer classes (correct-complete / wrong-complete / hit-limit), the sampling configuration in force (mode, temperature, top-p, top-k, presence penalty, token limit), and a reported behavioral bug.
+- **Initial condition:** a target model (open weights, small enough to hold resident in a Rust harness), its vendor model card, a reproducible Rust + bash harness with practice problems, a measured baseline split into answer classes (correct-complete / wrong-complete / hit-limit), the sampling configuration in force (mode, temperature, top-p, top-k, presence penalty, token limit), and a reported behavioral bug.
 - **Target condition:** the DME-0 config gate and DME-1 route verdict are recorded; if blocker-routed — an applied edit whose surface passes the DME-2 budget, a verification table carrying benchmark deltas AND completion-rate deltas side by side, a DME-3 attribution label on every headline gain, a non-failing sibling control run under the same recipe, and a report carrying the full edit diff, every forward-pass budget point tried, seeds, and logs.
 
 ## When to Use
@@ -116,7 +116,7 @@ variables:
 
 ### Step 5 — Apply, re-measure, verify
 
-1. Apply the edit in the weights session. Re-run the SAME practice benchmark under the SAME config.
+1. Apply the edit in the Rust harness's resident session. Re-run the SAME practice benchmark under the SAME config.
 2. Call `render_template`:
 
 ```
@@ -169,6 +169,7 @@ Template context variables (from each template's `[inference]` contract):
 
 ## Constraints
 
+- The harness language boundary is absolute (operator ruling 2026-11-06, extending the 2026-10-13 zero-Python rule beyond the repo tree): the harness is Rust + bash — no Python anywhere an agent authors — not in the repo, not in a replication workspace under the data dirs, not "temporarily". Ecosystem convenience is not an exception path: if the target architecture or capture machinery is unavailable in Rust on this machine (candle/burn architecture support, the ROCm backend), that is a surfaced capability gap routed to the operator under this skill's own routing discipline — never a silent language substitution. A Python harness is this skill's refusal state, not its Step 1.
 - Measure before you diagnose: the anchor's "math bug" was 93% non-terminating answers; completed answers were already right almost every time.
 - The config gate precedes every weight read. Pin the sampling settings — mode, temperature, top-p, top-k, presence penalty, token limit — and diff them against the vendor card. The anchor ran in the exact mode the card warns about, at a temperature-and-penalty combination associated with looping.
 - Weight edits remove obstacles; they do not install capabilities — the Gemma control is the standing counter-example. Route capability gaps out.
