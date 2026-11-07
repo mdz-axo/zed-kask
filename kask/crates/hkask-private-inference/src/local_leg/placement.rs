@@ -421,7 +421,14 @@ pub fn compile_placement(
                 let offloadable = meta.dense_bytes.saturating_sub(pinned_cpu_bytes);
                 let used = offloadable
                     .saturating_add(kv_bytes_estimate)
-                    .saturating_add(policy.compute_buffer_bytes);
+                    .saturating_add(policy.compute_buffer_bytes)
+                    // MTP record §7 item 1 (the D-B finding): the spec-decode
+                    // verify workspace is GPU-side whenever a draft is asked —
+                    // it enters the used set BEFORE the headroom test, so a
+                    // budget that would fit the draft without it routes the
+                    // draft to CPU instead of under-reserving the verify path
+                    // that OOM'd ctx 65536 on the 8 GB card.
+                    .saturating_add(spec.verify_workspace_bytes);
                 // The exact routing predicate: the budget covers the used
                 // set AND the headroom covers the draft. The ordering
                 // makes the subtraction underflow-free, and the degenerate
@@ -508,6 +515,7 @@ pub fn compile_placement(
         n_expert_used: meta.expert_used_count(),
         draft_bytes: draft.as_ref().map_or(0, |d| d.spec.draft_bytes),
         draft_on_gpu: draft.as_ref().is_some_and(|d| d.on_gpu),
+        verify_workspace_bytes: draft.as_ref().map_or(0, |d| d.spec.verify_workspace_bytes),
         planned_flags: args.clone(),
     };
 
@@ -881,15 +889,20 @@ mod tests {
 
     #[test]
     fn draft_plan_emits_spec_flags_and_pins_to_cpu_when_vram_is_tight() {
-        // The live-machine shape: dense 6.9 GB + kv 0.5 GB + compute 4 GiB
-        // against an 8.57 GB card leaves no room for the 2.79 GB draft —
-        // the estimate over-refuses (by design) and the draft rides CPU.
+        // The live-machine shape: dense 6.9 GB + kv 0.5 GB + the verify
+        // workspace 2 GiB (the MTP §7 item-1 term — GPU-side even with a
+        // CPU-routed draft) leaves 9.547 resident against a 10 GB card,
+        // while the routing's used set (6.9 + 0.5 + 4.29 compute + the
+        // workspace = 13.837 GB) leaves no headroom for the 2.79 GB draft
+        // — the estimate over-refuses (by design) and the draft rides CPU.
+        // The pre-§7 card (8.57 GB) genuinely cannot host this draft ask
+        // anymore — the workspace is the D-B lesson.
         let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
         let (_dir, model_path) = draft_dir();
         let plan = compile_placement(
             model_path,
             &test_meta(),
-            &test_gpu_hw(8_573_157_376),
+            &test_gpu_hw(10_000_000_000),
             &test_brief(),
             &draft_policy(),
             &manifest,
@@ -1070,5 +1083,104 @@ draft_bytes = 0
         let rendered = plan.to_string();
         assert!(rendered.contains("--spec-draft-ngl 0"));
         assert!(!rendered.contains("--spec-draft-ngl 999"));
+    }
+
+    const WORKSPACE_DRAFT_BRIEF_TOML: &str = r#"
+model_id = "qwen3-8-flash-next"
+display_name = "Qwen3.8 Flash Next"
+
+[model]
+total_params = 125_000_000_000
+active_params = 6_000_000_000
+expert_count = 512
+expert_used_count = 10
+
+[placement]
+ple_pin_pattern = "per_layer_token_embd"
+
+[recommendations]
+kv_cache_type = "q8_0"
+flash_attn = true
+context_length = 65_536
+
+[draft]
+module_file = "MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+spec_type = "draft-mtp"
+draft_n_max = 2
+draft_bytes = 2_000_000_000
+verify_workspace_bytes = 2_147_483_648
+"#;
+
+    const WORKSPACE_FREE_DRAFT_BRIEF_TOML: &str = r#"
+model_id = "qwen3-8-flash-next"
+display_name = "Qwen3.8 Flash Next"
+
+[model]
+total_params = 125_000_000_000
+active_params = 6_000_000_000
+expert_count = 512
+expert_used_count = 10
+
+[placement]
+ple_pin_pattern = "per_layer_token_embd"
+
+[recommendations]
+kv_cache_type = "q8_0"
+flash_attn = true
+context_length = 65_536
+
+[draft]
+module_file = "MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
+spec_type = "draft-mtp"
+draft_n_max = 2
+draft_bytes = 2_000_000_000
+"#;
+
+    #[test]
+    fn the_verify_workspace_consumes_the_headroom_before_the_draft() {
+        // MTP record §7 item 1 (the D-B finding): the verify workspace
+        // enters the used set BEFORE the headroom test — a card whose
+        // headroom would fit the draft without it routes the draft to CPU
+        // instead of under-reserving the GPU verify path. test_meta() pins
+        // offloadable 6.9G + kv 0.5G + compute 4.29G = 11.69G used; the 15G
+        // card leaves 3.31G headroom — the 2.0G draft fits WITHOUT the
+        // workspace, and does NOT with the 2.147G one (13.837G used →
+        // 1.163G headroom).
+        let manifest = decode(UNSLOTH_PREBUILT_TOML).expect("prebuilt manifest");
+        let (_dir, model_path) = draft_dir();
+        let brief =
+            ModelBrief::decode(WORKSPACE_DRAFT_BRIEF_TOML).expect("workspace brief decodes");
+        let plan = compile_placement(
+            model_path.clone(),
+            &test_meta(),
+            &test_gpu_hw(15_000_000_000),
+            &brief,
+            &draft_policy(),
+            &manifest,
+        )
+        .expect("the base plan fits");
+        assert!(
+            plan.to_string().contains("--spec-draft-ngl 0"),
+            "the workspace consumed the headroom — the draft routes CPU"
+        );
+
+        // The positive control: the same card, the same draft, NO workspace
+        // reserve — the draft rides the GPU (the pre-§7 arithmetic), so
+        // the routing change is the workspace's alone.
+        let brief = ModelBrief::decode(WORKSPACE_FREE_DRAFT_BRIEF_TOML)
+            .expect("workspace-free brief decodes");
+        let plan = compile_placement(
+            model_path,
+            &test_meta(),
+            &test_gpu_hw(15_000_000_000),
+            &brief,
+            &draft_policy(),
+            &manifest,
+        )
+        .expect("the plan fits");
+        assert!(
+            plan.to_string().contains("--spec-draft-ngl 999"),
+            "without the workspace reserve the draft rides the GPU"
+        );
     }
 }

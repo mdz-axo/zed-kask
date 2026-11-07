@@ -180,6 +180,15 @@ pub struct ConstraintEnv {
     /// arithmetic leaves no room).
     #[serde(default)]
     pub draft_on_gpu: bool,
+    /// zed-kask: MTP record §7 item 1 (2026-11-06) — the spec-decode
+    /// VERIFY workspace in bytes: GPU-side whenever a draft is ASKED,
+    /// INDEPENDENT of the draft module's placement (a CPU-routed draft
+    /// still runs speculative verification in GPU memory — the D-B
+    /// finding: the verify path OOM'd ctx 65536 on the 8 GB card with
+    /// 0.9-1.2 GB free, under-reserved by exactly this term). Zero = the
+    /// plan asks no draft (or a pre-§7 brief) — the old arithmetic.
+    #[serde(default)]
+    pub verify_workspace_bytes: u64,
     pub planned_flags: Vec<String>,
 }
 
@@ -345,6 +354,17 @@ pub fn evaluate_constraint(
                     constraint: "vram_dense_fit".into(),
                     reason: "dense+kv byte sum overflowed u64".into(),
                 })?;
+            // MTP record §7 item 1 (2026-11-06): the spec-decode VERIFY
+            // workspace is GPU-side whenever a draft is ASKED, independent
+            // of the draft module's placement — a CPU-routed draft still
+            // verifies in GPU memory (the D-B finding). Zero when the plan
+            // asks no draft: the pre-§7 arithmetic.
+            resident = resident
+                .checked_add(env.verify_workspace_bytes)
+                .ok_or_else(|| ManifestError::Constraint {
+                    constraint: "vram_dense_fit".into(),
+                    reason: "dense+kv+verify-workspace byte sum overflowed u64".into(),
+                })?;
             // A GPU-placed draft rides the VRAM budget; a CPU-routed one
             // (the compiler's -ngld 0) stays outside the channel.
             if env.draft_on_gpu {
@@ -363,8 +383,13 @@ pub fn evaluate_constraint(
                 } else {
                     String::new()
                 };
+                let workspace_part = if env.verify_workspace_bytes > 0 {
+                    format!(" + verify workspace {}", env.verify_workspace_bytes)
+                } else {
+                    String::new()
+                };
                 Ok(Evaluation::Deny(format!(
-                    "offloadable dense {offloadable} (dense {dense} − pinned {pinned}) + kv {kv}{draft_part} bytes exceed the declared VRAM budget {vram}",
+                    "offloadable dense {offloadable} (dense {dense} − pinned {pinned}) + kv {kv}{workspace_part}{draft_part} bytes exceed the declared VRAM budget {vram}",
                     dense = env.dense_bytes,
                     pinned = env.pinned_cpu_bytes,
                     kv = env.kv_bytes_estimate
@@ -537,6 +562,54 @@ mod tests {
         assert!(manifest.flags.spec_type.is_none());
         assert!(manifest.flags.spec_draft_n_max.is_none());
         assert!(manifest.flags.spec_draft_ngl.is_none());
+    }
+
+    #[test]
+    fn the_verify_workspace_counts_even_with_a_cpu_routed_draft() {
+        // MTP record §7 item 1 (the D-B finding): the spec-decode verify
+        // workspace is GPU-side whenever a draft is ASKED, independent of
+        // the draft module's placement — a CPU-routed draft still verifies
+        // in GPU memory. The 8 GB card: offloadable 6.0 + kv 0.5 + the 2 GiB
+        // workspace = 8.647 > 8 — DENY, the reason naming the workspace
+        // term; the same plan without the workspace fits (the pre-§7
+        // arithmetic).
+        let env = ConstraintEnv {
+            available_ram_bytes: 0,
+            total_ram_bytes: 0,
+            vram_bytes_declared: Some(8_000_000_000),
+            gpu_offload: true,
+            model_mmap: true,
+            expert_bytes: 0,
+            dense_bytes: 6_000_000_000,
+            pinned_cpu_bytes: 0,
+            kv_bytes_estimate: 500_000_000,
+            compute_bytes_estimate: 0,
+            context_length: 0,
+            slot_count: None,
+            n_expert_used: None,
+            draft_bytes: 2_786_568_256,
+            draft_on_gpu: false,
+            verify_workspace_bytes: 2_147_483_648,
+            planned_flags: Vec::new(),
+        };
+        let evaluation =
+            evaluate_constraint(&Constraint::VramDenseFit, &env).expect("the guard evaluates");
+        assert!(
+            matches!(&evaluation, Evaluation::Deny(reason) if reason.contains("verify workspace")),
+            "the workspace counts even with a CPU-routed draft, and the deny names it — got: {evaluation:?}"
+        );
+
+        // The same plan without the workspace reserve fits (the pre-§7
+        // arithmetic) — the field's zero is the legacy behavior.
+        let legacy = ConstraintEnv {
+            verify_workspace_bytes: 0,
+            ..env
+        };
+        assert_eq!(
+            evaluate_constraint(&Constraint::VramDenseFit, &legacy).expect("the guard evaluates"),
+            Evaluation::Allow,
+            "a zero workspace is the pre-§7 arithmetic — the plan fits"
+        );
     }
 
     #[test]

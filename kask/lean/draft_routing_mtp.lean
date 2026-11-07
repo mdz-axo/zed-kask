@@ -4,12 +4,16 @@ zed-kask spec pin (unsloth transfer T5 — the MTP draft routing invariants).
 The Rust side: `compile_placement` (kask/crates/hkask-private-inference/
 src/local_leg/placement.rs) routes a declared draft module to the GPU
 exactly when the VRAM budget covers the used set (offloadable dense +
-KV estimate + compute buffer) AND the headroom after that covers the
-draft's bytes; otherwise the draft rides the CPU (`-ngld 0`). The
-extended `VramDenseFit` guard (`evaluate_constraint`,
+KV estimate + compute buffer + the spec-decode VERIFY workspace — the
+MTP record §7 item 1 term, GPU-side whenever a draft is asked, placement-
+independent per the D-B finding) AND the headroom after that covers the
+draft's bytes; otherwise the draft rides the CPU (`-ngld 0`). The extended
+`VramDenseFit` guard (`evaluate_constraint`,
 kask/crates/hkask-private-inference/src/local_leg/manifest.rs) re-derives
-the VRAM channel with the GPU-placed draft's bytes inside the resident
-sum and refuses the plan when it exceeds the budget.
+the VRAM channel with the verify workspace UNCONDITIONALLY inside the
+resident sum (a CPU-routed draft still verifies in GPU memory) and the
+GPU-placed draft's bytes, and refuses the plan when it exceeds the
+budget.
 
 Modeled over ℕ with the STATED ASSUMPTION that all quantities and their
 sums fit u64 — enforced on the Rust side by construction: every guard sum
@@ -32,26 +36,30 @@ namespace DraftRouting
 
 /-- The compiler's routing decision (placement.rs, `compile_placement`):
 a declared draft rides the GPU exactly when the VRAM budget covers the
-used set (offloadable dense + KV estimate + compute buffer) and the
-headroom after that covers the draft's bytes. -/
-def RoutesToGpu (offloadable kv compute draft vram : Nat) : Prop :=
-  vram ≥ offloadable + kv + compute
-    ∧ vram - (offloadable + kv + compute) ≥ draft
+used set (offloadable dense + KV estimate + compute buffer + the
+spec-decode verify workspace — GPU-side whenever a draft is asked, the
+MTP record §7 item 1 term that the D-B OOM proved placement-independent)
+and the headroom after that covers the draft's bytes. -/
+def RoutesToGpu (offloadable kv compute workspace draft vram : Nat) : Prop :=
+  vram ≥ offloadable + kv + compute + workspace
+    ∧ vram - (offloadable + kv + compute + workspace) ≥ draft
 
 /-- The extended VramDenseFit guard (manifest.rs, `evaluate_constraint`,
 the draft branch): allow exactly when the offloadable dense set + the KV
-estimate + the GPU-placed draft's bytes fit the budget. -/
-def VramGuardAllows (offloadable kv draft vram : Nat) : Prop :=
-  offloadable + kv + draft ≤ vram
+estimate + the verify workspace (UNCONDITIONALLY — the CPU-routed draft
+still verifies in GPU memory) + the GPU-placed draft's bytes fit the
+budget. -/
+def VramGuardAllows (offloadable kv workspace draft vram : Nat) : Prop :=
+  offloadable + kv + workspace + draft ≤ vram
 
 /-- SOUNDNESS: a GPU-routed draft always passes the extended VRAM guard.
 The routing condition is strictly tighter than the guard's sum — it also
 covers the compute buffer — so the implication is unconditional in the
 model: no GPU-routed draft plan is ever refused by the guard it feeds. -/
 theorem gpu_routed_draft_passes_the_vram_guard
-    (offloadable kv compute draft vram : Nat)
-    (h : RoutesToGpu offloadable kv compute draft vram) :
-    VramGuardAllows offloadable kv draft vram := by
+    (offloadable kv compute workspace draft vram : Nat)
+    (h : RoutesToGpu offloadable kv compute workspace draft vram) :
+    VramGuardAllows offloadable kv workspace draft vram := by
   obtain ⟨hfit, hhead⟩ := h
   unfold VramGuardAllows
   omega

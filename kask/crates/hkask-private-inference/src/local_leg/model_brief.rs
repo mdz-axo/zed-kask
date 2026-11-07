@@ -110,6 +110,18 @@ pub struct DraftSpec {
     /// The draft module's file size in bytes — the guard and placement
     /// arithmetic consume it.
     pub draft_bytes: u64,
+    /// zed-kask: MTP record §7 item 1 (2026-11-06) — the spec-decode
+    /// VERIFY workspace in bytes: GPU-side whenever a draft is ASKED,
+    /// regardless of the draft module's own placement (a CPU-routed
+    /// draft still runs speculative verification in GPU memory — the D-B
+    /// finding: the verify path OOM'd ctx 65536 on the 8 GB card with
+    /// 0.9-1.2 GB free, under-reserved by exactly this term). Unsloth's
+    /// guidance: prepare 1-2 GB extra headroom; the brief declares the
+    /// conservative upper bound. `0` (the serde default, also the value
+    /// for briefs predating the field) = no reserve — the pre-§7
+    /// arithmetic.
+    #[serde(default)]
+    pub verify_workspace_bytes: u64,
 }
 
 impl ModelBrief {
@@ -156,6 +168,10 @@ mod tests {
         assert_eq!(draft.spec_type, "draft-mtp");
         assert_eq!(draft.draft_n_max, 2);
         assert_eq!(draft.draft_bytes, 2_786_568_256);
+        assert_eq!(
+            draft.verify_workspace_bytes, 2_147_483_648,
+            "the §7 item-1 verify workspace is declared at unsloth's conservative upper bound"
+        );
     }
 
     #[test]

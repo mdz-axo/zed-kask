@@ -56,3 +56,10 @@ module_file = "MTP/mtp-Qwen3.8-Flash-Next-shared-Q8_0.gguf"
 spec_type = "draft-mtp"
 draft_n_max = 2
 draft_bytes = 2_786_568_256
+# MTP record §7 item 1 (2026-11-06): the spec-decode VERIFY workspace —
+# GPU-side whenever a draft is asked, INDEPENDENT of the draft module's
+# placement (a CPU-routed draft still verifies in GPU memory; the D-B
+# finding: the verify path OOM'd ctx 65536 on the 8 GB card with
+# 0.9-1.2 GB free). Unsloth's guidance: prepare 1-2 GB extra headroom —
+# the brief declares the conservative upper bound (2 GiB).
+verify_workspace_bytes = 2_147_483_648
