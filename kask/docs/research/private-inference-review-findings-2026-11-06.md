@@ -480,3 +480,17 @@ the seam changed):
   Pins: `private_consolidation_twin_prunes_low_confidence_across_the_split`
   + `private_forgetting_leg_prunes_aged_turn_storage_only`. The
   append-only alternative was not taken; the operator ruled the mirror.
+- **The #1 follow-up (2026-11-06, the operator's "proceed with the #1
+  follow-up item") — the tool-query-embed family's remaining legs** —
+  the research showed the item's CORE (the curator child's query side)
+  had already landed under a concurrent stream (`54688d615b` Phase 1,
+  `89c5fbfe26` Phase 2, the design doc's status line); what remained was
+  the design §8's same-class legs, and the implementation's emission
+  census found a second unnamed seam at the research child. Landed as
+  `6554ec0b4b`: the research rerank leg (the surfaced skip — no private
+  chat model exists) + the semantic-duplication tier (routed via the
+  private local model — the admission extended to the research server),
+  four pins, both-sides. The corpus legs (design §8.2) remain the owed
+  ruling — three shapes recorded in D100, the perimeter-knob posture
+  recommended. The skills' gates, computed: CG-2 true (0.975), the
+  cybernetics convergence viable.
