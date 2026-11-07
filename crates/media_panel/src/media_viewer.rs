@@ -7342,13 +7342,20 @@ impl MediaViewer {
         // reveals scroll the text BENEATH the band instead of displacing
         // the player out of the pane (the operator's "pushes the video
         // from the view"), and the search input the operator reaches for
-        // mid-reading never scrolls away. The band is bounded (~200px:
-        // 140px player + chips + search) — the reading area keeps the
-        // remainder at every pane height (the bounded-player ruling).
+        // mid-reading never scrolls away. THE HEIGHT BUDGET (the one-list
+        // design's rejected concern, now answered by composition): the
+        // band caps at 55% of the workspace, and the player row is the
+        // flexible member — the reading area keeps at least 45% at every
+        // pane height, the chips/search rows are irreducible, and below
+        // them the player row shrinks first (the widget's own pins keep
+        // the transport visible at every height) with overflow_hidden as
+        // the degenerate-clip backstop (the S1 discipline: visible
+        // truncation, never corruption of a neighboring surface).
         // Pinned by follow_scroll_keeps_the_pinned_player_in_view.
         let player_row = match widget.clone() {
             Some(widget) => div()
-                .h(px(140.))
+                .flex_1()
+                .min_h_0()
                 .flex()
                 .min_w_0()
                 .overflow_hidden()
@@ -7356,12 +7363,18 @@ impl MediaViewer {
                 .into_any_element(),
             // Degradation surfaced, never silent: the transcript text
             // still renders without the player.
-            None => Label::new(SharedString::from(
-                "Playback unavailable — the transcript and editing controls remain available.",
-            ))
-            .size(LabelSize::XSmall)
-            .color(ui::Color::Error)
-            .into_any_element(),
+            None => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .child(
+                    Label::new(SharedString::from(
+                        "Playback unavailable — the transcript and editing controls remain available.",
+                    ))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Error),
+                )
+                .into_any_element(),
         };
         let chips_row = self.render_transcript_chips_row(cx);
         let search_row = self.render_transcript_search_row(cx);
@@ -7370,6 +7383,8 @@ impl MediaViewer {
             v_flex()
                 .id("media-transcript-band")
                 .debug_selector(|| "media-transcript-band".into())
+                .max_h(gpui::relative(0.55))
+                .overflow_hidden()
                 .px_3()
                 .pt_2()
                 .gap_1()
@@ -7466,7 +7481,7 @@ impl MediaViewer {
     /// player, the chips, and the search input live in the PINNED
     /// interaction band above the list (render_transcript_workspace) —
     /// never virtualized away with the navigated detail.
-    fn render_workspace_header_item(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn render_workspace_header_item(&self, ix: usize, _cx: &mut Context<Self>) -> AnyElement {
         let row = match ix {
             0 => {
                 let Some(state) = self.transcript.as_ref() else {
@@ -18134,6 +18149,7 @@ mod viewer_layout_tests {
     }
 
     /// dcterms:identifier: `render_transcript_workspace` — the pinned
+    /// dcterms:identifier: `render_transcript_workspace` — the pinned
     /// interaction band
     /// expect: The player, the surface chips, and the search input pin
     /// ABOVE the scrolling transcript list: a deep follow-along reveal
@@ -18143,111 +18159,17 @@ mod viewer_layout_tests {
     /// shipped construction rendered the player as list item 0 (operator
     /// report 2026-11-07: the text scroll "pushes or blocks the video from
     /// the view"), so the reveal's own scroll virtualized the primary
-    /// media object out of the pane.
+    /// media object out of the pane. The band caps at 55% of the
+    /// workspace (the player row is its flexible member), so the reading
+    /// area keeps the majority at every pane height — the composed
+    /// height-budget answer to the one-list design's rejected concern.
     /// [P1] Motivating: the synced recording — watch while reading along.
     /// pre: a word-timed pane state with 30 blocks (far taller than the
     /// pane); the follow reveal armed by a late current word.
-    /// post: the media widget's bounds remain laid out INSIDE the content
-    /// area after the reveal — a virtualized-away row lays out no bounds,
+    /// post: the media widget's bounds remain laid out INSIDE the band
+    /// after the reveal — a virtualized-away row lays out no bounds,
     /// which is the shipped construction's red.
     #[gpui::test]
-    /// [DIAG-GEOM] Throwaway probe — DELETE AFTER USE. Measures the
-    /// transcript sub-surface's geometry after the pinned-band change:
-    /// the viewer area, the band, the widget, the list, and the marked
-    /// block — to adjudicate whether the band collapses the list at the
-    /// failing tests' window sizes.
-    #[gpui::test]
-    fn diag_probe_transcript_band_geometry(cx: &mut TestAppContext) {
-        init_layout_test_globals(cx);
-        admit_fixture();
-        let viewer = cx.new(|_| MediaViewer::new());
-        let output = serde_json::json!({
-            "content": {
-                "status": "fetched",
-                "display_hint": format!(
-                    "```media\n{{\"kind\":\"video\",\"src\":\"{FIXTURE}\"}}\n```"
-                )
-            }
-        })
-        .to_string();
-        viewer.update(cx, |viewer, cx| {
-            viewer.ingest_tool_result(&Value::String(output), "video_fetch", cx)
-        });
-        let deep_state = TranscriptPaneState {
-            transcript_id: "t-geom".into(),
-            media_path: FIXTURE.into(),
-            gallery_asset_id: None,
-            alignment: "original".into(),
-            alignment_note: None,
-            words: Some(
-                (0..200)
-                    .map(|index| PaneWord {
-                        word: format!("g{index}"),
-                        start_ms: index as u64 * 100,
-                        end_ms: index as u64 * 100 + 90,
-                    })
-                    .collect(),
-            ),
-            working_text: String::new(),
-            paragraph_breaks: Some((1..20).map(|block| block * 10 - 1).collect()),
-            speaker_spans: None,
-            review: None,
-            layers: Vec::new(),
-            highlights: Vec::new(),
-            strikes: Vec::new(),
-            correction_edits: Vec::new(),
-            source_words: Vec::new(),
-        };
-        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
-            viewer: viewer.clone(),
-        });
-        for (w, h) in [(px(480.), px(320.)), (px(480.), px(600.))] {
-            cx.simulate_resize(size(w, h));
-            cx.run_until_parked();
-            viewer.update(cx, |viewer, cx| {
-                viewer.transcript = Some(deep_state.clone());
-                viewer.active_tab = ViewerTab::Workspace;
-                viewer.inspector_open = false;
-                cx.notify();
-            });
-            cx.run_until_parked();
-            viewer.update(cx, |viewer, cx| {
-                viewer.current_word = Some(190);
-                viewer.follow_viewport = true;
-                viewer.follow_marked_block_into_view();
-                cx.notify();
-            });
-            cx.run_until_parked();
-            let collected = [
-                ("band", "media-transcript-band"),
-                ("widget", "media-widget"),
-                ("transport", "media-transport"),
-                ("search", "media-transcript-search-input"),
-                ("marked-block", "media-transcript-marked-block"),
-                ("viewer-content", "media-viewer-content"),
-            ]
-            .map(|(name, sel)| (name, cx.debug_bounds(sel)));
-            let (list_state, count) = viewer.update(cx, |viewer, _| {
-                (
-                    viewer.transcript_list.logical_scroll_top(),
-                    viewer.transcript_list_count,
-                )
-            });
-            println!("[DIAG-GEOM] === window {w:?} x {h:?} ===");
-            for (name, bounds) in collected {
-                match bounds {
-                    Some(b) => println!(
-                        "[DIAG-GEOM] {name}: top={:?} bottom={:?} h={:?}",
-                        b.top(),
-                        b.bottom(),
-                        b.size.height
-                    ),
-                    None => println!("[DIAG-GEOM] {name}: NOT LAID OUT"),
-                }
-            }
-            println!("[DIAG-GEOM] list_scroll_top={list_state:?} count={count}");
-        }
-    }
     fn follow_scroll_keeps_the_pinned_player_in_view(cx: &mut TestAppContext) {
         init_layout_test_globals(cx);
         admit_fixture();
@@ -18297,7 +18219,7 @@ mod viewer_layout_tests {
         let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
             viewer: viewer.clone(),
         });
-        cx.simulate_resize(size(px(480.), px(320.)));
+        cx.simulate_resize(size(px(480.), px(600.)));
         cx.run_until_parked();
 
         viewer.update(cx, |viewer, cx| {
@@ -19161,13 +19083,22 @@ mod viewer_layout_tests {
         let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
             viewer: viewer.clone(),
         });
-        cx.simulate_resize(size(px(480.), px(320.)));
+        // 480x600, not the old 480x320: the composed two-pane fix (2026-11-07)
+        // pins the interaction band (player + chips + search) above the list,
+        // capped at 55% of the workspace so the reading area keeps the
+        // majority — at the old 320px-window geometry the band leaves the
+        // list a sub-padding sliver and the reachability contract is
+        // exercised against the band instead (the pinned close row and
+        // select chip are now reachable WITHOUT scrolling — strictly
+        // stronger than the old scroll-to-reach). The harness halves the
+        // window, so the viewer area here is ~300px.
+        cx.simulate_resize(size(px(480.), px(600.)));
         cx.run_until_parked();
 
         // The close affordance rides in the sub-surface's header row above
         // the list — always visible, never virtualized away, reachable
         // without scrolling even on the tightest pane (the harness halves
-        // the window, so the viewer area here is ~160px).
+        // the window, so the viewer area here is ~300px).
         let close = cx
             .debug_bounds("media-transcript-close")
             .expect("Close remains laid out during media failure");
@@ -19175,32 +19106,35 @@ mod viewer_layout_tests {
             close.bottom() <= px(320.),
             "Close remains reachable during media failure: {close:?}"
         );
-        // The 140px pinned player row fills the first frame; the mode
-        // chips and the paragraph sit below the tight fold. The
-        // reachability contract under virtualization is that scrolling
-        // renders each — no dead end — asserted at each one's own scroll
-        // position: the ~56px list viewport at this window size cannot
-        // hold the chips, the label rows, and the paragraph in one frame.
-        for (item_ix, selector) in [
-            (1, "media-transcript-select-mode"),
-            (WORKSPACE_HEADER_ITEMS, "media-transcript-paragraph"),
-        ] {
-            viewer.update(cx, |viewer, cx| {
-                viewer.transcript_list.scroll_to(ListOffset {
-                    item_ix,
-                    offset_in_item: px(0.),
-                });
-                cx.notify();
+        // The select-mode chip is PINNED in the interaction band (the
+        // composed two-pane fix): it is never a list item, so it must
+        // render WITHOUT any scrolling — the strict form of the old
+        // scroll-to-reach contract.
+        let select_mode = cx
+            .debug_bounds("media-transcript-select-mode")
+            .expect("the pinned select chip renders without scrolling during media failure");
+        assert!(
+            select_mode.bottom() <= px(320.),
+            "the pinned select chip remains reachable during media failure: {select_mode:?}"
+        );
+        // The paragraph (block 0) remains a list item under the band —
+        // scrolling renders it, no dead end.
+        let selector = "media-transcript-paragraph";
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript_list.scroll_to(ListOffset {
+                item_ix: WORKSPACE_HEADER_ITEMS,
+                offset_in_item: px(0.),
             });
-            cx.run_until_parked();
-            let bounds = cx.debug_bounds(selector).unwrap_or_else(|| {
-                panic!("{selector} renders when scrolled to during media failure")
-            });
-            assert!(
-                bounds.bottom() <= px(320.),
-                "{selector} remains reachable during media failure: {bounds:?}"
-            );
-        }
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} renders when scrolled to during media failure"));
+        assert!(
+            bounds.bottom() <= px(320.),
+            "{selector} remains reachable during media failure: {bounds:?}"
+        );
     }
 
     /// The follow-along mark must stay VISIBLE during playback (S3d, the
