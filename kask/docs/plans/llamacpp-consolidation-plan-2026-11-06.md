@@ -14,6 +14,24 @@ consumption correction (kask_bridge is gpui-coupled; the harness consumes
 the endpoint semantics, not the crate) are integrated. The Requirements
 (settled) section is unchanged and remains binding.
 
+EXECUTION RECORD (2026-11-07, closed out): P1–P6 and P8 executed to their
+gates; the receipts live on the Ongoing Work card `bb84805b` (task
+"Stage 2 (Rust + llama.cpp): DME harness on installed infrastructure —
+baselines re-measured"). Two provisions changed under typed findings and
+operator rulings, both preserving zero-capability-loss: (1) P5's
+prebuilt route is unimplementable as published — the published sys crate
+fails closed on LLAMA_PREBUILT_DIR while its decode-hooks patch is
+staged — resolved by the in-repo llama-cpp-sys-4 fork building the
+PINNED canonical source (LLAMA_CPP_SRC_DIR) with the patch applied;
+the 23-layer capture gate fired live on that route. (2) The S leg's
+BF16 is corrupt IN THE UPSTREAM SOURCE (our download byte-identical to
+the upstream LFS pointer) — the operator ruled the official Q8_0 as
+the interim S artifact (fleet identity ornith-1.5-9b-q8), and ruled the
+A leg to cap-4096 × 96, the archived-comparable trap shape. B: 96/96
+rows, both verdicts PASS. S: 10/10 rows, both verdicts PASS, the
+deviation recorded in every row. A: the cap-4096 baseline landed per the
+chain's autonomous completion (probe-A-canonical-4096.jsonl).
+
 ## End state
 
 - **Surface 1 — ollama's bundled llama.cpp** (ollama 0.40.12): the

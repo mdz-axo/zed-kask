@@ -50,7 +50,7 @@ decide.
 
 Default (probe / edit / gguf-info / summary): `cargo build -p dme-harness --release`
 
-With the capture engine (see LLAMA_PREBUILT_DIR above):
+With the capture engine (see LLAMA_CPP_SRC_DIR above):
 `cargo build -p dme-harness --release --features engine`
 
 ## The receipts' contract

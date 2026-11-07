@@ -51,8 +51,8 @@ note = "a distinct Q8_0 of the same base model (different quant provenance, pre-
 path = "ornith-1.5-9b/Ornith-1.5-9B-Q8_0.gguf"
 bytes = 9_786_060_384
 sha256 = "22086870b009dbe9815ee752c48a82de930118a7c5ce5599590892ae03b8b010"
-role = "sibling_receipt"
-note = "the sibling control's Q8_0 (the spikes' download, reconciled from the spikes' models/ dir)"
+role = "sibling_receipt_and_s_leg_interim"
+note = "the sibling control's Q8_0 (reconciled from the spikes' models/ dir) — AND the operator-ruled S-LEG INTERIM artifact (2026-11-07): the official BF16 is broken upstream (byte-identical to our corrupt download), so the S leg ran on this official Q8_0 through the fleet identity ornith-1.5-9b-q8 (probe-S-canonical-q8.jsonl; the deviation rationale lives in that brief)"
 
 [[artifact]]
 path = "bonsai-27b/Ternary-Bonsai-2-27B-Q2_0.gguf"
