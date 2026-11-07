@@ -21,20 +21,12 @@ use hkask_private_inference::local_leg::gguf_writer;
 use hkask_types::agent_paths::resolve_under_artifacts_dir;
 
 /// The DME artifacts: the canonical models dir first (the P6 layout, one
-/// dir per model brief), then the pre-consolidation locations.
+/// The DME artifacts — the canonical models dir, the ONE home (P6
+/// consolidated; the pre-consolidation locations are gone).
 fn dme_artifact(name: &str) -> Option<PathBuf> {
-    for dir in [
-        "private-inference/models/dme",
-        "private-inference/models/qwen35-0.8b",
-        "direct-model-edit-rust/vendor/gguf",
-        "direct-model-edit-rust/models",
-    ] {
-        let path = resolve_under_artifacts_dir(Path::new(dir)).join(name);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    None
+    let path =
+        resolve_under_artifacts_dir(Path::new("private-inference/models/qwen35-0.8b")).join(name);
+    path.is_file().then_some(path)
 }
 
 const PARAM_COUNT_TARGET: u64 = 752_393_024;
