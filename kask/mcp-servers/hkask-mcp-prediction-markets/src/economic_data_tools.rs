@@ -336,10 +336,10 @@ impl PredictionMarketsServer {
     /// Weight decision criteria and score alternatives via the decision
     /// model — the mcda skill's weight-and-score semantic halves (card
     /// c8a2ffaf). One typed Score question per criterion weight and per
-    /// (alternative, criterion) raw score over the fixed 0-10 answer space
-    /// (cost criteria pre-inverted: 0 = most costly, 10 = least costly).
+    /// (alternative, criterion) raw score over the fixed 1-10 answer space
+    /// (cost criteria pre-inverted: 1 = most costly, 10 = least costly).
     #[tool(
-        description = "Weight decision criteria and score alternatives via the decision model (kask.models.decision_model, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 0-10 answer space (cost criteria pre-inverted: 0 = most costly/worst, 10 = least costly/best). Returns {\"weights\": [{criterion, weight}], \"raw_scores\": [{alternative, criterion, raw_score}]} — the shape the mcda skill's lisp gates consume. An unset decision model is a typed refusal naming the setting."
+        description = "Weight decision criteria and score alternatives via the decision model (kask.models.decision_model, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 1-10 answer space (cost criteria pre-inverted: 1 = most costly/worst, 10 = least costly/best). Returns {\"weights\": [{criterion, weight}], \"raw_scores\": [{alternative, criterion, raw_score}]} — the shape the mcda skill's lisp gates consume. An unset decision model is a typed refusal naming the setting."
     )]
     pub async fn mcda_weight_score(
         &self,

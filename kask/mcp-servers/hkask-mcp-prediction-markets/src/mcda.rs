@@ -8,14 +8,21 @@
 //! elicitation to `kask.models.decision_model` (env HKASK_DECISION_MODEL,
 //! default OpenRouter/typesafe/jev-1.14 — a Jev-class System One model
 //! served over OpenRouter's Decisions API, never a chat endpoint): ONE
-//! call carrying typed Score questions over the FIXED 0-10 answer space —
+//! call carrying typed Score questions over the FIXED 1-10 answer space —
 //! one weight question per criterion (its importance for the decision
 //! under the named weighting method), one score question per
 //! (alternative, criterion) with the cost-criterion pre-inversion stated
-//! in the question text (the skill's convention: cost 0 = most
-//! costly/worst, 10 = least costly/best). The judgment per question is
-//! the argmax level over the calibrated per-level probabilities (the eqm
-//! extraction).
+//! in the question text (the skill's convention: cost 1 = most
+//! costly/worst, 10 = least costly/best). TEN levels per question, no
+//! more: the provider's Score `criteria` accept AT MOST 10 items — the
+//! former 11-level 0-10 space was rejected 422 by the live endpoint on
+//! every measurement run (the length pin in the tests closes that gap).
+//! The judgment per question is the chosen level's NUMBER in that 1-10
+//! space: the wire keys probabilities by 0-based index into the criteria
+//! (DecisionLevelProbability's own contract; the eqm probe's legend and
+//! probability-weighted score field both confirm index keying), so the
+//! judgment is the argmax level plus one (the eqm extraction plus the
+//! renumbering).
 //!
 //! The output is the shape the former template produced —
 //! `weights: [{criterion, weight}]` plus `raw_scores: [{alternative,
@@ -96,17 +103,17 @@ pub struct WeightScoreRequest {
 
 // ── Result types ──────────────────────────────────────────────────────────
 
-/// One criterion's elicited weight — the argmax level of the weight
-/// question over the fixed 0-10 importance space.
+/// One criterion's elicited weight — the chosen level's number from the
+/// weight question over the fixed 1-10 importance space.
 #[derive(Debug, serde::Serialize)]
 pub struct CriterionWeight {
     pub criterion: String,
     pub weight: u8,
 }
 
-/// One alternative's raw score on one criterion — the argmax level of
-/// the score question over the fixed 0-10 performance space (cost
-/// criteria pre-inverted).
+/// One alternative's raw score on one criterion — the chosen level's
+/// number from the score question over the fixed 1-10 performance space
+/// (cost criteria pre-inverted).
 #[derive(Debug, serde::Serialize)]
 pub struct RawScore {
     pub alternative: String,
@@ -166,39 +173,44 @@ impl From<McdaError> for hkask_mcp_server::server::McpToolError {
 
 // ── Decision request construction ──────────────────────────────────────────
 
-/// The fixed 0-10 importance answer space for weight questions (11
+/// The provider's Score `criteria` accept AT MOST 10 items — the request
+/// validation that rejected the 11-level 0-10 space live (a typed 422 on
+/// every measurement run, at `loc body.questions.*.score.criteria`). The
+/// answer space is therefore the natural TEN-level 1-10 scale, and every
+/// question's level list is exactly this long (pinned by test).
+const LEVELS_PER_QUESTION: usize = 10;
+
+/// The fixed 1-10 importance answer space for weight questions (ten
 /// ordered level descriptions, least to most) — the weighting rubric the
 /// former template stated inline, now the decision question's criteria.
-const WEIGHT_LEVELS: [&str; 11] = [
-    "0 — no importance: the criterion should not influence the decision",
-    "1 — very low importance",
-    "2 — low importance",
-    "3 — somewhat low importance",
-    "4 — below-average importance",
+const WEIGHT_LEVELS: [&str; LEVELS_PER_QUESTION] = [
+    "1 — no importance: the criterion should not influence the decision",
+    "2 — very low importance",
+    "3 — low importance",
+    "4 — somewhat low importance",
     "5 — average importance",
-    "6 — above-average importance",
-    "7 — somewhat high importance",
+    "6 — somewhat high importance",
+    "7 — above-average importance",
     "8 — high importance",
     "9 — very high importance",
     "10 — decisive importance: the criterion should dominate the decision",
 ];
 
-/// The fixed 0-10 performance answer space for score questions (11
+/// The fixed 1-10 performance answer space for score questions (ten
 /// ordered level descriptions, least to most). Cost criteria read
-/// through the pre-inverted rubric the question text states (0 = most
+/// through the pre-inverted rubric the question text states (1 = most
 /// costly/worst, 10 = least costly/best), so the levels stay
 /// performance-generic.
-const SCORE_LEVELS: [&str; 11] = [
-    "0 — worst possible performance on this criterion",
-    "1 — very poor performance",
-    "2 — poor performance",
-    "3 — somewhat poor performance",
-    "4 — below-average performance",
+const SCORE_LEVELS: [&str; LEVELS_PER_QUESTION] = [
+    "1 — worst possible performance on this criterion",
+    "2 — very poor performance",
+    "3 — poor performance",
+    "4 — somewhat poor performance",
     "5 — average performance",
-    "6 — above-average performance",
-    "7 — good performance",
-    "8 — very good performance",
-    "9 — excellent performance",
+    "6 — somewhat strong performance",
+    "7 — above-average performance",
+    "8 — strong performance",
+    "9 — very strong performance",
     "10 — best possible performance on this criterion",
 ];
 
@@ -255,11 +267,11 @@ fn decision_questions(
         };
         let instructions = match req.weighting_method.as_str() {
             "swing" => format!(
-                "Assign the swing weight of criterion \"{}\" ({}; {}) for this decision. {} — score this criterion's importance by the swing in overall value its improvement from worst to best provides. 0 = no importance, 10 = decisive importance.",
+                "Assign the swing weight of criterion \"{}\" ({}; {}) for this decision. {} — score this criterion's importance by the swing in overall value its improvement from worst to best provides. 1 = no importance, 10 = decisive importance.",
                 criterion.name, kind, criterion.description, SWING_RUBRIC
             ),
             _ => format!(
-                "Assign the direct importance weight of criterion \"{}\" ({}; {}) for this decision — its relative importance compared to the other criteria, reflecting how much it should influence the choice. 0 = no importance, 10 = decisive importance.",
+                "Assign the direct importance weight of criterion \"{}\" ({}; {}) for this decision — its relative importance compared to the other criteria, reflecting how much it should influence the choice. 1 = no importance, 10 = decisive importance.",
                 criterion.name, kind, criterion.description
             ),
         };
@@ -273,11 +285,11 @@ fn decision_questions(
         for (c, criterion) in req.criteria.iter().enumerate() {
             let instructions = match criterion.r#type {
                 CriterionType::Benefit => format!(
-                    "Score alternative \"{}\" on criterion \"{}\" — a benefit criterion ({}): higher values are better. 0 = worst possible performance, 10 = best possible performance.",
+                    "Score alternative \"{}\" on criterion \"{}\" — a benefit criterion ({}): higher values are better. 1 = worst possible performance, 10 = best possible performance.",
                     alt.name, criterion.name, criterion.description
                 ),
                 CriterionType::Cost => format!(
-                    "Score alternative \"{}\" on criterion \"{}\" — a cost criterion ({}), pre-inverted for the weighted-sum model: 0 = most costly (worst), 10 = least costly (best).",
+                    "Score alternative \"{}\" on criterion \"{}\" — a cost criterion ({}), pre-inverted for the weighted-sum model: 1 = most costly (worst), 10 = least costly (best).",
                     alt.name, criterion.name, criterion.description
                 ),
             };
@@ -291,10 +303,14 @@ fn decision_questions(
     questions
 }
 
-/// Map a decision answer to the judgment level: the most probable level
-/// (argmax over the calibrated per-level probabilities) — the eqm
-/// extraction. Never a fabricated value: a levelless answer reads `None`
-/// and the caller refuses naming the question.
+/// Map a decision answer to the most probable level (argmax over the
+/// calibrated per-level probabilities) — the eqm extraction. The wire
+/// keys probabilities by 0-based index into the question's criteria
+/// (DecisionLevelProbability's own contract; the eqm probe's legend and
+/// probability-weighted score field both confirm it), so this returns
+/// the INDEX, not the level's number in the 1-10 rubric — `usable_level`
+/// owns that renumbering. Never a fabricated value: a levelless answer
+/// reads `None` and the caller refuses naming the question.
 fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u8> {
     answer
         .level_probabilities
@@ -308,14 +324,18 @@ fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u
 }
 
 /// The usable judgment for one question id: the answer present, with
-/// levels, and inside the fixed 0-10 space.
+/// levels, and inside the question's ten-item criteria list — mapped
+/// from the wire's 0-based level index to the chosen level's NUMBER in
+/// the 1-10 rubric (index + 1, the renumbering the ten-level answer
+/// space requires; pinned by test).
 fn usable_level(batch: &hkask_types::ports::DecisionBatch, id: &str) -> Option<u8> {
     batch
         .answers
         .iter()
         .find(|answer| answer.id == id)
         .and_then(answer_level)
-        .filter(|level| *level <= 10)
+        .filter(|level| (*level as usize) < LEVELS_PER_QUESTION)
+        .map(|level| level + 1)
 }
 
 // ── Request validation ─────────────────────────────────────────────────────
@@ -370,10 +390,11 @@ fn validate(req: &WeightScoreRequest) -> Result<(), McdaError> {
 ///
 /// Sends the decision context as the state plus one typed score question
 /// per bounded judgment (the Decisions API: the model returns a
-/// calibrated probability distribution over each question's fixed 0-10
-/// levels, never text); the argmax level is the judgment. Normalization,
-/// composites, ranking and sensitivity stay deterministic in the skill's
-/// `lisp_eval` gates. An unset decision model is a typed refusal naming
+/// calibrated probability distribution over each question's fixed
+/// ten-level 1-10 scale, never text); the chosen level's number is the
+/// judgment. Normalization, composites, ranking and sensitivity stay
+/// deterministic in the skill's `lisp_eval` gates. An unset decision
+/// model is a typed refusal naming
 /// the setting — never a chat-model fallback; a private-provenance call
 /// refuses at the boundary (the decision model is cloud-served; private
 /// content never crosses).
@@ -516,18 +537,24 @@ mod tests {
         }
     }
 
-    fn answer(id: &str, level: u8) -> hkask_types::inference_ipc::DecisionAnswer {
+    /// An answer whose argmax sits at the 0-based criteria INDEX
+    /// `argmax_index` (the wire's keying), with a second calibrated level
+    /// inside the ten-item list so the argmax is a real extraction.
+    fn answer(id: &str, argmax_index: u8) -> hkask_types::inference_ipc::DecisionAnswer {
         hkask_types::inference_ipc::DecisionAnswer {
             id: id.to_string(),
-            score: level as f64,
-            // Two calibrated levels; the argmax is the judgment.
+            score: argmax_index as f64,
             level_probabilities: vec![
                 hkask_types::inference_ipc::DecisionLevelProbability {
-                    level,
+                    level: argmax_index,
                     probability: 0.8,
                 },
                 hkask_types::inference_ipc::DecisionLevelProbability {
-                    level: 10,
+                    level: if argmax_index == 9 {
+                        0
+                    } else {
+                        argmax_index + 1
+                    },
                     probability: 0.2,
                 },
             ],
@@ -551,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn decision_questions_carry_the_fixed_0_10_answer_space() {
+    fn decision_questions_carry_the_fixed_1_10_answer_space() {
         let req = request();
         let questions = decision_questions(&req);
         // 2 weight questions (one per criterion) + 2×2 score questions
@@ -561,6 +588,22 @@ mod tests {
         for question in &questions {
             assert!(!ids.contains(&question.id), "ids must be unique");
             ids.push(question.id.clone());
+            // THE CAP PIN: the provider's Score `criteria` accept AT MOST
+            // 10 items — the 11-level 0-10 space was rejected 422 live on
+            // every measurement run (card c8a2ffaf follow-up). The unit
+            // tests mock the wire, so the provider's request validation
+            // never runs here; this length assertion is the mechanical
+            // stand-in for it.
+            assert!(
+                question.criteria.len() <= 10,
+                "the provider rejects criteria lists over 10 items (live 422); got {}",
+                question.criteria.len()
+            );
+            assert_eq!(
+                question.criteria.len(),
+                LEVELS_PER_QUESTION,
+                "the answer space is the fixed ten-level 1-10 scale"
+            );
         }
 
         let weight_questions: Vec<_> = questions.iter().take(2).collect();
@@ -571,12 +614,15 @@ mod tests {
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),
-                "weight questions carry the fixed 0-10 importance space"
+                "weight questions carry the fixed 1-10 importance space"
             );
-            assert_eq!(
-                question.criteria.len(),
-                11,
-                "the answer space is the fixed 0-10 (eleven levels)"
+            assert!(
+                question.criteria[0].starts_with("1 — no importance"),
+                "the scale starts at level 1"
+            );
+            assert!(
+                question.criteria[LEVELS_PER_QUESTION - 1].starts_with("10 — decisive importance"),
+                "the scale tops out at level 10"
             );
             assert!(
                 question.instructions.contains(&criterion.name),
@@ -596,15 +642,22 @@ mod tests {
                     .iter()
                     .map(|s| s.to_string())
                     .collect::<Vec<_>>(),
-                "score questions carry the fixed 0-10 performance space"
+                "score questions carry the fixed 1-10 performance space"
+            );
+            assert!(
+                question.criteria[LEVELS_PER_QUESTION - 1].starts_with("10 — best possible"),
+                "the scale tops out at level 10"
             );
         }
         let benefit = &score_questions[0]; // s0_0: postgres × query latency
         assert!(
             benefit.instructions.contains("query latency")
                 && benefit.instructions.contains("postgres")
-                && benefit.instructions.contains("higher values are better"),
-            "benefit questions state the benefit rubric: {benefit:?}"
+                && benefit.instructions.contains("higher values are better")
+                && benefit
+                    .instructions
+                    .contains("1 = worst possible performance, 10 = best possible performance"),
+            "benefit questions state the 1-10 benefit rubric: {benefit:?}"
         );
         let cost = &score_questions[1]; // s0_1: postgres × operating cost
         assert!(
@@ -612,7 +665,7 @@ mod tests {
                 && cost.instructions.contains("pre-inverted")
                 && cost
                     .instructions
-                    .contains("0 = most costly (worst), 10 = least costly (best)"),
+                    .contains("1 = most costly (worst), 10 = least costly (best)"),
             "cost questions state the pre-inversion in the question text: {cost:?}"
         );
     }
@@ -654,6 +707,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn usable_level_maps_the_wire_index_to_the_level_number() {
+        // The wire keys probabilities by 0-based index into the criteria;
+        // the judgment is the chosen level's NUMBER in the 1-10 rubric
+        // (the renumbering pinned here — the flip point if a live answer
+        // ever arrives keyed 1-10 instead).
+        let answered = batch(vec![answer("w0", 7), answer("w1", 0), answer("w9", 9)]);
+        assert_eq!(usable_level(&answered, "w0"), Some(8), "index 7 is level 8");
+        assert_eq!(usable_level(&answered, "w1"), Some(1), "index 0 is level 1");
+        assert_eq!(
+            usable_level(&answered, "w9"),
+            Some(10),
+            "index 9 is level 10"
+        );
+        // An index outside the ten-item criteria list is unusable — never
+        // a fabricated level 11.
+        let out_of_range = batch(vec![hkask_types::inference_ipc::DecisionAnswer {
+            id: "w_out".to_string(),
+            score: 0.0,
+            level_probabilities: vec![hkask_types::inference_ipc::DecisionLevelProbability {
+                level: 10,
+                probability: 1.0,
+            }],
+            confidence: 1.0,
+        }]);
+        assert_eq!(
+            usable_level(&out_of_range, "w_out"),
+            None,
+            "a level index at/after the ten-item list is unusable, never level 11"
+        );
+        assert_eq!(usable_level(&out_of_range, "absent"), None);
+    }
+
     #[tokio::test]
     async fn private_provenance_refuses_before_any_call() {
         // The `with_call_provenance` seam sets the dispatch scope (the
@@ -690,14 +776,16 @@ mod tests {
         let req = request();
         // Every weight answers; one score is absent entirely (s0_1) and
         // one is levelless (s1_0) — both must refuse, never zero-fill.
-        let mut answers = vec![answer("w0", 8), answer("w1", 3), answer("s0_0", 6)];
+        // Wire indices are one below the judgments (index 7 answers
+        // level 8) — the renumbering mapped end-to-end.
+        let mut answers = vec![answer("w0", 7), answer("w1", 2), answer("s0_0", 5)];
         answers.push(hkask_types::inference_ipc::DecisionAnswer {
             id: "s1_0".to_string(),
             score: 0.0,
             level_probabilities: Vec::new(),
             confidence: 0.0,
         });
-        answers.push(answer("s1_1", 4));
+        answers.push(answer("s1_1", 3));
         let result = assemble_result(&req, &batch(answers))
             .expect_err("missing or levelless answers refuse");
         match result {
@@ -711,15 +799,29 @@ mod tests {
     #[test]
     fn assembled_output_shape_matches_the_former_template() {
         let req = request();
+        // Wire indices are one below the judgments (index 7 answers
+        // level 8) — the renumbering mapped end-to-end.
         let answers = vec![
-            answer("w0", 8),
-            answer("w1", 3),
-            answer("s0_0", 6),
-            answer("s0_1", 9),
-            answer("s1_0", 2),
-            answer("s1_1", 4),
+            answer("w0", 7),
+            answer("w1", 2),
+            answer("s0_0", 5),
+            answer("s0_1", 8),
+            answer("s1_0", 1),
+            answer("s1_1", 3),
         ];
         let result = assemble_result(&req, &batch(answers)).expect("complete batch assembles");
+        for weight in &result.weights {
+            assert!(
+                (1..=10).contains(&weight.weight),
+                "weights are level numbers in 1-10"
+            );
+        }
+        for raw in &result.raw_scores {
+            assert!(
+                (1..=10).contains(&raw.raw_score),
+                "raw scores are level numbers in 1-10"
+            );
+        }
         // The exact shape the former template produced — keys, order and
         // no extras — so the lisp halves and downstream skill steps
         // consume it unchanged.

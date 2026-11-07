@@ -68,16 +68,16 @@ env: `W` = raw weights (one per criterion), `ALTS` = one list per alternative of
 
 ### weight-and-score
 
-1. Call the `mcda_weight_score` tool with the identify-criteria pass-through: `decision_question`, `criteria` (the structured criterion objects — name, benefit-or-cost type, description), `alternatives` (each `{name, description}`), and `weighting_method` (`direct` or `swing`). The tool routes the semantic halves through `kask.models.decision_model` (the Decisions API — never a chat endpoint) as ONE call of typed Score questions over the fixed 0–10 answer space: one weight question per criterion under the named weighting method (swing carries the all-criteria-at-worst-level rubric), one score question per (alternative, criterion) with cost criteria pre-inverted (0 = most costly/worst, 10 = least costly/best). It returns `weights` (one per criterion, in criterion order) and `raw_scores` (one per alternative × criterion) — the shape the former weight-and-score render produced.
+1. Call the `mcda_weight_score` tool with the identify-criteria pass-through: `decision_question`, `criteria` (the structured criterion objects — name, benefit-or-cost type, description), `alternatives` (each `{name, description}`), and `weighting_method` (`direct` or `swing`). The tool routes the semantic halves through `kask.models.decision_model` (the Decisions API — never a chat endpoint) as ONE call of typed Score questions over the fixed 1–10 answer space: one weight question per criterion under the named weighting method (swing carries the all-criteria-at-worst-level rubric), one score question per (alternative, criterion) with cost criteria pre-inverted (1 = worst/most costly, 10 = best/least costly). It returns `weights` (one per criterion, in criterion order) and `raw_scores` (one per alternative × criterion) — the shape the former weight-and-score render produced.
 2. (D) Weights are normalized by `(norm W)` in `lisp_eval`; the tool's weights are not.
 3. (D) Normalize scores to 0–1: `normalized = raw / 10` — `ALTS` is one list per alternative of normalized scores in criterion order.
 4. (D) Compute composites with `lisp_eval` `(dot (norm W) <alt>)` for each alternative — the weighted sum model.
 5. (D) Rank alternatives by composite descending (rank 1 = best).
 6. If two alternatives have identical composite scores, assign the same rank and skip the next rank.
 
-**S15 clause.** The bounded weight and score judgments (each a calibrated score over the fixed 0–10 answer space) route through `kask.models.decision_model` with fail-visible resolution: an unset model is a typed refusal naming the setting, a private-provenance call refuses before any dispatch, and a missing judgment refuses rather than fabricating. The oracle for their deterministic consequences — normalization, composites, ranking, `MCDA-2`, `min_flip` — is the named `lisp_eval` gates.
+**S15 clause.** The bounded weight and score judgments (each a calibrated score over the fixed 1–10 answer space) route through `kask.models.decision_model` with fail-visible resolution: an unset model is a typed refusal naming the setting, a private-provenance call refuses before any dispatch, and a missing judgment refuses rather than fabricating. The oracle for their deterministic consequences — normalization, composites, ranking, `MCDA-2`, `min_flip` — is the named `lisp_eval` gates.
 
-The former weight-and-score render (deleted with card c8a2ffaf) is replaced by the `mcda_weight_score` tool: its semantic elicitation (the weighting-method rubric, the 0–10 scoring scale, the cost-criterion pre-inversion) moved into the tool's typed questions, and the identify-criteria structured pass-through replaces its context assembly.
+The former weight-and-score render (deleted with card c8a2ffaf) is replaced by the `mcda_weight_score` tool: its semantic elicitation (the weighting-method rubric, the 1–10 scoring scale, the cost-criterion pre-inversion) moved into the tool's typed questions, and the identify-criteria structured pass-through replaces its context assembly.
 
 ### sensitivity-analysis
 
@@ -132,9 +132,10 @@ findings). All receipts executed through the live tool 2026-09-29.
   composites — a render never re-ranks.
 - `argmax` keeps the first alternative on ties; report ties explicitly,
   never silently.
-- Raw scores are 0–10; normalized = raw / 10; cost criteria are
-  pre-inverted (0 = most costly, 10 = least costly). Weights are the
-  tool's 0–10 argmax judgments — raw, never normalized at the source;
+- Raw scores are 1–10 (the tool's fixed ten-level answer space);
+  normalized = raw / 10 (1–10 → [0.1, 1.0]); cost criteria are
+  pre-inverted (1 = most costly/worst, 10 = least costly/best). Weights
+  are the tool's 1–10 judgments — raw, never normalized at the source;
   `(norm W)` owns normalization.
 - The danger threshold is supplied explicitly as `danger_threshold` (0.3
   unless the decision question fixes a veto level — the render contract

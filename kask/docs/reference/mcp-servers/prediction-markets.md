@@ -185,7 +185,7 @@ uses the server's inference port for LLM scoring, not an external HTTP API.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `mcda_weight_score` | Weight decision criteria and score alternatives via the decision model (`kask.models.decision_model`, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 0-10 answer space (cost criteria pre-inverted: 0 = most costly/worst, 10 = least costly/best). Returns `weights` and `raw_scores` — the shape the mcda skill's `lisp_eval` gates consume. | `decision_question`, `criteria`, `alternatives`, `weighting_method` |
+| `mcda_weight_score` | Weight decision criteria and score alternatives via the decision model (`kask.models.decision_model`, served over the Decisions API — never a chat endpoint). One typed Score question per criterion weight and per alternative×criterion raw score over the fixed 1-10 answer space (cost criteria pre-inverted: 1 = most costly/worst, 10 = least costly/best). Returns `weights` and `raw_scores` — the shape the mcda skill's `lisp_eval` gates consume. | `decision_question`, `criteria`, `alternatives`, `weighting_method` |
 
 Like the EQM tool, this forwards to a server module (`mcda` at
 `kask/mcp-servers/hkask-mcp-prediction-markets/src/mcda.rs`, `mcda::weight_score` at
