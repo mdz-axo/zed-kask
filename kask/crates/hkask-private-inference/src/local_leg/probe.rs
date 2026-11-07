@@ -190,8 +190,9 @@ mod tests {
     use crate::local_leg::manifest::shipped_manifest;
 
     /// The real observed `--version` line of the pinned build
-    /// (verified live 2026-11-04 against build-hip).
-    const OBSERVED_VERSION_LINE: &str = "version: 0.9.0-dev (build 1, commit 9e2a04a)";
+    /// (verified live 2026-11-06 against build-hip; the probe pins the
+    /// COMMIT — the build number is display text, never compared).
+    const OBSERVED_VERSION_LINE: &str = "version: 0.9.0-dev (build 236, commit 9e2a04a)";
 
     #[test]
     fn parses_the_observed_version_line() {

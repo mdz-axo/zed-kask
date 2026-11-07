@@ -13,8 +13,9 @@ surface_id = "llama-cpp-mainline-cpu-p0"
 engine_version_pin = "v0.9.0-dev mainline, commit 9e2a04a — builds: CPU (build/), Vulkan (build-vulkan/), HIP gfx1102 (build-hip/)"
 
 # The structured pin the startup probe enforces (the probe parses the
-# binary's `--version` line: "version: 0.9.0-dev (build 1, commit 9e2a04a)",
-# verified live 2026-11-04 against build-hip/bin/llama-server).
+# binary's `--version` line: "version: 0.9.0-dev (build 236, commit
+# 9e2a04a)", verified live 2026-11-06 against build-hip/bin/llama-server —
+# the probe pins the COMMIT, never the build number).
 [version_pin]
 commit = "9e2a04a"
 version = "0.9.0-dev"

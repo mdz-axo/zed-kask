@@ -100,14 +100,18 @@ impl GpuBackend {
     }
 }
 
-/// The llama.cpp engine root — the canonical hidden-root engine install
-/// (`{data_dir}/private-inference/engine/llama.cpp/`, the two-root
-/// storage schema; the relocation `e91fdae7f7` retired the P0 `~/models`
-/// sprawl). Resolved through `agent_paths` — the HKASK_DATA_DIR → XDG →
-/// platform-default chain — never a literal home-dir string.
+/// The llama.cpp engine root — the canonical engine tree under the
+/// artifacts root (`{artifacts}/private-inference/engines/llama-cpp-mainline/`,
+/// the one-path artifacts location the consolidation plan pins; the
+/// build script `kask/scripts/build-llamacpp-mainline.sh` materializes it).
+/// Resolved through `agent_paths` — the HKASK_ARTIFACTS_DIR → XDG documents
+/// → platform-default chain, the same root class the bridge uses for the
+/// models root — never a literal home-dir string. The engine tree is a
+/// build artifact (multi-GiB, user-inspectable), so it lives under the
+/// visible artifacts root, not the hidden internal-data root.
 pub fn engine_root() -> PathBuf {
-    hkask_types::agent_paths::resolve_under_data_dir(Path::new(
-        "private-inference/engine/llama.cpp",
+    hkask_types::agent_paths::resolve_under_artifacts_dir(Path::new(
+        "private-inference/engines/llama-cpp-mainline",
     ))
 }
 
@@ -570,14 +574,15 @@ mod tests {
     }
 
     #[test]
-    fn engine_root_resolves_the_canonical_hidden_root() {
-        // The shape pin: the engine lives under the private-inference data
-        // subtree — the resolution chain (HKASK_DATA_DIR → XDG → platform
-        // default) is `agent_paths`' own, tested there; this pins that the
+    fn engine_root_resolves_the_canonical_artifacts_root() {
+        // The shape pin: the engine tree lives under the private-inference
+        // subtree of the ARTIFACTS root — the resolution chain
+        // (HKASK_ARTIFACTS_DIR → XDG documents → platform default) is
+        // `agent_paths`' own, tested there; this pins that the
         // private-inference call site names the canonical subpath, never a
         // `~` literal (the retired probe bug).
         let resolved = engine_root();
-        assert!(resolved.ends_with("private-inference/engine/llama.cpp"));
+        assert!(resolved.ends_with("private-inference/engines/llama-cpp-mainline"));
         assert!(!resolved.to_string_lossy().contains('~'));
     }
 
