@@ -349,9 +349,14 @@ pub(crate) fn read_f32_file(path: &str, dim: usize) -> Result<Vec<f32>> {
         "f32 file {path} too small: {} bytes for dim {dim}",
         bytes.len()
     );
-    Ok((0..dim)
-        .map(|i| f32::from_le_bytes(bytes[i * 4..(i + 1) * 4].try_into().unwrap()))
-        .collect())
+    let mut out = Vec::with_capacity(dim);
+    for i in 0..dim {
+        let b: [u8; 4] = bytes[i * 4..(i + 1) * 4]
+            .try_into()
+            .with_context(|| format!("f32 file {path}: short element {i}"))?;
+        out.push(f32::from_le_bytes(b));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

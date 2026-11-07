@@ -343,15 +343,15 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         .map(|i| {
             (0..cfg.vectors_dim)
                 .map(|j| {
-                    f64::from(f32::from_le_bytes(
-                        vbytes[(i * cfg.vectors_dim + j) * 4..(i * cfg.vectors_dim + j + 1) * 4]
-                            .try_into()
-                            .unwrap(),
-                    ))
+                    let off = (i * cfg.vectors_dim + j) * 4;
+                    let b: [u8; 4] = vbytes[off..off + 4]
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("vectors file: short f32 at offset {off}"))?;
+                    Ok(f64::from(f32::from_le_bytes(b)))
                 })
-                .collect()
+                .collect::<anyhow::Result<Vec<f64>>>()
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let rows = read_manifest(&args.capture_manifest)?;
     let mut files_used: BTreeSet<String> = BTreeSet::new();
@@ -515,14 +515,15 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             serde_json::json!(cosine(&apply_bridge(&m, &vectors[i]), &targets[i])?),
         );
     }
-    let mean_of = |idx: &[usize]| -> f64 {
-        idx.iter()
-            .map(|&i| cosine(&apply_bridge(&m, &vectors[i]), &targets[i]).unwrap())
-            .sum::<f64>()
-            / idx.len() as f64
+    let mean_of = |idx: &[usize]| -> anyhow::Result<f64> {
+        let mut sum = 0.0;
+        for &i in idx {
+            sum += cosine(&apply_bridge(&m, &vectors[i]), &targets[i])?;
+        }
+        Ok(sum / idx.len() as f64)
     };
-    let train_mean = mean_of(&train);
-    let held_mean = (!held.is_empty()).then(|| mean_of(&held));
+    let train_mean = mean_of(&train)?;
+    let held_mean = (!held.is_empty()).then(|| mean_of(&held)).transpose()?;
     let control = match &cfg.control {
         Some(c) => {
             anyhow::ensure!(!held.is_empty(), "control needs held-out anchors");
