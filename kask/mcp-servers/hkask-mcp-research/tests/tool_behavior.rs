@@ -661,6 +661,7 @@ fn test_server(
     inference_port: Option<Arc<dyn InferencePort>>,
     rerank_model: Option<&str>,
     embedding_model: Option<&str>,
+    private_embedding_model: Option<&str>,
 ) -> ResearchServer {
     ResearchServer::new(
         WebID::new(),
@@ -677,15 +678,24 @@ fn test_server(
         inference_port.unwrap_or_else(|| Arc::new(FailingInferencePort)),
         rerank_model.map(str::to_string),
         embedding_model.map(str::to_string),
+        private_embedding_model.map(str::to_string),
     )
 }
 
 fn make_server_without_db() -> ResearchServer {
-    test_server(Arc::new(NoCredentialsPool), 10, None, None, None, None)
+    test_server(
+        Arc::new(NoCredentialsPool),
+        10,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 fn make_server_with_pool(pool: Arc<dyn WebSearchPort>) -> ResearchServer {
-    test_server(pool, 10, None, None, None, None)
+    test_server(pool, 10, None, None, None, None, None)
 }
 
 fn research_db_pool() -> r2d2::Pool<hkask_storage::SqliteConnectionManager> {
@@ -708,6 +718,7 @@ fn make_server_with_research_db() -> ResearchServer {
         Arc::new(NoCredentialsPool),
         10,
         Some(research_db_pool()),
+        None,
         None,
         None,
         None,
@@ -1555,7 +1566,15 @@ fn make_server_with_pool_and_port(
     inference_port: Arc<dyn InferencePort>,
     rerank_model: Option<&str>,
 ) -> ResearchServer {
-    test_server(pool, 10, None, Some(inference_port), rerank_model, None)
+    test_server(
+        pool,
+        10,
+        None,
+        Some(inference_port),
+        rerank_model,
+        None,
+        None,
+    )
 }
 
 fn deep_search_request() -> SearchRequest {
@@ -1725,6 +1744,141 @@ async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
             "https://example.com/gamma",
         ],
         "heuristic order must be kept on rerank failure"
+    );
+}
+
+/// A rerank-RECORDING inference port: every rerank call bumps the shared
+/// counter and scores like the scoring stub. The private-provenance pin
+/// asserts the counter stays ZERO (the configured rerank model is never
+/// called for a private query); the public control asserts it moved.
+struct RecordingRerankPort {
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+stub_inference_port! {
+    RecordingRerankPort,
+    generate_msg: "stub: generate unused in rerank tests",
+    rerank(self, _model, _query, _documents): {
+        self.calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = _documents
+            .iter()
+            .enumerate()
+            .map(|(index, document)| {
+                let relevance_score = if document.contains("gamma") {
+                    0.90
+                } else if document.contains("alpha") {
+                    0.50
+                } else {
+                    0.10
+                };
+                hkask_types::inference_ipc::RerankScoreEntry {
+                    index,
+                    relevance_score,
+                }
+            })
+            .collect();
+        Box::pin(async move {
+            Ok(hkask_types::RerankBatch {
+                scores,
+                usage: hkask_types::InferenceUsage::default(),
+            })
+        })
+    }
+}
+
+/// zed-kask: D100 (the tool-query-embed design §8.1, operator-approved
+/// 2026-11-06) — the provenance-routed rerank leg, both sides. A
+/// private-provenance deep search makes ZERO rerank calls (the configured
+/// cloud model never sees the private query or candidates) and surfaces
+/// the skip: heuristic mode, the reason naming the private boundary, the
+/// heuristic RRF order kept. The explicit public control proves the gate
+/// does not over-block: the same configured model reranks as before.
+#[tokio::test]
+async fn private_call_skips_llm_rerank_with_the_boundary_surfaced() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(RecordingRerankPort {
+            calls: calls.clone(),
+        }),
+        Some("test-rerank-model"),
+    );
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.web_search(Parameters(deep_search_request())),
+    )
+    .await));
+
+    let rerank = output
+        .get("rerank")
+        .expect("the private skip still surfaces rerank info");
+    assert_eq!(
+        rerank.get("mode").and_then(|m| m.as_str()),
+        Some("heuristic"),
+        "the private skip keeps the heuristic order, surfaced: {rerank:?}"
+    );
+    let reason = rerank
+        .get("reason")
+        .and_then(|r| r.as_str())
+        .expect("the private skip must name the boundary");
+    assert!(
+        reason.contains("private-provenance") && reason.contains("kask.models.rerank_model"),
+        "the reason names the private boundary and the refused setting: {reason}"
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a private-provenance call makes ZERO configured-model rerank calls"
+    );
+    let urls: Vec<&str> = output["results"]
+        .as_array()
+        .expect("results array")
+        .iter()
+        .map(|r| r["url"].as_str().expect("url"))
+        .collect();
+    assert_eq!(
+        urls,
+        vec![
+            "https://example.com/alpha",
+            "https://example.com/beta",
+            "https://example.com/gamma",
+        ],
+        "the heuristic RRF order is kept on the private skip"
+    );
+}
+
+/// The public control for the rerank leg: an explicit PUBLIC provenance
+/// reranks through the configured model — the gate is scoped to private
+/// calls, never a blanket refusal.
+#[tokio::test]
+async fn public_call_reranks_through_the_configured_model() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let server = make_server_with_pool_and_port(
+        Arc::new(FixedResultsPool),
+        Arc::new(RecordingRerankPort {
+            calls: calls.clone(),
+        }),
+        Some("test-rerank-model"),
+    );
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PublicProvider,
+        server.web_search(Parameters(deep_search_request())),
+    )
+    .await));
+
+    let rerank = output
+        .get("rerank")
+        .expect("deep strategy must surface rerank info");
+    assert_eq!(
+        rerank.get("mode").and_then(|m| m.as_str()),
+        Some("llm"),
+        "the public call reranks as before: {rerank:?}"
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the public control dispatches exactly one rerank call"
     );
 }
 
@@ -1938,7 +2092,7 @@ fn intent_selection_server() -> (ResearchServer, Arc<IntentSelectionPool>) {
     let pool = Arc::new(IntentSelectionPool {
         selected_provider: std::sync::Mutex::new(Vec::new()),
     });
-    let server = test_server(pool.clone(), 0, None, None, None, None);
+    let server = test_server(pool.clone(), 0, None, None, None, None, None);
     (server, pool)
 }
 
@@ -2248,7 +2402,7 @@ fn make_server_with_pool_and_db(
     pool: Arc<dyn WebSearchPort>,
     database: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
 ) -> ResearchServer {
-    test_server(pool, 10, database, None, None, None)
+    test_server(pool, 10, database, None, None, None, None)
 }
 
 #[tokio::test]
@@ -3177,6 +3331,7 @@ fn make_server_with_embedding(
         Some(inference_port),
         None,
         embedding_model,
+        None,
     )
 }
 
@@ -3272,6 +3427,144 @@ async fn evaluate_evidence_rejects_unknown_duplication_mode() {
         error.message.contains("duplication"),
         "message names the field: {}",
         error.message
+    );
+}
+
+/// An embed-RECORDING inference port: every embed call records the MODEL
+/// string it was called with — the model string IS the routing signal, so
+/// the provenance pins assert which model leg served the call.
+struct ModelRecordingEmbedPort {
+    embed_models: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+stub_inference_port! {
+    ModelRecordingEmbedPort,
+    generate_msg: "stub: generate unused in duplication tests",
+    rerank(self, _model, _query, _documents): {
+        Box::pin(async {
+            Err(InferenceError::Connection(
+                "stub: rerank unused in duplication tests".to_string(),
+            ))
+        })
+    },
+    embed(self, _model, _texts): {
+        self.embed_models
+            .lock()
+            .expect("embed model log")
+            .push(_model.to_string());
+        let vectors: Vec<Vec<f32>> = _texts.iter().map(|_| vec![1.0_f32, 0.0]).collect();
+        Box::pin(async move {
+            Ok(hkask_types::EmbeddingBatch {
+                vectors,
+                requested_model: String::new(),
+                actual_model: None,
+                usage: hkask_types::InferenceUsage::default(),
+            })
+        })
+    }
+}
+
+/// zed-kask: D100 (operator-approved 2026-11-06, the tool-query-embed
+/// design's §8 legs) — the provenance-routed duplication tier: a
+/// private-provenance call embeds its artifact content through the
+/// private leg's LOCAL model ONLY (the recorded model string is the
+/// private one; the configured cloud embedder never sees the content);
+/// the semantic tier runs (no degradation). The explicit public control
+/// proves the tier does not over-block: the same server routes the
+/// public call through the configured model as before.
+#[tokio::test]
+async fn private_call_dedup_tier_embeds_via_the_private_model() {
+    let embed_models = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let server = test_server(
+        Arc::new(NoCredentialsPool),
+        10,
+        None,
+        Some(Arc::new(ModelRecordingEmbedPort {
+            embed_models: embed_models.clone(),
+        })),
+        None,
+        Some("test-configured-embed"),
+        Some("test-private-embed"),
+    );
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
+    )
+    .await));
+    assert_eq!(
+        output["set"]["duplication_mode"].as_str(),
+        Some("semantic"),
+        "the private call keeps the semantic tier (no degradation): {output}"
+    );
+    assert!(
+        output["set"].get("duplication_reason").is_none(),
+        "no degradation for a routed private call: {output}"
+    );
+    assert_eq!(
+        embed_models.lock().expect("embed model log").as_slice(),
+        &["test-private-embed".to_string()],
+        "the private call embeds through the PRIVATE model string only"
+    );
+
+    // The public control: the same server routes a public call through the
+    // configured model — the tier is provenance-scoped, never a blanket
+    // refusal.
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PublicProvider,
+        server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
+    )
+    .await));
+    assert_eq!(output["set"]["duplication_mode"].as_str(), Some("semantic"));
+    assert_eq!(
+        embed_models.lock().expect("embed model log").as_slice(),
+        &[
+            "test-private-embed".to_string(),
+            "test-configured-embed".to_string(),
+        ],
+        "the public control routes through the CONFIGURED model as before"
+    );
+}
+
+/// The private opt-out degrade: no private embedding model configured →
+/// the private call NEVER embeds (the configured cloud model is not
+/// consulted) and the shingle floor runs with the surfaced reason naming
+/// the private setting.
+#[tokio::test]
+async fn private_call_dedup_degrades_to_the_shingle_floor_when_no_private_model() {
+    let embed_models = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let server = test_server(
+        Arc::new(NoCredentialsPool),
+        10,
+        None,
+        Some(Arc::new(ModelRecordingEmbedPort {
+            embed_models: embed_models.clone(),
+        })),
+        None,
+        Some("test-configured-embed"),
+        None,
+    );
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
+    )
+    .await));
+    assert_eq!(
+        output["set"]["duplication_mode"].as_str(),
+        Some("shingles"),
+        "the opt-out degrades to the deterministic floor: {output}"
+    );
+    let reason = output["set"]["duplication_reason"]
+        .as_str()
+        .expect("the opt-out degrade must surface its reason");
+    assert!(
+        reason.contains("no private embedding model")
+            && reason.contains("HKASK_PRIVATE_EMBEDDING_MODEL"),
+        "the reason names the private setting: {reason}"
+    );
+    assert!(
+        embed_models.lock().expect("embed model log").is_empty(),
+        "the opted-out private call makes ZERO embed calls — the configured \
+         cloud model is never consulted"
     );
 }
 

@@ -98,6 +98,18 @@ hkask_mcp_server::mcp_server!(
         /// with a surfaced reason naming the setting — unset is a legitimate
         /// degraded mode because the floor exists (never a hidden constant).
         pub embedding_model: Option<String>,
+        /// zed-kask: D100 (operator-approved 2026-11-06, the tool-query-embed
+        /// design's §8 legs) — the private leg's LOCAL embedding model for
+        /// the semantic duplication tier on private-provenance calls,
+        /// resolved ONCE at the construction seam from
+        /// `HKASK_PRIVATE_EMBEDDING_MODEL` (the visible
+        /// `kask.private_inference.embedding_model` setting — the same
+        /// one-home reader the curator child routes by; the model string IS
+        /// the routing signal). `None`/empty = the operator's explicit
+        /// opt-out → the surfaced shingle-floor degrade, never the
+        /// configured cloud embedder — private artifact content never
+        /// widens.
+        pub private_embedding_model: Option<String>,
     } = crate::ontology::annotate;
 );
 
@@ -393,27 +405,54 @@ impl ResearchServer {
             // degraded outcome is surfaced in `rerank` — never a silent
             // fallback.
             let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
-                let outcome = match self.rerank_model.as_deref() {
-                    Some(model) => {
-                        llm_rerank(
-                            self.inference_port.as_ref(),
-                            &req.query,
-                            &mut compound.results,
-                            model,
-                        )
-                        .await
-                    }
-                    None => RerankOutcome {
+                // zed-kask: D100 (the tool-query-embed design §8.1,
+                // operator-approved 2026-11-06) — the provenance-routed
+                // rerank leg: a private-provenance call NEVER sends its
+                // query or candidate content to the configured rerank
+                // model (cloud by construction — the visible
+                // kask.models.rerank_model setting). No private
+                // chat/rerank model setting exists, so the stage takes the
+                // design's sanctioned alternative: the surfaced skip —
+                // the heuristic RRF order stands, the reason names the
+                // boundary. When a private rerank model setting ever
+                // exists, this branch becomes the routed-model shape (the
+                // curator child's routed_model_for_provenance pattern).
+                let outcome = if hkask_mcp_server::current_call_provenance()
+                    == hkask_types::InferenceProvenance::PrivateInference
+                {
+                    RerankOutcome {
                         scored: 0,
                         failed: compound.results.len(),
                         first_error: Some(
-                            "no rerank model configured — set \
+                            "private-provenance call — the rerank stage is skipped \
+                                 (private thread content never reaches the configured \
+                                 kask.models.rerank_model); heuristic order kept"
+                                .to_string(),
+                        ),
+                    }
+                } else {
+                    match self.rerank_model.as_deref() {
+                        Some(model) => {
+                            llm_rerank(
+                                self.inference_port.as_ref(),
+                                &req.query,
+                                &mut compound.results,
+                                model,
+                            )
+                            .await
+                        }
+                        None => RerankOutcome {
+                            scored: 0,
+                            failed: compound.results.len(),
+                            first_error: Some(
+                                "no rerank model configured — set \
                              kask.models.rerank_model (injected as \
                              HKASK_RERANK_MODEL); kask never falls back to a \
                              hidden code constant"
-                                .to_string(),
-                        ),
-                    },
+                                    .to_string(),
+                            ),
+                        },
+                    }
                 };
                 if outcome.scored == 0 {
                     tracing::warn!(
@@ -1837,61 +1876,91 @@ impl ResearchServer {
             // when the tier is not requested, no model is configured, or the
             // embed call fails — every degradation surfaced with its reason,
             // never silent (the rerank degradation contract).
+            // zed-kask: D100 (operator-approved 2026-11-06, the
+            // tool-query-embed design's §8 legs) — the provenance-routed
+            // duplication tier: a private-provenance call embeds its
+            // artifact content through the private leg's LOCAL model only
+            // (the model string IS the routing signal — the registry
+            // resolves it to the local ollama descriptor; the vectors stay
+            // within-batch, so the local model's native width is correct
+            // here). Unset/empty is the operator's explicit opt-out → the
+            // surfaced shingle-floor degrade naming the private setting —
+            // the content NEVER widens to the configured cloud embedder.
+            let private_call = hkask_mcp_server::current_call_provenance()
+                == hkask_types::InferenceProvenance::PrivateInference;
             let mut duplication_reason: Option<String> = None;
             let semantic_vectors: Option<Vec<(usize, Vec<f32>)>> = match duplication {
-                Some("semantic") => match self.embedding_model.as_deref() {
-                    None => {
-                        duplication_reason = Some(
-                            "semantic duplication requested but no embedding model \
+                Some("semantic") => {
+                    let resolved_model = if private_call {
+                        self.private_embedding_model.as_deref()
+                    } else {
+                        self.embedding_model.as_deref()
+                    };
+                    match resolved_model {
+                        None => {
+                            duplication_reason = Some(
+                                if private_call {
+                                    "private call context: no private embedding model \
+                                 configured — set kask.private_inference.embedding_model \
+                                 (injected as HKASK_PRIVATE_EMBEDDING_MODEL); the semantic \
+                                 tier is skipped for private contexts and the artifact \
+                                 content never widens to the configured cloud embedder; \
+                                 the deterministic shingle floor ran"
+                                } else {
+                                    "semantic duplication requested but no embedding model \
                                  configured — set kask.embedding_model (injected as \
                                  HKASK_EMBEDDING_MODEL); the deterministic shingle \
                                  floor ran instead"
+                                }
                                 .to_string(),
-                        );
-                        None
-                    }
-                    Some(model) => {
-                        let content_indices: Vec<usize> = artifacts
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, artifact)| artifact.content.is_some())
-                            .map(|(index, _)| index)
-                            .collect();
-                        let texts: Vec<String> = content_indices
-                            .iter()
-                            .map(|&index| artifacts[index].content.clone().unwrap_or_default())
-                            .collect();
-                        // Within-batch comparison only — the vectors never
-                        // touch a width-bound store, so the model's native
-                        // width is correct here (no `dimensions` request).
-                        match self.inference_port.embed(model, &texts).await {
-                            Ok(batch) if batch.vectors.len() == content_indices.len() => {
-                                // S-01 completion: the embedding call's
-                                // measured usage flows to the executing
-                                // tool's envelope.
-                                hkask_mcp_server::server::record_tool_usage(batch.usage.clone());
-                                Some(content_indices.into_iter().zip(batch.vectors).collect())
-                            }
-                            Ok(batch) => {
-                                duplication_reason = Some(format!(
-                                    "embedding tier returned {} vectors for {} \
+                            );
+                            None
+                        }
+                        Some(model) => {
+                            let content_indices: Vec<usize> = artifacts
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, artifact)| artifact.content.is_some())
+                                .map(|(index, _)| index)
+                                .collect();
+                            let texts: Vec<String> = content_indices
+                                .iter()
+                                .map(|&index| artifacts[index].content.clone().unwrap_or_default())
+                                .collect();
+                            // Within-batch comparison only — the vectors never
+                            // touch a width-bound store, so the model's native
+                            // width is correct here (no `dimensions` request).
+                            match self.inference_port.embed(model, &texts).await {
+                                Ok(batch) if batch.vectors.len() == content_indices.len() => {
+                                    // S-01 completion: the embedding call's
+                                    // measured usage flows to the executing
+                                    // tool's envelope.
+                                    hkask_mcp_server::server::record_tool_usage(
+                                        batch.usage.clone(),
+                                    );
+                                    Some(content_indices.into_iter().zip(batch.vectors).collect())
+                                }
+                                Ok(batch) => {
+                                    duplication_reason = Some(format!(
+                                        "embedding tier returned {} vectors for {} \
                                          content-bearing artifacts — the deterministic \
                                          shingle floor ran instead",
-                                    batch.vectors.len(),
-                                    content_indices.len()
-                                ));
-                                None
-                            }
-                            Err(error) => {
-                                duplication_reason = Some(format!(
-                                    "embedding tier failed ({error}) — the \
+                                        batch.vectors.len(),
+                                        content_indices.len()
+                                    ));
+                                    None
+                                }
+                                Err(error) => {
+                                    duplication_reason = Some(format!(
+                                        "embedding tier failed ({error}) — the \
                                          deterministic shingle floor ran instead"
-                                ));
-                                None
+                                    ));
+                                    None
+                                }
                             }
                         }
                     }
-                },
+                }
                 _ => None,
             };
 
@@ -2277,6 +2346,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // same construction-seam resolution; unset is a legitimate
                 // degraded mode (the shingle floor exists).
                 hkask_inference::model_constants::embedding_model(),
+                // zed-kask: D100 — the private leg's local embedding model
+                // for private-provenance duplication-tier calls (the same
+                // construction-seam discipline; unset/empty is the
+                // operator's explicit opt-out → the surfaced shingle-floor
+                // degrade).
+                hkask_inference::model_constants::private_embedding_model(),
             ))
         },
         credential_requirements(),

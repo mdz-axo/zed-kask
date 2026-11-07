@@ -247,6 +247,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // fallback for unset env); without this entry the research
             // server would silently miss the operator's model override.
             "HKASK_EMBEDDING_MODEL",
+            // zed-kask: D100 (operator-approved 2026-11-06) — the private
+            // leg's LOCAL embedding model for the duplication tier on
+            // private-provenance calls (the same admission the curator
+            // server carries; the emission is unconditional, the
+            // admission is the per-server allowlist). Without this entry
+            // a private call's semantic-duplication tier would degrade
+            // to the shingle floor instead of routing locally.
+            "HKASK_PRIVATE_EMBEDDING_MODEL",
             // Deep-strategy rerank model — read by
             // `hkask_inference::model_constants::rerank_model()` at call
             // time. Without this, an operator override is silently stripped

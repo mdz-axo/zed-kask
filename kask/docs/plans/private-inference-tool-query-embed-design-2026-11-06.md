@@ -6,7 +6,8 @@ the query side (Phase 1) AND the write side (Phase 2, under the operator's
 private-marked rows route by the row's provenance, the model-mismatch sweep
 skips private-marked candidates with a surfaced count, and the
 revision/repair paths preserve the mark. D100's row carries the landed
-record and the pin list.
+record and the pin list. **§8.1 (the research rerank leg) landed the same
+day too** — see §8's record below.
 
 ## 1. The seam (IS — tree-verified 2026-11-06)
 
@@ -127,6 +128,28 @@ rejects: routing private queries to the configured cloud model — the
 crossing D100 names as the seam.
 
 ## 8. The remaining legs of the same class (the 2026-11-06 review's extension, operator-directed)
+
+**Landed record (2026-11-06, the same day the design's phases landed):**
+leg 1 (the research server's rerank leg) landed as the surfaced skip — a
+private-provenance deep search makes ZERO configured-model rerank calls,
+keeps the heuristic RRF order, and surfaces the boundary as the degrade
+reason (`mode: heuristic`); no private chat/rerank model setting exists,
+which is why the skip (this design's sanctioned alternative) and not the
+route. The implementation's own emission census ALSO found a seam this
+section did not name: the research server's `evaluate_evidence`
+semantic-duplication tier embeds caller artifact content through the
+configured cloud embedder on `duplication="semantic"` — the same class,
+closed the same day by ROUTING through the private leg's local model (the
+`HKASK_PRIVATE_EMBEDDING_MODEL` admission extended to the research server,
+unset/empty the surfaced shingle-floor degrade). D100 carries both records
+and the four pins. **Leg 2 (the corpus server's assisting-inference legs)
+remains the owed ruling** — the three shapes, in the order this design
+recommends: extend the M5 off-axis acceptance to the tool legs (a stated
+limit record, no code); add the corpus server to
+`private_thread_disabled_servers` (the existing perimeter knob — the
+recommended v1 posture, the media precedent, one settings line, zero
+code); or per-tool routing (corpus_embed via the private model, tag/OCR
+surfaced skips — new code, the most granular).
 
 The same repair family has two more server-side inference legs that cross
 private thread content to cloud models, both unruled today (the review:

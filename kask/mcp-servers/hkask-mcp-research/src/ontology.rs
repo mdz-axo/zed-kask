@@ -279,6 +279,7 @@ mod tests {
             Arc::new(NoopInference),
             None,
             None,
+            None,
         );
         let response = server
             .web_ping()
