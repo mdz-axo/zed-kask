@@ -74,3 +74,30 @@ other spend rides this design.
 Speed re-measurement (the 16.52% stands as measured); streaming (held per
 the standing v1-unroutable pin; its precondition is now constructible but
 the speed bar stands on this card); the state-evolution mechanism study.
+
+## 7. Disposition (2026-11-07): superseded by the two-surface consolidation
+ruling — VOID as written, zero spend
+
+The operator's 2026-11-06 ruling (the consolidation plan v2: one served
+surface = ollama; one instrument surface = the in-process llama-cpp-4
+binding; every other llama.cpp tree goes) removed this design's treatment
+engine: `engines/qwen4exp-mtp` was deleted, with the MTP capability
+re-landing as `MtpSession` on the binding behind the plan's V3 gate. The
+design is therefore VOID in the executor-unavailable class (§4's typed
+vocabulary): the two-served-engine comparison it froze no longer has two
+engines to compare. **No spend occurred** — 0 of the 26 authorized
+requests; the deferred legs were never run.
+
+The parity question survives in a cleaner form at the V3 gate: MtpSession's
+speculative path vs the non-speculative path, compared IN-PROCESS on the
+one instrument (the plan's own one-instrument-comparability principle),
+under the position-matched protocol
+(`private-inference-position-matched-identity-protocol-2026-11-06.md`) —
+the state-trajectory finding applies to the binding's engine equally:
+same warmup, same problem sequence, matched positions, or the baselines
+drift with session position exactly as the served-engine studies did.
+
+Close-out note: the fork deletions ran without the plan's own archive-
+tarball-first gate (no archive found; the research record survives via
+the repo docs — the MTP and P2 records carry every commit pin and
+sha256, and both forks are re-clonable at their pinned commits).
