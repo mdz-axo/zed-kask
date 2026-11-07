@@ -23,61 +23,33 @@
 //! Failures are typed (`GgufError`) — the crate's discipline; an
 //! unsupported storage type is a refusal, never an approximation.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use super::gguf::{GgufError, GgufMeta, GgufTensor};
 
-// GGML tensor types (ggml.h)
-pub const GGML_F32: u32 = 0;
-pub const GGML_F16: u32 = 1;
-pub const GGML_Q8_0: u32 = 8;
-pub const GGML_BF16: u32 = 30;
+// The ONE exact-size home is the reader's storage-type table
+// (local_leg::gguf) — parse validation and this writer consume the same
+// numbers. Re-exported here so writer consumers keep one import site.
+pub use super::gguf::{GGML_BF16, GGML_F16, GGML_F32, GGML_Q8_0, type_name};
+use super::gguf::{exact_nbytes, known_block_size, known_type_size};
 
-pub fn type_name(ty: u32) -> &'static str {
-    match ty {
-        GGML_F32 => "f32",
-        GGML_F16 => "f16",
-        GGML_Q8_0 => "q8_0",
-        GGML_BF16 => "bf16",
-        2 => "q4_0",
-        3 => "q4_1",
-        6 => "q5_0",
-        7 => "q5_1",
-        10 => "q2_k",
-        11 => "q3_k",
-        12 => "q4_k",
-        13 => "q5_k",
-        14 => "q6_k",
-        15 => "q8_k",
-        _ => "other",
-    }
-}
-
-/// Elements per quantization block (1 for the half/float types).
+/// Elements per quantization block — the codec gate: a type outside the
+/// exact table is a typed refusal, never an approximation.
 pub fn block_size(ty: u32) -> Result<u64, GgufError> {
-    match ty {
-        GGML_F32 | GGML_F16 | GGML_BF16 => Ok(1),
-        GGML_Q8_0 => Ok(32),
-        ty => Err(GgufError::UnsupportedType {
-            ty,
-            op: "block_size",
-        }),
-    }
+    known_block_size(ty).ok_or(GgufError::UnsupportedType {
+        ty,
+        op: "block_size",
+    })
 }
 
-/// Bytes per quantization block.
+/// Bytes per quantization block — the codec gate.
 pub fn type_size(ty: u32) -> Result<u64, GgufError> {
-    match ty {
-        GGML_F32 => Ok(4),
-        GGML_F16 | GGML_BF16 => Ok(2),
-        GGML_Q8_0 => Ok(34),
-        ty => Err(GgufError::UnsupportedType {
-            ty,
-            op: "type_size",
-        }),
-    }
+    known_type_size(ty).ok_or(GgufError::UnsupportedType {
+        ty,
+        op: "type_size",
+    })
 }
 
 impl GgufTensor {
@@ -85,7 +57,10 @@ impl GgufTensor {
     /// (`nelements / block_size * type_size`). Unsupported storage types
     /// fail loudly — the writer never approximates a size.
     pub fn nbytes(&self) -> Result<u64, GgufError> {
-        Ok(self.nelements() / block_size(self.ggml_type)? * type_size(self.ggml_type)?)
+        exact_nbytes(self.ggml_type, self.nelements()).ok_or(GgufError::UnsupportedType {
+            ty: self.ggml_type,
+            op: "nbytes",
+        })
     }
 }
 
@@ -193,6 +168,20 @@ pub fn sha256_file(path: &Path) -> Result<String, GgufError> {
         let _ = write!(s, "{b:02x}");
     }
     Ok(s)
+}
+
+/// In-memory SHA-256 (converter provenance — e.g. the fitted bridge's
+/// bytes). Hex formatting mirrors `sha256_file`.
+pub fn sha256_bytes(b: &[u8]) -> String {
+    use sha2::Digest as _;
+    use std::fmt::Write;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b);
+    let mut s = String::with_capacity(64);
+    for b in hasher.finalize() {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 /// Read one tensor's exact data region.
@@ -361,13 +350,16 @@ pub struct StridedEditStats {
 
 /// Subtract `alpha * dir` from the strided elements of the selected
 /// torch-columns of one tensor's raw bytes, returning the patched bytes
-/// and the fidelity stats.
+/// and the fidelity stats — the channel-mask form of the rank-one edit.
 ///
 /// Q8_0 uses the minimal-collateral codec: each touched block keeps its
 /// ORIGINAL scale while the edited values still fit inside it (so
 /// unedited elements requant idempotently); only blocks whose amax grew
 /// re-scale. F16/BF16 edit directly in half precision (no collateral by
 /// construction — every element keeps its own storage).
+///
+/// The channel mask is the indicator special case of the dense trigger
+/// (`subtract_dense_columns`): column weight 1.0 on the selected channels.
 pub fn subtract_strided_columns(
     raw: &[u8],
     ty: u32,
@@ -378,14 +370,59 @@ pub fn subtract_strided_columns(
     alpha: f32,
     dir: &[f32],
 ) -> Result<(Vec<u8>, StridedEditStats), GgufError> {
+    let cols: BTreeMap<usize, f32> = channels.iter().map(|&j| (j, 1.0f32)).collect();
+    edit_weighted_columns(raw, ty, n_elem, ne0, ne1, &cols, alpha, dir)
+}
+
+/// The dense-trigger rank-one edit `W <- W - alpha * dir * k^T`
+/// (`rank_one_edit_action`): the direction `dir` (output space, ne1) is
+/// subtracted from each torch-column scaled by the trigger weight `k[j]`
+/// (input space, ne0). Zero-weight columns are skipped, so an all-zero
+/// trigger is a byte-identical no-op — and `alpha * k[j] * dir[r]`
+/// reduces bit-exactly to the strided form on an indicator trigger
+/// (`alpha * 1.0 == alpha` in f32).
+pub fn subtract_dense_columns(
+    raw: &[u8],
+    ty: u32,
+    n_elem: usize,
+    ne0: usize,
+    ne1: usize,
+    k: &[f32],
+    alpha: f32,
+    dir: &[f32],
+) -> Result<(Vec<u8>, StridedEditStats), GgufError> {
+    if k.len() != ne0 {
+        return Err(GgufError::Malformed {
+            reason: format!("trigger dim {} != input dim {ne0}", k.len()),
+        });
+    }
+    let cols: BTreeMap<usize, f32> = k
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| **w != 0.0)
+        .map(|(j, w)| (j, *w))
+        .collect();
+    edit_weighted_columns(raw, ty, n_elem, ne0, ne1, &cols, alpha, dir)
+}
+
+fn edit_weighted_columns(
+    raw: &[u8],
+    ty: u32,
+    n_elem: usize,
+    ne0: usize,
+    ne1: usize,
+    cols: &BTreeMap<usize, f32>,
+    alpha: f32,
+    dir: &[f32],
+) -> Result<(Vec<u8>, StridedEditStats), GgufError> {
     if dir.len() != ne1 {
         return Err(GgufError::Malformed {
             reason: format!("direction dim {} != output dim {ne1}", dir.len()),
         });
     }
     match ty {
-        GGML_Q8_0 => edit_q8_strided(raw, n_elem, ne0, channels, alpha, dir),
-        GGML_F16 | GGML_BF16 => edit_half_strided(raw, ty, n_elem, ne0, channels, alpha, dir),
+        GGML_Q8_0 => edit_q8_weighted(raw, n_elem, ne0, cols, alpha, dir),
+        GGML_F16 | GGML_BF16 => edit_half_weighted(raw, ty, n_elem, ne0, cols, alpha, dir),
         ty => Err(GgufError::UnsupportedType {
             ty,
             op: "strided edit",
@@ -394,20 +431,20 @@ pub fn subtract_strided_columns(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn edit_q8_strided(
+fn edit_q8_weighted(
     raw: &[u8],
     n_elem: usize,
     ne0: usize,
-    chans: &BTreeSet<usize>,
+    cols: &BTreeMap<usize, f32>,
     alpha: f32,
     dir: &[f32],
 ) -> Result<(Vec<u8>, StridedEditStats), GgufError> {
     let mut w = dequant_q8_0(raw, n_elem);
     let mut delta_sq = 0.0f64;
-    for &j in chans {
+    for (&j, &wj) in cols {
         for r in 0..dir.len() {
             let idx = r * ne0 + j;
-            let d = alpha * dir[r];
+            let d = alpha * wj * dir[r];
             w[idx] -= d;
             delta_sq += f64::from(d) * f64::from(d);
         }
@@ -417,7 +454,7 @@ fn edit_q8_strided(
     let mut blocks_touched = 0u64;
     let mut blocks_rescaled = 0u64;
     let mut processed = std::collections::HashSet::<usize>::new();
-    for &j in chans {
+    for (&j, _) in cols {
         for r in 0..dir.len() {
             let idx = r * ne0 + j;
             let b = idx / Q8_BLOCK;
@@ -459,14 +496,14 @@ fn edit_q8_strided(
     let w0 = dequant_q8_0(raw, n_elem);
     for idx in 0..n_elem {
         let j = idx % ne0;
-        if !chans.contains(&j) && wq[idx] != w0[idx] {
+        if !cols.contains_key(&j) && wq[idx] != w0[idx] {
             unedited_changed += 1;
         }
     }
     Ok((
         patched,
         StridedEditStats {
-            weights_touched: dir.len() as u64 * chans.len() as u64,
+            weights_touched: dir.len() as u64 * cols.len() as u64,
             blocks_touched,
             blocks_rescaled,
             unedited_elements_changed: unedited_changed,
@@ -478,21 +515,21 @@ fn edit_q8_strided(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn edit_half_strided(
+fn edit_half_weighted(
     raw: &[u8],
     ty: u32,
     n_elem: usize,
     ne0: usize,
-    chans: &BTreeSet<usize>,
+    cols: &BTreeMap<usize, f32>,
     alpha: f32,
     dir: &[f32],
 ) -> Result<(Vec<u8>, StridedEditStats), GgufError> {
     let mut w = dequant(ty, raw, n_elem)?;
     let mut delta_sq = 0.0f64;
-    for &j in chans {
+    for (&j, &wj) in cols {
         for r in 0..dir.len() {
             let idx = r * ne0 + j;
-            let d = alpha * dir[r];
+            let d = alpha * wj * dir[r];
             w[idx] -= d;
             delta_sq += f64::from(d) * f64::from(d);
         }
@@ -503,7 +540,7 @@ fn edit_half_strided(
     Ok((
         patched,
         StridedEditStats {
-            weights_touched: dir.len() as u64 * chans.len() as u64,
+            weights_touched: dir.len() as u64 * cols.len() as u64,
             blocks_touched: n_elem as u64, // half types: element-wise
             blocks_rescaled: 0,
             unedited_elements_changed: 0,
@@ -615,5 +652,108 @@ mod tests {
         assert_eq!(chans[0], 0);
         assert_eq!(chans[1], 56);
         assert_eq!(chans[63], 3528);
+    }
+
+    fn rng_vals(n: usize) -> Vec<f32> {
+        let mut state = 0x2026_1107u64;
+        let mut vals = vec![0f32; n];
+        for v in &mut vals {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *v = ((state >> 40) as i32) as f32 / 1e7;
+        }
+        vals
+    }
+
+    #[test]
+    fn dense_zero_trigger_is_byte_identical() {
+        // The dense rank-one edit with an all-zero trigger touches nothing:
+        // zero-weight columns are skipped, so the bytes round-trip exactly
+        // (the dense analog of the alpha=0 floor).
+        let vals = rng_vals(4096);
+        let k = vec![0f32; 64];
+        let dir = vec![1e-3f32; 64];
+        for ty in [GGML_F16, GGML_BF16, GGML_Q8_0] {
+            let raw = if ty == GGML_Q8_0 {
+                requant_q8_0(&vals)
+            } else {
+                requant(ty, &vals).expect("requant")
+            };
+            let (patched, stats) =
+                subtract_dense_columns(&raw, ty, vals.len(), 64, 64, &k, 1.0, &dir)
+                    .expect("zero-trigger dense edit");
+            assert_eq!(
+                patched,
+                raw,
+                "zero-trigger dense edit must be byte-identical for {}",
+                type_name(ty)
+            );
+            assert_eq!(stats.unedited_elements_changed, 0);
+        }
+    }
+
+    #[test]
+    fn dense_indicator_equals_strided_channels() {
+        // The channel mask IS the dense indicator special case: k = 1 on
+        // the spread channels reproduces the strided edit byte-for-byte
+        // (one rank-one kernel, two selection policies).
+        let vals = rng_vals(4096);
+        let chans: BTreeSet<usize> = spread_channels(64, 8).into_iter().collect();
+        let mut k = vec![0f32; 64];
+        for &j in &chans {
+            k[j] = 1.0;
+        }
+        let dir = vec![1e-3f32; 64];
+        for ty in [GGML_F16, GGML_BF16, GGML_Q8_0] {
+            let raw = if ty == GGML_Q8_0 {
+                requant_q8_0(&vals)
+            } else {
+                requant(ty, &vals).expect("requant")
+            };
+            let (a, sa) = subtract_strided_columns(&raw, ty, vals.len(), 64, 64, &chans, 0.5, &dir)
+                .expect("strided edit");
+            let (b, sb) = subtract_dense_columns(&raw, ty, vals.len(), 64, 64, &k, 0.5, &dir)
+                .expect("dense indicator edit");
+            assert_eq!(
+                a,
+                b,
+                "indicator dense edit == strided edit for {}",
+                type_name(ty)
+            );
+            assert_eq!(sa.weights_touched, sb.weights_touched);
+            assert_eq!(sa.edit_delta_l2, sb.edit_delta_l2);
+        }
+    }
+
+    #[test]
+    fn dense_trigger_scales_per_column() {
+        // rank_one_edit_action: the dense edit subtracts alpha * k[j] *
+        // dir[r] from element (r, j) — pinned on f16-exact values; column
+        // j = 1 (weight 0) is untouched.
+        let vals = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let raw = requant(GGML_F16, &vals).expect("f16 requant");
+        let k = vec![0.5f32, 0.0, 2.0, 1.0];
+        let dir = vec![1.0f32, 10.0];
+        let (patched, stats) =
+            subtract_dense_columns(&raw, GGML_F16, vals.len(), 4, 2, &k, 1.0, &dir)
+                .expect("dense edit");
+        let got = dequant(GGML_F16, &patched, vals.len()).expect("dequant");
+        let expect = [
+            1.0 - 0.5,
+            2.0,
+            3.0 - 2.0,
+            4.0 - 1.0,
+            5.0 - 5.0,
+            6.0,
+            7.0 - 20.0,
+            8.0 - 10.0,
+        ];
+        for (g, e) in got.iter().zip(expect) {
+            assert_eq!(g, &e);
+        }
+        assert_eq!(stats.weights_touched, 6); // 3 nonzero columns x 2 rows
+        let l2sq = 0.5f64 * 0.5 + 2.0 * 2.0 + 1.0 + 5.0 * 5.0 + 20.0 * 20.0 + 10.0 * 10.0;
+        assert!((stats.edit_delta_l2 - l2sq.sqrt()).abs() < 1e-9);
     }
 }

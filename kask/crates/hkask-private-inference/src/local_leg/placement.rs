@@ -39,6 +39,10 @@ pub enum PlacementError {
         "draft module `{path}` not found — a draft plan requires the brief's module file on disk (fail-closed at emit, the truncated-shard discipline)"
     )]
     DraftModuleMissing { path: String },
+    #[error(
+        "partial GPU offload asked but the model carries no usable block_count in its GGUF metadata — the verified layer split cannot be computed (fail-closed, never guessed)"
+    )]
+    PartialOffloadNeedsBlockCount,
 }
 
 /// Hardware inventory. `available_ram_bytes` is the number the guards use
@@ -297,6 +301,18 @@ pub struct PlacementPolicy {
     /// and emits the spec flags. Absent (false) on every plan that does
     /// not ask — no behavior change without the ask.
     pub draft: bool,
+    /// Partial GPU offload (the DME route capability, consolidation P4):
+    /// when the full dense set will not fit the declared VRAM, compute
+    /// the VERIFIED layer count that fits and emit that `-ngl` — the
+    /// non-offloaded layers ride the host by llama.cpp design — instead
+    /// of the whole-offload refusal. The split is computed from the
+    /// parse's own per-tensor byte accounting (offset-gap spans include
+    /// alignment padding — conservative: over-refusing at the boundary,
+    /// never under-reserving), and the guard evaluates the OFFLOADED
+    /// share through the pinned-cpu channel. Default false: no behavior
+    /// change for any existing caller; an ask where nothing fits still
+    /// leaves the full ask to the guard's numeric refusal.
+    pub partial_gpu_offload: bool,
     pub threads: u32,
     pub host: String,
     pub port: u16,
@@ -313,6 +329,7 @@ impl Default for PlacementPolicy {
             cpu_moe: true,
             n_gpu_layers: 999,
             draft: false,
+            partial_gpu_offload: false,
             threads: 12,
             host: "127.0.0.1".into(),
             port: 8010,
@@ -354,7 +371,7 @@ pub fn compile_placement(
     // The pattern comes from the model brief (M9), not the policy: the
     // brief carries per-model tensor names (Qwen3.8 has a PLE table,
     // Gemma 4 doesn't), the policy carries machine-level knobs.
-    let pinned_cpu_bytes = if brief.placement.ple_pin_pattern.is_empty() {
+    let mut pinned_cpu_bytes = if brief.placement.ple_pin_pattern.is_empty() {
         0
     } else {
         meta.tensors
@@ -363,6 +380,78 @@ pub fn compile_placement(
             .map(|t| t.approx_bytes)
             .fold(0u64, |acc, bytes| acc.saturating_add(bytes))
     };
+
+    // Partial GPU offload (policy-declared, the DME route capability):
+    // when the full dense set will not fit the declared VRAM, compute
+    // the VERIFIED layer split that fits and emit that -ngl — the
+    // non-offloaded layers ride the host by llama.cpp design. Byte
+    // accounting is exact-per-tensor over the parse's own offset-gap
+    // spans (padding included — conservative: over-refusing at the
+    // boundary, never under-reserving); the non-block dense share
+    // (embeddings, norms, output) is conservatively counted on the GPU
+    // side. The guard then evaluates the OFFLOADED share through the
+    // pinned-cpu channel. When nothing fits, the full ask stands and
+    // the guard denies with its own numbers — never a silent CPU-only
+    // substitution.
+    let mut n_gpu_layers = policy.n_gpu_layers;
+    if policy.partial_gpu_offload && n_gpu_layers > 0 {
+        if let Some(vram) = hw.vram.as_ref() {
+            let offloadable_dense = meta.dense_bytes.saturating_sub(pinned_cpu_bytes);
+            let full_resident = offloadable_dense
+                .saturating_add(kv_bytes_estimate)
+                .saturating_add(policy.compute_buffer_bytes);
+            if full_resident > vram.bytes() {
+                let n_layers = u64::from(
+                    meta.block_count()
+                        .ok_or(PlacementError::PartialOffloadNeedsBlockCount)?,
+                );
+                if n_layers == 0 {
+                    return Err(PlacementError::PartialOffloadNeedsBlockCount);
+                }
+                // Per-layer dense byte shares from the parse's accounting;
+                // experts never enter the VRAM channel (--cpu-moe).
+                let mut layer_bytes = vec![0u64; n_layers as usize];
+                let mut non_block_dense = 0u64;
+                for t in &meta.tensors {
+                    if t.is_expert {
+                        continue;
+                    }
+                    if let Some(rest) = t.name.strip_prefix("blk.") {
+                        if let Some((idx, _)) = rest.split_once('.') {
+                            if let Ok(i) = idx.parse::<usize>()
+                                && i < n_layers as usize
+                            {
+                                layer_bytes[i] = layer_bytes[i].saturating_add(t.approx_bytes);
+                                continue;
+                            }
+                        }
+                    }
+                    non_block_dense = non_block_dense.saturating_add(t.approx_bytes);
+                }
+                let fixed = non_block_dense
+                    .saturating_add(kv_bytes_estimate)
+                    .saturating_add(policy.compute_buffer_bytes);
+                if fixed < vram.bytes() {
+                    let budget = vram.bytes() - fixed;
+                    let mut acc = 0u64;
+                    let mut fit = 0usize;
+                    for (i, lb) in layer_bytes.iter().enumerate() {
+                        if acc.saturating_add(*lb) > budget {
+                            break;
+                        }
+                        acc = acc.saturating_add(*lb);
+                        fit = i + 1;
+                    }
+                    if fit > 0 {
+                        n_gpu_layers = (fit as u32).min(policy.n_gpu_layers);
+                        for lb in layer_bytes.iter().skip(fit) {
+                            pinned_cpu_bytes = pinned_cpu_bytes.saturating_add(*lb);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     let vocabulary = &manifest.flags;
 
@@ -465,9 +554,9 @@ pub fn compile_placement(
     // engine defaults.
     args.push(vocabulary.flash_attn.clone());
     args.push(if policy.flash_attn { "on" } else { "off" }.into());
-    if policy.n_gpu_layers > 0 {
+    if n_gpu_layers > 0 {
         args.push(vocabulary.n_gpu_layers.clone());
-        args.push(policy.n_gpu_layers.to_string());
+        args.push(n_gpu_layers.to_string());
         if policy.cpu_moe {
             args.push(vocabulary.cpu_moe.clone());
         }
@@ -505,7 +594,7 @@ pub fn compile_placement(
         // The guard consumes the budget figure however sourced; the
         // Sysfs/Declared provenance stays here at the probe layer.
         vram_bytes_declared: hw.vram.as_ref().map(VramSource::bytes),
-        gpu_offload: policy.n_gpu_layers > 0,
+        gpu_offload: n_gpu_layers > 0,
         // v1 never plans `--mlock`: file-backed weights are evictable, so
         // only the anonymous class is guarded (manifest.rs semantics).
         model_mmap: true,
@@ -718,6 +807,75 @@ mod tests {
         let rendered = plan.to_string();
         assert!(rendered.contains("-ngl 999"));
         assert!(rendered.contains("--cpu-moe"));
+    }
+
+    #[test]
+    fn partial_gpu_offload_computes_the_verified_layer_split() {
+        // The DME S-leg shape: a dense model bigger than the declared
+        // VRAM. 4 blocks × 2 GiB + 1 GiB non-block dense = 9 GiB on an
+        // 8 GiB budget. The full ask (ngl 999) refuses at vram_dense_fit
+        // (9 GiB + 0.5 GiB KV > 8 GiB); the partial ask computes the
+        // verified split — fixed share = 1 GiB non-block + 0.5 GiB KV +
+        // 1 GiB compute (declared in the policy), budget 5.5 GiB → 2
+        // blocks fit — and the guard then evaluates the OFFLOADED share
+        // (5 GiB + 0.5 GiB ≤ 8 GiB) through the pinned-cpu channel.
+        use crate::local_leg::gguf::{GgufTensor, GgufValue};
+        const GIB: u64 = 1 << 30;
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        let mut meta = GgufMeta::default();
+        meta.dense_bytes = 9 * GIB;
+        meta.kv
+            .insert("qwen4test.block_count".into(), GgufValue::U32(4));
+        for i in 0..4u64 {
+            meta.tensors.push(GgufTensor {
+                name: format!("blk.{i}.mlp.weight"),
+                ggml_type: 0,
+                dims: vec![1],
+                offset: i,
+                approx_bytes: 2 * GIB,
+                is_expert: false,
+            });
+        }
+        meta.tensors.push(GgufTensor {
+            name: "token_embd.weight".into(),
+            ggml_type: 0,
+            dims: vec![1],
+            offset: 4,
+            approx_bytes: GIB,
+            is_expert: false,
+        });
+        let mut hw = test_hw();
+        hw.vram = Some(VramSource::Declared { bytes: 8 * GIB });
+        let mut policy = PlacementPolicy::default();
+        policy.n_gpu_layers = 999;
+        policy.compute_buffer_bytes = GIB; // declared estimate for this test
+        // Without the partial ask: the full ask refuses, naming the guard.
+        let err = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &meta,
+            &hw,
+            &test_brief(),
+            &policy,
+            &manifest,
+        )
+        .expect_err("the full 9 GiB offload on an 8 GiB budget refuses");
+        assert!(
+            matches!(err, PlacementError::GuardDenied { ref constraint, .. } if constraint == "vram_dense_fit"),
+            "refusal must name the violated guard, got: {err}"
+        );
+        // With the partial ask: the verified split compiles and emits the
+        // computed layer count — never a silent substitution.
+        policy.partial_gpu_offload = true;
+        let plan = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &meta,
+            &hw,
+            &test_brief(),
+            &policy,
+            &manifest,
+        )
+        .expect("the verified partial split compiles");
+        assert!(plan.to_string().contains("-ngl 2"), "got {}", plan);
     }
 
     #[test]

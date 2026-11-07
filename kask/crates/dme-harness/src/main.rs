@@ -2,9 +2,16 @@
 //! (operator ruling 2026-11-06: no agent-authored Python anywhere).
 //!
 //! Modes:
-//!   probe      measurement leg: N problems x config -> JSONL receipts
-//!   capture    localization leg: per-layer activation captures
+//!   probe      measurement leg (P4): N problems x config -> JSONL
+//!              receipts, through the CANONICAL serving route (the L4
+//!              supervisor launches the fleet model per the L1 manifest;
+//!              completions ride the M3 endpoint semantics with per-row
+//!              sampling-parity verification)
+//!   capture    localization leg (the engine feature): per-layer
+//!              activation captures through llama-cpp-4's prebuilt link
+//!              against the canonical libs (P5)
 //!   edit       direction-subtraction edit -> patched GGUF + receipt
+//!              (the shared GGUF writer component)
 //!   gguf-info  dump a GGUF's metadata and tensor directory
 //!   summary    recompute a stage summary from a JSONL
 //!
@@ -13,30 +20,10 @@
 //! `lisp_eval` at decision time over these receipts — the instrument
 //! measures, the gates decide.
 
-mod config;
-#[cfg(feature = "engine")]
-mod mt;
-#[cfg(not(feature = "engine"))]
-mod mt;
-mod problems;
-mod receipt;
-
-// The shared GGUF component (P3): the private-inference stack's reader
-// (local_leg::gguf) + writer (local_leg::gguf_writer) — the hand parsers
-// are gone.
-pub(crate) use hkask_private_inference::local_leg::gguf as pi_gguf;
-pub(crate) use hkask_private_inference::local_leg::gguf_writer;
-
-#[cfg(feature = "engine")]
-mod capture;
-#[cfg(not(feature = "engine"))]
-mod edit;
-#[cfg(feature = "engine")]
-mod engine;
-#[cfg(feature = "engine")]
-mod probe;
-
 use anyhow::{Result, bail};
+#[cfg(feature = "engine")]
+use dme_harness::capture;
+use dme_harness::{edit, gguf_writer, pi_gguf, probe};
 
 fn main() {
     if let Err(e) = run() {
@@ -57,6 +44,10 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 fn flag_or(args: &[String], name: &str, default: &str) -> String {
     flag(args, name).unwrap_or_else(|| default.to_string())
+}
+
+fn has_flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
 }
 
 fn run() -> Result<()> {
@@ -104,54 +95,38 @@ fn run() -> Result<()> {
             Ok(())
         }
         "summary" => {
-            #[cfg(feature = "engine")]
-            {
-                let rows =
-                    flag(rest, "--rows").ok_or_else(|| anyhow::anyhow!("--rows required"))?;
-                let out = flag(rest, "--out");
-                probe::summarize(
-                    std::path::Path::new(&rows),
-                    out.as_deref().map(std::path::Path::new),
-                )
-            }
-            #[cfg(not(feature = "engine"))]
-            {
-                let _ = rest;
-                bail!("summary requires the engine feature; build with --features engine")
-            }
+            let rows = flag(rest, "--rows").ok_or_else(|| anyhow::anyhow!("--rows required"))?;
+            let out = flag(rest, "--out");
+            probe::summarize(
+                std::path::Path::new(&rows),
+                out.as_deref().map(std::path::Path::new),
+            )
         }
         "probe" => {
-            #[cfg(feature = "engine")]
-            {
-                let gguf =
-                    flag(rest, "--gguf").ok_or_else(|| anyhow::anyhow!("--gguf required"))?;
-                let cfg =
-                    flag(rest, "--config").ok_or_else(|| anyhow::anyhow!("--config required"))?;
-                let problems = flag(rest, "--problems")
-                    .ok_or_else(|| anyhow::anyhow!("--problems required"))?;
-                let out = flag(rest, "--out").ok_or_else(|| anyhow::anyhow!("--out required"))?;
-                let args = probe::ProbeArgs {
-                    gguf: gguf.into(),
-                    config: cfg.into(),
-                    problems: problems.into(),
-                    out_jsonl: out.clone().into(),
-                    out_summary: flag(rest, "--summary").map(Into::into),
-                    start: flag_or(rest, "--start", "0").parse()?,
-                    count: flag_or(rest, "--count", "8").parse()?,
-                    cap: flag_or(rest, "--cap", "4096").parse()?,
-                    n_ctx: flag_or(rest, "--n-ctx", "33792").parse()?,
-                    threads: flag_or(rest, "--threads", "4").parse()?,
-                    n_gpu_layers: flag_or(rest, "--n-gpu-layers", "99").parse()?,
-                    seed_base: flag_or(rest, "--seed", "20261106").parse()?,
-                    order: flag_or(rest, "--order", "mt19937"),
-                };
-                probe::run(args)
-            }
-            #[cfg(not(feature = "engine"))]
-            {
-                let _ = rest;
-                bail!("probe requires the engine feature; build with --features engine")
-            }
+            let config =
+                flag(rest, "--config").ok_or_else(|| anyhow::anyhow!("--config required"))?;
+            let problems =
+                flag(rest, "--problems").ok_or_else(|| anyhow::anyhow!("--problems required"))?;
+            let out = flag(rest, "--out").ok_or_else(|| anyhow::anyhow!("--out required"))?;
+            let args = probe::ProbeArgs {
+                model_id: flag_or(rest, "--model", "qwen35-0.8b"),
+                config: config.into(),
+                problems: problems.into(),
+                out_jsonl: out.into(),
+                out_summary: flag(rest, "--summary").map(Into::into),
+                start: flag_or(rest, "--start", "0").parse()?,
+                count: flag_or(rest, "--count", "8").parse()?,
+                cap: flag_or(rest, "--cap", "4096").parse()?,
+                threads: flag_or(rest, "--threads", "4").parse()?,
+                n_gpu_layers: flag_or(rest, "--ngl", "99").parse()?,
+                partial_gpu_offload: has_flag(rest, "--partial"),
+                kv_cache_type: flag_or(rest, "--kv", "f16"),
+                seed_base: flag_or(rest, "--seed", "20261106").parse()?,
+                order: flag_or(rest, "--order", "mt19937"),
+                budget_secs: flag_or(rest, "--budget-secs", "1500").parse()?,
+                port: flag_or(rest, "--port", "8011").parse()?,
+            };
+            probe::run(args)
         }
         "capture" => {
             #[cfg(feature = "engine")]

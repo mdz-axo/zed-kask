@@ -55,6 +55,14 @@ impl ProblemSet {
             "empty problem set: {}",
             path.display()
         );
+        // The archived instrument's dataset guard (ported from the retired
+        // gsm8k.rs): the train split is exactly 7,473 rows — a truncated
+        // dataset is a typed refusal, never a silently shorter leg.
+        anyhow::ensure!(
+            problems.len() == 7473,
+            "expected 7473 gsm8k train rows, got {} — the dataset is truncated or wrong",
+            problems.len()
+        );
         let n = problems.len();
         let order = match order {
             "mt19937" => crate::mt::PyRandom::new(seed).shuffle_order(n),

@@ -75,6 +75,38 @@ pub const SHIPPED_FLEET: &[(&str, &str, LocalModelLocation)] = &[
             artifact: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
         },
     ),
+    // The DME pair (consolidation 2026-11-06): the edit target and the
+    // sibling control — the stage-2 legs' models, served by the same
+    // supervisor and the canonical pin as the rest of the fleet. The
+    // ornith-1.5-9b artifact is FAIL-CLOSED until the corrupt download
+    // is repaired (the brief carries the state note).
+    (
+        "qwen35-0.8b",
+        include_str!("../../../../registry/model-briefs/qwen35-0.8b.toml"),
+        LocalModelLocation {
+            dir: "qwen35-0.8b",
+            artifact: "Qwen3.5-0.8B-BF16.gguf",
+        },
+    ),
+    (
+        "ornith-1.5-9b",
+        include_str!("../../../../registry/model-briefs/ornith-1.5-9b.toml"),
+        LocalModelLocation {
+            dir: "ornith-1.5-9b",
+            artifact: "Ornith-1.5-9B-BF16.gguf",
+        },
+    ),
+    // The edited variant (the DME loop serves it side by side with the
+    // pristine target — the A/B measurement; a distinct identity so the
+    // drift pin holds and no launch silently swaps the edited file in).
+    (
+        "qwen35-0.8b-edited",
+        include_str!("../../../../registry/model-briefs/qwen35-0.8b-edited.toml"),
+        LocalModelLocation {
+            dir: "qwen35-0.8b",
+            artifact: "Qwen3.5-0.8B-BF16.edited15.gguf",
+        },
+    ),
 ];
 
 /// Fleet projection failures — per-variant, never a blanket string

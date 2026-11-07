@@ -4602,10 +4602,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "hkask-private-inference",
+ "hkask-types",
  "llama-cpp-4",
  "serde",
  "serde_json",
- "sha2",
+ "tokio",
+ "zed-reqwest",
 ]
 
 [[package]]
@@ -22540,6 +22542,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes 1.11.1",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",

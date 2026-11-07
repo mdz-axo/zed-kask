@@ -3,9 +3,17 @@
 //! `problem_id` sequences from the retired Python harness, so legs stay
 //! row-for-row comparable with the historical receipts.
 //!
+//! The test imports the PRODUCTION `dme_harness::mt::PyRandom` — the
+//! lib target exists so this oracle pins the real problem order, never
+//! a mirrored copy of the algorithm (a mirror can only verify itself;
+//! the previous in-tree mirror carried the same never-terminating
+//! init_by_array bug the production code did, found at consolidation
+//! P4).
+//!
 //! Skips visibly (not fails) when the archive is absent — this is a
 //! live-machine instrument check, not a portable unit test.
 
+use dme_harness::mt::PyRandom;
 use std::path::Path;
 
 const ARCHIVE_LOGS: &str = "/home/mdz-axolotl/Documents/zk-data/direct-model-edit-archive/logs";
@@ -19,10 +27,6 @@ fn archived_problem_ids(file: &str) -> Vec<String> {
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter_map(|v| v["problem_id"].as_str().map(String::from))
         .collect()
-}
-
-fn ids_from_order(order: &[usize]) -> Vec<String> {
-    order.iter().map(|i| format!("gsm8k-train-{i}")).collect()
 }
 
 #[test]
@@ -45,8 +49,24 @@ fn order_matches_archived_receipts() {
     let n = raw.lines().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(n, 7473, "gsm8k train must have 7,473 rows");
 
-    let order = mt_order(n, 20261106);
-    let mine = ids_from_order(&order);
+    // The production order, from the production RNG.
+    let mine: Vec<String> = PyRandom::new(20261106)
+        .shuffle_order(n)
+        .iter()
+        .map(|i| format!("gsm8k-train-{i}"))
+        .collect();
+    // The P4 gate's named first five.
+    assert_eq!(
+        &mine[..5],
+        [
+            "gsm8k-train-6819",
+            "gsm8k-train-3171",
+            "gsm8k-train-5037",
+            "gsm8k-train-6229",
+            "gsm8k-train-1026",
+        ],
+        "the problem-order oracle: the first selected ids must remain the pinned five"
+    );
 
     let mut checked = 0;
     for archived in [&probe_a, &probe_a96, &probe_b, &probe_b_full] {
@@ -66,90 +86,4 @@ fn order_matches_archived_receipts() {
     }
     assert!(checked > 0, "no archived rows parsed to pin against");
     eprintln!("OK: {checked} archived problem_ids reproduced by the MT19937 order");
-}
-
-/// Mirrors src/mt.rs exactly (the bin crate keeps its modules private;
-/// a lib target is unnecessary for a harness bin).
-fn mt_order(n: usize, seed: u64) -> Vec<usize> {
-    let mut rng = PyRandomMirror::new(seed);
-    let mut order: Vec<usize> = (0..n).collect();
-    for i in (1..n).rev() {
-        let j = (rng.random() * (i as f64 + 1.0)) as usize;
-        order.swap(i, j);
-    }
-    order
-}
-
-struct PyRandomMirror {
-    mt: [u32; 624],
-    idx: usize,
-}
-
-impl PyRandomMirror {
-    fn new(seed: u64) -> Self {
-        let mut key = vec![seed as u32];
-        if seed >> 32 != 0 {
-            key.push((seed >> 32) as u32);
-        }
-        Self::init_by_array(&key)
-    }
-    fn init_by_array(key: &[u32]) -> Self {
-        let mut mt = [0u32; 624];
-        mt[0] = 19650218u32;
-        let mut i = 1usize;
-        let mut j = 0usize;
-        let mut k = if 624 > key.len() { 624 } else { key.len() };
-        while k > 0 {
-            mt[i] = mt[i] ^ mt[i - 1].wrapping_mul(0x9908_b0df).wrapping_add(1664525) ^ 0;
-            mt[i] = mt[i].wrapping_add(key[j]);
-            i += 1;
-            j += 1;
-            if i >= 624 {
-                mt[0] = mt[623];
-                i = 1;
-            }
-            if j >= key.len() {
-                j = 0;
-            }
-            k -= 1;
-        }
-        let mut i = 1usize;
-        while i < 624 {
-            mt[i] = (mt[i] ^ mt[i - 1].wrapping_mul(0x9908_b0df)).wrapping_add(1566083941);
-            i += 1;
-            if i >= 624 {
-                mt[0] = mt[623];
-                i = 1;
-            }
-        }
-        mt[0] = 0x8000_0000;
-        Self { mt, idx: 624 }
-    }
-    fn next_u32(&mut self) -> u32 {
-        if self.idx >= 624 {
-            self.twist();
-        }
-        let mut y = self.mt[self.idx];
-        self.idx += 1;
-        y ^= y >> 11;
-        y ^= (y << 7) & 0x9d2c_5680;
-        y ^= (y << 15) & 0xefc6_0000;
-        y ^= y >> 18;
-        y
-    }
-    fn twist(&mut self) {
-        for i in 0..624 {
-            let y = (self.mt[i] & 0x8000_0000) | (self.mt[(i + 1) % 624] & 0x7fff_ffff);
-            self.mt[i] = self.mt[(i + 397) % 624] ^ (y >> 1);
-            if y & 1 != 0 {
-                self.mt[i] ^= 0x9908_b0df;
-            }
-        }
-        self.idx = 0;
-    }
-    fn random(&mut self) -> f64 {
-        let a = self.next_u32() >> 5;
-        let b = self.next_u32() >> 6;
-        (a as f64 * 67108864.0 + b as f64) * (1.0 / 9007199254740992.0)
-    }
 }

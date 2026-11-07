@@ -9,9 +9,10 @@
 //! batch (the API refuses a shape mismatch, loudly).
 
 use crate::config::RunConfig;
-use crate::engine::{HARNESS, sha256_file};
+use crate::engine::{Engine, HARNESS, sha256_file};
 use crate::problems::ProblemSet;
 use anyhow::{Context, Result};
+use std::io::Write as _;
 use std::num::NonZeroU32;
 use std::path::Path;
 
@@ -61,7 +62,9 @@ pub fn run(args: CaptureArgs) -> Result<()> {
     }
 
     let manifest_path = args.out_dir.join("manifest.jsonl");
-    let mut manifest = std::io::BufWriter::new(std::fs::File::create(&manifest_path)?);
+    // Start the manifest fresh each run; the per-capture rows append to
+    // it inside drain_captures.
+    drop(std::fs::File::create(&manifest_path)?);
     let gguf_hash = sha256_file(&args.gguf)?;
 
     for i in 0..args.count {
@@ -71,7 +74,6 @@ pub fn run(args: CaptureArgs) -> Result<()> {
         let seed = args.seed_base + args.start as u64 + i as u64;
         let label = capture_one(&engine, &cfg, problem, &problem_id, seed, &args, &gguf_hash)
             .with_context(|| format!("capture {problem_id}"))?;
-        let _ = manifest; // rows are appended inside capture_one
         eprintln!("[{}/{}] {problem_id} -> {label}", i + 1, args.count);
     }
     Ok(())
@@ -204,8 +206,9 @@ fn drain_captures(
         let Some(CapturedTensorData::F32(values)) = cap.data else {
             continue;
         };
-        let (site_name, layer) = split_node(&cap.name);
-        let file = format!("{problem_id}.{phase}.{step}.{cap.name}.f32");
+        let cap_name = cap.name();
+        let (site_name, layer) = split_node(cap_name);
+        let file = format!("{problem_id}.{phase}.{step}.{cap_name}.f32");
         let path = args.out_dir.join(&file);
         let mut bytes = Vec::with_capacity(values.len() * 4);
         for v in &values {

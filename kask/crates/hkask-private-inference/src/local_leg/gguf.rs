@@ -101,6 +101,68 @@ pub enum GgufError {
 
 const GGUF_MAGIC: u32 = 0x46554747; // "GGUF" little-endian
 
+// ---------- the ggml storage-type table (the one exact-size home) ----------
+//
+// THE shared table: parse validation and the byte-exact writer both
+// consume it — one source of size truth for the whole component. Only
+// the types this component knows EXACTLY are listed; a tensor of an
+// unlisted type skips exact-size validation (the engine's loader still
+// validates every tensor at load) and refuses writer operations.
+pub const GGML_F32: u32 = 0;
+pub const GGML_F16: u32 = 1;
+pub const GGML_Q8_0: u32 = 8;
+pub const GGML_BF16: u32 = 30;
+
+pub fn type_name(ty: u32) -> &'static str {
+    match ty {
+        GGML_F32 => "f32",
+        GGML_F16 => "f16",
+        GGML_Q8_0 => "q8_0",
+        GGML_BF16 => "bf16",
+        2 => "q4_0",
+        3 => "q4_1",
+        6 => "q5_0",
+        7 => "q5_1",
+        10 => "q2_k",
+        11 => "q3_k",
+        12 => "q4_k",
+        13 => "q5_k",
+        14 => "q6_k",
+        15 => "q8_k",
+        _ => "other",
+    }
+}
+
+/// Elements per quantization block for the exactly-known types; `None`
+/// for every other storage type (validation skips them, writer
+/// operations refuse them — fail-closed, never approximated).
+pub fn known_block_size(ty: u32) -> Option<u64> {
+    match ty {
+        GGML_F32 | GGML_F16 | GGML_BF16 => Some(1),
+        GGML_Q8_0 => Some(32),
+        _ => None,
+    }
+}
+
+/// Bytes per quantization block for the exactly-known types.
+pub fn known_type_size(ty: u32) -> Option<u64> {
+    match ty {
+        GGML_F32 => Some(4),
+        GGML_F16 | GGML_BF16 => Some(2),
+        GGML_Q8_0 => Some(34),
+        _ => None,
+    }
+}
+
+/// The exact byte length of a tensor's data region for the
+/// exactly-known types; `None` for every other storage type.
+pub fn exact_nbytes(ty: u32, nelements: u64) -> Option<u64> {
+    match (known_block_size(ty), known_type_size(ty)) {
+        (Some(block), Some(size)) => Some(nelements / block * size),
+        _ => None,
+    }
+}
+
 struct GgufReader<R: Read> {
     inner: R,
     consumed: u64,
@@ -346,6 +408,30 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
             }
             last.approx_bytes = data_end - last.offset;
         }
+        // Exact-size validation (the corruption class the engine's loader
+        // refuses): a tensor whose CLAIMED element count × type size
+        // exceeds its offset-gap span is a corrupt or incomplete file.
+        // Live specimen: the truncated Ornith-1.5-9B-BF16 download —
+        // llama.cpp refused it at load while gap-based sizing alone
+        // accepted it (found 2026-11-06, consolidation P4). Types outside
+        // the exact table skip this check — the loader still validates
+        // every tensor at load; a wrong table entry could only over-refuse.
+        for t in &tensors {
+            if let Some(exact) = exact_nbytes(t.ggml_type, t.nelements()) {
+                if exact > t.approx_bytes {
+                    return Err(GgufError::Tensor {
+                        name: t.name.clone(),
+                        reason: format!(
+                            "claimed {exact} bytes ({} elements of {}) exceed its {}-byte span at offset {} — corrupt or incomplete file",
+                            t.nelements(),
+                            type_name(t.ggml_type),
+                            t.approx_bytes,
+                            t.offset
+                        ),
+                    });
+                }
+            }
+        }
     }
 
     let mut meta = GgufMeta {
@@ -557,5 +643,40 @@ mod tests {
         let path = dir.path().join("bad.gguf");
         std::fs::write(&path, &b).expect("write");
         assert!(parse(&[path]).is_err());
+    }
+
+    #[test]
+    fn refuses_a_directory_that_claims_more_bytes_than_its_span() {
+        // The corruption class the engine's loader refuses (live
+        // specimen: the truncated Ornith-1.5-9B-BF16 download, 2026-11-06):
+        // a tensor whose claimed element count × type size exceeds its
+        // offset-gap span is a typed parse refusal, never a silent accept.
+        let mut b = Vec::new();
+        put_u32(&mut b, GGUF_MAGIC);
+        put_u32(&mut b, 3);
+        put_u64(&mut b, 2); // tensor count
+        put_u64(&mut b, 0); // kv count
+        put_str(&mut b, "blk.0.attn_q.weight");
+        put_u32(&mut b, 1); // n_dims
+        put_u64(&mut b, 8); // 8 elements × 4 bytes = 32 claimed
+        put_u32(&mut b, GGML_F32);
+        put_u64(&mut b, 0); // offset 0
+        put_str(&mut b, "blk.0.attn_k.weight");
+        put_u32(&mut b, 1);
+        put_u64(&mut b, 4);
+        put_u32(&mut b, GGML_F32);
+        put_u64(&mut b, 16); // the first tensor's span is only 16 bytes
+        while b.len() % 32 != 0 {
+            b.push(0);
+        }
+        b.extend_from_slice(&[0u8; 64]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corrupt.gguf");
+        std::fs::write(&path, &b).expect("write");
+        let err = parse(&[path]).expect_err("the corrupt directory must refuse");
+        match err {
+            GgufError::Tensor { name, .. } => assert_eq!(name, "blk.0.attn_q.weight"),
+            other => panic!("corrupt directory is a Tensor refusal, got {other:?}"),
+        }
     }
 }
