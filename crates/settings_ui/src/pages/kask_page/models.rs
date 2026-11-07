@@ -235,7 +235,8 @@ pub(crate) fn render_models_page(
                     Label::new(
                         "Provider-prefixed model for the research server's deep-search \
                          rerank stage (per-candidate relevance scoring). Defaults to \
-                         deepinfra/Qwen/Qwen3-Reranker-8B.",
+                         OpenRouter/qwen/qwen3-reranker-8b; an ollama/-prefixed value \
+                         serves through the local judge protocol.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -452,7 +453,7 @@ mod tests {
             },
             |resolved| resolved.models.rerank_model.clone(),
             "HKASK_RERANK_MODEL",
-            ["deepinfra/Qwen/Qwen3-Reranker-8B", ""],
+            ["OpenRouter/qwen/qwen3-reranker-8b", ""],
         )
         .await;
     }

@@ -280,6 +280,9 @@ mod tests {
             None,
             None,
             None,
+            // The private leg's local rerank model — the stamp test never
+            // exercises the rerank stage.
+            None,
         );
         let response = server
             .web_ping()

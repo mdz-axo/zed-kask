@@ -280,6 +280,7 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_CLASSIFIER_MODEL",
     hkask_inference::model_constants::QA_GENERATION_MODEL_ENV,
     hkask_inference::model_constants::PRIVATE_EMBEDDING_MODEL_ENV,
+    hkask_inference::model_constants::PRIVATE_RERANK_MODEL_ENV,
     "HKASK_OCR_MODEL",
     "HKASK_RERANK_MODEL",
 ];
@@ -676,6 +677,32 @@ mod tests {
         assert_eq!(
             env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
             Some("voyage/voyage-3")
+        );
+    }
+
+    /// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL rerank model reaches the research child through
+    /// `HKASK_PRIVATE_RERANK_MODEL`, carrying the operator's explicit
+    /// opt-out (an EMPTY value is emitted as empty — the child's reader
+    /// maps empty/unset to the surfaced heuristic skip, never the
+    /// configured cloud reranker).
+    #[test]
+    fn mcp_env_emits_the_private_rerank_model() {
+        let mut settings = KaskSettings::default();
+        settings.private_inference.rerank_model = "ollama/qwen3-reranker-4b:latest".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_PRIVATE_RERANK_MODEL").map(String::as_str),
+            Some("ollama/qwen3-reranker-4b:latest")
+        );
+
+        // The explicit opt-out: an empty setting emits empty — the child
+        // reads the surfaced skip, never a hidden default.
+        settings.private_inference.rerank_model = String::new();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_PRIVATE_RERANK_MODEL").map(String::as_str),
+            Some("")
         );
     }
 

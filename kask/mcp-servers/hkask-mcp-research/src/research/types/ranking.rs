@@ -213,9 +213,9 @@ pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
 //
 // Decision: ONE `InferencePort::rerank` call carrying all candidates as
 // documents, routed through the zed-side IPC bridge to the OpenRouter
-// rerank endpoint (`/api/v1/rerank` — the only rerank provider). The
-// shipped default (`deepinfra/Qwen/Qwen3-Reranker-8B`) is not
-// `OpenRouter/`-prefixed and therefore not rerank-eligible: under the
+// rerank endpoint (`/api/v1/rerank`); the local `ollama/` arm serves the
+// judge protocol. An unrecognized prefix is not rerank-eligible and
+// degrades the stage to heuristic rerank with the reason surfaced.
 // default this path degrades to heuristic rerank with the reason
 // surfaced. An `OpenRouter/`-prefixed reranker override (e.g.
 // `OpenRouter/qwen/qwen3-reranker-8b`, via `HKASK_RERANK_MODEL` / the

@@ -1925,7 +1925,7 @@ pub struct KaskModelsSettingsContent {
     pub ocr_model: Option<String>,
     /// Rerank model for the research server's deep-search rerank stage
     /// (provider-prefixed). When empty, falls back to the kask default
-    /// (`deepinfra/Qwen/Qwen3-Reranker-8B`).
+    /// (`OpenRouter/qwen/qwen3-reranker-8b`).
     pub rerank_model: Option<String>,
     /// Decision model for bounded structured judgments (provider-prefixed;
     /// served over the provider's Decisions API — e.g.
@@ -1994,6 +1994,16 @@ pub struct KaskPrivateInferenceSettingsContent {
     /// operator's opt-out (structural tags only, surfaced).
     #[serde(default)]
     pub classifier_model: Option<String>,
+    /// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL rerank model (provider-qualified for a local
+    /// provider, e.g. `"ollama/qwen3-reranker-4b:latest"`).
+    /// Private-provenance deep-search rerank runs through this model only,
+    /// served by the local ollama instance's judge protocol; the configured
+    /// cloud reranker never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (the surfaced heuristic skip).
+    #[serde(default)]
+    pub rerank_model: Option<String>,
 }
 
 /// zed-kask: D100 — the default local-leg provider set for privacy-marked

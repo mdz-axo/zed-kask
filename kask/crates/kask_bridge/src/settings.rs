@@ -627,6 +627,12 @@ pub struct KaskPrivateInferenceSettings {
     /// only, surfaced). The default is the operator's named pick
     /// (`ollama/qwen3.5:4b`, deployed locally).
     pub classifier_model: String,
+    /// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL rerank model: private-provenance deep-search
+    /// rerank runs through this model only (the local ollama judge
+    /// protocol); the configured cloud reranker never sees private
+    /// content. Empty = the explicit opt-out (the surfaced heuristic skip).
+    pub rerank_model: String,
 }
 
 impl Default for KaskPrivateInferenceSettings {
@@ -656,6 +662,10 @@ impl Default for KaskPrivateInferenceSettings {
             // operator's named local pick.
             classifier_model: hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL
                 .to_string(),
+            // D100 §8.1 routed shape: the same single-home rule — the
+            // local ollama reranker (the 4b judge-protocol pick).
+            rerank_model: hkask_inference::model_constants::DEFAULT_PRIVATE_RERANK_MODEL
+                .to_string(),
         }
     }
 }
@@ -676,6 +686,8 @@ impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings 
             embedding_model: c.embedding_model.unwrap_or(default.embedding_model),
             // `Some("")` preserved here too — the structural-only opt-out.
             classifier_model: c.classifier_model.unwrap_or(default.classifier_model),
+            // `Some("")` preserved — the heuristic-skip opt-out.
+            rerank_model: c.rerank_model.unwrap_or(default.rerank_model),
         }
     }
 }
@@ -789,6 +801,14 @@ impl KaskSettings {
         env.insert(
             hkask_inference::model_constants::PRIVATE_EMBEDDING_MODEL_ENV.to_string(),
             self.private_inference.embedding_model.clone(),
+        );
+        // zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) —
+        // the private leg's LOCAL rerank model reaches the research child
+        // the same way: emitted unconditionally (an empty value carries the
+        // explicit opt-out), admitted by the research server's allowlist.
+        env.insert(
+            hkask_inference::model_constants::PRIVATE_RERANK_MODEL_ENV.to_string(),
+            self.private_inference.rerank_model.clone(),
         );
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
@@ -1368,6 +1388,11 @@ mod tests {
             hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL,
             "absent classifier content uses the single-home default (the operator's named local pick)"
         );
+        assert_eq!(
+            effective.rerank_model,
+            hkask_inference::model_constants::DEFAULT_PRIVATE_RERANK_MODEL,
+            "absent rerank content uses the single-home default (the local ollama reranker)"
+        );
         // A present section with every field set overrides each one.
         let content = KaskPrivateInferenceSettingsContent {
             provider_id: Some("pi-test".into()),
@@ -1377,6 +1402,7 @@ mod tests {
             private_thread_disabled_servers: Some(vec!["media".into()]),
             embedding_model: Some("ollama/custom-embed".into()),
             classifier_model: Some("ollama/custom-classifier".into()),
+            rerank_model: Some("ollama/custom-rerank".into()),
         };
         let effective: KaskPrivateInferenceSettings = content.into();
         assert_eq!(effective.provider_id, "pi-test");
@@ -1392,6 +1418,7 @@ mod tests {
         );
         assert_eq!(effective.embedding_model, "ollama/custom-embed");
         assert_eq!(effective.classifier_model, "ollama/custom-classifier");
+        assert_eq!(effective.rerank_model, "ollama/custom-rerank");
     }
 
     // D100 item 3 (operator 2026-11-05) — the private leg's local embedding

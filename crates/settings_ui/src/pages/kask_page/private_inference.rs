@@ -33,6 +33,7 @@ pub(crate) fn render_private_inference_page(
     let disabled_servers_initial = pi.private_thread_disabled_servers.join(", ");
     let embedding_model_initial = pi.embedding_model.clone();
     let classifier_model_initial = pi.classifier_model.clone();
+    let rerank_model_initial = pi.rerank_model.clone();
     // The entry-time prefix validation's allowed set: the private provider
     // id plus the local-provider set (the same set
     // `resolved_local_providers` merges; the wiring-time builder refusal
@@ -42,6 +43,10 @@ pub(crate) fn render_private_inference_page(
     // The classifier row's entry-time validation shares the allowed set —
     // cloned BEFORE the embedding row's `move` closure takes it.
     let classifier_allowed_prefixes = allowed_prefixes.clone();
+    // The rerank row's entry-time validation shares the allowed set —
+    // cloned before the embedding row's `move` closure takes it (the same
+    // ordering discipline).
+    let rerank_allowed_prefixes = allowed_prefixes.clone();
 
     let provider_id_input = kask_string_input(
         "kask-private-inference-provider-id",
@@ -276,6 +281,39 @@ pub(crate) fn render_private_inference_page(
         },
     );
 
+    // zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+    // private leg's LOCAL rerank model: private-provenance deep-search
+    // rerank runs through this model (the local ollama judge protocol);
+    // the configured cloud reranker never sees private content. The same
+    // entry-time local-prefix validation; empty = the surfaced heuristic
+    // skip (the explicit opt-out).
+    let rerank_model_input = kask_input_field(
+        "kask-private-inference-rerank-model",
+        0,
+        rerank_model_initial,
+        "empty = the surfaced heuristic skip (no local rerank)",
+        "Private Rerank Model",
+        move |text| {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            let (prefix, _) = trimmed.split_once('/')?;
+            rerank_allowed_prefixes
+                .iter()
+                .any(|allowed| allowed == prefix)
+                .then(|| trimmed.to_string())
+        },
+        |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .private_inference
+                .get_or_insert_default()
+                .rerank_model = Some(parsed);
+        },
+    );
+
     v_flex()
         .id("kask-private-inference-page")
         .size_full()
@@ -367,15 +405,16 @@ pub(crate) fn render_private_inference_page(
                 .child(Label::new("Private-Thread Policy"))
                 .child(
                     Label::new(
-                        "The three policy fields a privacy-marked thread reads \
+                        "The policy fields a privacy-marked thread reads \
                          (kask.private_inference): the local-leg provider ids \
                          (local by construction — a marked thread accepts these \
                          providers' models and never a cloud provider's), the MCP \
                          servers whose tools are disabled on marked threads \
                          (their assisting inference cannot run locally), and the \
-                         LOCAL embedding model for private memory (empty = the \
-                         keyword-only degrade; a cloud-prefixed value is refused \
-                         here and at wiring).",
+                         LOCAL embedding, classifier, and rerank models for \
+                         private memory, tagging, and deep-search rerank (empty \
+                         = the surfaced degrade; a cloud-prefixed value is \
+                         refused here and at wiring).",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -383,7 +422,8 @@ pub(crate) fn render_private_inference_page(
                 .child(local_providers_input)
                 .child(disabled_servers_input)
                 .child(embedding_model_input)
-                .child(classifier_model_input),
+                .child(classifier_model_input)
+                .child(rerank_model_input),
         )
         .child(Divider::horizontal())
         .child({
@@ -588,6 +628,7 @@ mod tests {
                 "kask-private-inference-classifier-model",
                 "classifier_model",
             ),
+            ("kask-private-inference-rerank-model", "rerank_model"),
         ] {
             assert!(
                 page.contains(field_id),

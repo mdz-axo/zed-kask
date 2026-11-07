@@ -110,6 +110,18 @@ hkask_mcp_server::mcp_server!(
         /// configured cloud embedder — private artifact content never
         /// widens.
         pub private_embedding_model: Option<String>,
+        /// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06)
+        /// — the private leg's LOCAL rerank model for private-provenance
+        /// deep-search rerank, resolved ONCE at the construction seam from
+        /// `HKASK_PRIVATE_RERANK_MODEL` (the visible
+        /// `kask.private_inference.rerank_model` setting — the one-home
+        /// reader; the model string IS the routing signal: the zed side
+        /// serves `ollama/`-qualified rerank models through the local
+        /// judge protocol, loopback and keyless). `None`/empty = the
+        /// operator's explicit opt-out → the surfaced heuristic skip,
+        /// never the configured cloud reranker — private thread content
+        /// never widens.
+        pub private_rerank_model: Option<String>,
     } = crate::ontology::annotate;
 );
 
@@ -406,29 +418,45 @@ impl ResearchServer {
             // fallback.
             let rerank = if strat == SearchStrategy::Deep && compound.results.len() >= 2 {
                 // zed-kask: D100 (the tool-query-embed design §8.1,
-                // operator-approved 2026-11-06) — the provenance-routed
-                // rerank leg: a private-provenance call NEVER sends its
-                // query or candidate content to the configured rerank
-                // model (cloud by construction — the visible
-                // kask.models.rerank_model setting). No private
-                // chat/rerank model setting exists, so the stage takes the
-                // design's sanctioned alternative: the surfaced skip —
-                // the heuristic RRF order stands, the reason names the
-                // boundary. When a private rerank model setting ever
-                // exists, this branch becomes the routed-model shape (the
-                // curator child's routed_model_for_provenance pattern).
+                // operator-approved 2026-11-06; the routed shape by the
+                // operator's 2026-11-06 ruling — private mode uses the
+                // ollama qwen reranker) — the provenance-routed rerank
+                // leg: a private-provenance call reranks through the
+                // private leg's LOCAL model ONLY
+                // (`kask.private_inference.rerank_model`, injected as
+                // HKASK_PRIVATE_RERANK_MODEL — the zed side's local arm
+                // serves the `ollama/`-qualified judge protocol over
+                // loopback, keyless); the configured cloud reranker never
+                // sees private content. Unset/empty is the operator's
+                // explicit opt-out → the surfaced skip, the reason naming
+                // the boundary and the setting.
                 let outcome = if hkask_mcp_server::current_call_provenance()
                     == hkask_types::InferenceProvenance::PrivateInference
                 {
-                    RerankOutcome {
-                        scored: 0,
-                        failed: compound.results.len(),
-                        first_error: Some(
-                            "private-provenance call — the rerank stage is skipped \
-                                 (private thread content never reaches the configured \
-                                 kask.models.rerank_model); heuristic order kept"
-                                .to_string(),
-                        ),
+                    match self.private_rerank_model.as_deref() {
+                        Some(private_model) => {
+                            llm_rerank(
+                                self.inference_port.as_ref(),
+                                &req.query,
+                                &mut compound.results,
+                                private_model,
+                            )
+                            .await
+                        }
+                        None => RerankOutcome {
+                            scored: 0,
+                            failed: compound.results.len(),
+                            first_error: Some(
+                                "private-provenance call — the rerank stage is skipped \
+                                     (private thread content never reaches the configured \
+                                     kask.models.rerank_model); set \
+                                     kask.private_inference.rerank_model (injected as \
+                                     HKASK_PRIVATE_RERANK_MODEL) to route it locally, or \
+                                     leave it empty for the surfaced skip; heuristic order \
+                                     kept"
+                                    .to_string(),
+                            ),
+                        },
                     }
                 } else {
                     match self.rerank_model.as_deref() {
@@ -2352,6 +2380,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // operator's explicit opt-out → the surfaced shingle-floor
                 // degrade).
                 hkask_inference::model_constants::private_embedding_model(),
+                // zed-kask: D100 §8.1 routed shape — the private leg's
+                // local rerank model for private-provenance deep-search
+                // rerank (the same construction-seam discipline; unset/
+                // empty is the operator's explicit opt-out → the surfaced
+                // heuristic skip).
+                hkask_inference::model_constants::private_rerank_model(),
             ))
         },
         credential_requirements(),

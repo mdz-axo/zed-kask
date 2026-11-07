@@ -260,6 +260,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // time. Without this, an operator override is silently stripped
             // under governed launch.
             "HKASK_RERANK_MODEL",
+            // zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06)
+            // — the private leg's LOCAL rerank model for private-provenance
+            // deep-search rerank, read by
+            // `hkask_inference::model_constants::private_rerank_model()` at
+            // the construction seam. Without this entry a private call's
+            // rerank stage would surface the heuristic skip instead of
+            // routing locally.
+            hkask_inference::model_constants::PRIVATE_RERANK_MODEL_ENV,
         ],
     },
     BuiltinMcpServer {
@@ -1473,6 +1481,13 @@ mod tests {
             "research reads HKASK_RERANK_MODEL via std::env::var (rerank model \
              resolution) but it is not allowlisted — an operator override \
              would be silently stripped under governed launch"
+        );
+        assert!(
+            s.config_env.contains(&"HKASK_PRIVATE_RERANK_MODEL"),
+            "research reads HKASK_PRIVATE_RERANK_MODEL via \
+             model_constants::private_rerank_model() but it is not \
+             allowlisted — a private call's rerank stage would surface the \
+             heuristic skip instead of routing locally"
         );
     }
 

@@ -679,6 +679,38 @@ fn test_server(
         rerank_model.map(str::to_string),
         embedding_model.map(str::to_string),
         private_embedding_model.map(str::to_string),
+        // The private leg's local rerank model — None here keeps the
+        // existing pins on the opt-out skip; the routing pins build via
+        // `test_server_with_private_rerank` below.
+        None,
+    )
+}
+
+/// zed-kask: D100 §8.1 routed shape — a construction seam that carries the
+/// private leg's LOCAL rerank model (the routing pins' server shape).
+fn test_server_with_private_rerank(
+    pool: Arc<dyn WebSearchPort>,
+    inference_port: Arc<dyn InferencePort>,
+    rerank_model: Option<&str>,
+    private_rerank_model: Option<&str>,
+) -> ResearchServer {
+    ResearchServer::new(
+        WebID::new(),
+        pool,
+        Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
+        RateLimiter::new(10000, 60),
+        None,
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        reqwest::Client::builder()
+            .build()
+            .expect("reqwest client build"),
+        inference_port,
+        rerank_model.map(str::to_string),
+        None,
+        None,
+        private_rerank_model.map(str::to_string),
     )
 }
 
@@ -1753,6 +1785,9 @@ async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
 /// called for a private query); the public control asserts it moved.
 struct RecordingRerankPort {
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Every rerank call's MODEL string, in call order — the routing pins
+    /// assert the private-provenance call used the private model only.
+    models: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 stub_inference_port! {
@@ -1761,6 +1796,10 @@ stub_inference_port! {
     rerank(self, _model, _query, _documents): {
         self.calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.models
+            .lock()
+            .expect("models mutex")
+            .push(_model.to_string());
         let scores: Vec<hkask_types::inference_ipc::RerankScoreEntry> = _documents
             .iter()
             .enumerate()
@@ -1801,6 +1840,7 @@ async fn private_call_skips_llm_rerank_with_the_boundary_surfaced() {
         Arc::new(FixedResultsPool),
         Arc::new(RecordingRerankPort {
             calls: calls.clone(),
+            models: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }),
         Some("test-rerank-model"),
     );
@@ -1825,6 +1865,10 @@ async fn private_call_skips_llm_rerank_with_the_boundary_surfaced() {
     assert!(
         reason.contains("private-provenance") && reason.contains("kask.models.rerank_model"),
         "the reason names the private boundary and the refused setting: {reason}"
+    );
+    assert!(
+        reason.contains("kask.private_inference.rerank_model"),
+        "the skip names the setting that routes locally: {reason}"
     );
     assert_eq!(
         calls.load(std::sync::atomic::Ordering::Relaxed),
@@ -1858,6 +1902,7 @@ async fn public_call_reranks_through_the_configured_model() {
         Arc::new(FixedResultsPool),
         Arc::new(RecordingRerankPort {
             calls: calls.clone(),
+            models: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }),
         Some("test-rerank-model"),
     );
@@ -1879,6 +1924,87 @@ async fn public_call_reranks_through_the_configured_model() {
         calls.load(std::sync::atomic::Ordering::Relaxed),
         1,
         "the public control dispatches exactly one rerank call"
+    );
+}
+
+/// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06 — private
+/// mode uses the ollama qwen reranker) — the positive control: with the
+/// private rerank model configured, a private-provenance deep search RERANKS
+/// (the surfaced skip is gone) and the recording port captured the PRIVATE
+/// model only — the configured cloud model is never called for private
+/// content. The public control asserts the configured model still serves
+/// public calls (the routing does not over-block).
+#[tokio::test]
+async fn private_call_reranks_via_the_private_model_only() {
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let models: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let server = test_server_with_private_rerank(
+        Arc::new(FixedResultsPool),
+        Arc::new(RecordingRerankPort {
+            calls: calls.clone(),
+            models: models.clone(),
+        }),
+        Some("test-configured-rerank-model"),
+        Some("ollama/qwen3-reranker-4b:latest"),
+    );
+    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.web_search(Parameters(deep_search_request())),
+    )
+    .await));
+
+    let rerank = output
+        .get("rerank")
+        .expect("the routed private call surfaces rerank info");
+    assert_eq!(
+        rerank.get("mode").and_then(|m| m.as_str()),
+        Some("llm"),
+        "the private call reranks through the private model: {rerank:?}"
+    );
+    assert!(
+        calls.load(std::sync::atomic::Ordering::Relaxed) > 0,
+        "the private call made rerank calls through the private model"
+    );
+    let captured = models.lock().expect("models mutex").clone();
+    assert!(
+        captured
+            .iter()
+            .all(|model| model == "ollama/qwen3-reranker-4b:latest"),
+        "every private-provenance rerank call used the private model: {captured:?}"
+    );
+
+    // The public control: the configured cloud model still serves public
+    // calls — a FRESH recorder, so the captured models are this leg's alone
+    // (the private leg's entries do not pollute the check).
+    let models_public: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let server = test_server_with_private_rerank(
+        Arc::new(FixedResultsPool),
+        Arc::new(RecordingRerankPort {
+            calls: calls.clone(),
+            models: models_public.clone(),
+        }),
+        Some("test-configured-rerank-model"),
+        Some("ollama/qwen3-reranker-4b:latest"),
+    );
+    let output = parse(&ok(server
+        .web_search(Parameters(deep_search_request()))
+        .await));
+    let rerank = output
+        .get("rerank")
+        .expect("the public call surfaces rerank info");
+    assert_eq!(
+        rerank.get("mode").and_then(|m| m.as_str()),
+        Some("llm"),
+        "the public call still reranks through the configured model: {rerank:?}"
+    );
+    let captured = models_public.lock().expect("models mutex").clone();
+    assert!(
+        captured
+            .iter()
+            .all(|model| model == "test-configured-rerank-model"),
+        "public calls keep the configured model: {captured:?}"
     );
 }
 

@@ -167,7 +167,16 @@ proposed actions" direction):
    (`call_provenance.rs`), so the same rule applies mechanically: a
    private-provenance call routes its rerank leg to a local model or skips
    the stage with a surfaced note (degrade-not-leak), never a cloud
-   crossing.
+   crossing. **Disposition 2026-11-06 (landed):** the skip shape landed
+   first (the provenance-routed research legs, D100); the operator's
+   follow-up ruling — private mode uses the ollama qwen reranker — then
+   landed the ROUTED shape: the private leg's rerank model setting
+   (`kask.private_inference.rerank_model`, default
+   `ollama/qwen3-reranker-4b:latest`) routes private-provenance rerank
+   through the local ollama judge protocol, with the surfaced skip as the
+   explicit-empty opt-out; the repaired `kask.models.rerank_model` default
+   and the local serving arm are recorded in the research.md decision
+   record and D100.
 2. **The corpus server's assisting-inference legs.** `corpus_embed`,
    `corpus_tag_chunks` and the OCR vision leg on private-provenance calls
    embed, tag and OCR through the cloud models. The M5 off-axis ruling

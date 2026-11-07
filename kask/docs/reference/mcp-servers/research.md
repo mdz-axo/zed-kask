@@ -112,24 +112,62 @@ but semantically wrong judgments that structural validation cannot catch.
 
 **Decision.** Native rerank protocol: ONE `InferencePort::rerank` call
  carrying all candidates as documents, routed through the inference IPC
- bridge to OpenRouter's rerank endpoint (`/api/v1/rerank`). The model must be
-`OpenRouter/`-prefixed to be rerank-eligible — `detect_rerank_provider`
-(`kask/crates/hkask-inference/src/rerank.rs:28-31`) strips only that prefix,
-and the bridge rejects anything else with `InvalidArgument` naming the
-requirement (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1018-1027`).
+ bridge to the serving arm named by the model string's provider prefix
+ (`detect_rerank_provider`, `kask/crates/hkask-inference/src/rerank.rs:47-63`
+ — the model string IS the routing signal). Two arms:
+
+- **Cloud (`OpenRouter/`-prefixed)** — OpenRouter's rerank endpoint
+  (`/api/v1/rerank`); the zed side of the bridge holds the OpenRouter key
+  (keychain slot at the provider `api_url`, `https://openrouter.ai/api/v1` —
+  the ONE location) and calls the provider directly; the MCP server never
+  sees the credential (same pattern as `GenerateBatch`). The bridge rejects
+  an unrecognized prefix with `InvalidArgument` naming the requirement
+  (`kask/crates/kask_bridge/src/inference_ipc_server.rs:1019-1030`).
+- **Local (`ollama/`-prefixed, case-insensitive)** — the D100 §8.1 routed
+  shape (operator ruling 2026-11-06): the private leg's rerank models serve
+  through the local ollama chat API's Qwen3-Reranker judge protocol — ollama
+  has NO rerank endpoint (`/v1/rerank` and `/api/rerank` both 404,
+  probe-verified 2026-11-06), so the local arm issues one deterministic
+  (temperature 0, generation-bounded) chat call per document and reads the
+  FIRST sampled token as the binary verdict — `yes` → 1.0, `no` → 0.0
+  (probe-verified on `qwen3-reranker-4b:latest`; the 0.6b's community
+  template mis-serves the protocol — rambling output and a wrong verdict on
+  an irrelevant document — and is not the default). No credential: the
+  ollama descriptor is keyless. The binary score is deliberate — a single
+  sampled token's logprob is not a graded probability, so yes-scored
+  documents tie above no-scored ones and each group keeps its heuristic
+  relative order (the consumer's stable sort). Implementation:
+  `kask/crates/hkask-inference/src/rerank.rs:150-310`, dispatched at
+  `kask/crates/kask_bridge/src/inference_ipc_server.rs:1033-1066`.
+
 The settings-chain default for `kask.models.rerank_model` is
-`DEFAULT_RERANK_MODEL` = `deepinfra/Qwen/Qwen3-Reranker-8B`
-(`kask/crates/hkask-inference/src/model_constants.rs:274`, wired as the
-settings default at `kask/crates/kask_bridge/src/settings.rs:665`) — NOT
-`OpenRouter/`-prefixed, so under the default a deep-strategy rerank fails the
-eligibility check and surfaces as the degraded `mode: "heuristic"` with the
-error as reason; set an `OpenRouter/`-prefixed reranker (e.g.
-`OpenRouter/qwen/qwen3-reranker-8b`) via `kask.models.rerank_model` /
-`HKASK_RERANK_MODEL` to use the native path. The zed side
-of the bridge holds the OpenRouter key (keychain slot at the provider
-`api_url`, `https://openrouter.ai/api/v1` — the ONE location) and calls the
-provider directly; the MCP
-server never sees the credential (same pattern as `GenerateBatch`).
+`DEFAULT_RERANK_MODEL` = `OpenRouter/qwen/qwen3-reranker-8b`
+(`kask/crates/hkask-inference/src/model_constants.rs:390`, wired as the
+settings default at `kask/crates/kask_bridge/src/settings.rs:553`) — the
+same Qwen3-Reranker-8B the 2026-09-11 operator ruling named, on the
+servable cloud path. The ruling's first literal
+(`deepinfra/Qwen/Qwen3-Reranker-8B`) was unroutable by construction — the
+native path serves only the two provider prefixes — so every
+default-configured deep search silently degraded to `mode: "heuristic"`
+(the operator-reported bug, repaired 2026-11-06, pinned by
+`default_rerank_model_is_routable_by_the_native_path`).
+
+**Private-mode routing (D100 §8.1, operator ruling 2026-11-06 — private
+mode uses the ollama qwen reranker).** The deep-strategy rerank stage reads
+the call's provenance: a private-provenance call reranks through the private
+leg's LOCAL model ONLY — the setting `kask.private_inference.rerank_model`
+(default `ollama/qwen3-reranker-4b:latest` per `DEFAULT_PRIVATE_RERANK_MODEL`,
+emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL`, admitted by the
+research server's allowlist), resolved at the construction seam
+(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:436-456`).
+Unset/empty is the operator's explicit opt-out → the surfaced skip: the
+heuristic RRF order stands, the reason naming the boundary, the refused
+cloud setting, and the private setting that routes locally. The configured
+cloud reranker never sees private content. Pins:
+`private_call_reranks_via_the_private_model_only` (the recording
+falsifier), `private_call_skips_llm_rerank_with_the_boundary_surfaced`
+(the opt-out), `public_call_reranks_through_the_configured_model` (the
+public control).
 
 **Why the native protocol.**
 
@@ -170,8 +208,10 @@ output's `rerank` field — never a silent fallback:
   scoring; the rerank stage reorders on top and falls back to RRF order on
   total failure.
 - *Inference IPC bridge* (`InferenceMethod::Rerank`): the call routes to
-  the zed side, which holds the OpenRouter key and calls the provider's
-  rerank endpoint directly — the MCP server never sees the credential
+  the zed side, which dispatches by the model string's provider prefix —
+  `OpenRouter/` holds the OpenRouter key and calls the provider's rerank
+  endpoint directly; `ollama/` serves the local judge-protocol arm over
+  loopback, keyless. The MCP server never sees any credential
   (same pattern as `GenerateBatch`).
 - *Model constants* (`kask/crates/hkask-inference/src/model_constants.rs`):
   `DEFAULT_RERANK_MODEL` is the single source of truth. The settings chain
@@ -193,7 +233,8 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS and research-run tools) |
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
-| `HKASK_RERANK_MODEL` | Rerank model (settings default `deepinfra/Qwen/Qwen3-Reranker-8B`; the rerank endpoint requires an `OpenRouter/`-prefixed model — any other value degrades deep-strategy rerank to heuristic mode with the reason surfaced) |
+| `HKASK_RERANK_MODEL` | Rerank model (settings default `OpenRouter/qwen/qwen3-reranker-8b` — repaired 2026-11-06: the previous `deepinfra/…` default was unroutable by the native path, so every default-configured deep search degraded to heuristic mode; the default keeps the ruled Qwen3-Reranker-8B on the servable OpenRouter path). An `ollama/`-prefixed value serves through the local judge-protocol arm |
+| `HKASK_PRIVATE_RERANK_MODEL` | The private leg's LOCAL rerank model for private-provenance deep-search rerank (`kask.private_inference.rerank_model`, default `ollama/qwen3-reranker-4b:latest`; emitted unconditionally — an empty value is the explicit opt-out, the surfaced heuristic skip) |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for the semantic duplication tier (emitted unconditionally by the settings chain; unset is a legitimate degraded mode — the deterministic shingle floor runs with a surfaced reason) |
 
 ## One-time data migration — `rss.db` → `research.db`

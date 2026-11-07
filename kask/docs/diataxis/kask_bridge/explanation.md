@@ -81,13 +81,13 @@ under Passphrase rotation.
 `build_mcp_server_env` is the canonical child-process environment path. It
 filters non-secret configuration first, then resolves only the server's
 credential allowlist, then adds the inference socket and timeout
-(`kask/crates/kask_bridge/src/mcp_servers.rs:496-660@build_mcp_server_env`). The ordering is
+(`kask/crates/kask_bridge/src/mcp_servers.rs:512-676@build_mcp_server_env`). The ordering is
 load-bearing because configuration and credentials are disjoint key sets
 (`kask/crates/kask_bridge/src/mcp_servers.rs:11-22`).
 
 Every built-in descriptor carries explicit `credentials` and `config_env`
 allowlists. Unknown server IDs fail closed in both filters
-(`kask/crates/kask_bridge/src/mcp_servers.rs:436@filter_credentials_for_server,935@filter_config_env_for_server`). This makes a
+(`kask/crates/kask_bridge/src/mcp_servers.rs:452@filter_credentials_for_server,951@filter_config_env_for_server`). This makes a
 server's child environment an attenuated capability rather than a copy of the
 parent environment.
 

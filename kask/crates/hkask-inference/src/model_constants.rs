@@ -24,6 +24,8 @@
 //!   injected by `mcp_env()`; the direct path fails typed when unset)
 //! - `HKASK_PRIVATE_EMBEDDING_MODEL` — the private leg's local embedding
 //!   model (D100 item 3 + the query-side provenance routing)
+//! - `HKASK_PRIVATE_RERANK_MODEL` — the private leg's local rerank model
+//!   (D100 §8.1 routed shape, operator ruling 2026-11-06)
 //! - `HKASK_DECISION_MODEL` — the decision model for bounded structured
 //!   judgments (the Decisions API, not a chat endpoint)
 
@@ -160,6 +162,27 @@ pub const PRIVATE_EMBEDDING_MODEL_ENV: &str = "HKASK_PRIVATE_EMBEDDING_MODEL";
 /// call degrade, never a fallback to the configured cloud model.
 pub fn private_embedding_model() -> Option<String> {
     std::env::var(PRIVATE_EMBEDDING_MODEL_ENV)
+        .ok()
+        .filter(|m| !m.trim().is_empty())
+}
+
+/// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the env
+/// name carrying the private leg's LOCAL rerank model to kask MCP children
+/// (`kask.private_inference.rerank_model` → `mcp_env()` → this var). The
+/// research child routes private-provenance deep-search rerank through this
+/// model ONLY (the zed side's local arm serves `ollama/`-qualified rerank
+/// models through the local ollama judge protocol — loopback, no
+/// credentials); public calls keep `HKASK_RERANK_MODEL`. Empty/unset is the
+/// surfaced skip — the private rerank stage degrades to heuristic order and
+/// the private query and candidates never widen to the configured cloud
+/// reranker.
+pub const PRIVATE_RERANK_MODEL_ENV: &str = "HKASK_PRIVATE_RERANK_MODEL";
+
+/// The private leg's LOCAL rerank model as injected into kask MCP children
+/// ([`PRIVATE_RERANK_MODEL_ENV`]). Empty/unset reads `None` — the surfaced
+/// heuristic skip, never a fallback to the configured cloud reranker.
+pub fn private_rerank_model() -> Option<String> {
+    std::env::var(PRIVATE_RERANK_MODEL_ENV)
         .ok()
         .filter(|m| !m.trim().is_empty())
 }
@@ -354,10 +377,17 @@ pub const DEFAULT_MEDIA_TAGGING_MODEL: &str = "openrouter/Qwen3 VL 8B Instruct";
 
 /// Default rerank model for the research server's deep-search rerank stage
 /// (env `HKASK_RERANK_MODEL` via `KaskModelsSettings::rerank_model`). The
-/// rerank stage sends non-reasoning relevance-scoring requests. Verified on
-/// DeepInfra's catalog 2026-09-11: `Qwen/Qwen3-Reranker-8B`, $0.05/1M tokens,
-/// 32K context, instruction-aware (operator ruling 2026-09-11).
-pub const DEFAULT_RERANK_MODEL: &str = "deepinfra/Qwen/Qwen3-Reranker-8B";
+/// rerank stage sends non-reasoning relevance-scoring requests. The
+/// 2026-09-11 operator ruling named Qwen3-Reranker-8B (verified on
+/// DeepInfra's catalog: $0.05/1M tokens, 32K context, instruction-aware);
+/// the deepinfra-prefixed literal that ruling first shipped was UNROUTABLE
+/// by construction — `detect_rerank_provider` serves only `OpenRouter/`-
+/// and `ollama/`-prefixed models, so every default-configured deep search
+/// silently degraded to heuristic rerank (the operator-reported bug,
+/// repaired 2026-11-06). The default keeps the ruled model on the servable
+/// cloud path; private-provenance rerank routes through the local
+/// ollama reranker (`DEFAULT_PRIVATE_RERANK_MODEL`).
+pub const DEFAULT_RERANK_MODEL: &str = "OpenRouter/qwen/qwen3-reranker-8b";
 
 /// Default decision model (env `HKASK_DECISION_MODEL` via
 /// `KaskModelsSettings::decision_model`). TypeSafe's Jev 1.14 — the first
@@ -412,3 +442,17 @@ pub const DEFAULT_PRIVATE_EMBEDDING_MODEL: &str = "ollama/qwen3-embedding:0.6b";
 /// and keeps the structural-only degrade. An explicitly empty setting is
 /// the opt-out (structural tags only, surfaced).
 pub const DEFAULT_PRIVATE_CLASSIFIER_MODEL: &str = "ollama/qwen3.5:4b";
+
+/// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+/// private leg's LOCAL rerank model, served by the local ollama instance
+/// through its chat API. Ollama has NO rerank endpoint (`/v1/rerank` and
+/// `/api/rerank` both 404, probe-verified 2026-11-06), so the local arm
+/// speaks the Qwen3-Reranker judge protocol (Zhang et al.,
+/// arXiv:2506.05176): one deterministic chat call per document, the first
+/// sampled token IS the verdict — `yes` → 1.0, `no` → 0.0 (probe-verified
+/// on the operator's ollama 0.40.12). The 4b is the default pick — the
+/// 0.6b's community GGUF template mis-serves the judge protocol
+/// (probe-verified rambling output and a wrong verdict on an irrelevant
+/// document, 2026-11-06). An explicitly empty setting is the operator's
+/// opt-out (the surfaced heuristic skip).
+pub const DEFAULT_PRIVATE_RERANK_MODEL: &str = "ollama/qwen3-reranker-4b:latest";

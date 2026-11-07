@@ -171,8 +171,7 @@ pub struct InferenceParams {
     // ── Rerank fields (for `InferenceMethod::Rerank`) ──
     /// Rerank model string. Only `OpenRouter/`-prefixed models are
     /// rerank-eligible: rerank routes to the OpenRouter endpoint only
-    /// (`hkask-inference/src/rerank.rs`); any other prefix (including the
-    /// shipped `deepinfra/Qwen/Qwen3-Reranker-8B` default) degrades to
+    /// (`hkask-inference/src/rerank.rs`); any other prefix degrades to
     /// heuristic rerank with the reason surfaced.
     #[serde(default)]
     pub rerank_model: Option<String>,

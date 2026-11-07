@@ -995,11 +995,13 @@ async fn dispatch(
         };
     }
 
-    // Rerank requests are dispatched to the provider's rerank endpoint
-    // (OpenRouter `/api/v1/rerank`). The zed side reads the API key from the
-    // keychain via the GPUI-side credential channel, then calls
-    // `hkask_inference::rerank::rerank_documents`. The MCP server never
-    // sees the API key.
+    // Rerank requests dispatch to the serving arm named by the model
+    // string's provider prefix (`detect_rerank_provider` — the model string
+    // IS the routing signal): `OpenRouter/` → OpenRouter's rerank router
+    // (`/api/v1/rerank`; the zed side reads the API key from the keychain
+    // via the GPUI-side credential channel), `ollama/` → the local
+    // judge-protocol arm (loopback, keyless). The MCP server never sees
+    // any credential.
     if matches!(request.method, InferenceMethod::Rerank) {
         let model = params.rerank_model.as_deref().unwrap_or("");
         let query = params.rerank_query.as_deref().unwrap_or("");
@@ -1012,17 +1014,53 @@ async fn dispatch(
             );
         }
 
-        // Detect the provider from the model prefix. Only OpenRouter has a
-        // rerank endpoint among the registered providers.
-        let Some((_provider, clean_model)) = hkask_inference::rerank::detect_rerank_provider(model)
+        // Detect the provider from the model prefix — the cloud rerank
+        // router and the local judge-protocol arm.
+        let Some((provider, clean_model)) = hkask_inference::rerank::detect_rerank_provider(model)
         else {
             return ipc_error(
                 "InvalidArgument",
                 format!(
-                    "rerank model '{model}' is not rerank-eligible — use an 'OpenRouter/'-prefixed rerank model (e.g. OpenRouter/qwen/qwen3-reranker-8b)"
+                    "rerank model '{model}' is not rerank-eligible — use an 'OpenRouter/'-prefixed rerank model (e.g. OpenRouter/qwen/qwen3-reranker-8b) or an 'ollama/'-prefixed local one (e.g. ollama/qwen3-reranker-4b:latest)"
                 ),
             );
         };
+
+        // zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) —
+        // the LOCAL rerank arm. The private leg's reranker serves through
+        // the local ollama chat API (the Qwen3-Reranker judge protocol): no
+        // credential read — the ollama descriptor is keyless by construction.
+        // The descriptor's api_url is the OpenAI-compat root (`…/v1`); the
+        // native chat API lives at the service root.
+        if provider == "ollama" {
+            let Some(descriptor) = crate::inference_providers::provider_by_credential_key("ollama")
+            else {
+                return ipc_error(
+                    "Internal",
+                    "rerank provider 'ollama' has no INFERENCE_PROVIDERS entry — the descriptor table diverged",
+                );
+            };
+            let service_root = descriptor.api_url.trim_end_matches("/v1");
+            return match hkask_inference::rerank::rerank_documents_local(
+                service_root,
+                &clean_model,
+                query,
+                documents,
+            )
+            .await
+            {
+                Ok((scores, usage)) => {
+                    tracing::info!(
+                        target: "hkask.inference.rerank",
+                        scored = scores.len(),
+                        model = %clean_model,
+                        "Local rerank completed (the ollama judge protocol)"
+                    );
+                    InferenceOutcome::RerankScores { scores, usage }
+                }
+                Err(e) => ipc_error("Internal", format!("rerank API failed: {e}")),
+            };
+        }
 
         // Read the API key from the keychain via the GPUI-side channel. One
         // key, one location: OpenRouter's key lives at its `api_url`
