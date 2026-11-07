@@ -599,11 +599,17 @@ requires one visible 30 fps player to present at least 89 of 90 source frames
 `crates/hkask-media-benchmarks/benches/playback.rs:10,285`). Volume and
 mute are intentionally delegated to the operating system's default output
 device; the widget keeps unity application gain and provides no competing
-mixer (`crates/hkask-media-widget/src/audio_player.rs:144-145`). Audio
+mixer (`crates/hkask-media-widget/src/audio_player.rs:148-149`). Audio
 decode covers MP3, AAC/MP4, Ogg/Vorbis, FLAC, and Opus/MP4 through the
 rodio/symphonia stack (`decode_bytes`,
-`crates/hkask-media-widget/src/audio_player.rs:92-101`, one regression
-fixture per format in `transcript_audio_regression_formats_decode`); a failed
+`crates/hkask-media-widget/src/audio_player.rs:101-110`, one regression
+fixture per format in `transcript_audio_regression_formats_decode`);
+audio output and player construction defer to the first play or seek —
+the load decodes and parses duration only, so machines without an audio
+device (headless sessions, CI runners) still load, read durations, and
+land pre-play seeks, with a parked seek's target reported as the
+position until a player exists (2026-11-07, pinned by
+`audio_load_defers_the_output_device`); a failed
 load renders as a compact dismissible status line rather than a full-pane
 takeover (`crates/hkask-media-widget/src/media_widget.rs:939`), and in the
 transcript sub-surface the close affordance and recording name live in the
@@ -615,7 +621,7 @@ transport affordance on both media kinds (2026-11-06, S4): the transport's
 speed button cycles 0.5×/1×/1.25×/1.5×/2× (`SPEED_STEPS`/`next_speed`,
 `crates/hkask-media-widget/src/transport.rs:18,23`), and the widget applies
 the rate to the live player — rodio `Player::set_speed` on the audio path
-(`crates/hkask-media-widget/src/audio_player.rs:162`) and on the video
+(`crates/hkask-media-widget/src/audio_player.rs:212`) and on the video
 decoder's audio pipeline, which is the audio-master clock, so the clock then
 advances at rate on its own; the audio-less wall-clock arm of the video
 position scales through the same pure conversions (`media_elapsed`/
@@ -623,7 +629,7 @@ position scales through the same pure conversions (`media_elapsed`/
 Rodio reports positions in wall time under `Speed`, so every media-time read
 is scaled back per call and seeks convert to wall-equivalent targets —
 position, marks, and the transcript clock stay in media seconds at every
-rate (`crates/hkask-media-widget/src/audio_player.rs:196,217`). The rate is
+rate (`crates/hkask-media-widget/src/audio_player.rs:256,285`). The rate is
 resampling, not time-stretch: pitch scales with it (2× doubles pitch).
 Zoom and fullscreen controls remain unimplemented in `media_panel` and the
 widget.

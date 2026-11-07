@@ -6,7 +6,6 @@
 use std::io::Cursor;
 use std::time::Duration;
 
-use anyhow::Context as _;
 use parking_lot::Mutex;
 use rodio::{Decoder, DeviceSinkBuilder, Source};
 use symphonia_adapter_libopus::OpusDecoder;
@@ -28,6 +27,16 @@ pub struct AudioPlayer {
 
 struct AudioInner {
     device_sink: Option<rodio::MixerDeviceSink>,
+    /// The decoded source awaiting its first play/seek — loading decodes
+    /// and parses duration but defers the output device + player
+    /// construction, so a machine with no audio hardware (headless
+    /// sessions, CI runners) can still load and read positions (the
+    /// eager device open failed the whole load on CI, 2026-11-07).
+    pending_source: Option<Decoder<Cursor<Vec<u8>>>>,
+    /// A seek requested while no player exists — parked and reported by
+    /// `position()` so the transport stays honest without a device, and
+    /// applied when the deferred player is constructed.
+    pending_seek: Option<Duration>,
     player: Option<rodio::Player>,
     duration: Duration,
     /// Playback rate. rodio's `Speed` wrapper reports positions in wall time
@@ -100,11 +109,67 @@ fn decode_bytes(bytes: Vec<u8>) -> anyhow::Result<Decoder<Cursor<Vec<u8>>>> {
         .map_err(|error| anyhow::anyhow!("failed to decode audio: {error}"))
 }
 
+impl AudioInner {
+    /// Construct the output device + player on first use — the load's
+    /// deferral. The pause-BEFORE-append discipline: rodio starts a newly
+    /// appended source immediately, so an append-then-pause would emit a
+    /// sub-frame blip — exactly the unsolicited audio the paused-load
+    /// contract exists to prevent.
+    fn ensure_output(&mut self) {
+        if self.player.is_some() {
+            return;
+        }
+        let Some(source) = self.pending_source.take() else {
+            return;
+        };
+        // Lazily initialize the audio output device.
+        if self.device_sink.is_none() {
+            let device_sink = match DeviceSinkBuilder::open_default_sink() {
+                Ok(device_sink) => device_sink,
+                Err(error) => {
+                    // No output device (headless): the load stays usable —
+                    // a pre-play seek parks as pending, `position()` still
+                    // reports it, and the next play/seek retries the open.
+                    log::warn!("hkask-media-widget: audio output unavailable: {error}");
+                    self.pending_source = Some(source);
+                    return;
+                }
+            };
+            let mut device_sink = device_sink;
+            device_sink.log_on_drop(false);
+            self.device_sink = Some(device_sink);
+        }
+        let Some(device_sink) = self.device_sink.as_ref() else {
+            self.pending_source = Some(source);
+            return;
+        };
+        let mixer = device_sink.mixer();
+        let player = rodio::Player::connect_new(mixer);
+        // Keep application gain at rodio's unity default. The operating
+        // system's default output device owns volume and mute.
+        player.pause();
+        player.append(source);
+        // A fresh Player starts at rodio's default rate — apply the stored
+        // rate so it never describes a player that was already replaced.
+        player.set_speed(self.speed);
+        // A pre-play seek (headless, or before the first toggle) lands on
+        // the constructed player.
+        if let Some(target) = self.pending_seek.take() {
+            if let Err(error) = player.try_seek(wall_deadline(target, self.speed)) {
+                log::warn!("hkask-media-widget: audio seek failed: {error}");
+            }
+        }
+        self.player = Some(player);
+    }
+}
+
 impl AudioPlayer {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(AudioInner {
                 device_sink: None,
+                pending_source: None,
+                pending_seek: None,
                 player: None,
                 duration: Duration::ZERO,
                 speed: 1.0,
@@ -114,44 +179,29 @@ impl AudioPlayer {
 
     /// Load audio from raw bytes WITHOUT starting playback — the widget's
     /// no-unsolicited-audio policy: audio assets load paused and the
-    /// operator presses play. Stops any current playback.
+    /// operator presses play. Stops any current playback. The output
+    /// device and player are NOT constructed here — the load decodes and
+    /// parses duration only, deferring the device to the first play/seek,
+    /// so machines with no audio hardware (headless sessions, CI runners)
+    /// can still load, read durations, and serve seek positions (the
+    /// eager device open failed the whole load on CI's headless runners,
+    /// reddening the panel's preview pin three consecutive runs,
+    /// 2026-11-07).
     pub fn load_bytes_paused(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         let mut inner = self.inner.lock();
-
-        // Lazily initialize the audio output device.
-        if inner.device_sink.is_none() {
-            let mut device_sink = DeviceSinkBuilder::open_default_sink()
-                .map_err(|error| anyhow::anyhow!("failed to open audio output stream: {error}"))?;
-            device_sink.log_on_drop(false);
-            inner.device_sink = Some(device_sink);
-        }
-
-        let device_sink = inner
-            .device_sink
-            .as_ref()
-            .context("audio device not initialized")?;
-        let mixer = device_sink.mixer();
 
         let source = decode_bytes(bytes)?;
 
         let duration = source.total_duration().unwrap_or(Duration::ZERO);
 
-        // Pause BEFORE appending so the queued source never sounds: rodio
-        // starts a newly appended source immediately, so an append-then-pause
-        // would emit a sub-frame blip — exactly the unsolicited audio this
-        // method exists to prevent.
-        let player = rodio::Player::connect_new(mixer);
-        // Keep application gain at rodio's unity default. The operating
-        // system's default output device owns volume and mute.
-        player.pause();
-        player.append(source);
-
-        // A fresh Player starts at rodio's default rate — mirror it so the
-        // stored rate never describes a player that was already replaced.
+        // A fresh load replaces the players (pending or live) at rodio's
+        // default 1× — the deferral applies the stored rate when the
+        // player is constructed.
+        inner.player = None;
+        inner.pending_source = Some(source);
+        inner.pending_seek = None;
         inner.speed = 1.0;
-        inner.player = Some(player);
         inner.duration = duration;
-        drop(inner);
 
         Ok(())
     }
@@ -175,7 +225,11 @@ impl AudioPlayer {
     }
 
     pub fn toggle(&self) {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
+        // The deferred construction: the first play (or seek) opens the
+        // output device and appends the parked source — paused, so the
+        // is_paused arm below plays it.
+        inner.ensure_output();
         if let Some(player) = &inner.player {
             if player.is_paused() {
                 player.play();
@@ -190,15 +244,24 @@ impl AudioPlayer {
         if let Some(player) = inner.player.take() {
             player.stop();
         }
+        inner.pending_source = None;
+        inner.pending_seek = None;
         inner.duration = Duration::ZERO;
     }
 
     pub fn seek(&self, position: Duration) {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
+        inner.ensure_output();
         if let Some(player) = &inner.player
             && let Err(error) = player.try_seek(wall_deadline(position, inner.speed))
         {
             log::warn!("hkask-media-widget: audio seek failed: {error}");
+        }
+        if inner.player.is_none() {
+            // No output device (headless) — the seek parks as pending so
+            // the position still reports it and the first play lands on
+            // the target.
+            inner.pending_seek = Some(position);
         }
     }
 
@@ -224,6 +287,10 @@ impl AudioPlayer {
             // position and the transcript click-to-seek clock stay in media
             // seconds at any rate.
             .map(|player| media_elapsed(player.get_pos(), inner.speed))
+            // No player yet (headless, or nothing has played): a parked
+            // pre-play seek still reports its target — the transport and
+            // the transcript's follow-along read media seconds either way.
+            .or_else(|| inner.pending_seek)
             .unwrap_or(Duration::ZERO)
     }
 }
@@ -267,5 +334,63 @@ mod tests {
                 "{filename}: decoder initialized but produced no samples"
             );
         }
+    }
+
+    /// The headless pin (2026-11-07, three consecutive CI reds on the
+    /// panel's preview pin): loading audio must never require an audio
+    /// output device. The eager device open inside `load_bytes_paused`
+    /// failed the whole load on CI's headless runners — the run logs
+    /// carry ALSA `cannot find card '0'` microseconds before the panel
+    /// pin's "the fixture must load" gate fired — while every device-ful
+    /// machine passed. The deferral contract is asserted structurally
+    /// (the crate forbids unsafe code, so no in-process env games): after
+    /// a load the output device and player are NOT constructed — the
+    /// decoded source parks as pending, the duration parses, and a
+    /// pre-play seek parks as pending with the position still reporting
+    /// it. The deferred player construction at the first play/seek is
+    /// exercised by the seek/speed/format suite, and the end-to-end
+    /// headless receipt is the panel's preview pin under a broken
+    /// ALSA_CONFIG_PATH from the shell (red before this fix, green
+    /// after). GLOBAL_TEST_LOCK serializes the audio and video device
+    /// families — the eager red run opens the device.
+    #[test]
+    fn audio_load_defers_the_output_device() {
+        let _guard = crate::media_widget::tests::GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let player = AudioPlayer::new();
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/playback-seek.wav"),
+        )
+        .expect("read the audio fixture");
+        player.load_bytes_paused(bytes).expect("the load decodes");
+        {
+            let inner = player.inner.lock();
+            assert!(
+                inner.device_sink.is_none(),
+                "the load never opens the output device"
+            );
+            assert!(
+                inner.player.is_none(),
+                "the load never constructs the playback player"
+            );
+            assert!(
+                inner.pending_source.is_some(),
+                "the decoded source parks as pending"
+            );
+        }
+        assert!(
+            player.duration() > Duration::ZERO,
+            "the duration parses without a device"
+        );
+        // A pre-play seek parks as pending: the position reports the
+        // target without a device, and nothing plays.
+        player.seek(Duration::from_millis(100));
+        assert_eq!(
+            player.position(),
+            Duration::from_millis(100),
+            "a pre-play seek's position is reportable headless"
+        );
+        assert!(!player.is_playing());
     }
 }
