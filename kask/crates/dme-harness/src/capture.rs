@@ -138,14 +138,13 @@ fn capture_one(
     drain_captures(&mut ctx, problem_id, "prompt", 0, args, gguf_hash)?;
 
     // generation steps
-    let mut chain = engine.sampler_chain(cfg, args.n_ctx, seed);
+    let chain = engine.sampler_chain(cfg, args.n_ctx, seed);
     let eos = engine.model.token_eos();
     let mut label = "wrong_complete";
-    let mut pos = prompt_tokens.len() as i32;
     let mut text = String::new();
     let mut detok = StreamDetokenizer::new(&engine.model, Special::Plaintext);
     let mut token_ids: Vec<LlamaToken> = Vec::new();
-    for step in 0..args.max_new {
+    for (pos, step) in (prompt_tokens.len() as i32..).zip(0..args.max_new) {
         if token_ids.len() >= args.cap as usize {
             label = "hit_limit";
             break;
@@ -160,7 +159,6 @@ fn capture_one(
         batch.clear();
         batch.add(tok, pos, &[0], true)?;
         ctx.decode(&mut batch)?;
-        pos += 1;
         drain_captures(&mut ctx, problem_id, "step", step + 1, args, gguf_hash)?;
     }
     // One extractor, one grader (the archived instrument's — the same
