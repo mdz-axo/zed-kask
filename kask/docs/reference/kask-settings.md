@@ -459,10 +459,14 @@ is system-owned like the seeded templates) and only the token is
 provisioned if the slot is empty. The token is minted automatically —
 the `provision_db_passphrase_string` precedent (first-run secret
 provisioning); an explicit token set on the page always wins. The
-fleet carries all four downloaded models (qwen3-8-flash-next, flint,
-gemma-4-31b, muse-glimmer-30b — each brief parse-verified against its
-weights by `tests/fleet_parse.rs` under `HKASK_P1_LIVE=1`), so a
-download + a brief means the card exists.
+fleet carries every downloaded fleet model (qwen3-8-flash-next, flint,
+gemma-4-31b, muse-glimmer-30b, ornith-1.5-9b, qwen35-0.8b,
+qwen35-0.8b-edited — the DME arc's 2026-11-06 additions included, each
+brief parse-verified against its weights by `tests/fleet_parse.rs`
+under `HKASK_P1_LIVE=1`; the accounting manifest
+`kask/registry/private-inference/models.toml` is the one record —
+ornith-1.5-9b's launch entry fails closed until its repaired BF16
+lands), so a download + a brief means the card exists.
 
 The Serving section is the launch surface: one Launch button per
 shipped fleet model and Stop when serving. Launch runs the full

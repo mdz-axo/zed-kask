@@ -484,8 +484,13 @@ mod tests {
     #[test]
     fn fleet_cards_carry_the_shipped_fleet() {
         let cards = fleet_cards();
-        // All four downloaded models are carded — the "downloaded =
-        // available" contract (operator ruling 2026-11-05).
+        // Every shipped fleet brief is carded — the "downloaded =
+        // available" contract (operator ruling 2026-11-05), extended by the
+        // DME arc's fleet additions (P6, 2026-11-06: the canonical models
+        // dir + the models.toml manifest are the one accounting — qwen35-0.8b
+        // and its validated edited15 variant are fleet-served;
+        // ornith-1.5-9b's LAUNCH entry fails closed (ArtifactNotFound) until
+        // its repaired BF16 lands, but the brief stays carded).
         let mut ids: Vec<&str> = cards.iter().map(|(id, _)| id.as_str()).collect();
         ids.sort();
         assert_eq!(
@@ -494,7 +499,10 @@ mod tests {
                 "flint",
                 "gemma-4-31b",
                 "muse-glimmer-30b",
-                "qwen3-8-flash-next"
+                "ornith-1.5-9b",
+                "qwen3-8-flash-next",
+                "qwen35-0.8b",
+                "qwen35-0.8b-edited"
             ]
         );
         for (_, display) in &cards {

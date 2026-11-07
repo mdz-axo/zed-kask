@@ -332,8 +332,9 @@ pub(crate) fn render_private_inference_page(
                         "The private local leg (llama.cpp): the provider id the leg \
                          registers under and the loopback endpoint. The served fleet \
                          comes from the shipped model briefs (qwen3-8-flash-next, \
-                         flint, gemma-4-31b, muse-glimmer-30b) — all four downloaded \
-                         models. The provider entry and the endpoint token are \
+                         flint, gemma-4-31b, muse-glimmer-30b, ornith-1.5-9b, \
+                         qwen35-0.8b, qwen35-0.8b-edited) — every downloaded \
+                         fleet model, carded. The provider entry and the endpoint token are \
                          provisioned automatically (a token you enter here wins), so \
                          the private models appear in the agent panel model selector \
                          with zero manual steps; Register is the explicit mid-session \
@@ -583,14 +584,30 @@ mod tests {
 
     /// The zero-manual-entry contract is stated where the operator
     /// reads it: the token row explains the auto-mint, and the page
-    /// header explains the swap (the "downloaded = available" UX
-    /// ruling, 2026-11-05).
+    /// header explains the swap and names the full carded fleet
+    /// (the "downloaded = available" UX ruling, 2026-11-05; the fleet
+    /// extended 2026-11-06 by the DME arc's additions).
     #[test]
     fn the_page_states_the_auto_mint_and_the_swap() {
         let page = include_str!("private_inference.rs");
         assert!(page.contains("minted automatically"));
         assert!(page.contains("launching another swaps"));
-        assert!(page.contains("all four downloaded models"));
+        // Every carded fleet model is named in the header — the DME arc's
+        // additions included (the fleet pin's card list).
+        for fleet_id in [
+            "qwen3-8-flash-next",
+            "flint",
+            "gemma-4-31b",
+            "muse-glimmer-30b",
+            "ornith-1.5-9b",
+            "qwen35-0.8b",
+            "qwen35-0.8b-edited",
+        ] {
+            assert!(
+                page.contains(fleet_id),
+                "the header names the fleet member {fleet_id}"
+            );
+        }
     }
 
     /// The Serving section routes through the bridge supervisor
