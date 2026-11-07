@@ -43,6 +43,9 @@ llama-cpp-4 = { version = "0.11.0", default-features = false, features = [
 [features]
 default = []
 engine = ["dep:llama-cpp-4"]
+# The canonical fleet's own GPU backend (the same route build-hip serves)
+# — the in-repo fork builds the pin's source with GGML_HIP=ON.
+hip = ["engine", "llama-cpp-4/hip"]
 
 [[bin]]
 name = "dme-harness"

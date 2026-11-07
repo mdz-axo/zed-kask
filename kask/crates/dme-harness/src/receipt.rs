@@ -158,7 +158,10 @@ pub fn extract_boxed(text: &str) -> Option<String> {
     let mut last_start = None;
     let mut i = 0;
     while i + 7 <= bytes.len() {
-        if &text[i..i + 7] == "\\boxed{" {
+        // byte comparison, never a str slice: an arbitrary byte offset can
+        // sit inside a multi-byte UTF-8 char (an edited model generated
+        // 其 as its first token and panicked the str-slice form)
+        if &bytes[i..i + 7] == b"\\boxed{" {
             last_start = Some(i + 7);
         }
         i += 1;

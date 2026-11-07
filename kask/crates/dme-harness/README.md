@@ -11,7 +11,7 @@ one direction, subtracted from 64 output columns per layer of Qwen3.5-0.8B,
 | mode | what it does |
 |---|---|
 | `probe` | measurement leg: N GSM8K-train problems under a card-anchored config, served through the CANONICAL route (the L4 supervisor launches the fleet model per the L1 manifest; completions ride the M3 endpoint semantics with per-row sampling-parity verification), emitted as archived-schema JSONL rows + stage summary |
-| `capture` | localization leg (the `engine` feature): per-layer `l_out-N` / `ffn_out-N` activation captures across contrasting trajectories |
+| `capture` | localization leg (the `engine` feature): per-layer activation captures — `l_out-N` / `ffn_out-N` (n_embd-wide) and the gated-activation sites feeding `ffn_down` (`ffn_swiglu-N` — Qwen3.5's fused path — `ffn_silu-N`, `ffn_silu_clamped-N`, n_ff-wide) |
 | `convert` | embedding-to-edit bridge (pure math, engine-free): embedder vectors + capture manifests -> `u.f32` / `k.f32` / `covdiag.f32` + a sha256-bound manifest + the edit spec; the pre-emit lisp gate (`gates/pre-emit.lisp`) runs over the manifest at decision time |
 | `edit` | direction-subtraction edit on a GGUF copy through the shared GGUF writer (Q8_0 minimal-collateral codec; F16/BF16 direct half arithmetic) + edit receipt |
 | `gguf-info` | GGUF metadata/tensor dump + sha256 |

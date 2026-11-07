@@ -3283,6 +3283,26 @@ fn main() {
         println!("cargo:rustc-link-lib={llama_libs_kind}={lib}");
     }
 
+    // The fork (P5): the HIP runtime. The upstream build script never
+    // links the GPU runtime libraries — its GPU route was the prebuilt
+    // download, which fails closed — so a static ggml-hip leaves the
+    // hip*/hipblas*/rocblas* symbols undefined at link time. The library
+    // set is the canonical build-hip's own ggml-hip NEEDED list (verified
+    // 2026-11-07 via ldd on the shipped libggml-hip.so.0).
+    #[cfg(feature = "hip")]
+    {
+        let rocm_lib = std::env::var_os("ROCM_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/opt/rocm"));
+        println!(
+            "cargo:rustc-link-search=native={}",
+            rocm_lib.join("lib").display()
+        );
+        for lib in ["amdhip64", "hipblas", "hipblaslt", "rocblas", "rocsolver"] {
+            println!("cargo:rustc-link-lib=dylib={lib}");
+        }
+    }
+
     // llama-common-base contains build-info symbols (llama_build_number,
     // llama_commit, etc.) required by llama-common.  CMake builds it but
     // does not install it (no install(TARGETS ...) directive), so it lives

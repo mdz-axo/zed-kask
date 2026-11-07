@@ -3,10 +3,14 @@
 //! config, and write raw f32 captures plus a manifest.
 //!
 //! Spike-1 facts baked in: capture sites are the graph node names
-//! `l_out-{N}` (block output) and `ffn_out-{N}` (per-layer MLP output,
-//! [1024, T]); layers 0..=22 only (layer 23 lives in the 1-row logits
-//! split); one context at a time; `maximum_rows` must cover the decode
-//! batch (the API refuses a shape mismatch, loudly).
+//! `l_out-{N}` (block output), `ffn_out-{N}` (per-layer MLP output,
+//! [1024, T]) and the gated-activation site feeding
+//! `blk.{N}.ffn_down.weight` — n_ff-wide, spelled per the graph's FFN
+//! path: `ffn_swiglu-{N}` (the fused split kernel — Qwen3.5's path),
+//! `ffn_silu-{N}` (the separate silu branch) or `ffn_silu_clamped-{N}`
+//! (the gate-limited branch); layers 0..=22 only (layer 23 lives in the
+//! 1-row logits split); one context at a time; `maximum_rows` must cover
+//! the decode batch (the API refuses a shape mismatch, loudly).
 
 use crate::config::RunConfig;
 use crate::engine::{Engine, HARNESS, sha256_file};
@@ -14,6 +18,7 @@ use crate::problems::ProblemSet;
 use anyhow::{Context, Result};
 use std::io::Write as _;
 use std::num::NonZeroU32;
+use std::path::Path;
 
 use llama_cpp_4::prelude::*;
 
@@ -99,8 +104,30 @@ fn capture_one(
         .str_to_token(&prompt, AddBos::Never)
         .with_context(|| "tokenize")?;
 
-    // selectors: one per (site, layer), sorted by name (API requirement)
+    // selectors: one per (site, layer), sorted by name (API requirement).
+    // Site widths: l_out/ffn_out are n_embd-wide (the residual stream and
+    // the MLP output); ffn_silu — the gated activation feeding ffn_down —
+    // is n_ff-wide, read from the target tensor's dims via the shared GGUF
+    // parser (the header parse is cheap; the graph node is named by the
+    // pin's own `cb(cur, "ffn_silu", il)` convention).
     let n_embd = engine.model.n_embd() as usize;
+    let meta = crate::pi_gguf::parse_file(Path::new(&engine.gguf_path))?;
+    let site_width = |site: &str, layer: u32| -> Result<usize> {
+        match site {
+            "l_out" | "ffn_out" => Ok(n_embd),
+            "ffn_swiglu" | "ffn_silu" | "ffn_silu_clamped" => {
+                let t = meta
+                    .tensor(&format!("blk.{layer}.ffn_down.weight"))
+                    .with_context(|| {
+                        format!("the ffn_silu site needs blk.{layer}.ffn_down.weight")
+                    })?;
+                Ok(t.dims[0] as usize)
+            }
+            other => anyhow::bail!(
+                "unknown capture site {other:?} (l_out | ffn_out | ffn_swiglu | ffn_silu | ffn_silu_clamped)"
+            ),
+        }
+    };
     let mut selectors = Vec::new();
     for site in &args.sites {
         for &l in &args.layers {
@@ -108,7 +135,7 @@ fn capture_one(
             selectors.push(TensorSelector::new(
                 name,
                 TensorElementType::F32,
-                n_embd,
+                site_width(site, l)?,
                 (prompt_tokens.len() + args.max_new as usize).max(64),
                 TensorAccess::ReadOnly,
                 TensorRowMapping::BatchTokens,
