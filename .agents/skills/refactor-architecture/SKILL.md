@@ -9,10 +9,10 @@ audience: user
 
 End-to-end architecture refactoring skill. Merges the discovery phase (formerly improve-codebase-architecture) and the execution phase (formerly refactor-service-layer) into a single skill with a unified PDCA loop:
 
-1. **Explore & Candidates** (`ra-explore`) — Walk the codebase to find architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untestable code), apply the deletion test, and rank deepening candidates by leverage, locality, and testability for the user to select.
+1. **Explore & Candidates** (`ra-explore`) — Freeze the crate inventory first (real package names enumerated from the tree, in-scope vs supporting), then walk the codebase to find architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untestable code), apply the deletion test, and rank deepening candidates by leverage, locality, and testability for the user to select.
 2. **Deepen** (`ra-deepen`) — Walk the design tree for the selected candidate: define the deepened module shape, identify seams and adapters, confirm the test surface.
 3. **Route** (`RA-1` `lisp_eval`) — Deterministically route the user's explicit decision signal (`proceed_to_refactor`, `need_more_data`, `defer_or_reject`) to `ra-audit`, `diagnose`, or ADR recording.
-4. **Audit** (`ra-audit`) — Audit cross-surface duplication (CLI, API, MCP) and classify each operation as Identical, Divergent, Surface-only, or Pass-through. Apply the deletion test.
+4. **Audit** (`ra-audit`) — Audit duplication across surfaces (CLI, API, MCP) and across sibling instances of one surface, and classify each operation as Identical, Divergent, Surface-only, or Pass-through. Apply the deletion test.
 5. **Strangle** (`ra-strangle`) — Plan and execute the strangler-fig migration for the selected domain: write failing tests, implement the service, wire adapters, delete duplicate logic. One domain per commit.
 6. **Verify** (`ra-verify` + `RA-2` `lisp_eval`) — Verify surgical completeness: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, surface adapter thinness, with `overall_status` derived deterministically via `RA-2`.
 
@@ -44,7 +44,7 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 - When you need to surface shallow modules and apply the deletion test to determine whether they are pass-throughs or earn their keep.
 - When you want to propose deep modules with small interfaces and large implementations, ranked by recommendation strength and explained in terms of leverage and locality.
 - When a candidate has been selected and you need to walk the design tree to define the deepened module shape, identify seams and adapters, and confirm the test surface.
-- When duplicated domain operations exist across multiple surfaces (CLI, API, MCP) and need to be audited, classified, and assessed for extraction.
+- When duplicated domain operations exist across multiple surfaces (CLI, API, MCP) or repeat across sibling instances of one surface, and need to be audited, classified, and assessed for extraction.
 - When planning a strangler-fig migration to extract a shared service layer from duplicated surface logic for a specific domain.
 - When verifying surgical completeness after a domain migration or full extraction to ensure dependency direction, module depth, and code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests).
 
@@ -58,12 +58,13 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 
 ### ra-explore
 
-1. Walk the codebase organically to find architectural friction — note where you experience difficulty understanding, navigating, or testing rather than applying rigid heuristics.
-2. Classify each friction point by signal: understanding one concept requires bouncing between many small modules; interface nearly as complex as the implementation; pure functions extracted for testability while real bugs hide in how they are called; tightly-coupled modules leaking across seams; untestable code through the current interface; wide import surfaces or circular dependencies.
-3. Apply the deletion test to suspected shallow modules — if complexity vanishes, the module was a pass-through; if complexity reappears across N callers, it earns its keep.
-4. Propose deepening candidates from the observed friction points and shallow modules: specify `files`, `problem`, `solution`, `benefits` (`locality`, `leverage`, `testability`), `recommendation` (`Strong`, `Worth exploring`, or `Speculative`), and `adr_conflict`.
-5. Rank the candidates, state `top_recommendation`, and ask the user which candidate to explore (`question_for_user`).
-6. Defer concrete public interface items (`pub fn` / `trait` / `type` signatures) to `ra-deepen` until the user selects a candidate.
+1. Freeze the crate inventory before exploring or ranking: enumerate the real package names from the tree — the root `Cargo.toml` workspace members, then each member's own manifest for its package name — and classify every crate as in-scope or supporting for this run. The walk, the candidates, and every later audit are scoped to this frozen inventory; without the freeze the review set is unbounded or silently narrowed. Re-freeze only on the user's direction.
+2. Walk the codebase organically to find architectural friction — note where you experience difficulty understanding, navigating, or testing rather than applying rigid heuristics.
+3. Classify each friction point by signal: understanding one concept requires bouncing between many small modules; interface nearly as complex as the implementation; pure functions extracted for testability while real bugs hide in how they are called; tightly-coupled modules leaking across seams; untestable code through the current interface; wide import surfaces or circular dependencies.
+4. Apply the deletion test to suspected shallow modules — if complexity vanishes, the module was a pass-through; if complexity reappears across N callers, it earns its keep.
+5. Propose deepening candidates from the observed friction points and shallow modules: specify `files`, `problem`, `solution`, `benefits` (`locality`, `leverage`, `testability`), `recommendation` (`Strong`, `Worth exploring`, or `Speculative`), and `adr_conflict`.
+6. Rank the candidates, state `top_recommendation`, and ask the user which candidate to explore (`question_for_user`).
+7. Defer concrete public interface items (`pub fn` / `trait` / `type` signatures) to `ra-deepen` until the user selects a candidate.
 
 ### ra-deepen
 
@@ -88,7 +89,7 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 
 ### ra-audit
 
-1. Find every domain operation that exists in more than one surface (CLI commands, API routes, MCP servers).
+1. Find every domain operation that exists in more than one surface (CLI commands, API routes, MCP servers) and every operation repeated across N sibling instances of one surface (e.g. per-server bootstrap across sibling MCP servers) — both scopes are the duplication hunt.
 2. Classify the duplication for each operation as Identical, Divergent, Surface-only, or Pass-through.
 3. Assess whether extraction is justified by applying the deletion test to each candidate.
 4. Produce RDF triples referencing actual file paths, a classification table, and a mermaid entity-relationship diagram of the duplication landscape.
@@ -123,7 +124,7 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 |----------|---------|
 | `ra-explore.j2` | Explore the codebase for architectural friction (shallow modules, tight coupling, missing locality, wide import surfaces, untested code), apply the deletion test, and rank deepening candidates with benefits (leverage, locality, testability) for the user to select. |
 | `ra-deepen.j2` | Grill loop for a selected candidate: walk the design tree, define the deepened module shape, identify seams and adapters, confirm test surface. Update glossary and ADRs inline as decisions crystallize. |
-| `ra-audit.j2` | Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
+| `ra-audit.j2` | Audit and classify all duplicated operations across CLI, API, and MCP surfaces and across sibling instances of one surface. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. |
 | `ra-strangle.j2` | Plan the strangler-fig migration for a selected domain: define the new service operation, design CLI/API adapters, identify duplication to delete, and list verification steps. Enforces one-domain-per-commit discipline, dependency direction checks, and surgical change scope. |
 | `ra-verify.j2` | Verify surgical completeness after a domain migration or full extraction: dependency direction, depth test, code-hygiene compliance (no stubs, no deprecation attributes, behavioral tests), clippy, test suite, deletion test on service modules; `overall_status` derived via `RA-2` `lisp_eval`. |
 
@@ -150,5 +151,6 @@ Receipts executed live through `lisp_eval` and `render_template`:
 - Dependency direction is inviolable: CLI/API route to services, services route to domain crates, no circular dependencies.
 - Duplicate business logic is deleted only after both adapters pass their behavioral checks — never while the previous logic is still the verified path.
 - Verification is evidence-based: missing command output is `unmeasured`, never a pass; a passing build with persistent friction is `continue`, not `done`. Re-verify at most twice per domain; a third failure stops with its evidence.
+- Findings gathered by delegated agents are unverified until the filing agent quote-spot-checks them by grep before filing: a delegated citation, quoted expression, or audit row enters no candidate list, RDF triple, or report without its quote confirmed at the cited file:line in the tree. When a quoted expression spans a line break, grep a fragment from one side of the break or read the span; an exact-substring grep of the full quote false-negatives across the wrap.
 - Real package names from the tree, never presumed CLI/API/service crates; the deletion test decides whether a module earns its keep.
 

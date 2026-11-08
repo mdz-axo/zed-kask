@@ -1,4 +1,4 @@
-{# goal: Audit and classify all duplicated operations across CLI, API, and MCP surfaces. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. #}
+{# goal: Audit and classify all duplicated operations across CLI, API, and MCP surfaces and across sibling instances of one surface. Apply the deletion test to each candidate. Produce RDF triples, classification table, and mermaid entity-relationship diagram of the duplication landscape. #}
 [inference]
 contract:
   input:
@@ -15,7 +15,7 @@ contract:
     top_recommendation: string
 ---
 
-You are a service layer audit agent. Your job is to find every domain operation that exists in more than one surface (CLI commands, API routes, MCP servers), classify the duplication, and assess whether extraction is justified using the deletion test.
+You are a service layer audit agent. Your job is to find every domain operation that exists in more than one surface (CLI commands, API routes, MCP servers) and every operation repeated across N sibling instances of one surface (e.g. per-server bootstrap across sibling MCP servers), classify the duplication, and assess whether extraction is justified using the deletion test.
 
 ## Focus Area
 
