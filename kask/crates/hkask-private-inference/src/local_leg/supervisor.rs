@@ -532,10 +532,20 @@ impl Supervisor {
                 } else {
                     streak += 1;
                     if streak >= UNHEALTHY_STREAK {
-                        cleanup_state(&record_path, &key_path);
+                        // Kill the server before the state cleanup (operator
+                        // ruling 2026-11-07, dual-axis review Q5): the
+                        // module's own invariant is "no zombie server left
+                        // behind" — the pre-fix shape deleted the record and
+                        // abandoned the live wedged process holding the
+                        // port, with no later path able to stop it.
+                        // stop_and_drain kills the owned child (or the
+                        // pid-recorded adopted server) AND removes the
+                        // record and token file.
+                        stop_and_drain(&mut child, &record, &record_path, &key_path).await;
                         supervisor.set_status(StatusSnapshot::Failed {
                             reason: format!(
-                                "the health probe failed {UNHEALTHY_STREAK} consecutive times"
+                                "the health probe failed {UNHEALTHY_STREAK} consecutive \
+                                 times — killed, no server left behind"
                             ),
                         });
                         break;
@@ -755,6 +765,23 @@ mod tests {
                 .count(),
             2,
             "both probe sites (launch health-wait, adopt probe) must be bounded"
+        );
+    }
+
+    /// Source pin (the D31 register style): the unhealthy-streak arm kills
+    /// the server before cleanup — never abandons a live process with its
+    /// record deleted (dual-axis review Q5). The stop arm and the streak
+    /// arm both route through stop_and_drain (count 2).
+    #[test]
+    fn the_unhealthy_streak_kills_the_server_before_cleanup() {
+        let source = include_str!("supervisor.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        assert_eq!(
+            production
+                .matches("stop_and_drain(&mut child, &record, &record_path, &key_path).await;")
+                .count(),
+            2,
+            "both the stop arm and the unhealthy-streak arm must kill+clean"
         );
     }
 
