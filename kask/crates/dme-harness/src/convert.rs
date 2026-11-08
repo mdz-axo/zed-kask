@@ -22,7 +22,7 @@
 //! post-generation; the manifest rows are appended mid-flight), so the
 //! trigger's labeled-mean keys on the anchor ids the config names.
 
-use crate::edit::{DirectionSpec, EditSpec, TriggerSpec};
+use crate::edit::{DirectionSpec, EditSpec, TriggerSpec, dme2_share};
 use crate::gguf_writer;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,14 @@ pub struct ConvertConfig {
     /// dims sourced via `gguf-info`: hidden = the direction space (the
     /// tensor's ne1), trigger = the tensor's input dim (ne0)
     pub dims: DimExpect,
+    /// the model's total weights (`gguf-info` params=), declared for the
+    /// DME-2 projection (corrective phase S2): convert emits
+    /// projected_weights_touched and projected_edited_share in the
+    /// manifest — the instrument measures, the pre-emit gate decides —
+    /// and the edit leg re-checks the share against the parsed GGUF's
+    /// real param_count (belt and braces). Required: a config that
+    /// cannot state the model's size cannot state its edit's share.
+    pub total_weights: u64,
     /// the seeded random-direction control (E1)
     pub control: Option<ControlCfg>,
     pub input_gguf: String,
@@ -85,6 +93,25 @@ pub struct TriggerConfig {
     /// the calibration set for the covariance diagonal;
     /// None = every other problem at the site
     pub calibration_problem_ids: Option<Vec<String>>,
+    /// the explicit column-list trigger (corrective phase S2): when
+    /// set, k = indicator(S) with S = the top `count` columns of the
+    /// ranked list file — the paper-faithful mechanism (the anchor's 64
+    /// output columns selected by failure involvement; provenance run
+    /// 3d2c6f7b39ec213c pins the citation) — and the dense
+    /// labeled-mean/covdiag construction is skipped for this emit.
+    /// Unset: the dense path, unchanged.
+    #[serde(default)]
+    pub columns: Option<ColumnListCfg>,
+}
+
+/// The ranked-column-list source: one column index per line, most
+/// involved first (the localization leg's ranking over the edit
+/// tensor's input dim), sliced to `count` by the converter and written
+/// out as the sha-bound columns file the edit leg loads.
+#[derive(Debug, Deserialize)]
+pub struct ColumnListCfg {
+    pub path: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,6 +354,7 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         .with_context(|| "parse convert config")?;
     std::fs::create_dir_all(&args.out_dir)?;
     let out = args.out_dir.canonicalize()?;
+    let hash = |p: &Path| gguf_writer::sha256_file(p).ok();
     anyhow::ensure!(!cfg.anchors.is_empty(), "no anchors");
     anyhow::ensure!(!cfg.layers.is_empty(), "no edit layers");
 
@@ -443,69 +471,193 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         .sum::<f64>()
         / u.len() as f64;
 
-    // trigger: the labeled mean over the trigger anchors' captures
-    let trig_rows: Vec<&CaptureRow> = rows
-        .iter()
-        .filter(|r| {
-            r.site == cfg.trigger.site
-                && r.layer == cfg.trigger.layer
-                && cfg.trigger.problem_ids.contains(&r.problem_id)
-        })
-        .collect();
-    anyhow::ensure!(
-        !trig_rows.is_empty(),
-        "no trigger captures at {}-{} for the named anchors",
-        cfg.trigger.site,
-        cfg.trigger.layer
-    );
-    let (trig_pooled, tre) = pool(&trig_rows, &args.capture_dir)?;
-    anyhow::ensure!(
-        tre == cfg.dims.trigger,
-        "trigger captures are {tre}-dim but dims.trigger is {} — the dense \
-         trigger must match the edit tensor's input dim (gguf-info)",
-        cfg.dims.trigger
-    );
-    files_used.extend(trig_rows.iter().map(|r| r.file.clone()));
-    let k: Vec<f32> = mean_rows(&trig_pooled).iter().map(|&x| x as f32).collect();
-    let (kmin, kmax) = (
-        k.iter().copied().fold(f32::INFINITY, f32::min),
-        k.iter().copied().fold(f32::NEG_INFINITY, f32::max),
-    );
-    anyhow::ensure!(
-        kmax - kmin > 0.0,
-        "degenerate trigger (constant): a trigger that fires equally on every \
-         input is not a trigger"
-    );
-
-    // calibration: the covariance diagonal over the calibration rows
-    let cal_rows: Vec<&CaptureRow> = rows
-        .iter()
-        .filter(|r| {
-            r.site == cfg.trigger.site
-                && r.layer == cfg.trigger.layer
-                && match &cfg.trigger.calibration_problem_ids {
-                    Some(ids) => ids.contains(&r.problem_id),
-                    None => !cfg.trigger.problem_ids.contains(&r.problem_id),
+    // trigger — two paths (corrective phase S2 makes the split explicit):
+    //  * `columns` (the paper-faithful explicit mechanism): k =
+    //    indicator(S), S = the top `count` of the ranked list file; the
+    //    dense k/covdiag artifacts are not emitted.
+    //  * `dense` (frozen): the labeled mean over the trigger anchors'
+    //    captures + the calibration covariance diagonal — unchanged.
+    let (trigger_spec, trigger_json, trigger_support, trigger_kind): (
+        TriggerSpec,
+        serde_json::Value,
+        usize,
+        &'static str,
+    ) = match &cfg.trigger.columns {
+        Some(cc) => {
+            anyhow::ensure!(cc.count > 0, "columns.count must be > 0");
+            anyhow::ensure!(
+                cc.count <= cfg.dims.trigger,
+                "columns.count {} exceeds the trigger dim {}",
+                cc.count,
+                cfg.dims.trigger
+            );
+            let ranked_bytes = std::fs::read(&cc.path)
+                .with_context(|| format!("read the ranked column list {}", cc.path))?;
+            let ranked_sha = gguf_writer::sha256_bytes(&ranked_bytes);
+            let ranked_text = std::str::from_utf8(&ranked_bytes)
+                .with_context(|| format!("the ranked column list {} is not UTF-8", cc.path))?;
+            let mut seen = BTreeSet::new();
+            let mut ranked: Vec<usize> = Vec::new();
+            for (ln, line) in ranked_text.lines().enumerate() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
                 }
-        })
-        .collect();
-    anyhow::ensure!(
-        !cal_rows.is_empty(),
-        "no calibration captures at {}-{} — the covariance diagonal needs a \
-         non-trigger baseline",
-        cfg.trigger.site,
-        cfg.trigger.layer
-    );
-    let (cal_pooled, cre) = pool(&cal_rows, &args.capture_dir)?;
-    anyhow::ensure!(
-        cre == tre,
-        "calibration rows are {cre}-dim, trigger is {tre}"
-    );
-    files_used.extend(cal_rows.iter().map(|r| r.file.clone()));
-    let covdiag: Vec<f32> = variance_rows(&cal_pooled, &mean_rows(&cal_pooled))
-        .iter()
-        .map(|&x| x as f32)
-        .collect();
+                let j: usize = line.parse().with_context(|| {
+                    format!(
+                        "the ranked column list {} line {}: not a column index",
+                        cc.path,
+                        ln + 1
+                    )
+                })?;
+                anyhow::ensure!(
+                    j < cfg.dims.trigger,
+                    "the ranked column list {} line {}: column {j} out of range (dim {})",
+                    cc.path,
+                    ln + 1,
+                    cfg.dims.trigger
+                );
+                anyhow::ensure!(
+                    seen.insert(j),
+                    "the ranked column list {} line {}: duplicate column {j}",
+                    cc.path,
+                    ln + 1
+                );
+                ranked.push(j);
+            }
+            anyhow::ensure!(
+                ranked.len() >= cc.count,
+                "the ranked column list {} holds {} columns; the selection needs {}",
+                cc.path,
+                ranked.len(),
+                cc.count
+            );
+            let selected: Vec<usize> = ranked.iter().copied().take(cc.count).collect();
+            let cols_path = out.join("columns.txt");
+            let cols_body = selected
+                .iter()
+                .map(|j| j.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            std::fs::write(&cols_path, cols_body)?;
+            let cols_sha = gguf_writer::sha256_file(&cols_path)?;
+            (
+                TriggerSpec::Columns {
+                    path: cols_path.display().to_string(),
+                    sha256: cols_sha.clone(),
+                    dim: cfg.dims.trigger,
+                    count: selected.len(),
+                },
+                serde_json::json!({
+                    "kind": "columns",
+                    "site": cfg.trigger.site, "layer": cfg.trigger.layer,
+                    "problem_ids": cfg.trigger.problem_ids,
+                    "columns": {"path": cols_path.display().to_string(),
+                                 "sha256": cols_sha,
+                                 "count": selected.len(), "dim": cfg.dims.trigger},
+                    "ranked_list": {"path": cc.path, "sha256": ranked_sha,
+                                      "rows": ranked.len()},
+                    "selected": selected,
+                }),
+                selected.len(),
+                "columns",
+            )
+        }
+        None => {
+            let trig_rows: Vec<&CaptureRow> = rows
+                .iter()
+                .filter(|r| {
+                    r.site == cfg.trigger.site
+                        && r.layer == cfg.trigger.layer
+                        && cfg.trigger.problem_ids.contains(&r.problem_id)
+                })
+                .collect();
+            anyhow::ensure!(
+                !trig_rows.is_empty(),
+                "no trigger captures at {}-{} for the named anchors",
+                cfg.trigger.site,
+                cfg.trigger.layer
+            );
+            let (trig_pooled, tre) = pool(&trig_rows, &args.capture_dir)?;
+            anyhow::ensure!(
+                tre == cfg.dims.trigger,
+                "trigger captures are {tre}-dim but dims.trigger is {} — the dense \
+                     trigger must match the edit tensor's input dim (gguf-info)",
+                cfg.dims.trigger
+            );
+            files_used.extend(trig_rows.iter().map(|r| r.file.clone()));
+            let k: Vec<f32> = mean_rows(&trig_pooled).iter().map(|&x| x as f32).collect();
+            let (kmin, kmax) = (
+                k.iter().copied().fold(f32::INFINITY, f32::min),
+                k.iter().copied().fold(f32::NEG_INFINITY, f32::max),
+            );
+            anyhow::ensure!(
+                kmax - kmin > 0.0,
+                "degenerate trigger (constant): a trigger that fires equally on every \
+                     input is not a trigger"
+            );
+
+            // calibration: the covariance diagonal over the calibration rows
+            let cal_rows: Vec<&CaptureRow> = rows
+                .iter()
+                .filter(|r| {
+                    r.site == cfg.trigger.site
+                        && r.layer == cfg.trigger.layer
+                        && match &cfg.trigger.calibration_problem_ids {
+                            Some(ids) => ids.contains(&r.problem_id),
+                            None => !cfg.trigger.problem_ids.contains(&r.problem_id),
+                        }
+                })
+                .collect();
+            anyhow::ensure!(
+                !cal_rows.is_empty(),
+                "no calibration captures at {}-{} — the covariance diagonal needs a \
+                     non-trigger baseline",
+                cfg.trigger.site,
+                cfg.trigger.layer
+            );
+            let (cal_pooled, cre) = pool(&cal_rows, &args.capture_dir)?;
+            anyhow::ensure!(
+                cre == tre,
+                "calibration rows are {cre}-dim, trigger is {tre}"
+            );
+            files_used.extend(cal_rows.iter().map(|r| r.file.clone()));
+            let covdiag: Vec<f32> = variance_rows(&cal_pooled, &mean_rows(&cal_pooled))
+                .iter()
+                .map(|&x| x as f32)
+                .collect();
+
+            let k_path = out.join("k.f32");
+            let cov_path = out.join("covdiag.f32");
+            std::fs::write(&k_path, f32_bytes(&k))?;
+            std::fs::write(&cov_path, f32_bytes(&covdiag))?;
+            (
+                TriggerSpec::Dense {
+                    path: k_path.display().to_string(),
+                    dim: tre,
+                    covdiag_path: Some(cov_path.display().to_string()),
+                },
+                serde_json::json!({
+                    "kind": "dense",
+                    "site": cfg.trigger.site, "layer": cfg.trigger.layer,
+                    "problem_ids": cfg.trigger.problem_ids,
+                    "rows_pooled": trig_pooled.len(),
+                    "k": {"path": k_path.display().to_string(), "sha256": hash(&k_path),
+                           "dim": tre, "min": kmin, "max": kmax},
+                    "covdiag": {"path": cov_path.display().to_string(), "sha256": hash(&cov_path),
+                                 "dim": tre,
+                                 "note": "per-channel variance of the calibration rows; the edit \
+                                          leg whitens k_eff = k / sqrt(var + 1e-6) when covdiag_path is set"},
+                    "calibration": {"rows": cal_pooled.len(),
+                                      "problem_ids": cfg.trigger.calibration_problem_ids
+                                          .clone().unwrap_or_else(|| vec!["others".into()])},
+                }),
+                tre,
+                "dense",
+            )
+        }
+    };
 
     // E1's measurements: per-anchor bridge cosines + the control
     let mut per_anchor = serde_json::Map::new();
@@ -541,13 +693,11 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         None => None,
     };
 
-    // outputs
+    // outputs: u.f32 always (the bridge direction); the trigger's own
+    // artifacts were written by the branch above (k.f32 + covdiag.f32 on
+    // the dense path, columns.txt on the column-list path)
     let u_path = out.join("u.f32");
-    let k_path = out.join("k.f32");
-    let cov_path = out.join("covdiag.f32");
     std::fs::write(&u_path, f32_bytes(&u))?;
-    std::fs::write(&k_path, f32_bytes(&k))?;
-    std::fs::write(&cov_path, f32_bytes(&covdiag))?;
     let spec = EditSpec {
         layers: cfg.layers.clone(),
         tensor: cfg.tensor.clone(),
@@ -556,17 +706,25 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             path: u_path.display().to_string(),
             dim: cfg.dims.hidden,
         },
-        trigger: TriggerSpec::Dense {
-            path: k_path.display().to_string(),
-            dim: tre,
-            covdiag_path: Some(cov_path.display().to_string()),
-        },
+        trigger: trigger_spec,
         input: cfg.input_gguf.clone(),
         output: cfg.output_gguf.clone(),
     };
     let spec_path = out.join("edit-spec.json");
     std::fs::write(&spec_path, serde_json::to_string_pretty(&spec)?)?;
     crate::edit::validate_spec(&spec)?;
+
+    // the DME-2 projection (corrective phase S2): every trigger-support
+    // column receives the direction in every edited layer — the anchor's
+    // own arithmetic is 2 layers x 1024 x 64 = 131,072 weights = 0.016% of
+    // 0.8B. The dense trigger's projected support is the full input dim
+    // (an upper bound; the edit leg re-derives the real support from the
+    // whitened k and gates on it against the parsed GGUF's param_count).
+    // The instrument measures and states the share; the pre-emit lisp
+    // gate and the edit leg's hard refusal decide on it.
+    let projected_weights_touched =
+        cfg.layers.len() as u64 * cfg.dims.hidden as u64 * trigger_support as u64;
+    let projected_edited_share = dme2_share(projected_weights_touched, cfg.total_weights);
 
     // the manifest: sha256 of every input and output, the fitted phi's
     // digest, the dims, alpha, and the EditSpec
@@ -576,7 +734,6 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             phi_bytes.extend_from_slice(&x.to_le_bytes());
         }
     }
-    let hash = |p: &Path| gguf_writer::sha256_file(p).ok();
     let capture_files: Vec<serde_json::Value> = files_used
         .iter()
         .map(|f| serde_json::json!({"file": f, "sha256": hash(&args.capture_dir.join(f))}))
@@ -594,7 +751,7 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             "capture_files": capture_files,
             "input_gguf": {"path": cfg.input_gguf, "sha256": hash(Path::new(&cfg.input_gguf))},
         },
-        "dims": {"vectors": cfg.vectors_dim, "hidden": cfg.dims.hidden, "trigger": tre},
+        "dims": {"vectors": cfg.vectors_dim, "hidden": cfg.dims.hidden, "trigger": cfg.dims.trigger},
         "anchors": {
             "count": cfg.anchors.len(), "train": train.len(), "held_out": held.len(),
             "target": cfg.target_anchor_id,
@@ -609,23 +766,13 @@ pub fn run(args: ConvertArgs) -> Result<()> {
         },
         "alpha": cfg.alpha,
         "rank": 1u32,
+        "total_weights": cfg.total_weights,
+        "projected_weights_touched": projected_weights_touched,
+        "projected_edited_share": projected_edited_share,
         "u": {"path": u_path.display().to_string(), "sha256": hash(&u_path),
                "dim": cfg.dims.hidden, "min": umin, "max": umax, "variance": uvar,
                "l2": u.iter().map(|&x| f64::from(x * x)).sum::<f64>().sqrt()},
-        "trigger": {
-            "site": cfg.trigger.site, "layer": cfg.trigger.layer,
-            "problem_ids": cfg.trigger.problem_ids,
-            "rows_pooled": trig_pooled.len(),
-            "k": {"path": k_path.display().to_string(), "sha256": hash(&k_path),
-                   "dim": tre, "min": kmin, "max": kmax},
-            "covdiag": {"path": cov_path.display().to_string(), "sha256": hash(&cov_path),
-                         "dim": tre,
-                         "note": "per-channel variance of the calibration rows; the edit \
-                                  leg whitens k_eff = k / sqrt(var + 1e-6) when covdiag_path is set"},
-            "calibration": {"rows": cal_pooled.len(),
-                              "problem_ids": cfg.trigger.calibration_problem_ids
-                                  .clone().unwrap_or_else(|| vec!["others".into()])},
-        },
+        "trigger": trigger_json,
         "cosines": {"train_mean": train_mean, "held_out_mean": held_mean,
                      "per_anchor": per_anchor},
         "control": control,
@@ -637,7 +784,8 @@ pub fn run(args: ConvertArgs) -> Result<()> {
     std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
     eprintln!(
         "convert: {} anchors ({} train / {} held-out), train cos {:.4}, held-out cos {}, \
-         control {}, u {}-dim, trigger {}-dim over {} anchor(s), manifest {}",
+         control {}, u {}-dim, trigger {} (support {} of dim {}), projected {} weights \
+         ({:.5}% of {}), manifest {}",
         cfg.anchors.len(),
         train.len(),
         held.len(),
@@ -650,8 +798,12 @@ pub fn run(args: ConvertArgs) -> Result<()> {
             .map(|c| format!("{:.4}", c["held_out_mean"].as_f64().unwrap_or(0.0)))
             .unwrap_or_else(|| "n/a".into()),
         cfg.dims.hidden,
-        tre,
-        cfg.trigger.problem_ids.len(),
+        trigger_kind,
+        trigger_support,
+        cfg.dims.trigger,
+        projected_weights_touched,
+        projected_edited_share * 100.0,
+        cfg.total_weights,
         manifest_path.display()
     );
     Ok(())
@@ -849,6 +1001,7 @@ mod tests {
             "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a3"],
                          "calibration_problem_ids": null},
             "dims": {"hidden": 3, "trigger": 3},
+            "total_weights": 1000000,
             "control": {"seed": 20261106},
             "input_gguf": dummy_gguf.display().to_string(),
             "output_gguf": (dir.path().join("edited.gguf")).display().to_string()
@@ -891,6 +1044,14 @@ mod tests {
         assert_eq!(man["dims"]["hidden"], 3);
         assert_eq!(man["anchors"]["train"], 3);
         assert_eq!(man["anchors"]["held_out"], 1);
+        // corrective phase S2 — the DME-2 projection on the manifest:
+        // 1 layer x hidden 3 x dense support 3 = 9 touched, stated with
+        // its denominator
+        assert_eq!(man["trigger"]["kind"], "dense");
+        assert_eq!(man["total_weights"], 1_000_000);
+        assert_eq!(man["projected_weights_touched"], 9);
+        let share = man["projected_edited_share"].as_f64().unwrap();
+        assert!((share - 9.0 / 1_000_000.0).abs() < 1e-15);
         assert!(
             man["cosines"]["held_out_mean"].as_f64().unwrap() > 0.99999,
             "the constructed bridge is exact on held-out"
@@ -935,6 +1096,7 @@ mod tests {
             "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a0"],
                          "calibration_problem_ids": null},
             "dims": {"hidden": 3, "trigger": 3},
+            "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
         });
         let cpath = dir.path().join("cfg.json");
@@ -970,6 +1132,7 @@ mod tests {
             "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a0"],
                          "calibration_problem_ids": null},
             "dims": {"hidden": 4, "trigger": 3},
+            "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
         });
         let cpath = dir.path().join("cfg.json");
@@ -1009,6 +1172,7 @@ mod tests {
             "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a0"],
                          "calibration_problem_ids": null},
             "dims": {"hidden": 3, "trigger": 3},
+            "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
         });
         let cpath = dir.path().join("cfg.json");
@@ -1045,6 +1209,7 @@ mod tests {
             "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a0"],
                          "calibration_problem_ids": null},
             "dims": {"hidden": 3, "trigger": 3},
+            "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
         });
         let cpath = dir.path().join("cfg.json");
@@ -1061,5 +1226,194 @@ mod tests {
             err.to_string().contains("vectors file holds"),
             "wrong refusal: {err:#}"
         );
+    }
+
+    /// Corrective phase S2 — a config that cannot state the model's
+    /// total weights refuses at parse time: DME-2 is mechanical, and a
+    /// manifest that cannot state its projected share cannot be emitted.
+    #[test]
+    fn refuses_a_config_without_total_weights() {
+        let cfg = serde_json::json!({
+            "vectors_dim": 2,
+            "anchors": [{"id": "a0", "split": "train"}],
+            "site": "l_out", "layer": 12, "layers": [12], "tensor": "ffn_down",
+            "alpha": 1.0, "ridge_lambda": 0.0, "target_anchor_id": "a0",
+            "trigger": {"site": "l_out", "layer": 12, "problem_ids": ["a0"],
+                         "calibration_problem_ids": null},
+            "dims": {"hidden": 3, "trigger": 3},
+            "input_gguf": "x", "output_gguf": "y"
+        });
+        let err = serde_json::from_value::<ConvertConfig>(cfg)
+            .expect_err("a config without total_weights must refuse");
+        assert!(
+            err.to_string().contains("total_weights"),
+            "wrong refusal: {err}"
+        );
+    }
+
+    /// Corrective phase S2 — the explicit column-list trigger path: a
+    /// ranked list round-trips into the sha-bound columns file + the
+    /// spec, the manifest carries the projection (layers x hidden x
+    /// |S|), and no dense k/covdiag artifacts are emitted. The bridge
+    /// anchors' captures are still required (u is unchanged); the
+    /// trigger captures are not (the columns path does not build k
+    /// from captures).
+    #[test]
+    fn column_list_round_trips_into_the_spec() {
+        let dir = TempDir::new("cols-e2e");
+        // bridge anchors only — no trigger-anchor captures needed
+        let (manifest, cdir) = fixture_captures(
+            dir.path(),
+            &[
+                ("a0", vec![1.0, 0.0, 1.0]),
+                ("a1", vec![0.0, 1.0, 1.0]),
+                ("a2", vec![2.0, 3.0, 5.0]),
+                ("a3", vec![3.0, 1.0, 4.0]),
+            ],
+        );
+        let mpath = dir.path().join("manifest.jsonl");
+        std::fs::write(&mpath, manifest).unwrap();
+        let vpath = dir.path().join("vectors.f32");
+        write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0]);
+        let ranked = dir.path().join("ranked.txt");
+        std::fs::write(&ranked, "2\n0\n1\n").unwrap(); // ranked: 2, 0, 1 — take 2
+        let cfg = serde_json::json!({
+            "vectors_dim": 2,
+            "anchors": [
+                {"id": "a0", "split": "train"},
+                {"id": "a1", "split": "train"},
+                {"id": "a2", "split": "train"},
+                {"id": "a3", "split": "held_out"}
+            ],
+            "site": "l_out", "layer": 12,
+            "layers": [15, 19], "tensor": "ffn_down",
+            "alpha": 1.0, "ridge_lambda": 0.0,
+            "target_anchor_id": "a3",
+            "trigger": {"site": "l_out", "layer": 15, "problem_ids": [],
+                         "calibration_problem_ids": null,
+                         "columns": {"path": ranked.display().to_string(), "count": 2}},
+            "dims": {"hidden": 3, "trigger": 3},
+            "total_weights": 1000000,
+            "input_gguf": "x", "output_gguf": "y"
+        });
+        let cpath = dir.path().join("convert-config.json");
+        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
+        let out = dir.path().join("out");
+        run(ConvertArgs {
+            config: cpath,
+            vectors: vpath,
+            capture_manifest: mpath,
+            capture_dir: cdir,
+            out_dir: out.clone(),
+        })
+        .expect("the column-list convert runs");
+
+        // the columns file: the top-2 of the ranking, order preserved
+        let cols_text = std::fs::read_to_string(out.join("columns.txt")).unwrap();
+        assert_eq!(cols_text, "2\n0\n");
+        // the emitted spec: the sha-bound Columns trigger, parseable by
+        // the edit leg's own loader
+        let spec = crate::edit::load_spec(&out.join("edit-spec.json")).expect("spec parses");
+        match &spec.trigger {
+            crate::edit::TriggerSpec::Columns {
+                count,
+                dim,
+                sha256,
+                path,
+            } => {
+                assert_eq!((*count, *dim), (2, 3));
+                assert_eq!(
+                    sha256.as_str(),
+                    gguf_writer::sha256_file(Path::new(path)).unwrap().as_str()
+                );
+            }
+            other => panic!("expected the columns trigger, got {other:?}"),
+        }
+        assert_eq!(spec.layers, vec![15, 19]);
+        // no dense artifacts on this path
+        assert!(!out.join("k.f32").exists());
+        assert!(!out.join("covdiag.f32").exists());
+        // the manifest: the columns trigger record + the projection
+        // (2 layers x hidden 3 x |S| 2 = 12)
+        let man: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join("convert-manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(man["trigger"]["kind"], "columns");
+        assert_eq!(man["trigger"]["selected"], serde_json::json!([2, 0]));
+        assert_eq!(man["trigger"]["columns"]["count"], 2);
+        assert!(man["trigger"]["columns"]["sha256"].as_str().unwrap().len() == 64);
+        assert!(
+            man["trigger"]["ranked_list"]["sha256"]
+                .as_str()
+                .unwrap()
+                .len()
+                == 64
+        );
+        assert_eq!(man["projected_weights_touched"], 12);
+        let share = man["projected_edited_share"].as_f64().unwrap();
+        assert!((share - 12.0 / 1_000_000.0).abs() < 1e-15);
+    }
+
+    /// Corrective phase S2 — the ranked list is validated: duplicates,
+    /// out-of-range columns, and a short list refuse loudly.
+    #[test]
+    fn refuses_a_bad_ranked_column_list() {
+        for (body, needle) in [
+            ("2\n2\n1\n", "duplicate column"),
+            ("3\n0\n1\n", "out of range"),
+            ("0\n", "the selection needs 2"),
+            ("x\n0\n1\n", "not a column index"),
+        ] {
+            let dir = TempDir::new("cols-refuse");
+            let (manifest, cdir) = fixture_captures(
+                dir.path(),
+                &[
+                    ("a0", vec![1.0, 0.0, 1.0]),
+                    ("a1", vec![0.0, 1.0, 1.0]),
+                    ("a2", vec![2.0, 3.0, 5.0]),
+                    ("a3", vec![3.0, 1.0, 4.0]),
+                ],
+            );
+            let mpath = dir.path().join("manifest.jsonl");
+            std::fs::write(&mpath, manifest).unwrap();
+            let vpath = dir.path().join("vectors.f32");
+            write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0]);
+            let ranked = dir.path().join("ranked.txt");
+            std::fs::write(&ranked, body).unwrap();
+            let cfg = serde_json::json!({
+                "vectors_dim": 2,
+                "anchors": [
+                    {"id": "a0", "split": "train"},
+                    {"id": "a1", "split": "train"},
+                    {"id": "a2", "split": "train"},
+                    {"id": "a3", "split": "held_out"}
+                ],
+                "site": "l_out", "layer": 12,
+                "layers": [15], "tensor": "ffn_down",
+                "alpha": 1.0, "ridge_lambda": 0.0,
+                "target_anchor_id": "a3",
+                "trigger": {"site": "l_out", "layer": 15, "problem_ids": [],
+                             "calibration_problem_ids": null,
+                             "columns": {"path": ranked.display().to_string(), "count": 2}},
+                "dims": {"hidden": 3, "trigger": 3},
+                "total_weights": 1000000,
+                "input_gguf": "x", "output_gguf": "y"
+            });
+            let cpath = dir.path().join("cfg.json");
+            std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
+            let err = run(ConvertArgs {
+                config: cpath,
+                vectors: vpath,
+                capture_manifest: mpath,
+                capture_dir: cdir,
+                out_dir: dir.path().join("out"),
+            })
+            .expect_err("the bad ranked list must refuse");
+            assert!(
+                err.to_string().contains(needle),
+                "wrong refusal for {body:?}: {err:#}"
+            );
+        }
     }
 }
