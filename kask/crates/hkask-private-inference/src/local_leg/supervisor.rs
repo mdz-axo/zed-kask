@@ -317,7 +317,7 @@ impl Supervisor {
             .map_err(|source| SupervisionError::Spawn { source })?;
 
         // Health-wait, bounded by the measured load bound.
-        let client = reqwest::Client::new();
+        let client = health_probe_client()?;
         let health_url = format!("http://{}:{}", prepared.plan.host, prepared.plan.port)
             + &prepared.manifest.probe.health_path;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(HEALTH_TIMEOUT_SECS);
@@ -436,7 +436,7 @@ impl Supervisor {
                 ),
             });
         }
-        let client = reqwest::Client::new();
+        let client = health_probe_client()?;
         let health_url = format!("http://{}:{}", prepared.plan.host, prepared.plan.port)
             + &prepared.manifest.probe.health_path;
         if !health_ok(&client, &health_url).await {
@@ -598,6 +598,21 @@ async fn tcp_connectable(host: &str, port: u16) -> bool {
     tokio::net::TcpStream::connect((host, port)).await.is_ok()
 }
 
+/// Health-probe client: a probe slower than the poll cadence reads as a
+/// failed poll. Without a bound, an accept-but-never-answer server (the
+/// wedged-portal class) freezes the probe itself — the 20-minute launch
+/// deadline and the unhealthy-streak watchdog only advance BETWEEN probes,
+/// so an unbounded probe defeats both and status stays `Serving` forever.
+fn health_probe_client() -> Result<reqwest::Client, SupervisionError> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(POLL_INTERVAL_SECS))
+        .build()
+        .map_err(|source| SupervisionError::Io {
+            context: "health probe client construction".to_string(),
+            source: std::io::Error::other(source.to_string()),
+        })
+}
+
 async fn health_ok(client: &reqwest::Client, url: &str) -> bool {
     client
         .get(url)
@@ -716,6 +731,32 @@ async fn stop_by_pid(pid: u32, record_path: &Path, key_path: &Path) {
 mod tests {
     use super::*;
     use crate::local_leg::manifest::shipped_manifest;
+
+    /// Source pin (the D31 register style): the probe deadline lives inside
+    /// reqwest and is unobservable from a unit test — pin the construction
+    /// instead, over the production half of this file (the tests mod is
+    /// excluded, as in the D31 pins): both probe sites route through
+    /// `health_probe_client` (bounded at the poll interval) and no
+    /// production site constructs an unbounded client (an unbounded probe
+    /// freezes the health deadline and the streak watchdog — both only
+    /// advance between probes).
+    #[test]
+    fn health_probes_are_deadline_bounded() {
+        let source = include_str!("supervisor.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        assert_eq!(
+            production.matches("reqwest::Client::new()").count(),
+            0,
+            "an unbounded client reintroduces the wedged-server freeze"
+        );
+        assert_eq!(
+            production
+                .matches("let client = health_probe_client()?;")
+                .count(),
+            2,
+            "both probe sites (launch health-wait, adopt probe) must be bounded"
+        );
+    }
 
     #[test]
     fn plan_digest_is_stable_and_policy_sensitive() {
