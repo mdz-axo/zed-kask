@@ -617,6 +617,14 @@ pub enum ExperimentationError {
         "final-evaluation run refs must be disjoint from the experiment's prior records — overlapping refs: {0:?}"
     )]
     RunRefsNotDisjoint(Vec<String>),
+    #[error(
+        "experiment_key {0} is already bound to a different declaration — replay convergence returns the existing record only for an identical retry; a different payload under the same key is refused (re-declare under a new key)"
+    )]
+    ExperimentKeyDiffers(String),
+    #[error(
+        "variant_key {0} is already bound to a different variant — replay convergence returns the existing record only for an identical retry; a different payload under the same key is refused (register under a new key)"
+    )]
+    VariantKeyDiffers(String),
     #[error("database error: {0}")]
     Database(#[from] hkask_storage::database::types::DbError),
     #[error("serialization error: {0}")]

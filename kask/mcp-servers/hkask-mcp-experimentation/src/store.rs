@@ -396,7 +396,11 @@ impl ExperimentationStore {
             ],
         )?;
         if inserted == 0 {
-            // Converged on an existing experiment_key — return that record.
+            // Converged on an existing experiment_key — replay convergence
+            // is for IDENTICAL retries only: a different payload under the
+            // same key is a typed refusal (dual-axis review Q3, matching
+            // the seal path and kata-kanban's idempotency), never a silent
+            // return of a record the caller believes was just revised.
             let key = experiment_key.ok_or_else(|| {
                 ExperimentationError::Serialization(
                     "INSERT was ignored without an experiment_key — an unexpected \
@@ -404,7 +408,23 @@ impl ExperimentationStore {
                         .to_string(),
                 )
             })?;
-            return self.experiment_by_key(key);
+            let existing = self.experiment_by_key(key)?;
+            let declaration_matches = existing.hypothesis == hypothesis
+                && existing.layer == layer
+                && existing.genotype_refs.as_slice() == genotype_refs
+                && existing.eval_set == *eval_set
+                && existing.fitness_fn == fitness_fn
+                && existing.noise_band == *noise_band
+                && value_column(&existing.prediction)? == value_column(prediction)?
+                && existing.budget == *budget
+                && existing.max_runs == max_runs
+                && existing.linked_goal_id.as_deref() == linked_goal_id
+                && value_column(&existing.rubrics)? == value_column(rubrics)?
+                && existing.design_spec.as_ref() == design_spec;
+            if declaration_matches {
+                return Ok(existing);
+            }
+            return Err(ExperimentationError::ExperimentKeyDiffers(key.to_string()));
         }
         self.experiment_by_id(&id)
     }
@@ -515,7 +535,17 @@ impl ExperimentationStore {
                         .to_string(),
                 )
             })?;
-            return self.variant_by_key(experiment_id, key);
+            // Replay convergence is for IDENTICAL retries only (dual-axis
+            // review Q3): a different payload under the same key is a
+            // typed refusal, matching the propose path.
+            let existing = self.variant_by_key(experiment_id, key)?;
+            if existing.genotype_config == *genotype_config
+                && existing.parent_variant_id.as_deref() == parent_variant_id
+                && existing.role == role
+            {
+                return Ok(existing);
+            }
+            return Err(ExperimentationError::VariantKeyDiffers(key.to_string()));
         }
         // First variant moves the experiment from proposed to running.
         self.driver.execute(
@@ -1467,6 +1497,47 @@ mod tests {
         );
     }
 
+    /// A DIFFERENT payload under a converged experiment_key is a typed
+    /// refusal (dual-axis review Q3): the caller must learn its revision
+    /// was not recorded — never receive the stale record in silence.
+    #[test]
+    fn experiment_key_refuses_a_different_payload() {
+        let store = store();
+        let first = propose(&store, "skill", Some("key-1"));
+        let error = store
+            .propose_experiment(
+                "A DIFFERENT hypothesis under the same key",
+                "skill",
+                &[".agents/skills/self-improvement/SKILL.md".to_string()],
+                &serde_json::json!({"task_set": "fixed-5", "pin_suites": ["lisp_eval_tool"]}),
+                "evaluator pass rate on the fixed set",
+                &serde_json::json!({"cost_band_pct": 10}),
+                &rubrics(),
+                &Prediction {
+                    claim: "variant B wins".to_string(),
+                    confidence: 0.7,
+                },
+                &serde_json::json!({"energy_budget": "one eval run", "max_runs": 18}),
+                18,
+                None,
+                Some("key-1"),
+                None,
+            )
+            .expect_err("a different payload under a converged key is refused");
+        assert!(
+            matches!(error, ExperimentationError::ExperimentKeyDiffers(_)),
+            "got: {error:?}"
+        );
+        assert_eq!(
+            store
+                .experiment_by_key("key-1")
+                .expect("original intact")
+                .id,
+            first.id,
+            "the refusal leaves the stored record untouched"
+        );
+    }
+
     #[test]
     fn variant_key_converges_within_an_experiment() {
         let store = store();
@@ -1476,6 +1547,35 @@ mod tests {
         assert_eq!(
             first.id, second.id,
             "a retried register with the same key must converge, not duplicate"
+        );
+    }
+
+    /// A DIFFERENT variant payload under a converged variant_key is a typed
+    /// refusal (dual-axis review Q3) — same rule as the propose path.
+    #[test]
+    fn variant_key_refuses_a_different_payload() {
+        let store = store();
+        let experiment = propose(&store, "prompt_template", None);
+        let first = variant(&store, &experiment.id, "v1", None, Some("v1-key"));
+        let error = store
+            .register_variant(
+                &experiment.id,
+                &serde_json::json!({"name": "a different genotype"}),
+                None,
+                VARIANT_ROLE_CHALLENGER,
+                Some("v1-key"),
+            )
+            .expect_err("a different payload under a converged key is refused");
+        assert!(
+            matches!(error, ExperimentationError::VariantKeyDiffers(_)),
+            "got: {error:?}"
+        );
+        assert_eq!(
+            store
+                .variant_by_key(&experiment.id, "v1-key")
+                .expect("original intact")
+                .id,
+            first.id
         );
     }
 

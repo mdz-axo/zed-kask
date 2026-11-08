@@ -60,7 +60,9 @@ pub fn map_experimentation_error(error: ExperimentationError) -> McpToolError {
         | ExperimentationError::AblationWithoutParent
         | ExperimentationError::UnknownScientificOutcome(_)
         | ExperimentationError::SelectionResolutionConflict(..)
-        | ExperimentationError::DesignSpecInvalid(_) => {
+        | ExperimentationError::DesignSpecInvalid(_)
+        | ExperimentationError::ExperimentKeyDiffers(_)
+        | ExperimentationError::VariantKeyDiffers(_) => {
             McpToolError::invalid_argument(error.to_string())
         }
         ExperimentationError::DuplicateBaseline(..) => {
