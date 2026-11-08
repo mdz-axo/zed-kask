@@ -986,22 +986,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // here. Used by the EQM scoring tool.
     let inference_port = hkask_inference::resolve_inference_port().await;
 
-    // A malformed numeric env var must warn, not silently fall back — an
-    // operator cannot distinguish "not configured" from "configured but
-    // broken" otherwise.
-    let cache_ttl_secs = match std::env::var("HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS") {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(
-                    "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS={raw} failed to parse ({e}); \
-                     falling back to default {DEFAULT_CACHE_TTL_SECS}s"
-                );
-                DEFAULT_CACHE_TTL_SECS
-            }
-        },
-        Err(_) => DEFAULT_CACHE_TTL_SECS,
-    };
+    // A malformed numeric env var warns and falls back through the shared
+    // helper (dual-axis review H9) — the canonical `hkask.mcp.env` warn
+    // shape, not a per-site reimplementation of the parse-with-warn
+    // pattern an operator cannot distinguish "not configured" from
+    // "configured but broken" without.
+    let cache_ttl_secs = hkask_mcp_server::parse_env_warn(
+        "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+        DEFAULT_CACHE_TTL_SECS,
+    );
 
     // D28 — Standardized Artifact Storage. Calibration journal lives at
     // `{kask_data_dir}/mcp/prediction-markets/calibration.jsonl`. Override
