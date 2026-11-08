@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use hkask_mcp_server::server::{McpToolError, execute_tool, resolve_db_passphrase};
+use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_types::AnyJsonValue;
 use hkask_types::McpErrorKind;
 use rmcp::handler::server::wrapper::Parameters;
@@ -712,40 +712,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
             let registry_path = crate::registry_path();
-            // First boot: the registry's parent directory may not exist yet
-            // (the default lives under nested per-agent data dirs). Create
-            // it up front so the failure mode is a real DB error, not a
-            // missing-directory error; either way the open surfaces it
-            // visibly.
-            if let Some(Err(error)) = registry_path.parent().map(std::fs::create_dir_all) {
-                tracing::warn!(
-                    target: "hkask.mcp.experimentation",
-                    path = %registry_path.display(),
-                    %error,
-                    "Failed to create the experimentation DB directory \
-                     — the subsequent DB open will surface the failure"
-                );
-            }
             let db_path = registry_path.to_string_lossy().to_string();
-            // Canonical 2-tier passphrase chain (ctx.credentials → env →
-            // keychain). See `hkask_mcp_server::server::resolve_db_passphrase`.
-            // Startup failures map to Infrastructure — visible and named, never
-            // a silent empty-key open.
+            // The shared server-database bootstrap (dual-axis review Batch
+            // C, migration 3 of 3): the parent self-heal, the 2-tier
+            // passphrase chain, open-or-repair, the pool, and the labeled
+            // driver — absorbed into hkask-mcp-server. Startup failures
+            // map to Infrastructure — visible and named, never a silent
+            // empty-key open.
             let infrastructure = |message: String| {
                 hkask_mcp_server::McpError::Infrastructure(hkask_types::InfrastructureError::Io(
                     message,
                 ))
             };
-            let passphrase = resolve_db_passphrase(&ctx.credentials)
-                .map_err(|error| infrastructure(format!("HKASK_DB_PASSPHRASE: {error}")))?;
-            let db = hkask_storage::open_or_repair(&db_path, &passphrase)
+            let server_db = hkask_mcp_server::open_server_db(&db_path, &ctx.credentials)
                 .map_err(|error| infrastructure(error.to_string()))?;
-            let pool = db
-                .sqlite_pool()
-                .map_err(|error| infrastructure(format!("sqlite pool: {error}")))?;
-            let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = Arc::new(
-                hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path.as_str()),
-            );
+            let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+                Arc::clone(&server_db.driver);
             let store = Arc::new(
                 ExperimentationStore::with_driver(driver)
                     .map_err(|error| infrastructure(format!("experimentation store init: {error}")))?,
