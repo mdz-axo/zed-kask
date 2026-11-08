@@ -223,9 +223,10 @@ async fn tick_does_not_verify_unapplied_ocr_advice() {
 /// after it would never observe remaining == 0 and the E04 exhaustion
 /// alert could never fire (the pre-fix defect: the alert was dead
 /// code). Controls: the reset still replenishes; a replenished agent
-/// does not re-alert without new exhaustion; and the reset alone earns
-/// no review-card write — the exhaustion alert is transient
-/// (`escalated: false`) and does not represent a review condition.
+/// does not re-alert without new exhaustion; and the exhaustion alert IS
+/// board-reviewable (operator ruling 2026-11-07, dual-axis review T3:
+/// fresh cap exhaustion is escalated — the reset alone still earns no
+/// card, only a fresh post-reset exhaustion does).
 #[tokio::test]
 async fn cap_exhaustion_is_detected_before_the_reset_replenishes() {
     let archive = Arc::new(CapturingSink(Mutex::new(Vec::new())));
@@ -306,11 +307,18 @@ async fn cap_exhaustion_is_detected_before_the_reset_replenishes() {
         "a replenished agent must not re-alert"
     );
 
-    // Control: resetting the cap does not create a review card for the
-    // transient alert.
+    // The exhaustion alert IS board-reviewable (T3 ruling): the fresh
+    // post-charge exhaustion persisted exactly one review delivery — and
+    // the replenished control cycle above produced no second one.
+    let persisted = escalation.persisted.lock().expect("persisted");
+    assert_eq!(
+        persisted.len(),
+        1,
+        "fresh cap exhaustion creates exactly one review delivery"
+    );
     assert!(
-        escalation.persisted.lock().expect("persisted").is_empty(),
-        "the transient exhaustion alert must not create a review card"
+        persisted[0].contains(&agent.to_string()),
+        "the review delivery names the exhausted agent"
     );
 }
 

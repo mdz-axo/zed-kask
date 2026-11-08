@@ -537,12 +537,20 @@ impl super::CyberneticsLoop {
                 .collect();
 
             for (domain, message) in &alert_entries {
+                // Board-reviewable (operator ruling 2026-11-07, dual-axis
+                // review T3): fresh cap exhaustion is a discrete, actionable
+                // observation — an agent stopped mid-work or a ceiling is
+                // mis-set, both worth an operator look. An escalated Warning
+                // reaches the board (§9.3, confidence 0.5); the board's
+                // open-condition matching coalesces repeats as card comments
+                // while D65 keeps each fresh exhaustion uncoalesced on the
+                // loop side.
                 let alert = RuntimeAlert {
                     domain: domain.clone(),
                     deficit: 1,
                     threshold: 1,
                     severity: AlertSeverity::Warning,
-                    escalated: false,
+                    escalated: true,
                     timestamp: chrono::Utc::now(),
                     message: message.clone(),
                     occurrence_count: 1,
