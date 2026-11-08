@@ -68,6 +68,42 @@ pub(crate) fn provider_http_client() -> reqwest::Client {
         .expect("reqwest provider client: TLS backend initialization")
 }
 
+/// Bridge-outage warn latch: a configured-but-broken bridge silently
+/// degrades every per-call path to direct HTTP, and the eventual
+/// direct-path error misattributes (it names the env var while the break
+/// is the bridge) — warn once per outage instead of per call, re-arming
+/// when the bridge answers again (dual-axis review I2; the unwired-latch
+/// precedent).
+static BRIDGE_OUTAGE_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Try the IPC bridge per call, warning once per outage on a configured
+/// socket that does not answer. `None` for an unconfigured socket stays
+/// silent — unconfigured is a config state, not an outage, and the
+/// callers' unconfigured errors are already honest.
+async fn bridge_client_or_warn() -> Option<InferenceIpcClient> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            // Re-arm so a later outage warns again.
+            BRIDGE_OUTAGE_WARNED.store(true, std::sync::atomic::Ordering::Release);
+            Some(client)
+        }
+        Some(Err(error)) => {
+            if BRIDGE_OUTAGE_WARNED.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    %error,
+                    "the configured IPC bridge is not answering — calls degrade to direct \
+                     HTTP; a direct-path error here names the env var, but the break is \
+                     the bridge (warns once per outage, re-arms on recovery)"
+                );
+            }
+            None
+        }
+        None => None,
+    }
+}
+
 /// The shared "no IPC bridge" reason. Every stub method names the socket so the
 /// operator can distinguish "not configured" from "configured but broken" — a
 /// missing socket is never reported as an empty success (the `.rules`
@@ -199,7 +235,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // inference (face detection, object detection, scene captioning,
             // etc.) routes through zed's LanguageModelRegistry via the bridge,
             // same as every other inference method on this port.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client
                     .generate_vision(&prompt, &images, &params, model_override.as_deref())
                     .await;
@@ -227,7 +263,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         let tools = tools.map(|t| t.to_vec());
         Box::pin(async move {
             // Try the IPC bridge first — re-attempt on each call.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client
                     .generate_with_model(
                         &prompt,
@@ -262,7 +298,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // a single string and calls generate_with_model — the provider
             // sees "system: ...\n\nuser: ..." instead of proper role-tagged
             // messages, causing the "you responding to yourself" defect.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client
                     .generate_with_messages(
                         &messages,
@@ -293,7 +329,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
         let texts = texts.to_vec();
         Box::pin(async move {
             // Try the IPC bridge first.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return hkask_types::InferencePort::embed_with_identity(&client, &model, &texts)
                     .await;
             }
@@ -320,7 +356,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // Same routing as `embed_with_identity`: IPC bridge first, then
             // the direct-HTTP fallback — with the requested width threaded
             // to both so MRL models emit the store's width either way.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return hkask_types::InferencePort::embed_with_dimensions(
                     &client, &model, &texts, dimensions,
                 )
@@ -335,7 +371,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
     fn list_models<'a>(&'a self) -> hkask_types::PortFuture<'a, Vec<hkask_types::ModelEntry>> {
         Box::pin(async {
             // Try the IPC bridge first.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client.list_models().await;
             }
             Err(hkask_types::InferenceError::Connection(format!(
@@ -360,7 +396,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // from here. Without this override the trait default returns
             // NotConfigured("rerank not supported") and the research
             // server's deep-strategy rerank can never reach the bridge.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client.rerank_documents(&model, &query, &documents).await;
             }
             Err(hkask_types::InferenceError::Connection(format!(
@@ -385,7 +421,7 @@ impl hkask_types::InferencePort for LazyInferencePort {
             // from here. Without this override the trait default returns
             // NotConfigured("decision not supported") and the
             // prediction-markets EQM scoring can never reach the bridge.
-            if let Some(Ok(client)) = InferenceIpcClient::from_env().await {
+            if let Some(client) = bridge_client_or_warn().await {
                 return client.decide_questions(&model, &state, &questions).await;
             }
             Err(hkask_types::InferenceError::Connection(format!(
@@ -1019,6 +1055,25 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
 mod tests {
     use super::*;
     use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
+
+    /// Source pin (the D31 register style): the per-call bridge attempts
+    /// route through `bridge_client_or_warn` — a raw `Some(Ok(..))`
+    /// attempt drops the configured-but-broken arm with no log, and the
+    /// eventual direct-path error misattributes (dual-axis review I2).
+    #[test]
+    fn per_call_bridge_attempts_warn_on_outage() {
+        let source = include_str!("hkask_inference.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        assert_eq!(
+            production.matches("if let Some(Ok(client))").count(),
+            0,
+            "raw bridge attempts swallow the configured-but-broken arm"
+        );
+        assert!(
+            production.contains("bridge_client_or_warn"),
+            "the per-call paths route through the warn-once helper"
+        );
+    }
 
     /// Source pin (the D31 register style): the provider HTTP deadline lives
     /// inside reqwest and is unobservable from a unit test — pin the
