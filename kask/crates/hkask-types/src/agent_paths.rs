@@ -1,11 +1,11 @@
 //! Filesystem path helpers for per-agent storage.
 //!
-//! The system has three agent classes:
+//! The system has two agent classes (the replica class went with the
+//! persona/replica system's deletion — doc re-anchored 2026-11-07,
+//! dual-axis review E12):
 //! - **User agent** — the human user. Provisioned by `provision_agent`.
 //!   Has `agents/{username}/{username}.db` (sovereign DB) + `memory.db`.
 //! - **Curator agent** — the system regulator. Has `agents/curator/curator.db`.
-//! - **Replica agents** — static memory built from a corpus. Not provisioned;
-//!   their DBs are opened from agent-provided paths, not from `agents/`.
 //!
 //! These helpers compute agent paths and bootstrap the directory structure.
 //!

@@ -9,15 +9,22 @@
 //! - Shared: consent-bound access (shared knowledge, not universally public)
 //! - Public: universal access (no consent required)
 //!
-//! Access control enforcement is delegated to the `CapabilityToken` primitive.
+//! Enforcement is structural (doc re-anchored 2026-11-07, dual-axis
+//! review E11 — the deleted `CapabilityToken`/`SovereigntyChecker`
+//! machinery no longer exists to cite): the per-user data directory IS
+//! the enforcement perimeter (P4.1 — one encrypted SQLCipher file per
+//! user; no cross-user handle means no cross-user access is structurally
+//! possible), the private store split (`curator-private.db`, D100), and
+//! the M5 provenance partition (`call_admits` at the curator child's
+//! recall and direct-ID surfaces).
 //!
 //! # Visibility Model
 //!
 //! | Level | Meaning | Enforcement |
 //! |-------|---------|-------------|
-//! | Private | Agent-specific access | `SovereigntyChecker` + `CapabilityToken` |
-//! | Shared | Consent-bound shared access | `SovereigntyChecker` + `CapabilityToken` |
-//! | Public | Universal access | No capability required |
+//! | Private | Agent-specific access | Structural isolation (P4.1) + M5 provenance filters |
+//! | Shared | Consent-bound shared access | P2.1 consent gates (OUGHT — not yet implemented) |
+//! | Public | Universal access | No consent gate required |
 
 use serde::{Deserialize, Serialize};
 
@@ -26,9 +33,10 @@ use crate::id::WebID;
 /// Visibility level for artifacts
 /// Loop: Cybernetics
 ///
-/// Classification enum used by `SovereigntyChecker`, `Goal`, and
-/// `HMem` to categorize data accessibility. The actual enforcement
-/// is delegated to the `CapabilityToken` primitive.
+/// Classification enum used by `Goal` and `HMem` to categorize data
+/// accessibility (the deleted `SovereigntyChecker` no longer cites it).
+/// Enforcement is structural — see the module doc (the P4.1 perimeter
+/// plus the M5 provenance partition).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
