@@ -13,6 +13,11 @@
 //!   convert    embedding-to-edit bridge: embedder vectors + capture
 //!              manifests -> u/k/covdiag + a hash-bound manifest + the
 //!              edit spec (pure math, engine-free)
+//!   contrast   the contrast-u instrument leg (the replication's slot-7
+//!              addition): the failing/progressing capture pair ->
+//!              per-layer u-{L}.f32 (unit-norm mean difference), the
+//!              swiglu column ranking ranked-{L}.txt, and the S-mass
+//!              margin receipt (pure math, engine-free)
 //!   embed      embeddings leg (the engine feature): one L2-normalized
 //!              Qwen3-Embedding vector per anchor id — E1's input route
 //!   edit       direction-subtraction edit -> patched GGUF + receipt
@@ -28,7 +33,7 @@
 use anyhow::{Result, bail};
 #[cfg(feature = "engine")]
 use dme_harness::{capture, embed};
-use dme_harness::{convert, edit, gguf_writer, pi_gguf, probe};
+use dme_harness::{contrast, convert, edit, gguf_writer, pi_gguf, probe};
 
 fn main() {
     if let Err(e) = run() {
@@ -59,7 +64,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).ok_or_else(|| {
         anyhow::anyhow!(
-            "usage: dme-harness <probe|capture|convert|edit|embed|gguf-info|summary> ..."
+            "usage: dme-harness <probe|capture|contrast|convert|edit|embed|gguf-info|summary> ..."
         )
     })?;
     let rest: &[String] = if args.is_empty() { &[] } else { &args[1..] };
@@ -226,6 +231,24 @@ fn run() -> Result<()> {
                 let _ = rest;
                 bail!("embed requires the engine feature; build with --features engine")
             }
+        }
+        "contrast" => {
+            let failing =
+                flag(rest, "--failing").ok_or_else(|| anyhow::anyhow!("--failing required"))?;
+            let progressing = flag(rest, "--progressing")
+                .ok_or_else(|| anyhow::anyhow!("--progressing required"))?;
+            let out = flag(rest, "--out").ok_or_else(|| anyhow::anyhow!("--out required"))?;
+            let layers: Vec<u32> = flag_or(rest, "--layers", "15,19")
+                .split(',')
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            contrast::run(contrast::ContrastArgs {
+                failing_dir: failing.into(),
+                progressing_dir: progressing.into(),
+                out_dir: out.into(),
+                layers,
+                top: flag_or(rest, "--top", "64").parse()?,
+            })
         }
         "edit" => {
             let spec = flag(rest, "--spec").ok_or_else(|| anyhow::anyhow!("--spec required"))?;
