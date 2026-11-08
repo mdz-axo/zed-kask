@@ -40,7 +40,7 @@ storage.
 
 Wozniak & Gorzelanczyk (1995), equation (3): **R(t) = exp(-t/S)**
 
-Where S is memory life in days (configurable, default 180 = 6 months × 30).
+Where S is memory life in days (configurable, default 90).
 After S days without recall, confidence decays to exp(-1) ≈ 36.8%.
 
 At recall (when a memory is pulled into a prompt as context), the decay clock
@@ -71,7 +71,7 @@ sweep; it is not a cross-store transaction.
 
 | Variable                          | Description                            | Default |
 | --------------------------------- | -------------------------------------- | ------- |
-| `HKASK_MEMORY_LIFE_DAYS`          | Memory life S in days                  | 180     |
+| `HKASK_MEMORY_LIFE_DAYS`          | Memory life S in days                  | 90      |
 
 | `HKASK_MEMORY_INGEST_CONCURRENCY` | Ingestion semaphore permits            | 1       |
 | `HKASK_EMBEDDING_DIM`             | Embedding vector dimension             | 1024    |
