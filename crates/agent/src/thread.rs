@@ -230,9 +230,13 @@ impl std::error::Error for NoModelConfiguredError {}
 /// `kask.private_inference.provider_id` PLUS the settings-configured local
 /// providers (default: local ollama). Every member is local by
 /// construction — a marked thread runs models whose inference stays on
-/// this machine (the private leg or local ollama), never a cloud provider.
-/// With nothing configured, local ollama still serves (the default set);
-/// cloud providers are always refused (fail-closed).
+/// this machine (the private leg or local ollama), never a cloud
+/// provider. With nothing configured, local ollama still serves (the
+/// default set); cloud providers are always refused (fail-closed).
+/// F1 (2026-11-08): since ollama >= 0.40 also serves cloud-proxied models
+/// under the local ollama provider, the set alone no longer suffices —
+/// the model-level `is_cloud_model_name` check
+/// ([`is_private_leg_model_id`]) closes that crossing.
 pub(crate) fn private_inference_local_providers(cx: &App) -> Vec<Arc<str>> {
     let section = cx
         .global::<settings::SettingsStore>()
@@ -255,10 +259,42 @@ pub(crate) fn private_inference_local_providers(cx: &App) -> Vec<Arc<str>> {
 
 /// D100 — the private-leg predicate: a model is private-leg iff its
 /// provider is in the local-leg set (the configured private-inference
-/// provider or a local provider — ollama by default). Cloud providers are
-/// never in the set (fail-closed).
+/// provider or a local provider — ollama by default) AND the model is
+/// not a cloud entry. Cloud providers are never in the set (fail-closed);
+/// and since ollama >= 0.40 serves cloud-proxied models under the local
+/// ollama provider, the model-level [`is_cloud_model_name`] check closes
+/// that crossing (F1, 2026-11-08): `ollama/glm-5.3:cloud` is refused on
+/// a marked thread like any public provider.
 pub(crate) fn is_private_leg_model(model: &LanguageModel, cx: &App) -> bool {
-    is_private_leg_provider(&model.provider_id.0, cx)
+    is_private_leg_model_id(&model.provider_id.0, &model.id.0, cx)
+}
+
+/// D100/F1 — the provider-and-model form of the private-leg predicate,
+/// for surfaces that hold the pair as strings (the agent panel's model
+/// list, whose ids are `{provider}/{model}`).
+pub(crate) fn is_private_leg_model_id(provider_id: &str, model_name: &str, cx: &App) -> bool {
+    is_private_leg_provider(provider_id, cx) && !is_cloud_model_name(model_name)
+}
+
+/// F1 (2026-11-08) — true when a provider model name carries ollama's
+/// cloud namespace token as its final `:`/`-` segment. Ollama >= 0.40
+/// lists cloud-proxied entries (`remote_host: "https://ollama.com"` in
+/// `/api/tags`) under names like `glm-5.3:cloud` and
+/// `qwen3.5:397b-cloud`; locally served entries never end in a `cloud`
+/// token (both forms verified live against ollama 0.40.12, 2026-11-08).
+/// The registry's [`LanguageModel`] carries only provider and id — the
+/// structured `remote_host` field never reaches this policy layer — so
+/// the naming convention is the one model-level signal available at
+/// every admission site, and dispatch addresses cloud models by the
+/// same name, so no route to them bypasses the check. Fail-closed in the
+/// cloud direction: the token matches case-insensitively, and a name
+/// carrying it refuses the model; a name without it keeps today's
+/// provider-level admission unchanged.
+fn is_cloud_model_name(model_name: &str) -> bool {
+    model_name
+        .rsplit([':', '-'])
+        .next()
+        .is_some_and(|last| last.eq_ignore_ascii_case("cloud"))
 }
 
 /// D100 — the provider-level form of the private-leg predicate, for
@@ -15279,6 +15315,73 @@ mod tests {
             unavailable.contains("no public provider"),
             "the unavailability error names the no-fallback boundary: {unavailable}"
         );
+    }
+
+    /// F1 (2026-11-08): the cloud-name classifier's decision table — the
+    /// live-observed ollama 0.40.12 cloud forms (colon and hyphen tags,
+    /// case-insensitive) classify as cloud; local ollama names and every
+    /// shipped fleet id classify as local. No local or fleet id ends in a
+    /// `cloud` token (the manifest + the live tag list are the evidence).
+    #[test]
+    fn is_cloud_model_name_classifies_the_live_forms() {
+        for name in [
+            "glm-5.3:cloud",
+            "qwen3.5:397b-cloud",
+            "gemma4:31b-cloud",
+            "GLM-5.3:CLOUD",
+        ] {
+            assert!(is_cloud_model_name(name), "{name} is a cloud entry");
+        }
+        for name in [
+            "qwen3.5:4b",
+            "ornith:9b",
+            "bonsai-27b:latest",
+            "qwen3-reranker-4b:latest",
+            "flint",
+            "qwen36-35b-a3b",
+            "qwen35-0.8b-edited",
+            "qwen3-8-flash-next",
+            "muse-glimmer-30b",
+            "",
+        ] {
+            assert!(!is_cloud_model_name(name), "{name} is a local entry");
+        }
+    }
+
+    /// F1 (2026-11-08): the private-leg predicate's decision table — ollama
+    /// cloud models are refused at the MODEL level while local ollama
+    /// models and the configured private leg stay admitted (the gate must
+    /// not over-block), and public providers stay refused as before.
+    #[gpui::test]
+    fn private_leg_predicate_refuses_ollama_cloud_models(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        set_private_inference_provider(cx, "private-local");
+
+        cx.update(|cx| {
+            assert!(
+                !is_private_leg_model_id("ollama", "glm-5.3:cloud", cx),
+                "an ollama cloud model is not private-leg"
+            );
+            assert!(
+                !is_private_leg_model_id("ollama", "qwen3.5:397b-cloud", cx),
+                "the hyphenated cloud form is not private-leg"
+            );
+            assert!(
+                is_private_leg_model_id("ollama", "qwen3.5:4b", cx),
+                "a local ollama model stays private-leg"
+            );
+            assert!(
+                is_private_leg_model_id("private-local", "flint", cx),
+                "the configured private leg stays private-leg"
+            );
+            assert!(
+                !is_private_leg_model_id("openrouter", "z-ai/glm-5.3", cx),
+                "a public provider stays refused"
+            );
+        });
     }
 
     #[gpui::test]

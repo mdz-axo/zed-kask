@@ -3288,16 +3288,20 @@ fn strip_slash_command_prefix(text: &str) -> String {
 /// zed-kask: D100 (operator ruling 2026-11-05) — mark every model outside
 /// the local private leg as disabled in the panel list, with the boundary
 /// as the reason. The agent-model id is `{provider}/{model}`
-/// (`LanguageModels::model_id`), so the provider is the prefix before the
-/// first `/`. Pinned by
-/// `private_thread_model_list_disables_non_local_models`.
+/// (`LanguageModels::model_id`), so the check is MODEL-level: the provider
+/// must be in the local-leg set AND the model must not carry ollama's
+/// cloud token — ollama >= 0.40 serves cloud-proxied models
+/// (`glm-5.3:cloud` and friends) under the local ollama provider, and a
+/// marked thread refuses them like any public provider (F1, 2026-11-08).
+/// Pinned by `private_thread_model_list_disables_non_local_models` and
+/// `private_thread_model_list_disables_ollama_cloud_models`.
 fn disable_non_local_models(
     list: acp_thread::AgentModelList,
     cx: &App,
 ) -> acp_thread::AgentModelList {
     let scope = |mut info: acp_thread::AgentModelInfo| {
-        let provider = info.id.as_str().split('/').next().unwrap_or_default();
-        if !crate::thread::is_private_leg_provider(provider, cx) {
+        let (provider, model) = info.id.as_str().split_once('/').unwrap_or(("", ""));
+        if !crate::thread::is_private_leg_model_id(provider, model, cx) {
             info.disabled = Some(language_model::DisabledReason(
                 "private thread — only the local private inference leg serves \
                  this thread (kask.private_inference)"
@@ -13335,6 +13339,84 @@ mod internal_tests {
                 "an unmarked thread's model list is fully selectable"
             );
         }
+    }
+
+    /// zed-kask: D100/F1 (2026-11-08) — ollama >= 0.40 serves cloud-proxied
+    /// models under a LOCAL provider (`glm-5.3:cloud`, `qwen3.5:397b-cloud` —
+    /// `remote_host: "https://ollama.com"` in `/api/tags`, verified live on
+    /// 0.40.12), so the provider-level leg check admits them and a marked
+    /// thread would dispatch private content to ollama's cloud. The panel
+    /// scoping is model-level: a `cloud` token in the model name disables
+    /// the entry with the boundary reason, exactly like a public provider.
+    #[gpui::test]
+    fn private_thread_model_list_disables_ollama_cloud_models(cx: &mut TestAppContext) {
+        use gpui::UpdateGlobal as _;
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .private_inference
+                        .get_or_insert_default()
+                        .provider_id = Some("private-local".to_string());
+                });
+            });
+        });
+
+        let info = |id: &str| acp_thread::AgentModelInfo {
+            id: AgentModelId::new(id),
+            name: id.into(),
+            description: None,
+            icon: None,
+            is_latest: false,
+            cost: None,
+            disabled: None,
+        };
+        let list = cx.update(|cx| {
+            disable_non_local_models(
+                acp_thread::AgentModelList::Flat(vec![
+                    info("ollama/glm-5.3:cloud"),
+                    info("ollama/qwen3.5:4b"),
+                    info("private-local/flint"),
+                    info("fake/fake-model"),
+                ]),
+                cx,
+            )
+        });
+        let acp_thread::AgentModelList::Flat(entries) = list else {
+            panic!("a flat list stays flat");
+        };
+        let by_id = |id: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.id.as_str() == id)
+                .unwrap_or_else(|| panic!("the list carries {id}"))
+        };
+        assert!(
+            by_id("ollama/glm-5.3:cloud")
+                .disabled
+                .as_ref()
+                .is_some_and(|reason| reason.0.as_ref().contains("private thread")),
+            "an ollama cloud model is disabled with the boundary reason"
+        );
+        assert!(
+            by_id("ollama/qwen3.5:4b").disabled.is_none(),
+            "a local ollama model stays selectable"
+        );
+        assert!(
+            by_id("private-local/flint").disabled.is_none(),
+            "the configured private leg stays selectable"
+        );
+        assert!(
+            by_id("fake/fake-model").disabled.is_some(),
+            "a public provider stays disabled"
+        );
     }
 
     /// zed-kask: D100 (the review's F1) — the panel scoping's dispatch leg:
