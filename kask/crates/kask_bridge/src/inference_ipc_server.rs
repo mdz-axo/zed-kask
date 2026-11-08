@@ -340,8 +340,9 @@ fn peer_is_owner(_stream: &tokio::net::UnixStream) -> bool {
 impl InferenceIpcServer {
     /// Start listening on a new Unix socket.
     ///
-    /// The socket path is randomly generated inside a per-user private
-    /// directory. The socket is removed when the server is dropped.
+    /// The socket path is pid-keyed and stable for the process lifetime
+    /// (see the struct doc: the socket is intentionally leaked — there is
+    /// no `Drop` cleanup, and the path carries no per-instance nonce).
     ///
     /// `inference_port` is the port to dispatch chat requests to (typically
     /// the `LanguageModelInferencePort` backed by zed's `LanguageModelRegistry`).

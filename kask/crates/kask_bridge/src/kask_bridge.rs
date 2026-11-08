@@ -16,9 +16,12 @@
 //! (the call site binds it to `_ipc_server`). Rust does not drop detached
 //! tasks or process-global statics on exit, so a `Drop` impl would be dead
 //! code — and the `let _ = std::fs::remove_file(...)` it would contain is the
-//! silent-error-swallow trap the `.rules` file warns against. The socket lives
-//! in a per-user private tmpdir (`/tmp/kask-inference-{uid}/kask-inference-{pid}-{nonce}`,
-//! 0600 in a 0700 dir) that the OS reaps on reboot or tmpdir cleanup.
+//! silent-error-swallow trap the `.rules` file warns against. The socket
+//! lives in a per-user private runtime dir
+//! (`$XDG_RUNTIME_DIR/kask/kask-inference-{pid}.sock` — pid-keyed and
+//! stable for the process, no per-instance nonce, 0600 in a 0700 dir;
+//! `/tmp/kask-inference-{uid}/` is only the pre-XDG fallback) that the
+//! OS reaps on reboot or tmpdir cleanup.
 
 pub mod affordance;
 mod condenser_bridge;

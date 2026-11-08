@@ -72,8 +72,9 @@ pub fn set_inference_socket_path(path: &str) {
 
 /// Get the current inference IPC socket path, or `None` if not yet set.
 ///
-/// Called from `KaskMcpDescriptor::command()` and `kask_server_env()` in
-/// `main.rs` when building the env map for MCP server child processes.
+/// Called from `kask_server_env()` in `main.rs` when building the env map
+/// for MCP server child processes (the former `KaskMcpDescriptor` caller
+/// was deleted with the per-project spawn path, 2026-08-29).
 #[must_use]
 pub fn get_inference_socket_path() -> Option<String> {
     let guard = match INFERENCE_SOCKET_PATH.lock() {

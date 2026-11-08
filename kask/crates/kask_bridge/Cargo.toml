@@ -10,7 +10,11 @@ description = "The bidirectional seam between hKask port traits and zed-kask fac
 path = "src/kask_bridge.rs"
 
 [dependencies]
-# hKask side — port traits only (never concrete zed crates)
+# hKask side — §13.1 is directional (hKask crates never depend on zed
+# crates); the entries below are what this seam consumes on the hKask
+# side, port traits (hkask-types) and the concrete service crates it
+# adapts (re-anchored 2026-11-07, dual-axis review B3: the old "port
+# traits only" header misdescribed its own list).
 hkask-types.workspace = true
 hkask-bridge-ontology.workspace = true
 
