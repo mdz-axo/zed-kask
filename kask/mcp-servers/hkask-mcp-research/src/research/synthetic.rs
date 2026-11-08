@@ -310,7 +310,7 @@ fn extract_json_path(
     for item_val in item_refs {
         let mut item = ExtractedItem::default();
         for (field, path) in &spec.fields {
-            let value = query_json_field(item_val, path);
+            let value = query_json_field(item_val, field, path)?;
             assign_item_field(&mut item, field, value);
         }
         finalize_entry_id(&mut item, template);
@@ -321,18 +321,20 @@ fn extract_json_path(
 }
 
 /// Query a single JSON field from an item value. Returns the string
-/// representation of the first match, or empty string if no match.
-fn query_json_field(item: &Value, path: &str) -> String {
+/// representation of the first match, or empty string if the path is
+/// well-formed but matches nothing — a MALFORMED path fails typed
+/// (dual-axis review G4): a typo'd field spec must not yield a silently
+/// empty feed.
+fn query_json_field(item: &Value, field: &str, path: &str) -> Result<String, SyntheticError> {
     use jsonpath_rust::JsonPath;
     match item.query(path) {
-        Ok(matches) => {
-            if let Some(first) = matches.first() {
-                json_value_to_string(first)
-            } else {
-                String::new()
-            }
-        }
-        Err(_) => String::new(),
+        Ok(matches) => Ok(matches
+            .first()
+            .map(|value| json_value_to_string(value))
+            .unwrap_or_default()),
+        Err(error) => Err(SyntheticError::ExtractionFailed(format!(
+            "field `{field}` JSONPath `{path}`: {error}"
+        ))),
     }
 }
 
@@ -777,3 +779,41 @@ pub(crate) fn build_diff_hash_feed(
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A malformed field JSONPath fails typed, naming the field (dual-axis
+    /// review G4) — the parallel items-selector path already failed closed;
+    /// a typo'd field spec must not yield a silently empty feed.
+    #[test]
+    fn a_malformed_field_jsonpath_fails_typed_not_empty() {
+        let json = serde_json::json!([{"title": "a"}]);
+        let spec: ExtractorSpec = serde_json::from_value(serde_json::json!({
+            "items_selector": "$[*]",
+            "fields": {"title": "$["},
+        }))
+        .expect("spec parses");
+        let error = extract_json_path(&spec, &json).expect_err("malformed path");
+        assert!(
+            error.to_string().contains("title"),
+            "the error names the field: {error}"
+        );
+    }
+
+    /// A well-formed path that matches nothing stays EMPTY (not an error)
+    /// — a missing field in some items is legitimate.
+    #[test]
+    fn a_wellformed_path_matching_nothing_stays_empty() {
+        let json = serde_json::json!([{"other": 1}]);
+        let spec: ExtractorSpec = serde_json::from_value(serde_json::json!({
+            "items_selector": "$[*]",
+            "fields": {"title": "$.title"},
+        }))
+        .expect("spec parses");
+        let items = extract_json_path(&spec, &json).expect("no error for a missing field");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "", "a missing field is empty, not an error");
+    }
+}
