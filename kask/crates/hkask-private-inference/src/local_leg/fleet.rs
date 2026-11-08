@@ -75,6 +75,19 @@ pub const SHIPPED_FLEET: &[(&str, &str, LocalModelLocation)] = &[
             artifact: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
         },
     ),
+    // The interactive general model (operator-approved acquisition
+    // 2026-11-08): 35B total / 3B active — the smallest active set in
+    // the fleet, so RAM-resident hybrid decode runs at the fleet's
+    // fastest interactive class. The MTP head ships in-file, dormant
+    // under the mainline surface (the brief carries the record).
+    (
+        "qwen36-35b-a3b",
+        include_str!("../../../../registry/model-briefs/qwen36-35b-a3b.toml"),
+        LocalModelLocation {
+            dir: "qwen36-35b-a3b",
+            artifact: "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+        },
+    ),
     // The DME pair (consolidation 2026-11-06): the edit target and the
     // sibling control — the stage-2 legs' models, served by the same
     // supervisor and the canonical pin as the rest of the fleet. The

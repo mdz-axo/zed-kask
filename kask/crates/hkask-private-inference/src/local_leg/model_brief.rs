@@ -147,6 +147,9 @@ mod tests {
     const GEMMA_BRIEF_TOML: &str =
         include_str!("../../../../registry/model-briefs/gemma-4-31b.toml");
 
+    const QWEN36_35B_BRIEF_TOML: &str =
+        include_str!("../../../../registry/model-briefs/qwen36-35b-a3b.toml");
+
     #[test]
     fn decodes_the_qwen_brief() {
         let brief = ModelBrief::decode(QWEN_BRIEF_TOML).expect("Qwen brief decodes");
@@ -180,5 +183,24 @@ mod tests {
         assert!(!brief.is_moe());
         assert_eq!(brief.placement.ple_pin_pattern, "");
         assert!(brief.draft.is_none());
+    }
+
+    #[test]
+    fn decodes_the_qwen36_35b_brief() {
+        let brief = ModelBrief::decode(QWEN36_35B_BRIEF_TOML).expect("Qwen3.6-35B brief decodes");
+        assert_eq!(brief.model_id, "qwen36-35b-a3b");
+        assert!(brief.is_moe());
+        // Parse-sourced (config.json + the live GGUF parse, 2026-11-08 —
+        // tests/fleet_parse.rs is the standing cross-check).
+        assert_eq!(brief.model.expert_count, 256);
+        assert_eq!(brief.model.expert_used_count, 8);
+        // No PLE table (the flint placement precedent) and no draft ask:
+        // the in-file MTP head loads dormant under the mainline surface,
+        // which declares no draft vocabulary.
+        assert_eq!(brief.placement.ple_pin_pattern, "");
+        assert!(brief.draft.is_none());
+        assert_eq!(brief.recommendations.context_length, 65_536);
+        assert_eq!(brief.recommendations.kv_cache_type, "q8_0");
+        assert!(brief.recommendations.flash_attn);
     }
 }

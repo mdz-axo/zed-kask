@@ -333,7 +333,8 @@ pub(crate) fn render_private_inference_page(
                          registers under and the loopback endpoint. The served fleet \
                          comes from the shipped model briefs (qwen3-8-flash-next, \
                          flint, gemma-4-31b, muse-glimmer-30b, ornith-1.5-9b, \
-                         qwen35-0.8b, qwen35-0.8b-edited) — every downloaded \
+                         ornith-1.5-9b-q8, qwen35-0.8b, qwen35-0.8b-edited, \
+                         qwen36-35b-a3b) — every downloaded \
                          fleet model, carded. The provider entry and the endpoint token are \
                          provisioned automatically (a token you enter here wins), so \
                          the private models appear in the agent panel model selector \
@@ -600,8 +601,10 @@ mod tests {
             "gemma-4-31b",
             "muse-glimmer-30b",
             "ornith-1.5-9b",
+            "ornith-1.5-9b-q8",
             "qwen35-0.8b",
             "qwen35-0.8b-edited",
+            "qwen36-35b-a3b",
         ] {
             assert!(
                 page.contains(fleet_id),

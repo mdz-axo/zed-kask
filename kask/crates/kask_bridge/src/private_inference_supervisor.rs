@@ -490,7 +490,10 @@ mod tests {
         // dir + the models.toml manifest are the one accounting — qwen35-0.8b
         // and its validated edited15 variant are fleet-served;
         // ornith-1.5-9b's LAUNCH entry fails closed (ArtifactNotFound) until
-        // its repaired BF16 lands, but the brief stays carded).
+        // its repaired BF16 lands, but the brief stays carded), the S-leg
+        // interim q8 identity (2026-11-07 — this pin missed it at that
+        // landing; restored here), and the interactive general model
+        // qwen36-35b-a3b (2026-11-08).
         let mut ids: Vec<&str> = cards.iter().map(|(id, _)| id.as_str()).collect();
         ids.sort();
         assert_eq!(
@@ -500,9 +503,11 @@ mod tests {
                 "gemma-4-31b",
                 "muse-glimmer-30b",
                 "ornith-1.5-9b",
+                "ornith-1.5-9b-q8",
                 "qwen3-8-flash-next",
                 "qwen35-0.8b",
-                "qwen35-0.8b-edited"
+                "qwen35-0.8b-edited",
+                "qwen36-35b-a3b"
             ]
         );
         for (_, display) in &cards {
