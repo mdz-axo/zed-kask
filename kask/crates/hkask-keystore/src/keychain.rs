@@ -292,17 +292,8 @@ impl Keychain {
         Ok(())
     }
 
-    /// Retrieve a secret from an arbitrary URL in the OS keychain.
-    ///
-    /// expect: "My keys are generated, stored, and rotated under my sovereignty"
-    /// pre:  url is non-empty
-    /// post: returns Ok(secret) if stored, Err(NotFound) if not
-    pub fn retrieve_by_url(&self, url: &str) -> Result<Zeroizing<String>, KeychainError> {
-        let keyring = open_keyring();
-        block_on(Self::retrieve_url(keyring, url.to_string(), None))
-    }
-
-    /// Async counterpart of `retrieve_by_url`; the returned secret is zeroized on drop.
+    /// Retrieve a secret from an arbitrary URL in the OS keychain; the
+    /// returned secret is zeroized on drop.
     ///
     /// Bounded by [`KEYCHAIN_READ_TIMEOUT_SECS`] like the sync read path: a
     /// portal that neither answers nor errors within the window is wedged,
