@@ -1829,10 +1829,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             );
             Ok(CuratorServer::new(ctx.webid, db, inference_port.clone()))
         },
-        vec![hkask_mcp_server::CredentialRequirement::required(
-            "HKASK_DB_PASSPHRASE",
-            "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
-        )],
+        vec![hkask_mcp_server::db_passphrase_requirement()],
     )
     .await
 }
@@ -1907,15 +1904,10 @@ mod tests {
     #[test]
     fn curator_startup_requires_durable_storage() {
         let source = include_str!("hkask_mcp_curator.rs");
-        let required_passphrase = [
-            "CredentialRequirement::required(",
-            "\n            \"HKASK_DB_PASSPHRASE\"",
-        ]
-        .concat();
         assert!(
-            source.contains(&required_passphrase),
-            "HKASK_DB_PASSPHRASE must be declared required — the curator has no \
-             in-memory fallback (CuratorStores::empty), so an optional declaration \
+            source.contains("db_passphrase_requirement()"),
+            "HKASK_DB_PASSPHRASE must be declared required via the shared helper — the curator \
+             has no in-memory fallback (CuratorStores::empty), so an optional declaration \
              starts a server whose every DB-backed tool call fails"
         );
     }

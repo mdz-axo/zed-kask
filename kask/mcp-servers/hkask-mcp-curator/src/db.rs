@@ -90,21 +90,10 @@ pub struct CuratorDb {
 
 impl CuratorDb {
     pub(crate) fn from_context(ctx: &hkask_mcp_server::server::ServerContext) -> Self {
-        let db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
-            let p = hkask_types::agent_paths::agent_db("curator");
-            let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-            if let Some(parent) = resolved.parent()
-                && let Err(e) = std::fs::create_dir_all(parent)
-            {
-                tracing::warn!(
-                    target: "hkask.mcp.curator",
-                    error = %e,
-                    path = ?parent,
-                    "Failed to create curator data directory — DB open will likely fail"
-                );
-            }
-            resolved.to_string_lossy().to_string()
-        });
+        let db_path = hkask_mcp_server::resolve_server_db_path(
+            "HKASK_CURATOR_DB",
+            &hkask_types::agent_paths::agent_db("curator"),
+        );
         let passphrase = match resolve_db_passphrase(&ctx.credentials) {
             Ok(passphrase) => Some(passphrase),
             Err(error) => {
@@ -348,7 +337,7 @@ pub(crate) fn open_curator_stores(
         }
     };
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-        Arc::new(SqliteDriver::new(pool));
+        Arc::new(SqliteDriver::new_labeled(pool, db_path));
     let embedding_dim = hkask_storage::embedding_dim();
     let embedding_store = match hkask_storage::EmbeddingStore::from_driver(
         Arc::clone(&driver),
