@@ -216,8 +216,13 @@ fn topological_sort(events: &[ScenarioEvent]) -> Result<Vec<String>, ScenarioErr
     let event_ids: Vec<String> = events.iter().map(|e| e.id.clone()).collect();
     let id_set: HashSet<&str> = event_ids.iter().map(|s| s.as_str()).collect();
 
-    // Build adjacency list and in-degree map
-    let mut in_degree: HashMap<String, u32> = event_ids.iter().map(|id| (id.clone(), 0)).collect();
+    // Build adjacency list and in-degree map. The in-degree map is a
+    // BTreeMap so the zero-in-degree seed (and with it the whole Kahn
+    // order, the nodes array, and the joint product's float order) is
+    // deterministic run-to-run — a HashMap seed varied the tree's order
+    // for identical input.
+    let mut in_degree: std::collections::BTreeMap<String, u32> =
+        event_ids.iter().map(|id| (id.clone(), 0)).collect();
     let mut adjacency: HashMap<String, Vec<String>> = event_ids
         .iter()
         .map(|id| (id.clone(), Vec::new()))
@@ -437,4 +442,61 @@ pub(crate) fn structure_framing_document(
         surfaced_assumptions: get_list("surfaced_assumptions"),
         exploration_prompts: get_list("exploration_prompts"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{EventDependency, ScenarioEvent, ScenarioType, TimeHorizon};
+    use chrono::NaiveDate;
+
+    /// A hand-usable event constructor with the non-structural fields
+    /// pinned (mirrors the property_tests builder).
+    fn event(id: &str, depends_on: Vec<EventDependency>) -> ScenarioEvent {
+        ScenarioEvent {
+            id: id.to_string(),
+            name: format!("Event {id}"),
+            question: format!("Does event {id} occur?"),
+            deadline: NaiveDate::from_ymd_opt(2027, 12, 31).expect("valid static date"),
+            time_horizon: TimeHorizon::Strategic,
+            scenario_type: ScenarioType::CompanyAnalysis,
+            subject: "topo-tests".to_string(),
+            probability: 0.5,
+            basis: None,
+            depends_on,
+            sub_questions: Vec::new(),
+            base_rate: None,
+            reference_class: None,
+            brier_score: None,
+            update_count: 0,
+        }
+    }
+
+    fn dep(parents: &[&str]) -> EventDependency {
+        EventDependency {
+            parent_event_ids: parents.iter().map(|p| p.to_string()).collect(),
+            conditionals: vec![1.0; 1 << parents.len()],
+        }
+    }
+
+    /// The topological order is deterministic: three independent roots and
+    /// one child of all three. The former HashMap seed varied the order
+    /// run-to-run (and with it the nodes array and the joint product's
+    /// float multiplication order) for identical input — the BTreeMap
+    /// seed makes the Kahn order reproducible.
+    #[test]
+    fn topological_order_is_deterministic() {
+        let events = vec![
+            event("a", vec![]),
+            event("b", vec![]),
+            event("c", vec![]),
+            event("child", vec![dep(&["a", "b", "c"])]),
+        ];
+        let first = topological_sort(&events).expect("acyclic");
+        let second = topological_sort(&events).expect("acyclic");
+        assert_eq!(first, second, "identical input must yield identical order");
+        // The BTreeMap seed sorts the zero-in-degree roots; the LIFO queue
+        // pops them reverse-sorted, then the child.
+        assert_eq!(first, vec!["c", "b", "a", "child"]);
+    }
 }
