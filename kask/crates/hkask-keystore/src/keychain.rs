@@ -104,16 +104,32 @@ where
         .expect("Keychain thread panicked")
 }
 
+/// The bounded keychain-thread call outcome: the answer, a deadline miss
+/// (a wedged portal — a stall to outlive), or the worker dying before
+/// answering (a break to report as `Platform`, never misread as a stall).
+#[derive(Debug, PartialEq, Eq)]
+enum BoundedOutcome<T> {
+    Answered(T),
+    TimedOut,
+    WorkerDied,
+}
+
 /// Run a future to completion on the dedicated keychain thread with a
-/// deadline. `None` means the future did not answer within `timeout` —
-/// the caller decides the typed error; the detached thread lingers on
-/// the wedged call (it cannot be cancelled, only outlived).
-fn block_on_with_timeout<F>(future: F, timeout: std::time::Duration) -> Option<F::Output>
+/// deadline. A deadline miss means the wedged call lingers on the detached
+/// thread (it cannot be cancelled, only outlived); a worker death is a
+/// break, not a stall — the caller surfaces it as `Platform`, arming the
+/// recovery sweep on the true condition instead of waiting out a portal
+/// that is not wedged (the old `.ok()` conflated the two).
+fn block_on_with_timeout<F>(future: F, timeout: std::time::Duration) -> BoundedOutcome<F::Output>
 where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    spawn_keychain_future(future).recv_timeout(timeout).ok()
+    match spawn_keychain_future(future).recv_timeout(timeout) {
+        Ok(output) => BoundedOutcome::Answered(output),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => BoundedOutcome::TimedOut,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => BoundedOutcome::WorkerDied,
+    }
 }
 
 fn spawn_keychain_future<F>(future: F) -> std::sync::mpsc::Receiver<F::Output>
@@ -216,8 +232,8 @@ impl Keychain {
             Self::retrieve_url(keyring, url, Some(("retrieve_by_key", key.clone()))),
             std::time::Duration::from_secs(KEYCHAIN_READ_TIMEOUT_SECS),
         ) {
-            Some(result) => result,
-            None => {
+            BoundedOutcome::Answered(result) => result,
+            BoundedOutcome::TimedOut => {
                 warn!(
                     key = %key,
                     timeout_secs = KEYCHAIN_READ_TIMEOUT_SECS,
@@ -227,6 +243,17 @@ impl Keychain {
                     key,
                     timeout_secs: KEYCHAIN_READ_TIMEOUT_SECS,
                 })
+            }
+            BoundedOutcome::WorkerDied => {
+                warn!(
+                    key = %key,
+                    "Keychain worker thread exited before answering — a break, not a wedged portal"
+                );
+                Err(KeychainError::Platform(
+                    "the keychain worker thread exited before completing the read (a panic, \
+                     not a wedged portal)"
+                        .to_string(),
+                ))
             }
         }
     }
@@ -514,10 +541,10 @@ mod integration_tests {
     #[test]
     fn bounded_keychain_read_returns_fast_results() {
         let verdict = block_on_with_timeout(async { 7_u32 }, std::time::Duration::from_secs(5));
-        assert_eq!(verdict, Some(7));
+        assert_eq!(verdict, BoundedOutcome::Answered(7));
     }
 
-    /// A future that exceeds its deadline yields `None` — the caller
+    /// A future that exceeds its deadline yields `TimedOut` — the caller
     /// converts it to the typed `Timeout` error. A wedged secret portal
     /// (the 2026-10-04 incident) is outlived, never waited on: this pins
     /// the bounding mechanism without touching a real keyring.
@@ -530,7 +557,28 @@ mod integration_tests {
             },
             std::time::Duration::from_millis(50),
         );
-        assert_eq!(verdict, None, "a call past the deadline must yield None");
+        assert_eq!(
+            verdict,
+            BoundedOutcome::TimedOut,
+            "a call past the deadline must time out"
+        );
+    }
+
+    /// A worker that dies before answering is a BREAK, not a stall: the
+    /// old `.ok()` conflated a panicked thread with a wedged portal, so a
+    /// real break armed the wait-for-recovery sweep on a portal that was
+    /// healthy. `WorkerDied` surfaces as `Platform` (both arms of the D5
+    /// recovery sweep still fire — but on the truthful reason now).
+    #[test]
+    fn a_panicking_worker_reads_as_a_break_not_a_timeout() {
+        let verdict = block_on_with_timeout(
+            async { panic!("worker-panic probe") },
+            std::time::Duration::from_secs(5),
+        );
+        assert!(
+            matches!(verdict, BoundedOutcome::WorkerDied),
+            "a worker panic must surface as a break, not a wedged-portal stall"
+        );
     }
 
     /// The async URL read's bounding mechanism: a spawned task that
