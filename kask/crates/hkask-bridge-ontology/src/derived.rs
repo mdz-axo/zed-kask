@@ -2092,6 +2092,25 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-11-02 (chat-thread resolution directive; research run 4aade80f023a1962); ISO/IEC 10746-2 | ITU-T X.902, 'Open Distributed Processing — Reference model: Foundations' (RM-ODP); ISO/IEC 7498-1:1994, OSI Basic Reference Model; The Open Group TOGAF definitions; IFLA Library Reference Model, doi:10.82487/ifla.40.2",
     },
+    DerivedConcept {
+        term: "llm_editing",
+        aliases: &[
+            "model editing",
+            "llm edit",
+            "direct model editing",
+            "weight editing",
+            "weight-space editing",
+        ],
+        identity: "changing a large language model's behavior by directly modifying a small, localized set of its parameters — no gradient-based training — so the targeted behavior changes while behavior across other inputs is preserved",
+        definition: "The editing literature holds the contract fixed: the objective is 'to efficiently alter the behavior of LLMs within a specific domain without negatively impacting performance across other inputs' (Yao et al. 2023, the survey of the field), with the established method families being locate-then-edit (find the parameters causally responsible for the behavior, then alter them: Meng et al., ROME, 2022), weight-space arithmetic (task vectors — 'a direction in the weight space of a pre-trained model', composed or negated: Ilharco et al., 2022), and single-direction ablation (identify one direction and remove it: Arditi et al., 2024). Per the operator ruling of 2026-11-07, in this domain's usage 'model' refers to the LLM — a language model / AI model — so the generic 'model editing' and the direct-model-edit skill's 'direct model editing' denote LLM editing: direct weight-space modification of an open-weights language model, operationalized by that skill as ground, route, localize, subtract, verify over the Takehi-Teoh-Zhang-Khattab 2026 anchor case. The nameable violation: calling a prompt, decoding, or training change a weight edit — an edit is a change to the weights themselves, localized at the behavior's causal site and behavior-preserving outside it.",
+        constituents: &[
+            "language model",
+            "parameter localization",
+            "behavior preservation",
+            "weight",
+        ],
+        authority: "operator ruling 2026-11-07 (audit remediation of the direct-model-edit skill; research run 8353bc04dabb5e6b); Yao, Wang, Tian, Cheng, Li, Deng, Chen & Zhang, 'Editing Large Language Models: Problems, Methods, and Opportunities', EMNLP 2023, arXiv:2305.13172; Meng, Bau, Andonian & Belinkov, 'Locating and Editing Factual Associations in GPT' (ROME), NeurIPS 2022, arXiv:2202.05262; Ilharco, Ribeiro, Wortsman, Gururangan, Schmidt, Hajishirzi & Farhadi, 'Editing Models with Task Arithmetic', ICLR 2023, arXiv:2212.04089; Arditi, Obeso, Syed, Paleka, Panickssery, Gurnee & Nanda, 'Refusal in Language Models Is Mediated by a Single Direction', arXiv:2406.11717",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -3476,5 +3495,35 @@ mod tests {
             "goal_setting's constituents name the goal entry"
         );
         assert_eq!(resolve_derived("goal").map(|c| c.term), Some("goal"));
+    }
+
+    /// expect: [P5] The 2026-11-07 LLM-editing operator ruling (the
+    /// direct-model-edit audit remediation) resolves the domain term and
+    /// its aliases to the derived concept citing its published authorities,
+    /// never the coarse 5W1H core anchor.
+    #[test]
+    fn llm_editing_ruling_resolves_with_authority() {
+        for (term, marker) in [
+            ("LLM editing", "arXiv:2305.13172"),
+            ("model editing", "2026-11-07"),
+            ("direct model editing", "Arditi"),
+            ("weight-space editing", "operator ruling 2026-11-07"),
+        ] {
+            let concept =
+                resolve_derived(term).expect("LLM editing ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, "llm_editing",
+                "{term} resolves to llm_editing"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-11-07"),
+                "{term} cites the 2026-11-07 ruling"
+            );
+        }
     }
 }
