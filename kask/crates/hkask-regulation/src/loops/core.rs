@@ -247,6 +247,13 @@ pub enum LivenessTrust {
 /// This is the Fermi `LoopView.reading` — the four modules compose into a
 /// single verdict that distinguishes wiring-closed from turning from working.
 /// The defining discipline: **wiring-closed ≠ turning ≠ working**.
+///
+/// Wire-format note (operator ruling 2026-11-07, dual-axis review T2): this
+/// enum deliberately serializes PascalCase (`"Homeostatic"`) while its
+/// sibling `LoopView` enums serialize snake_case — a compat freeze:
+/// persisted `LoopView` composites decode against these spellings, and
+/// renaming breaks stored records. Do not "fix" the casing without a
+/// record migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Reading {
     /// The loop is turning and producing verified impact. This is the
@@ -313,7 +320,8 @@ pub struct LoopView {
     pub outcome_trust: OutcomeTrust,
     /// Has the writer ever run? (Fermi `liveness_trust`)
     pub liveness_trust: LivenessTrust,
-    /// The composite reading — wiring-closed, turning, broken, or unobserved.
+    /// The composite reading — wiring-closed, turning, homeostatic, broken,
+    /// or unobserved.
     pub reading: Reading,
 }
 
