@@ -376,14 +376,36 @@ impl ToolRetryTracker {
     }
 }
 
-/// Hash a `serde_json::Value` deterministically. Uses `serde_json::to_vec`
-/// (canonical serialization) then hashes the bytes.
+/// Hash a `serde_json::Value` deterministically. The workspace builds
+/// `serde_json` with `preserve_order`, so a raw `to_vec` serializes object
+/// keys in the model's emission order — a semantically identical retry
+/// that merely permutes keys would land on a fresh `(tool, input_hash)`
+/// key and dodge the only refusing tracker dimension. Canonical form =
+/// recursively object-keys-sorted JSON, then `to_vec`, then the byte hash.
 fn input_hash(input: &serde_json::Value) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    if let Ok(bytes) = serde_json::to_vec(input) {
+    if let Ok(bytes) = serde_json::to_vec(&canonical_json(input)) {
         bytes.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// The canonical form: object keys sorted (recursively — nested objects
+/// too); array order is semantic and preserved; other values pass through.
+fn canonical_json(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted = std::collections::BTreeMap::new();
+            for (key, entry) in map {
+                sorted.insert(key.clone(), canonical_json(entry));
+            }
+            serde_json::Value::Object(sorted.into_iter().collect())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonical_json).collect())
+        }
+        other => other.clone(),
+    }
 }
 
 /// Format the warning message injected into the tool result at `WARN_THRESHOLD`.
@@ -450,6 +472,32 @@ pub fn format_repeat_refusal(tool_name: &str, streak: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The canonical hash is insensitive to object-key order: a retry that
+    /// merely permutes keys must land on the SAME `(tool, input_hash)` key
+    /// so the per-input hard cap accumulates (the workspace's
+    /// `preserve_order` made a raw `to_vec` emission-ordered — the review's
+    /// finding).
+    #[test]
+    fn input_hash_is_insensitive_to_object_key_order() {
+        let a = serde_json::json!({"z": 1, "a": {"y": 2, "b": 3}});
+        let b = serde_json::json!({"a": {"b": 3, "y": 2}, "z": 1});
+        assert_eq!(input_hash(&a), input_hash(&b));
+    }
+
+    /// Order-insensitivity must not collapse distinct inputs: different
+    /// values hash apart, and array order stays semantic.
+    #[test]
+    fn input_hash_still_separates_different_inputs() {
+        assert_ne!(
+            input_hash(&serde_json::json!({"a": 1})),
+            input_hash(&serde_json::json!({"a": 2}))
+        );
+        assert_ne!(
+            input_hash(&serde_json::json!([1, 2])),
+            input_hash(&serde_json::json!([2, 1]))
+        );
+    }
 
     #[test]
     fn allows_first_few_failures() {
