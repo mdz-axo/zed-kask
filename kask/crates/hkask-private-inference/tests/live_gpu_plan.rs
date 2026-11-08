@@ -67,10 +67,13 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
     // the dGPU, routed experts resident in RAM. `cpu_moe` is already true.
     policy.n_gpu_layers = 999;
     // The model brief carries the PLE pin; the policy carries machine-level
-    // knobs only. The shipped fleet is the brief home — never a
-    // CWD-relative file read.
-    let brief = fleet::shipped_model("qwen3-8-flash-next")
-        .expect("the shipped fleet carries the Qwen brief")
+    // knobs only. The discovered fleet is the brief home (seed +
+    // discover — the production path), never a CWD-relative file read.
+    let briefs_dir = tempfile::tempdir().expect("briefs dir");
+    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
+    let models_root = tempfile::tempdir().expect("models root");
+    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "qwen3-8-flash-next")
+        .expect("the discovered fleet carries the Qwen brief")
         .brief;
 
     // Shard 1 is the metadata-only header shard; llama.cpp discovers the

@@ -24,6 +24,10 @@
 model_id = "qwen36-35b-a3b"
 display_name = "Qwen3.6 35B A3B"
 
+[location]
+dir = "qwen36-35b-a3b"
+artifact = "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+
 [model]
 total_params = 35_000_000_000
 active_params = 3_000_000_000

@@ -18,6 +18,10 @@
 model_id = "qwen35-0.8b-edited"
 display_name = "Qwen3.5 0.8B (edited)"
 
+[location]
+dir = "qwen35-0.8b"
+artifact = "Qwen3.5-0.8B-BF16.edited15.gguf"
+
 [model]
 total_params = 752_393_024
 active_params = 752_393_024

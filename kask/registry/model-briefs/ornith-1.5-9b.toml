@@ -31,6 +31,10 @@
 model_id = "ornith-1.5-9b"
 display_name = "Ornith-1.5 9B"
 
+[location]
+dir = "ornith-1.5-9b"
+artifact = "Ornith-1.5-9B-BF16.gguf"
+
 [model]
 total_params = 9_197_093_888
 active_params = 9_197_093_888

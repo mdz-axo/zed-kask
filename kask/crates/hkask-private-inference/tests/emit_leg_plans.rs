@@ -53,10 +53,13 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
     // refusal is a printed finding for the record, not a test failure —
     // the matrix adapts with a recorded deviation, never silently.
     let model = paths[0].clone();
-    // The shipped fleet is the brief home (compile-time embed, the
-    // manifest-shipping precedent) — never a CWD-relative file read.
-    let brief = fleet::shipped_model("qwen3-8-flash-next")
-        .expect("the shipped fleet carries the Qwen brief")
+    // The discovered fleet is the brief home (seed + discover — the
+    // production path), never a CWD-relative file read.
+    let briefs_dir = tempfile::tempdir().expect("briefs dir");
+    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
+    let models_root = tempfile::tempdir().expect("models root");
+    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "qwen3-8-flash-next")
+        .expect("the discovered fleet carries the Qwen brief")
         .brief;
     for (leg, flash_attn, n_gpu_layers) in [
         ("a-cpu-control [build/bin]", true, 0u32),

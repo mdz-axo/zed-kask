@@ -7,6 +7,10 @@
 model_id = "gemma-4-31b"
 display_name = "Gemma 4 31B"
 
+[location]
+dir = "gemma4"
+artifact = "gemma-4-31B-it-UD-Q4_K_XL.gguf"
+
 [model]
 total_params = 31_000_000_000
 active_params = 31_000_000_000  # dense: all params active

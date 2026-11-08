@@ -1312,6 +1312,10 @@ mod tests {
 model_id = "qwen3-8-flash-next"
 display_name = "Qwen3.8 Flash Next"
 
+[location]
+dir = "qwen38-flash-next"
+artifact = "UD-Q2_K_XL"
+
 [model]
 total_params = 125_000_000_000
 active_params = 6_000_000_000
@@ -1362,6 +1366,10 @@ draft_bytes = 0
 model_id = "qwen3-8-flash-next"
 display_name = "Qwen3.8 Flash Next"
 
+[location]
+dir = "qwen38-flash-next"
+artifact = "UD-Q2_K_XL"
+
 [model]
 total_params = 125_000_000_000
 active_params = 6_000_000_000
@@ -1387,6 +1395,10 @@ verify_workspace_bytes = 2_147_483_648
     const WORKSPACE_FREE_DRAFT_BRIEF_TOML: &str = r#"
 model_id = "qwen3-8-flash-next"
 display_name = "Qwen3.8 Flash Next"
+
+[location]
+dir = "qwen38-flash-next"
+artifact = "UD-Q2_K_XL"
 
 [model]
 total_params = 125_000_000_000

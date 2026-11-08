@@ -24,7 +24,7 @@ use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::placement::{GpuBackend, PlacementPolicy, probe_backend};
 use hkask_private_inference::local_leg::supervisor::{LaunchConfig, Supervisor};
 
-use crate::private_inference::credential_url;
+use crate::private_inference::{credential_url, local_fleet, refresh_local_fleet};
 use crate::settings::{KaskPrivateInferenceSettings, KaskSettings};
 
 // The page renders the supervisor's live state through the bridge —
@@ -142,15 +142,56 @@ pub fn entry_present(content: &settings_content::SettingsContent, provider_id: &
         .is_some_and(|entries| entries.contains_key(provider_id))
 }
 
-/// The served fleet for the page's Launch buttons: `(model_id,
-/// display_name)` projected from the shipped briefs — the same source
-/// the provider entry's model cards render.
-pub fn fleet_cards() -> Vec<(String, String)> {
-    fleet::shipped_models()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|model| (model.brief.model_id, model.brief.display_name))
+/// The served fleet for the page's Launch buttons — the discovered
+/// fleet's cards `(model_id, display_name)`, the same source the
+/// provider entry's model cards render. Pure, so the projection is
+/// pinnable against a seeded fixture.
+pub fn fleet_cards_from(fleet: &[fleet::FleetModel]) -> Vec<(String, String)> {
+    fleet
+        .iter()
+        .map(|model| {
+            (
+                model.brief.model_id.clone(),
+                model.brief.display_name.clone(),
+            )
+        })
         .collect()
+}
+
+/// The fleet's cards from the lazily discovered fleet — the page's
+/// render path (a memoized memory read, never a directory scan on
+/// render, D-S6). Discovery failures log and degrade to an empty
+/// list; the action outcomes surface the typed reason.
+pub fn fleet_cards() -> Vec<(String, String)> {
+    match local_fleet() {
+        Ok(fleet) => fleet_cards_from(&fleet),
+        Err(err) => {
+            tracing::warn!("private-inference fleet discovery failed: {err}");
+            Vec::new()
+        }
+    }
+}
+
+/// The locally-available ollama models — the OTHER local leg, served
+/// by ollama itself (no launch button: ollama serves its own models).
+/// Cloud-proxied entries are excluded (the shared F1 classifier — the
+/// list names what stays on this machine). The unified local set the
+/// PI page surfaces: the discovered fleet plus these.
+pub fn local_ollama_models(cx: &App) -> Vec<String> {
+    let registry = LanguageModelRegistry::read_global(cx);
+    registry
+        .provider(&LanguageModelProviderId("ollama".to_string().into()))
+        .map(|provider| {
+            provider
+                .provided_models(cx)
+                .iter()
+                .filter(|model| {
+                    !settings_content::is_ollama_cloud_model_name(model.id().0.as_ref())
+                })
+                .map(|model| model.name().0.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The last action's refusal reason, if any (the page clears nothing;
@@ -210,6 +251,9 @@ pub fn resolve_launch_config_with(
         models_root: hkask_types::agent_paths::resolve_under_artifacts_dir(Path::new(
             "private-inference/models",
         )),
+        // The discovered briefs dir — the fleet's source (seeding is
+        // idempotent; the launch discovers the brief from here).
+        briefs_dir: crate::private_inference::briefs_dir(),
         // The endpoint policy is the PI's settings row; the placement
         // knobs stay at the placement policy's own defaults (the
         // settings host/port delegation keeps the two in agreement).
@@ -338,6 +382,9 @@ async fn mint_flow(
 pub fn register_provider_entry(cx: &mut App) {
     let settings = KaskSettings::get_global(cx).private_inference.clone();
     let provider = zed_credentials::global(cx);
+    // Register is the explicit refresh: re-discover the fleet so a
+    // dropped brief (and its weights) surfaces now, never a rebuild.
+    refresh_local_fleet();
     cx.spawn(async move |cx: &mut AsyncApp| {
         mint_flow(&settings, provider.as_ref(), cx).await;
         cx.update(|cx| {
@@ -350,10 +397,23 @@ pub fn register_provider_entry(cx: &mut App) {
                         .and_then(|kask| kask.private_inference.clone())
                         .map(Into::into)
                         .unwrap_or_default();
-                    if let Err(err) = crate::private_inference::apply_provider_entry(settings, &pi)
-                    {
-                        tracing::warn!("private-inference registration refused: {err}");
-                    }
+                    let outcome = match local_fleet() {
+                        Ok(fleet) => {
+                            if let Err(err) = crate::private_inference::apply_provider_entry(
+                                settings, &pi, &fleet,
+                            ) {
+                                tracing::warn!("private-inference registration refused: {err}");
+                                Some(err.to_string())
+                            } else {
+                                None
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!("private-inference fleet discovery failed: {err}");
+                            Some(err.to_string())
+                        }
+                    };
+                    record_outcome(outcome);
                 },
             );
         });
@@ -394,6 +454,16 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// A fleet discovered from a seeded tempdir — the pure-fixture
+    /// counterpart of `local_fleet`'s lazy machine path (tests never
+    /// touch the real artifacts dir).
+    fn seeded_fleet() -> Vec<fleet::FleetModel> {
+        let briefs = tempfile::tempdir().expect("briefs tempdir");
+        fleet::seed_briefs(briefs.path()).expect("the seed set writes");
+        let models_root = tempfile::tempdir().expect("models tempdir");
+        fleet::discover(briefs.path(), models_root.path()).expect("the seeded fleet discovers")
+    }
+
     #[test]
     fn mint_token_is_fresh_and_prefixed() {
         let a = mint_token();
@@ -419,8 +489,11 @@ mod tests {
             .get_or_insert_default()
             .insert(
                 "other".into(),
-                crate::private_inference::provider_entry(&KaskPrivateInferenceSettings::default())
-                    .expect("entry builds"),
+                crate::private_inference::provider_entry(
+                    &KaskPrivateInferenceSettings::default(),
+                    &seeded_fleet(),
+                )
+                .expect("entry builds"),
             );
         assert!(!entry_present(&content, "private-local"));
 
@@ -432,8 +505,11 @@ mod tests {
             .get_or_insert_default()
             .insert(
                 "private-local".into(),
-                crate::private_inference::provider_entry(&KaskPrivateInferenceSettings::default())
-                    .expect("entry builds"),
+                crate::private_inference::provider_entry(
+                    &KaskPrivateInferenceSettings::default(),
+                    &seeded_fleet(),
+                )
+                .expect("entry builds"),
             );
         assert!(entry_present(&content, "private-local"));
     }
@@ -482,34 +558,28 @@ mod tests {
     }
 
     #[test]
-    fn fleet_cards_carry_the_shipped_fleet() {
-        let cards = fleet_cards();
-        // Every shipped fleet brief is carded — the "downloaded =
-        // available" contract (operator ruling 2026-11-05), extended by the
-        // DME arc's fleet additions (P6, 2026-11-06: the canonical models
-        // dir + the models.toml manifest are the one accounting — qwen35-0.8b
-        // and its validated edited15 variant are fleet-served;
-        // ornith-1.5-9b's LAUNCH entry fails closed (ArtifactNotFound) until
-        // its repaired BF16 lands, but the brief stays carded), the S-leg
-        // interim q8 identity (2026-11-07 — this pin missed it at that
-        // landing; restored here), and the interactive general model
-        // qwen36-35b-a3b (2026-11-08).
-        let mut ids: Vec<&str> = cards.iter().map(|(id, _)| id.as_str()).collect();
-        ids.sort();
-        assert_eq!(
-            ids,
-            vec![
-                "flint",
-                "gemma-4-31b",
-                "muse-glimmer-30b",
-                "ornith-1.5-9b",
-                "ornith-1.5-9b-q8",
-                "qwen3-8-flash-next",
-                "qwen35-0.8b",
-                "qwen35-0.8b-edited",
-                "qwen36-35b-a3b"
-            ]
-        );
+    fn fleet_cards_project_the_discovered_fleet() {
+        // The "downloaded = available" contract (operator ruling
+        // 2026-11-05): every DISCOVERED fleet model is carded — the
+        // card list is a projection of the discovered set, so adding a
+        // model is a data act and the projection never drifts from the
+        // fleet (the drift this pin's hardcoded predecessor let happen
+        // at the -q8 landing, 2026-11-07).
+        let fleet = seeded_fleet();
+        let cards = fleet_cards_from(&fleet);
+        assert_eq!(cards.len(), fleet.len());
+        let mut carded: Vec<&str> = cards.iter().map(|(id, _)| id.as_str()).collect();
+        let mut discovered: Vec<&str> = fleet.iter().map(|m| m.brief.model_id.as_str()).collect();
+        carded.sort_unstable();
+        discovered.sort_unstable();
+        assert_eq!(carded, discovered, "the cards ARE the discovered fleet");
+        // The seed set is what discovery sees after seeding.
+        let mut seeded: Vec<&str> = fleet::SEED_BRIEFS
+            .iter()
+            .map(|(file, _)| file.trim_end_matches(".toml"))
+            .collect();
+        seeded.sort_unstable();
+        assert_eq!(discovered, seeded);
         for (_, display) in &cards {
             assert!(!display.is_empty(), "every card renders a display name");
         }

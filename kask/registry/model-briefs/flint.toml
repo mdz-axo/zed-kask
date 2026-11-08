@@ -11,6 +11,10 @@
 model_id = "flint"
 display_name = "Flint"
 
+[location]
+dir = "flint"
+artifact = "flint-UD-Q4_K_XL.gguf"
+
 [model]
 total_params = 39_800_000_000
 active_params = 2_500_000_000

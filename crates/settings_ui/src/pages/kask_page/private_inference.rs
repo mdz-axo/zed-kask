@@ -327,25 +327,36 @@ pub(crate) fn render_private_inference_page(
             v_flex()
                 .gap_1()
                 .child(SettingsSectionHeader::new("Private Inference"))
-                .child(
-                    Label::new(
+                .child({
+                    // The fleet is DISCOVERED, not hardcoded here (operator
+                    // ruling 2026-11-08): the header renders the
+                    // memoized discovery — a memoized memory read, never a
+                    // scan on render (D-S6).
+                    let fleet = kask_bridge::private_inference_supervisor::fleet_cards();
+                    let names = fleet
+                        .iter()
+                        .map(|(id, _)| id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    Label::new(format!(
                         "The private local leg (llama.cpp): the provider id the leg \
                          registers under and the loopback endpoint. The served fleet \
-                         comes from the shipped model briefs (qwen3-8-flash-next, \
-                         flint, gemma-4-31b, muse-glimmer-30b, ornith-1.5-9b, \
-                         ornith-1.5-9b-q8, qwen35-0.8b, qwen35-0.8b-edited, \
-                         qwen36-35b-a3b) — every downloaded \
-                         fleet model, carded. The provider entry and the endpoint token are \
+                         is discovered from the model briefs under the artifacts \
+                         private-inference/model-briefs directory (currently {}: \
+                         {names}). Every discovered fleet model, carded — a brief plus \
+                         its weights joins by a data act (Register or a restart), \
+                         never a rebuild. The provider entry and the endpoint token are \
                          provisioned automatically (a token you enter here wins), so \
                          the private models appear in the agent panel model selector \
                          with zero manual steps; Register is the explicit mid-session \
-                         refresh (e.g. after host/port edits). One model holds the \
-                         RAM at a time — launching another swaps (stops the current \
-                         server, then loads the new one).",
-                    )
+                         refresh (e.g. after host/port edits, or after dropping a new \
+                         brief). One model holds the RAM at a time — launching another \
+                         swaps (stops the current server, then loads the new one).",
+                        fleet.len(),
+                    ))
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
-                ),
+                    .color(Color::Muted)
+                }),
         )
         .child(Divider::horizontal())
         .child(
@@ -391,9 +402,10 @@ pub(crate) fn render_private_inference_page(
                 .child(
                     Label::new(
                         "Register writes the language_models.openai_compatible entry \
-                         (api_url from the endpoint, one model card per shipped \
-                         brief). Idempotent; a refusal (empty provider id, a broken \
-                         shipped brief) writes nothing and logs the reason.",
+                         (api_url from the endpoint, one model card per discovered \
+                         fleet model). Idempotent; a refusal (empty provider id, a broken \
+                         brief, a failed discovery) writes nothing and the last-action \
+                         memo names the reason.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -431,7 +443,9 @@ pub(crate) fn render_private_inference_page(
         .child({
             // The Serving section — the P1 supervisor's zed-side surface
             // (slice plan step 8): the live status line, one Launch
-            // button per shipped fleet model, and Stop when serving. The
+            // button per discovered fleet model, Stop when serving, and
+            // the OTHER local leg — the local ollama models (served by
+            // ollama itself; cloud-proxied entries excluded, F1). The
             // supervisor handle is cheap; status() is a snapshot read,
             // never HTTP — the refresh happens through the actions'
             // `cx.refresh_windows()`.
@@ -441,6 +455,7 @@ pub(crate) fn render_private_inference_page(
             let status = supervisor.status();
             let fleet = kask_bridge::private_inference_supervisor::fleet_cards();
             let outcome = kask_bridge::private_inference_supervisor::last_action_outcome();
+            let ollama = kask_bridge::private_inference_supervisor::local_ollama_models(cx);
 
             let status_line = match &status {
                 StatusSnapshot::Stopped => {
@@ -517,6 +532,17 @@ pub(crate) fn render_private_inference_page(
                         .children(launch_buttons)
                         .when_some(stop_button, |this, button| this.child(button)),
                 )
+                .when(!ollama.is_empty(), |this| {
+                    this.child(
+                        Label::new(format!(
+                            "Local ollama models (served by ollama itself, no launch \
+                             needed): {}",
+                            ollama.join(", ")
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    )
+                })
         })
         .into_any_element()
 }
@@ -585,30 +611,31 @@ mod tests {
 
     /// The zero-manual-entry contract is stated where the operator
     /// reads it: the token row explains the auto-mint, and the page
-    /// header explains the swap and names the full carded fleet
-    /// (the "downloaded = available" UX ruling, 2026-11-05; the fleet
-    /// extended 2026-11-06 by the DME arc's additions).
+    /// header explains the swap and renders the DISCOVERED fleet from
+    /// the bridge (the "downloaded = available" UX ruling, 2026-11-05;
+    /// discovery replaced the hardcoded list by operator ruling
+    /// 2026-11-08 — the header renders `fleet_cards`, so no literal can
+    /// drift from the fleet again).
     #[test]
     fn the_page_states_the_auto_mint_and_the_swap() {
         let page = include_str!("private_inference.rs");
         assert!(page.contains("minted automatically"));
         assert!(page.contains("launching another swaps"));
-        // Every carded fleet model is named in the header — the DME arc's
-        // additions included (the fleet pin's card list).
-        for fleet_id in [
-            "qwen3-8-flash-next",
-            "flint",
-            "gemma-4-31b",
-            "muse-glimmer-30b",
-            "ornith-1.5-9b",
-            "ornith-1.5-9b-q8",
-            "qwen35-0.8b",
-            "qwen35-0.8b-edited",
-            "qwen36-35b-a3b",
-        ] {
+        // The header renders the discovered fleet — the discovery dir is
+        // named, the projection routes through the bridge, and no
+        // literal fleet id remains in the page source.
+        assert!(
+            page.contains("private-inference/model-briefs"),
+            "the header names the discovered briefs directory"
+        );
+        assert!(
+            page.contains("kask_bridge::private_inference_supervisor::fleet_cards()"),
+            "the header renders the bridge's discovered fleet"
+        );
+        for id in ["qwen3-8-flash-next", "qwen36-35b-a3b"] {
             assert!(
-                page.contains(fleet_id),
-                "the header names the fleet member {fleet_id}"
+                !page.contains(&format!("({id},")),
+                "no literal fleet id remains in the page source: {id}"
             );
         }
     }
@@ -622,6 +649,7 @@ mod tests {
         assert!(page.contains("launch_private_model"));
         assert!(page.contains("stop_private_model"));
         assert!(page.contains("fleet_cards"));
+        assert!(page.contains("local_ollama_models"));
         assert!(page.contains("supervisor().status()"));
         assert!(page.contains("last_action_outcome"));
     }

@@ -55,8 +55,13 @@ fn wrapper(dir: &Path, name: &str, prelude: &str) -> PathBuf {
 /// machine-independent: small declared bytes, ample declared RAM.
 fn prepared(port: u16) -> PreparedLaunch {
     let manifest = manifest::shipped_manifest().expect("shipped manifest");
-    let brief = fleet::shipped_model("gemma-4-31b")
-        .expect("gemma is in the fleet")
+    // The discovered fleet is the brief home (seed + discover — the
+    // production path), never a CWD-relative file read.
+    let briefs_dir = tempfile::tempdir().expect("briefs dir");
+    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
+    let models_root = tempfile::tempdir().expect("models root");
+    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "gemma-4-31b")
+        .expect("gemma is in the discovered fleet")
         .brief;
     let meta = GgufMeta {
         gguf_version: 3,
@@ -108,6 +113,10 @@ fn config(state_dir: &Path, binary: &Path, api_key: Option<&str>) -> LaunchConfi
         api_key: api_key.map(str::to_string),
         state_dir: state_dir.to_path_buf(),
         models_root: state_dir.to_path_buf(),
+        // The prepared-launch path never reads the briefs (the plan is
+        // pre-built) — the field names where a full prepare_launch
+        // would discover from.
+        briefs_dir: state_dir.join("model-briefs"),
         policy: PlacementPolicy::default(),
     }
 }

@@ -67,6 +67,10 @@ pub struct LaunchConfig {
     pub api_key: Option<String>,
     pub state_dir: PathBuf,
     pub models_root: PathBuf,
+    /// The discovered briefs directory (`{artifacts}/private-inference/
+    /// model-briefs/`) — the fleet's source of truth since discovery
+    /// replaced the compiled-in list (2026-11-08).
+    pub briefs_dir: PathBuf,
     pub policy: PlacementPolicy,
 }
 
@@ -85,9 +89,23 @@ pub struct PreparedLaunch {
 /// Resolve the fleet model, parse its shards, probe the hardware and
 /// compile the guard-verified plan — the full production prepare path.
 pub fn prepare_launch(config: &LaunchConfig) -> Result<PreparedLaunch, SupervisionError> {
-    let files = fleet::resolve_model_files(&config.models_root, &config.model_id)?;
+    let model = fleet::discover_model(&config.briefs_dir, &config.models_root, &config.model_id)?;
+    let files =
+        model
+            .artifact_files
+            .clone()
+            .ok_or_else(|| fleet::FleetError::ArtifactNotFound {
+                model_id: config.model_id.clone(),
+                path: config
+                    .models_root
+                    .join(&model.brief.location.dir)
+                    .join(&model.brief.location.artifact)
+                    .to_string_lossy()
+                    .to_string(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            })?;
     let meta = gguf::parse(&files)?;
-    let brief = fleet::shipped_model(&config.model_id)?.brief;
+    let brief = model.brief;
     let hardware = placement::probe_hardware()?;
     let manifest = manifest::shipped_manifest()?;
     let plan = placement::compile_placement(

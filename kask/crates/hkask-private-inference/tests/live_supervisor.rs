@@ -28,6 +28,12 @@ fn models_root() -> std::path::PathBuf {
     hkask_types::agent_paths::resolve_under_artifacts_dir(Path::new("private-inference/models"))
 }
 
+fn briefs_dir() -> std::path::PathBuf {
+    hkask_types::agent_paths::resolve_under_artifacts_dir(Path::new(
+        "private-inference/model-briefs",
+    ))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore]
 async fn the_full_production_launch_serves_and_stops_on_the_real_machine() {
@@ -52,12 +58,18 @@ async fn the_full_production_launch_serves_and_stops_on_the_real_machine() {
     };
     eprintln!("[p1-live] backend: {backend:?}");
 
+    // The discovered briefs dir is seeded before the launch — the
+    // production startup path's act, idempotent here.
+    hkask_private_inference::local_leg::fleet::seed_briefs(&briefs_dir())
+        .expect("the compiled-in seed writes");
+
     let config = LaunchConfig {
         model_id: MODEL_ID.into(),
         binary,
         api_key: Some(TOKEN.into()),
         state_dir: hkask_types::agent_paths::resolve_under_data_dir(Path::new("private-inference")),
         models_root: models_root(),
+        briefs_dir: briefs_dir(),
         policy: PlacementPolicy::default(),
     };
     let supervisor = Supervisor::default();

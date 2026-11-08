@@ -12,6 +12,10 @@
 model_id = "qwen3-8-flash-next"
 display_name = "Qwen3.8 Flash Next"
 
+[location]
+dir = "qwen38-flash-next"
+artifact = "UD-Q2_K_XL"
+
 [model]
 # Total parameters in the MoE (from the GGUF metadata).
 total_params = 125_000_000_000

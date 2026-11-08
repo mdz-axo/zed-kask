@@ -38,6 +38,11 @@ pub struct ModelBrief {
     pub display_name: String,
     /// Model-level metadata (the [model] table).
     pub model: ModelMetadata,
+    /// Where the weights live (the [location] table) — the brief is
+    /// self-contained: policy plus its artifact, so a fleet model is ONE
+    /// file and joining the fleet needs no code edit (the discovered
+    /// catalog, 2026-11-08).
+    pub location: LocationSpec,
     /// Placement metadata (the [placement] table).
     pub placement: PlacementMetadata,
     /// Recommended settings (the [recommendations] table).
@@ -45,6 +50,20 @@ pub struct ModelBrief {
     /// Speculative-draft spec (the optional `[draft]` table) — None on
     /// models that ship no draft module.
     pub draft: Option<DraftSpec>,
+}
+
+/// The model's local artifact location (the [location] table) —
+/// relative to the artifacts models root. `artifact` is either a single
+/// GGUF file (dense models) or the shard directory (the resolver lists
+/// and sorts the `.gguf` files inside; the first is the entry shard —
+/// the same convention the live-shard fixture pins).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocationSpec {
+    /// The model's directory under the artifacts models root.
+    pub dir: String,
+    /// The GGUF file, or the shard directory, under that directory.
+    pub artifact: String,
 }
 
 /// Model metadata (the [model] table).

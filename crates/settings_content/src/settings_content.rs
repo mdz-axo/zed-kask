@@ -2014,6 +2014,30 @@ pub struct KaskPrivateInferenceSettingsContent {
 /// same list.
 pub const DEFAULT_LOCAL_PROVIDERS: &[&str] = &["ollama"];
 
+/// zed-kask: D100/F1 (2026-11-08) — true when a provider model name
+/// carries ollama's cloud namespace token as its final `:`/`-`
+/// segment. Ollama >= 0.40 lists cloud-proxied entries
+/// (`remote_host: "https://ollama.com"` in `/api/tags`) under names
+/// like `glm-5.3:cloud` and `qwen3.5:397b-cloud`; locally served
+/// entries never end in a `cloud` token (both forms verified live
+/// against ollama 0.40.12, 2026-11-08). The registry's model type
+/// carries only provider and id — the structured `remote_host` field
+/// never reaches the policy layers — so the naming convention is the
+/// one model-level signal available at every admission or projection
+/// site, and dispatch addresses cloud models by the same name, so no
+/// route to them bypasses the check. Fail-closed in the cloud
+/// direction: the token matches case-insensitively, and a name
+/// carrying it refuses the model; a name without it keeps the
+/// provider-level admission unchanged. Shared by the agent-side
+/// private-leg predicate and the bridge's local-model projections
+/// (one home, never duplicated).
+pub fn is_ollama_cloud_model_name(model_name: &str) -> bool {
+    model_name
+        .rsplit([':', '-'])
+        .next()
+        .is_some_and(|last| last.eq_ignore_ascii_case("cloud"))
+}
+
 /// zed-kask: D100 — the default set of MCP servers disabled on
 /// privacy-marked threads (operator ruling 2026-11-05): the media server —
 /// its analysis passes (vision, STT, OCR) rely on cloud inference in ways
@@ -2118,5 +2142,38 @@ mod private_inference_local_set_tests {
             vec!["lm-studio-local".to_string()],
             "an unset provider contributes nothing (no leg registered)"
         );
+    }
+
+    /// F1 (2026-11-08): the cloud-name classifier's decision table — the
+    /// live-observed ollama 0.40.12 cloud forms (colon and hyphen tags,
+    /// case-insensitive) classify as cloud; local ollama names and every
+    /// shipped fleet id classify as local. No local or fleet id ends in
+    /// a `cloud` token (the manifest + the live tag list are the
+    /// evidence). The one home shared by the agent-side private-leg
+    /// predicate and the bridge's local-model projections.
+    #[test]
+    fn is_ollama_cloud_model_name_classifies_the_live_forms() {
+        for name in [
+            "glm-5.3:cloud",
+            "qwen3.5:397b-cloud",
+            "gemma4:31b-cloud",
+            "GLM-5.3:CLOUD",
+        ] {
+            assert!(is_ollama_cloud_model_name(name), "{name} is a cloud entry");
+        }
+        for name in [
+            "qwen3.5:4b",
+            "ornith:9b",
+            "bonsai-27b:latest",
+            "qwen3-reranker-4b:latest",
+            "flint",
+            "qwen36-35b-a3b",
+            "qwen35-0.8b-edited",
+            "qwen3-8-flash-next",
+            "muse-glimmer-30b",
+            "",
+        ] {
+            assert!(!is_ollama_cloud_model_name(name), "{name} is a local entry");
+        }
     }
 }

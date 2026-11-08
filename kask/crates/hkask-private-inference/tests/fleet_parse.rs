@@ -1,9 +1,13 @@
 //! Live fleet-parse verification (env-gated `HKASK_P1_LIVE`): every
-//! shipped fleet model's brief `[model]` table cross-checked against the
-//! real GGUF headers. The brief is declared data (sourced numbers); this
-//! is the standing instrument that keeps it honest — a brief that
-//! diverges from the weights it describes fails here, before it can
-//! misplace a launch.
+//! discovered fleet model's brief `[model]` table cross-checked against
+//! the real GGUF headers, over the REAL discovered briefs directory
+//! (seeded — the production path). The brief is declared data (sourced
+//! numbers); this is the standing instrument that keeps it honest — a
+//! brief that diverges from the weights it describes fails here, before
+//! it can misplace a launch. A model whose artifact is absent is
+//! SKIPPED with a surfaced line (the carded-missing state — the
+//! deliberately-unrepaired ornith BF16), never a panic: the parse
+//! cross-checks every model whose weights ARE on disk.
 //!
 //! ```sh
 //! HKASK_P1_LIVE=1 cargo test -p hkask-private-inference \
@@ -23,15 +27,24 @@ fn every_fleet_brief_matches_its_real_gguf_parse() {
         eprintln!("HKASK_P1_LIVE unset; skipping the live fleet parse");
         return;
     }
+    let briefs_dir = hkask_types::agent_paths::resolve_under_artifacts_dir(std::path::Path::new(
+        "private-inference/model-briefs",
+    ));
     let root = hkask_types::agent_paths::resolve_under_artifacts_dir(std::path::Path::new(
         "private-inference/models",
     ));
-    for model in fleet::shipped_models().expect("the fleet decodes") {
+    fleet::seed_briefs(&briefs_dir).expect("the compiled-in seed writes (idempotent)");
+    for model in fleet::discover(&briefs_dir, &root).expect("the discovered fleet decodes") {
         let brief = &model.brief;
-        let files = fleet::resolve_model_files(&root, &brief.model_id)
-            .unwrap_or_else(|err| panic!("{} resolves: {err}", brief.model_id));
+        let Some(files) = &model.artifact_files else {
+            println!(
+                "[fleet-parse] {}: artifact absent — skipped (carded-missing)",
+                brief.model_id
+            );
+            continue;
+        };
         let meta =
-            gguf::parse(&files).unwrap_or_else(|err| panic!("{} parses: {err}", brief.model_id));
+            gguf::parse(files).unwrap_or_else(|err| panic!("{} parses: {err}", brief.model_id));
         println!(
             "[fleet-parse] {} ({} files): expert_count={:?} expert_used_count={:?} \
              block_count={:?} native_context={:?} expert_bytes={:.2} GiB \
