@@ -19,7 +19,7 @@ use hkask_types::ports::{DecisionBatch, InferenceUsage};
 static DECISIONS_HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
 
 fn decisions_http_client() -> &'static reqwest::Client {
-    DECISIONS_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+    DECISIONS_HTTP_CLIENT.get_or_init(crate::provider_http_client)
 }
 
 /// Provider-prefixed model → (provider, clean model id). Only OpenRouter

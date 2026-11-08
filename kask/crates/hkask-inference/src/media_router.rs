@@ -24,7 +24,7 @@ impl MediaRouter {
     /// post: returns MediaRouter whose registry holds all constructible providers
     #[must_use]
     pub fn new(config: InferenceConfig) -> Self {
-        let client = Arc::new(reqwest::Client::new());
+        let client = Arc::new(crate::provider_http_client());
         let mut providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
 
         match crate::media_providers::DeepInfraMediaProvider::new(&config, client.clone()) {

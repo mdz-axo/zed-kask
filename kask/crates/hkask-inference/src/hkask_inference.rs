@@ -48,6 +48,26 @@ mod media_routing_tests;
 pub use config::{InferenceConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 
+/// Per-request deadline for direct provider HTTP calls (rerank, decisions,
+/// media, direct embeddings). A wedged provider — one that accepts the
+/// connection but never answers — must fail the call within a bound rather
+/// than hang it: the keystore `KEYCHAIN_READ_TIMEOUT_SECS` discipline
+/// applied to provider HTTP, at the direct-embedding port's existing 120s
+/// (the slowest legitimate call class).
+pub(crate) const PROVIDER_REQUEST_TIMEOUT_SECS: u64 = 120;
+
+/// Build the shared provider-call client carrying the per-request deadline.
+/// Panics on TLS-backend init failure — the same failure class
+/// `reqwest::Client::new()` already panics on, surfaced at first use.
+pub(crate) fn provider_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            PROVIDER_REQUEST_TIMEOUT_SECS,
+        ))
+        .build()
+        .expect("reqwest provider client: TLS backend initialization")
+}
+
 /// The shared "no IPC bridge" reason. Every stub method names the socket so the
 /// operator can distinguish "not configured" from "configured but broken" — a
 /// missing socket is never reported as an empty success (the `.rules`
@@ -578,7 +598,9 @@ impl DirectEmbeddingPort {
         };
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(std::time::Duration::from_secs(
+                PROVIDER_REQUEST_TIMEOUT_SECS,
+            ))
             .build()
             .map_err(|e| {
                 tracing::warn!(
@@ -997,6 +1019,30 @@ impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
 mod tests {
     use super::*;
     use hkask_types::inference_ipc::INFERENCE_SOCKET_ENV;
+
+    /// Source pin (the D31 register style): the provider HTTP deadline lives
+    /// inside reqwest and is unobservable from a unit test — pin the
+    /// construction instead. Every provider client routes through
+    /// [`provider_http_client`] (which sets `PROVIDER_REQUEST_TIMEOUT_SECS`);
+    /// a bare `reqwest::Client::new()` reintroduces the unbounded hang (the
+    /// wedged-provider class the keystore deadline exists for).
+    #[test]
+    fn provider_http_clients_are_deadline_bounded() {
+        for (label, source) in [
+            ("rerank", include_str!("rerank.rs")),
+            ("decisions", include_str!("decisions.rs")),
+            ("media_router", include_str!("media_router.rs")),
+        ] {
+            assert!(
+                source.contains("crate::provider_http_client"),
+                "{label} must construct its HTTP client through crate::provider_http_client"
+            );
+            assert!(
+                !source.contains("reqwest::Client::new()"),
+                "{label} must not construct an unbounded client"
+            );
+        }
+    }
 
     fn prepared_chat_messages() -> Vec<hkask_types::ChatMessage> {
         vec![
