@@ -478,6 +478,7 @@ async fn a_foreign_pid_at_the_recorded_slot_is_never_killed() {
         endpoint: format!("http://127.0.0.1:{port}/v1"),
         started_at_unix: 0,
         binary: STUB.to_string(),
+        token_fingerprint: "0123456789abcdef".into(),
     };
     std::fs::write(
         state.path().join("launch-record.json"),

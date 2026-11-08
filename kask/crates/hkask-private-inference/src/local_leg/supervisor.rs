@@ -114,6 +114,13 @@ pub struct LaunchRecord {
     pub endpoint: String,
     pub started_at_unix: u64,
     pub binary: String,
+    /// The endpoint token's fingerprint at launch (dual-axis review P3):
+    /// adoption refuses when the CURRENT token differs — a rotated token
+    /// would otherwise adopt a server every client request then 401s
+    /// against. Empty in records from before this field: unverifiable,
+    /// so refused (never trusted as a file).
+    #[serde(default)]
+    pub token_fingerprint: String,
 }
 
 /// What the page renders: the supervisor's live state.
@@ -355,6 +362,7 @@ impl Supervisor {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
             binary: config.binary.to_string_lossy().to_string(),
+            token_fingerprint: token_fingerprint(token),
         };
         write_record(&record_path, &record).map_err(|source| SupervisionError::Io {
             context: format!("write {}", record_path.display()),
@@ -433,6 +441,27 @@ impl Supervisor {
                 holder: format!(
                     "pid {} (record does not match this launch: digest/endpoint differ)",
                     record.pid
+                ),
+            });
+        }
+        // The endpoint token joins the adoption identity (dual-axis review
+        // P3): a server that outlived an editor session is adopted only
+        // when the CURRENT token is the one it launched with — a rotated
+        // token would otherwise adopt a server every client request then
+        // 401s against. An empty fingerprint is a record from before this
+        // check: unverifiable, so refused (never trusted as a file).
+        let expected_token_fingerprint = token_fingerprint(config.api_key.as_deref().unwrap_or(""));
+        if record.token_fingerprint != expected_token_fingerprint {
+            return Err(SupervisionError::PortOccupied {
+                holder: format!(
+                    "pid {} (record does not match this launch: the endpoint token differs \
+                     from the recorded launch{} — stop the serving server and relaunch)",
+                    record.pid,
+                    if record.token_fingerprint.is_empty() {
+                        "; the record predates token fingerprinting"
+                    } else {
+                        ""
+                    }
                 ),
             });
         }
@@ -594,6 +623,17 @@ impl Supervisor {
 /// digests equal; any policy or model change breaks adoption (the
 /// plan's `Display` alone misses host/port, so they are hashed
 /// explicitly — found by the digest's own falsifier test).
+/// A short non-reversible fingerprint of the endpoint token for the launch
+/// record — adoption verifies the CURRENT token is the one the server
+/// launched with without storing the token in the record (dual-axis
+/// review P3).
+fn token_fingerprint(token: &str) -> String {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(token.as_bytes());
+    // The first 16 hex chars — short, non-reversible, never the token.
+    format!("{:x}", digest)[..16].to_string()
+}
+
 fn plan_digest(plan: &LaunchPlan, model_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(plan.to_string());
@@ -785,6 +825,18 @@ mod tests {
         );
     }
 
+    /// The token fingerprint is deterministic, short, and non-reversible
+    /// (dual-axis review P3): the same token converges, a different token
+    /// never collides, and the record never stores the token itself.
+    #[test]
+    fn token_fingerprint_is_stable_and_token_sensitive() {
+        let a = token_fingerprint("the-token");
+        assert_eq!(a, token_fingerprint("the-token"), "stable");
+        assert_ne!(a, token_fingerprint("other-token"), "token-sensitive");
+        assert_eq!(a.len(), 16, "a short hex prefix, never the token");
+        assert!(!a.contains("the-token"), "non-reversible");
+    }
+
     #[test]
     fn plan_digest_is_stable_and_policy_sensitive() {
         let manifest = shipped_manifest().expect("manifest");
@@ -819,6 +871,7 @@ mod tests {
             endpoint: "http://127.0.0.1:8010/v1".into(),
             started_at_unix: 1_735_000_000,
             binary: "/bin/llama-server".into(),
+            token_fingerprint: "0123456789abcdef".into(),
         };
         write_record(&path, &record).expect("write");
         assert_eq!(read_record(&path).as_ref(), Some(&record));
