@@ -90,3 +90,10 @@ note = "muse-glimmer-30b (see the brief)"
 path = "qwen38-flash-next/"
 role = "fleet"
 note = "qwen3-8-flash-next — the UD-Q2_K_XL shard directory (the brief carries the shard provenance)"
+
+[[artifact]]
+path = "qwen36-35b-a3b/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+bytes = 22_853_663_008
+sha256 = "55983c5a75a1ab969824077b3bb3de4146e82a9234072b48ad4e8f92ad3fe9f1"
+role = "fleet"
+note = "qwen36-35b-a3b (see kask/registry/model-briefs/qwen36-35b-a3b.toml) — the MTP-GGUF variant from unsloth/Qwen3.6-35B-A3B-MTP-GGUF: the multi-token-prediction head ships IN-FILE (+492,206,848 bytes over the mainline repo's UD-Q4_K_XL) and loads dormant under the mainline surface (no draft vocabulary declared — manifest.rs the_mainline_surface_spells_no_draft_vocabulary). Range-resumed acquisition, size + LFS sha256 verified (download.log beside the weights); parse-sourced expert 256/8, block_count 41, native context 262,144 (the live fleet parse, 2026-11-08 — tests/fleet_parse.rs)"
