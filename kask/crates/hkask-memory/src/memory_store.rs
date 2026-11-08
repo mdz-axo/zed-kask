@@ -1438,7 +1438,11 @@ impl MemoryStore {
             });
             // The first one is kept; delete the rest.
             for h_mem in &sorted[1..] {
-                match self.h_mem_store.delete_by_id(&h_mem.id) {
+                // Route through delete_h_mem — the deletion-cleanup contract
+                // (2026-09-09 ruling): a raw delete_by_id strands the deleted
+                // near-duplicate's passage embedding under the live entity,
+                // an orphan the entity-scoped sweep can never see.
+                match self.delete_h_mem(&h_mem.id) {
                     Ok(()) => deleted_count += 1,
                     Err(error) => {
                         failed_count += 1;
@@ -2500,6 +2504,58 @@ mod tests {
                 .len(),
             1,
             "the sibling row survives"
+        );
+    }
+
+    /// The dedup loop routes through the same cleanup contract: a
+    /// near-duplicate's passage embedding must not survive the purge as an
+    /// orphan under the live entity. The two values normalize equal
+    /// (punctuation/case) but their passages differ, so no surviving
+    /// sibling shares the deleted row's passage — the raw `delete_by_id`
+    /// shape the review caught stranded exactly this embedding.
+    #[test]
+    fn dedup_removes_the_deleted_rows_passage_embedding_under_a_live_entity() {
+        let store = test_store();
+        let webid = WebID::from_persona(b"curator");
+        let high = "Revenue trend is up.";
+        let low = "revenue trend is up";
+        assert_eq!(
+            normalize_value(high),
+            normalize_value(low),
+            "the pair must be a near-duplicate group"
+        );
+        store_h_mem(&store, "company:a", "lesson", high, webid);
+        store_h_mem(&store, "company:a", "lesson", low, webid);
+        let dim = hkask_storage::embedding_dim();
+        store
+            .store_embedding("company:a", &vec![0.4; dim], "test-model", Some(high))
+            .expect("seed high embedding");
+        store
+            .store_embedding("company:a", &vec![0.6; dim], "test-model", Some(low))
+            .expect("seed low embedding");
+
+        let outcome = store.dedup_by_normalized_value(100).expect("dedup");
+        assert_eq!(outcome.deleted_count, 1);
+        assert_eq!(outcome.failed_count, 0);
+
+        let survivors = store
+            .h_mem_store
+            .query_by_entity("company:a")
+            .expect("query rows");
+        assert_eq!(survivors.len(), 1, "one of the near-duplicates survives");
+        let survivor_passage = survivors[0].value.as_str().expect("string value");
+        let deleted_passage = if survivor_passage == high { low } else { high };
+        assert!(
+            !store
+                .has_embedding_for_passage("company:a", deleted_passage)
+                .expect("probe deleted"),
+            "the deleted near-duplicate's passage embedding must not survive the dedup"
+        );
+        assert!(
+            store
+                .has_embedding_for_passage("company:a", survivor_passage)
+                .expect("probe survivor"),
+            "the surviving row's passage embedding must stay"
         );
     }
 
