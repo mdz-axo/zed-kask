@@ -94,6 +94,14 @@ pub struct FlagVocabulary {
     /// 0600 file, never a command-line arg (`/proc/<pid>/cmdline` leak) and
     /// never an env var (the pinned build exposes none for the key).
     pub api_key_file: String,
+    /// The no-mmap intent's full argv fragment (the mainline pin spells
+    /// `["--load-mode", "none"]` — it replaced the classic `--no-mmap` with
+    /// a load-mode vocabulary, verified live 2026-11-07). None on surfaces
+    /// that spell no such intent: a no-mmap ask against them is a typed
+    /// refusal at compile time, never a silently mmap'd launch. A plan
+    /// carrying the fragment counts its weights as resident RAM in the
+    /// headroom guard (`model_mmap=false`).
+    pub no_mmap: Option<Vec<String>>,
     /// The speculative-decoding draft flags. None on surfaces that spell
     /// no draft intent — the mainline pin's binary is not on disk to
     /// verify the spellings against, and an unverified spelling is never

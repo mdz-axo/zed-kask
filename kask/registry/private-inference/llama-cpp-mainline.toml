@@ -51,6 +51,16 @@ alias = "--alias"
 # The token file: "--api-key-file FNAME — path to file containing API keys"
 # (verified live 2026-11-04; no env var exists for the key).
 api_key_file = "--api-key-file"
+# The no-mmap intent (2026-11-07 dGPU link-loss investigation): the full
+# argv fragment that loads weights WITHOUT memory mapping. Verified live
+# 2026-11-07 against build-hip/bin/llama-server --help: this pin replaced
+# the classic --no-mmap with "-lm, --load-mode MODE" whose `none` value is
+# "no special loading mode". A plan carrying the fragment counts its
+# weights as resident RAM in the headroom guard (model_mmap=false) — the
+# mmap'd-weights path under the HIP backend is what drives the KFD
+# userptr/SVM churn that preceded every dGPU PCIe link loss (2026-11-07
+# diagnosis).
+no_mmap = ["--load-mode", "none"]
 
 # --- constraints (closed vocabulary; every one gated by the fixtures below) ---
 

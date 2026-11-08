@@ -33,6 +33,7 @@ pub struct CaptureArgs {
     pub n_ctx: u32,
     pub threads: u32,
     pub n_gpu_layers: u32,
+    pub no_mmap: bool,
     pub seed_base: u64,
     pub sites: Vec<String>, // "l_out" and/or "ffn_out"
     pub layers: Vec<u32>,   // e.g. 15,19 (plus any contrast layers)
@@ -60,7 +61,7 @@ pub fn run(args: CaptureArgs) -> Result<()> {
     } else {
         ProblemSet::load(&args.problems, args.seed_base)?
     };
-    let engine = Engine::load(&args.gguf, args.n_gpu_layers)?;
+    let engine = Engine::load(&args.gguf, args.n_gpu_layers, args.no_mmap)?;
 
     anyhow::ensure!(!args.layers.is_empty(), "no layers to capture");
     anyhow::ensure!(!args.sites.is_empty(), "no capture sites");

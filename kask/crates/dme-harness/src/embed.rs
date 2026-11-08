@@ -15,6 +15,7 @@ use std::io::Write as _;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
+use llama_cpp_4::model::params::LlamaLoadMode;
 use llama_cpp_4::prelude::*;
 
 pub struct EmbedArgs {
@@ -27,6 +28,7 @@ pub struct EmbedArgs {
     pub threads: u32,
     pub n_gpu_layers: u32,
     pub free_corpus: bool,
+    pub no_mmap: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -47,12 +49,18 @@ pub fn run(args: EmbedArgs) -> Result<()> {
     };
     anyhow::ensure!(args.count > 0, "no anchors to embed");
     let backend = LlamaBackend::init()?;
+    let mut params = LlamaModelParams::default().with_n_gpu_layers(args.n_gpu_layers);
+    if args.no_mmap {
+        // The 2026-11-07 link-loss investigation: load without mmap (the
+        // same intent the serving route spells as `--load-mode none`).
+        params = params.with_load_mode(LlamaLoadMode::None);
+    }
     let model = LlamaModel::load_from_file(
         &backend,
         args.gguf
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("non-utf8 gguf path"))?,
-        &LlamaModelParams::default().with_n_gpu_layers(args.n_gpu_layers),
+        &params,
     )
     .map_err(|e| anyhow::anyhow!("llama_model_load: {e}"))?;
 
@@ -89,7 +97,7 @@ pub fn run(args: EmbedArgs) -> Result<()> {
         let emb = ctx
             .embeddings_seq_ith(0)
             .context("no embedding produced — is this an embedding model (pooling metadata)?")?;
-        let emb: &[f32] = emb.as_ref();
+        let emb: &[f32] = emb;
         let d = emb.len();
         match dim_out {
             None => dim_out = Some(d),

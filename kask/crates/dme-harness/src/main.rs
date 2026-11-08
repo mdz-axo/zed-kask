@@ -127,7 +127,8 @@ fn run() -> Result<()> {
                 threads: flag_or(rest, "--threads", "4").parse()?,
                 n_gpu_layers: flag_or(rest, "--ngl", "99").parse()?,
                 partial_gpu_offload: has_flag(rest, "--partial"),
-                kv_cache_type: flag_or(rest, "--kv", "f16"),
+                no_mmap: has_flag(rest, "--no-mmap"),
+                kv_cache_type: flag_or(rest, "--kv", "f16").parse()?,
                 seed_base: flag_or(rest, "--seed", "20261106").parse()?,
 
                 budget_secs: flag_or(rest, "--budget-secs", "1500").parse()?,
@@ -171,6 +172,7 @@ fn run() -> Result<()> {
                     layers,
                     max_new: flag_or(rest, "--max-new", "256").parse()?,
                     free_corpus: has_flag(rest, "--free-corpus"),
+                    no_mmap: has_flag(rest, "--no-mmap"),
                 };
                 capture::run(args)
             }
@@ -216,6 +218,7 @@ fn run() -> Result<()> {
                     threads: flag_or(rest, "--threads", "8").parse()?,
                     n_gpu_layers: flag_or(rest, "--n-gpu-layers", "0").parse()?,
                     free_corpus: has_flag(rest, "--free-corpus"),
+                    no_mmap: has_flag(rest, "--no-mmap"),
                 })
             }
             #[cfg(not(feature = "engine"))]

@@ -43,6 +43,8 @@ pub struct ProbeArgs {
     pub threads: u32,
     pub n_gpu_layers: u32,
     pub partial_gpu_offload: bool,
+    /// Load the served model without mmap (`PlacementPolicy::no_mmap`).
+    pub no_mmap: bool,
     pub kv_cache_type: String,
     pub seed_base: u64,
     pub budget_secs: u64,
@@ -79,6 +81,7 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         threads: args.threads,
         n_gpu_layers: args.n_gpu_layers,
         partial_gpu_offload: args.partial_gpu_offload,
+        no_mmap: args.no_mmap,
         kv_cache_type: args.kv_cache_type.clone(),
         flash_attn: true,
         cpu_moe: true,
@@ -357,10 +360,10 @@ pub fn summarize(rows: &Path, out: Option<&Path>) -> Result<()> {
             cap = v["cap"].as_u64().unwrap_or(0) as u32;
             config = v["config"].as_str().unwrap_or("").to_string();
         }
-        if first_ids.len() < 5 {
-            if let Some(id) = v["problem_id"].as_str() {
-                first_ids.push(id.to_string());
-            }
+        if first_ids.len() < 5
+            && let Some(id) = v["problem_id"].as_str()
+        {
+            first_ids.push(id.to_string());
         }
         n += 1;
         mean_wall += v["wall_secs"].as_f64().unwrap_or(0.0);

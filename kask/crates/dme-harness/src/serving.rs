@@ -250,6 +250,10 @@ pub fn verify_sampling_parity(req: &CompletionRequest, echo: &Value) -> Result<(
 
 /// The engine's `--version` first line (the pin receipt on every row).
 fn probe_version_line(binary: &Path) -> Result<String> {
+    // One-shot CLI subprocess probe in a blocking harness — the async
+    // replacement exists for the UI process's threads, not this
+    // instrument (the ytdlp/ffmpeg detect-step precedent).
+    #[allow(clippy::disallowed_methods)]
     let out = std::process::Command::new(binary)
         .arg("--version")
         .output()

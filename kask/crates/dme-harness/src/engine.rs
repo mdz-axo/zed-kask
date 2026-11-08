@@ -27,6 +27,7 @@ use crate::config::RunConfig;
 use anyhow::{Result, anyhow};
 use std::path::Path;
 
+use llama_cpp_4::model::params::LlamaLoadMode;
 use llama_cpp_4::prelude::*;
 
 pub const HARNESS: &str = concat!("dme-harness-rust/", env!("CARGO_PKG_VERSION"));
@@ -45,15 +46,23 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn load(gguf_path: &Path, n_gpu_layers: u32) -> Result<Self> {
+    pub fn load(gguf_path: &Path, n_gpu_layers: u32, no_mmap: bool) -> Result<Self> {
         let meta = pi_gguf::parse_file(gguf_path)?;
         let backend = LlamaBackend::init()?;
+        let mut params = LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers);
+        if no_mmap {
+            // The 2026-11-07 link-loss investigation: mmap'd weights under
+            // the HIP backend drive the KFD userptr/SVM churn that preceded
+            // every dGPU PCIe link loss — load without mmap instead (the
+            // same intent the serving route spells as `--load-mode none`).
+            params = params.with_load_mode(LlamaLoadMode::None);
+        }
         let model = LlamaModel::load_from_file(
             &backend,
             gguf_path
                 .to_str()
                 .ok_or_else(|| anyhow!("non-utf8 gguf path"))?,
-            &LlamaModelParams::default().with_n_gpu_layers(n_gpu_layers),
+            &params,
         )
         .map_err(|e| anyhow!("llama_model_load: {e}"))?;
         let templates = ChatTemplates::from_model(&model, None)?;

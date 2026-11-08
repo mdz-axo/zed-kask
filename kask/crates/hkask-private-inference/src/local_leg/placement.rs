@@ -43,6 +43,10 @@ pub enum PlacementError {
         "partial GPU offload asked but the model carries no usable block_count in its GGUF metadata — the verified layer split cannot be computed (fail-closed, never guessed)"
     )]
     PartialOffloadNeedsBlockCount,
+    #[error(
+        "no-mmap asked but the engine surface `{0}` spells no load-mode vocabulary — the spelling was never verified against this pin"
+    )]
+    NoMmapVocabularyMissing(String),
 }
 
 /// Hardware inventory. `available_ram_bytes` is the number the guards use
@@ -313,6 +317,13 @@ pub struct PlacementPolicy {
     /// change for any existing caller; an ask where nothing fits still
     /// leaves the full ask to the guard's numeric refusal.
     pub partial_gpu_offload: bool,
+    /// Load the model WITHOUT memory mapping (the 2026-11-07 dGPU
+    /// link-loss investigation: mmap'd weights under the HIP backend drive
+    /// the KFD userptr/SVM churn that preceded every PCIe link loss). The
+    /// surface spells the argv fragment; the guard then counts weights as
+    /// resident RAM (`model_mmap=false`). Default false: no behavior
+    /// change for any existing caller — the ask is always explicit.
+    pub no_mmap: bool,
     pub threads: u32,
     pub host: String,
     pub port: u16,
@@ -330,6 +341,7 @@ impl Default for PlacementPolicy {
             n_gpu_layers: 999,
             draft: false,
             partial_gpu_offload: false,
+            no_mmap: false,
             threads: 12,
             host: "127.0.0.1".into(),
             port: 8010,
@@ -554,6 +566,16 @@ pub fn compile_placement(
     // engine defaults.
     args.push(vocabulary.flash_attn.clone());
     args.push(if policy.flash_attn { "on" } else { "off" }.into());
+    // The no-mmap intent: the surface spells the whole argv fragment; a
+    // vocabulary-less surface is a typed refusal, never a silently mmap'd
+    // launch (the draft-vocabulary discipline).
+    if policy.no_mmap {
+        let fragment = vocabulary
+            .no_mmap
+            .as_ref()
+            .ok_or_else(|| PlacementError::NoMmapVocabularyMissing(manifest.surface_id.clone()))?;
+        args.extend(fragment.iter().cloned());
+    }
     if n_gpu_layers > 0 {
         args.push(vocabulary.n_gpu_layers.clone());
         args.push(n_gpu_layers.to_string());
@@ -595,9 +617,11 @@ pub fn compile_placement(
         // Sysfs/Declared provenance stays here at the probe layer.
         vram_bytes_declared: hw.vram.as_ref().map(VramSource::bytes),
         gpu_offload: n_gpu_layers > 0,
-        // v1 never plans `--mlock`: file-backed weights are evictable, so
-        // only the anonymous class is guarded (manifest.rs semantics).
-        model_mmap: true,
+        // v1 never plans `--mlock`: file-backed (mmap'd) weights are
+        // evictable, so only the anonymous class is guarded — EXCEPT on a
+        // no-mmap plan, where weights are read into anonymous RAM and
+        // count as resident (manifest.rs semantics).
+        model_mmap: !policy.no_mmap,
         expert_bytes: meta.expert_bytes,
         dense_bytes: meta.dense_bytes,
         pinned_cpu_bytes,
@@ -807,6 +831,86 @@ mod tests {
         let rendered = plan.to_string();
         assert!(rendered.contains("-ngl 999"));
         assert!(rendered.contains("--cpu-moe"));
+    }
+
+    #[test]
+    fn no_mmap_plan_emits_the_verified_load_mode_fragment() {
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        let mut policy = PlacementPolicy::default();
+        policy.n_gpu_layers = 0; // CPU shape: the fragment is tier-independent
+        policy.no_mmap = true;
+        let plan = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            // Weightless meta: this test pins the fragment's emission, not
+            // the resident-RAM accounting (the guard test below owns that).
+            &GgufMeta::default(),
+            &test_hw(),
+            &test_brief(),
+            &policy,
+            &manifest,
+        )
+        .expect("no-mmap plan compiles against the mainline vocabulary");
+        let rendered = plan.to_string();
+        // The verified mainline spelling (2026-11-07, build-hip --help):
+        // the pin's load-mode vocabulary, `none` = no mmap/mlock/dio.
+        assert!(rendered.contains("--load-mode none"));
+    }
+
+    #[test]
+    fn no_mmap_counts_weights_resident_for_the_ram_guard() {
+        let manifest = decode(MANIFEST_TOML).expect("manifest");
+        // The same tight-RAM shape under both knobs: mmap'd weights are
+        // evictable (the guard passes on the anonymous class alone);
+        // no-mmap weights are resident RAM and bust the headroom — the
+        // only difference between the two plans is the knob.
+        let mut mmap_policy = PlacementPolicy::default();
+        mmap_policy.n_gpu_layers = 0;
+        compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &test_meta(),
+            &test_hw(),
+            &test_brief(),
+            &mmap_policy,
+            &manifest,
+        )
+        .expect("mmap plan: weights are evictable, anonymous fits");
+
+        let mut resident_policy = mmap_policy;
+        resident_policy.no_mmap = true;
+        let err = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &test_meta(),
+            &test_hw(),
+            &test_brief(),
+            &resident_policy,
+            &manifest,
+        )
+        .expect_err("no-mmap plan: weights count as resident and bust the headroom");
+        assert!(
+            matches!(err, PlacementError::GuardDenied { ref constraint, .. } if constraint == "available_ram_headroom"),
+            "refusal must name the headroom guard, got: {err}"
+        );
+    }
+
+    #[test]
+    fn no_mmap_ask_against_a_vocabulary_less_surface_is_refused() {
+        let mut manifest = decode(MANIFEST_TOML).expect("manifest");
+        manifest.flags.no_mmap = None;
+        let mut policy = PlacementPolicy::default();
+        policy.no_mmap = true;
+        let err = compile_placement(
+            PathBuf::from("/models/test.gguf"),
+            &test_meta(),
+            &test_hw(),
+            &test_brief(),
+            &policy,
+            &manifest,
+        )
+        .expect_err("a surface that spells no fragment must refuse the ask");
+        assert!(
+            matches!(err, PlacementError::NoMmapVocabularyMissing(ref s) if s == "llama-cpp-mainline-cpu-p0"),
+            "refusal must name the surface, got: {err}"
+        );
     }
 
     #[test]
