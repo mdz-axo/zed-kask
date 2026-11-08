@@ -34,7 +34,7 @@ pub(crate) use kanban::{
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool, resolve_db_passphrase};
+use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
@@ -1678,42 +1678,24 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // `std::env::var` (matching every other DB-path env var:
                 // `HKASK_CURATOR_DB`, `HKASK_RESEARCH_DB`, etc.)
                 // and injected via `config_env`, not `credentials`.
-                let kanban_db_path = std::env::var("HKASK_KANBAN_DB").unwrap_or_else(|_| {
-                    let relative_path =
-                        hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban");
-                    let default_path =
-                        hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
-                    if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all) {
-                        tracing::warn!(
-                            target: "hkask.mcp.kata_kanban",
-                            path = %default_path.display(),
-                            %error,
-                            "Failed to create default kanban DB directory \
-                             — the subsequent DB open will surface the failure"
-                        );
-                    }
-                    tracing::info!(
-                        target: "hkask.mcp.kata_kanban",
-                        path = %default_path.display(),
-                        "Using default per-agent kanban database"
-                    );
-                    default_path.to_string_lossy().to_string()
-                });
-                // Resolve the DB passphrase through the canonical 2-tier chain
-                // (ctx.credentials → resolve_credential which does env → keychain).
-                // See `hkask_mcp_server::server::resolve_db_passphrase`.
-                let passphrase = resolve_db_passphrase(&ctx.credentials)
-                    .map_err(|error| anyhow::anyhow!("HKASK_DB_PASSPHRASE: {error}"))?;
-                let db = hkask_storage::open_or_repair(&kanban_db_path, &passphrase)
-                    .map_err(|error| anyhow::anyhow!("{error}"))?;
-                let pool = db
-                    .sqlite_pool()
-                    .map_err(|error| anyhow::anyhow!("pool: {error}"))?;
+                // The shared server-database bootstrap (dual-axis review
+                // Batch C, migration 1 of 3): D28 path resolution with the
+                // parent self-heal, the 2-tier passphrase chain, and the
+                // labeled driver — absorbed into hkask-mcp-server.
+                let kanban_db_path = hkask_mcp_server::resolve_server_db_path(
+                    "HKASK_KANBAN_DB",
+                    &hkask_types::agent_paths::mcp_server_db("kata-kanban", "kanban"),
+                );
+                let server_db = hkask_mcp_server::open_server_db(&kanban_db_path, &ctx.credentials)
+                    .map_err(|error| {
+                        // Infrastructure (H2): a config/DB-open failure is
+                        // infrastructure, never an UnexpectedResponse.
+                        hkask_mcp_server::McpError::Infrastructure(
+                            hkask_types::InfrastructureError::Io(error.to_string()),
+                        )
+                    })?;
                 let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-                    Arc::new(hkask_storage::database::sqlite::SqliteDriver::new_labeled(
-                        pool,
-                        kanban_db_path.as_str(),
-                    ));
+                    Arc::clone(&server_db.driver);
                 // Clone the handle before `HMemStore` takes ownership: replay
                 // protection lives in the same database as the writes it guards.
                 let idempotency_driver = driver.clone();
@@ -1752,10 +1734,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 detail: e.to_string(),
             })
         },
-        vec![hkask_mcp_server::CredentialRequirement::required(
-            "HKASK_DB_PASSPHRASE",
-            "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
-        )],
+        vec![hkask_mcp_server::db_passphrase_requirement()],
     )
     .await
 }
@@ -1782,14 +1761,13 @@ fn kanban_startup_requires_durable_storage() {
     let source = include_str!("hkask_mcp_kata_kanban.rs");
     let volatile_database = ["Database", "::in_memory()"].concat();
     let volatile_replay = ["IdempotencyStore", "::default()"].concat();
-    let required_passphrase = [
-        "CredentialRequirement::required(",
-        "\n            \"HKASK_DB_PASSPHRASE\"",
-    ]
-    .concat();
+    let required_passphrase = "db_passphrase_requirement()";
     assert!(!source.contains(&volatile_database));
     assert!(!source.contains(&volatile_replay));
-    assert!(source.contains(&required_passphrase));
+    assert!(
+        source.contains(required_passphrase),
+        "the shared HKASK_DB_PASSPHRASE requirement is declared via the framework helper"
+    );
 }
 
 // D28 — pins the default DB path resolution.
