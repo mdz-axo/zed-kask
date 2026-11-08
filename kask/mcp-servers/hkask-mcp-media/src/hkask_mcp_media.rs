@@ -217,6 +217,7 @@ hkask_mcp_server::mcp_server!(
 pub mod layer_pass;
 pub mod layer_store;
 pub mod redaction;
+mod sqlite_helpers;
 pub mod track_stitcher;
 pub mod transcript;
 pub mod transcript_export;

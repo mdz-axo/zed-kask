@@ -31,6 +31,8 @@ use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::{DbRow, DbValue};
 use serde::Serialize;
 
+use crate::sqlite_helpers::{count_rows, opt_param, opt_text, table_exists};
+
 /// Schema DDL — idempotent (`IF NOT EXISTS`), run by every public function
 /// so the store is bootstrap-free against any driver (file or in-memory).
 const SCHEMA_SQL: &str = "
@@ -245,15 +247,6 @@ pub fn ensure_schema(driver: &dyn DatabaseDriver) -> Result<(), TranscriptStoreE
     Ok(())
 }
 
-fn table_exists(driver: &dyn DatabaseDriver, table: &str) -> Result<bool, TranscriptStoreError> {
-    Ok(driver
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            &[DbValue::Text(table.to_string())],
-        )?
-        .is_some())
-}
-
 /// Persist a transcript bundle. Multiple transcriptions of the same media
 /// path over time are distinct rows. A bundle without word timings is
 /// stored (text/segments remain usable) with `has_word_timings: false` —
@@ -413,7 +406,12 @@ pub fn count_linked_transcripts(
     gallery_asset_id: &str,
 ) -> Result<usize, TranscriptStoreError> {
     ensure_schema(driver)?;
-    count_rows(driver, "transcripts", "gallery_asset_id", gallery_asset_id)
+    Ok(count_rows(
+        driver,
+        "transcripts",
+        "gallery_asset_id",
+        gallery_asset_id,
+    )?)
 }
 
 /// Delete one transcript aggregate. The database trigger deletes layers and
@@ -439,22 +437,6 @@ pub fn delete_transcript(
         exports_preserved,
         renders_preserved,
     })
-}
-
-fn count_rows(
-    driver: &dyn DatabaseDriver,
-    table: &str,
-    column: &str,
-    value: &str,
-) -> Result<usize, TranscriptStoreError> {
-    let row = driver.query_optional(
-        &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
-        &[DbValue::Text(value.to_string())],
-    )?;
-    match row {
-        Some(row) => Ok(row.get_int(0)? as usize),
-        None => Ok(0),
-    }
 }
 
 pub fn record_export(
@@ -887,22 +869,6 @@ fn layer_record_from_row(row: &DbRow) -> Result<LayerRecord, TranscriptStoreErro
         layer,
         created_at: row.get_str(4)?.to_string(),
     })
-}
-
-/// Optional text column → `DbValue` (Null when absent).
-fn opt_param(value: Option<String>) -> DbValue {
-    value.map(DbValue::Text).unwrap_or(DbValue::Null)
-}
-
-/// Read an optional TEXT column.
-fn opt_text(row: &DbRow, name: &str) -> Result<Option<String>, DbError> {
-    match row.get_named(name)? {
-        DbValue::Null => Ok(None),
-        DbValue::Text(text) => Ok(Some(text.clone())),
-        other => Err(DbError::Database(format!(
-            "column {name}: expected text, got {other:?}"
-        ))),
-    }
 }
 
 #[cfg(test)]

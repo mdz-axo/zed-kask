@@ -34,6 +34,8 @@ use hkask_storage::database::value::{DbRow, DbValue};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::sqlite_helpers::{count_rows, opt_param, opt_text, table_exists};
+
 /// Schema DDL — idempotent (`IF NOT EXISTS`), run by every public function
 /// so the store is bootstrap-free against any driver (file or in-memory).
 const SCHEMA_SQL: &str = "
@@ -386,17 +388,6 @@ pub fn ensure_schema(driver: &dyn DatabaseDriver) -> Result<(), LayerStoreError>
     Ok(())
 }
 
-/// Whether `table` exists (the sqlite_master check, mirroring
-/// `transcript_store::table_exists`).
-fn table_exists(driver: &dyn DatabaseDriver, table: &str) -> Result<bool, LayerStoreError> {
-    Ok(driver
-        .query_optional(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            &[DbValue::Text(table.to_string())],
-        )?
-        .is_some())
-}
-
 /// Whether `table` carries `column` — the idempotent ALTER guard.
 fn column_exists(
     driver: &dyn DatabaseDriver,
@@ -707,22 +698,6 @@ pub fn delete_layer(
     })
 }
 
-fn count_rows(
-    driver: &dyn DatabaseDriver,
-    table: &str,
-    column: &str,
-    value: &str,
-) -> Result<usize, LayerStoreError> {
-    let row = driver.query_optional(
-        &format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1"),
-        &[DbValue::Text(value.to_string())],
-    )?;
-    match row {
-        Some(row) => Ok(row.get_int(0)? as usize),
-        None => Ok(0),
-    }
-}
-
 fn summary_from_row(row: &DbRow) -> Result<MediaLayerSummary, LayerStoreError> {
     let stored_kind = row.get_named("kind")?.as_text()?;
     let kind = MediaLayerKind::parse(stored_kind).ok_or_else(|| {
@@ -786,11 +761,6 @@ fn stored_item_from_row(row: &DbRow) -> Result<StoredMediaLayerItem, LayerStoreE
     })
 }
 
-/// Optional value → `DbValue` (Null when absent).
-fn opt_param(value: Option<String>) -> DbValue {
-    value.map(DbValue::Text).unwrap_or(DbValue::Null)
-}
-
 /// Deserialize a named TEXT column as JSON (`DbRow` exposes `get_json` by
 /// index only; this resolves the name once).
 fn get_json_named<T: serde::de::DeserializeOwned>(row: &DbRow, name: &str) -> Result<T, DbError> {
@@ -804,17 +774,6 @@ fn get_json_named<T: serde::de::DeserializeOwned>(row: &DbRow, name: &str) -> Re
 
 fn opt_real(value: Option<f64>) -> DbValue {
     value.map(DbValue::Real).unwrap_or(DbValue::Null)
-}
-
-/// Read an optional TEXT column.
-fn opt_text(row: &DbRow, name: &str) -> Result<Option<String>, DbError> {
-    match row.get_named(name)? {
-        DbValue::Null => Ok(None),
-        DbValue::Text(text) => Ok(Some(text.clone())),
-        other => Err(DbError::Database(format!(
-            "column {name}: expected text, got {other:?}"
-        ))),
-    }
 }
 
 /// Read an optional REAL column (Null → `None`).
