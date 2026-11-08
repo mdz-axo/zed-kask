@@ -923,8 +923,10 @@ impl HMemStore {
     ///
     /// Used by recall paths that need to load h_mems for a family of
     /// entities (e.g. all `curator:thread:*` entities for keyword
-    /// search). The prefix must not contain SQL LIKE wildcards (`%` or `_`)
-    /// — they would be interpreted as wildcards.
+    /// search). The prefix is matched literally (`_` and `%` are ordinary
+    /// characters) — the same `substr … COLLATE BINARY` predicate the
+    /// delete path enforces, so a listing never over-reports what a prefix
+    /// deletion removes.
     ///
     /// The `limit` caps the number of rows loaded — without it, a session
     /// with thousands of past turns would load all of them into memory on
@@ -934,7 +936,7 @@ impl HMemStore {
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P3\] Motivating: Generative Space — query by entity prefix
-    /// pre:  prefix is non-empty and contains no LIKE wildcards
+    /// pre:  prefix is non-empty
     /// pre:  limit > 0
     /// post: returns up to `limit` h_mems whose entity starts with `prefix`,
     ///       ordered by `valid_from DESC` (most recent first)
@@ -947,11 +949,11 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE entity LIKE ?1 \
+                 WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY \
                  ORDER BY valid_from DESC LIMIT ?2"
             ),
             &[
-                DbValue::Text(format!("{}%", prefix)),
+                DbValue::Text(prefix.to_string()),
                 DbValue::Integer(limit as i64),
             ],
         )
@@ -975,11 +977,12 @@ impl HMemStore {
         self.query_rows(
             &format!(
                 "SELECT {HMEM_COLUMNS} FROM hmems \
-                 WHERE entity LIKE ?1 AND valid_from >= ?2 \
+                 WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY \
+                 AND valid_from >= ?2 \
                  ORDER BY valid_from ASC LIMIT ?3"
             ),
             &[
-                DbValue::Text(format!("{}%", prefix)),
+                DbValue::Text(prefix.to_string()),
                 DbValue::Text(since.to_string()),
                 DbValue::Integer(limit as i64),
             ],
@@ -1191,22 +1194,23 @@ impl HMemStore {
         self.count_rows("SELECT COUNT(*) FROM hmems", &[])
     }
 
-    /// Count h_mems by entity prefix (LIKE 'prefix%').
+    /// Count h_mems by entity prefix (literal prefix match).
     ///
-    /// The counting counterpart of `query_by_entity_prefix` — same prefix
-    /// semantics (must not contain SQL LIKE wildcards), but returns the row
-    /// count without loading rows. Used by the memory-health growth sensor's
-    /// sheddable-tier count (turn storage + goal events).
+    /// The counting counterpart of `query_by_entity_prefix` — the same
+    /// literal `substr … COLLATE BINARY` predicate, so the count never
+    /// over-reports what a prefix deletion removes — but returns the row
+    /// count without loading rows. Used by the memory-health growth
+    /// sensor's sheddable-tier count (turn storage + goal events).
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P3\] Motivating: Generative Space — count by entity prefix
-    /// pre:  prefix is non-empty and contains no LIKE wildcards
+    /// pre:  prefix is non-empty
     /// post: returns the number of h_mems whose entity starts with `prefix`
     #[must_use = "result must be used"]
     pub fn count_by_entity_prefix(&self, prefix: &str) -> Result<usize, HMemError> {
         self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE entity LIKE ?1",
-            &[DbValue::Text(format!("{}%", prefix))],
+            "SELECT COUNT(*) FROM hmems WHERE substr(entity, 1, length(?1)) = ?1 COLLATE BINARY",
+            &[DbValue::Text(prefix.to_string())],
         )
     }
 
@@ -1478,6 +1482,39 @@ struct HMemRow {
 mod tests {
     use super::*;
     use crate::database::sqlite::SqliteDriver;
+
+    /// The prefix reads are LITERAL, not LIKE: `_` and `%` are ordinary
+    /// characters. The pre-fix split (listing LIKE, deletion literal) made
+    /// the purge preview over-report what a delete removes — an entity key
+    /// like `skill_use_issue:` wildcard-matched `skillXuseXissue:` rows.
+    #[test]
+    fn entity_prefix_reads_are_literal_not_like_wildcards() -> anyhow::Result<()> {
+        let store = HMemStore::from_driver(SqliteDriver::in_memory_driver())?;
+        store.insert(&HMem::new(
+            "skill_use_issue:a",
+            "note",
+            serde_json::json!(1),
+            WebID::new(),
+        ))?;
+        store.insert(&HMem::new(
+            "skillXuseXissue:b",
+            "note",
+            serde_json::json!(2),
+            WebID::new(),
+        ))?;
+        let listed = store.query_by_entity_prefix("skill_use_issue:", 10)?;
+        assert_eq!(listed.len(), 1, "literal prefix: no wildcard expansion");
+        assert_eq!(listed[0].entity, "skill_use_issue:a");
+        assert_eq!(store.count_by_entity_prefix("skill_use_issue:")?, 1);
+        // The since-variant shares the literal predicate.
+        let since = store.query_by_entity_prefix_since(
+            "skill_use_issue:",
+            "1970-01-01T00:00:00+00:00",
+            10,
+        )?;
+        assert_eq!(since.len(), 1, "the since-variant stays literal too");
+        Ok(())
+    }
 
     /// The provenance tier round-trips through the store, and the default
     /// is the ceiling's fail-safe direction: an unstamped `HMem::new`
