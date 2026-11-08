@@ -1410,6 +1410,12 @@ fn main() {
                 launch_pass_for_observer.clone(),
                 cx,
             );
+            // zed-kask: D9 (operator ruling 2026-11-08) — the private
+            // leg's provider entry is DERIVED state: the settings
+            // observer syncs it (compute, diff, write only when
+            // drifted — the MCP-runtime env-diff pattern). No button,
+            // no manual registration.
+            kask_bridge::private_inference_supervisor::sync_provider_entry(cx);
         })
         .detach();
 
@@ -2408,16 +2414,13 @@ fn main() {
                     }
                     agent::set_metacognition_provider(Some(std::sync::Arc::new(status_provider)));
 
-                    // zed-kask: D9/M7 — the "downloaded = available"
-                    // half (operator ruling 2026-11-05): when the private
-                    // leg's provider entry is absent, register it once
-                    // here (mint-if-absent token + the M3 emission — the
-                    // settings-store notification registers the provider
-                    // live, so the private model cards appear in the
-                    // agent panel with zero manual steps); when the
-                    // entry exists, only the token is provisioned if the
-                    // slot is empty and the entry is never touched.
-                    kask_bridge::private_inference_supervisor::ensure_registered(cx);
+                    // zed-kask: D9/M7 (operator ruling 2026-11-08) — the
+                    // private leg's provider entry is DERIVED state: the
+                    // FIRST sync runs here (mint-if-absent token + compute,
+                    // diff, write-only-when-drifted), and the settings
+                    // observer re-syncs on every change — no button, no
+                    // manual registration, no hand-edit-wins residue.
+                    kask_bridge::private_inference_supervisor::sync_provider_entry(cx);
 
                     // zed-kask: D8 — algedonic alerts land on the "Algedonic
                     // review" kanban board through the same governed channel
@@ -4101,8 +4104,8 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
         tool: &str,
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
-        use hkask_tool_invoker::InvokeError;
         use hkask_mcp::ToolPort;
+        use hkask_tool_invoker::InvokeError;
         use hkask_types::WebID;
 
         // Accounting identity for the call meter — not a credential.

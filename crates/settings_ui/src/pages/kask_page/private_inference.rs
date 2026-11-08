@@ -156,17 +156,12 @@ pub(crate) fn render_private_inference_page(
             .into_any_element()
     };
 
-    // The Register action — the explicit refresh: mint-if-absent
-    // provisioning, then the M3 emission written through the settings
-    // store (an overwrite — Register is the refresh after host/port
-    // edits). Startup does the same write-only-if-absent
-    // (`ensure_registered`), so this button is the mid-session tool.
-    let register_button = Button::new("kask-private-inference-register", "Register Provider")
-        .style(ButtonStyle::Outlined)
-        .label_size(LabelSize::Small)
-        .on_click(|_, _, cx| {
-            kask_bridge::private_inference_supervisor::register_provider_entry(cx)
-        });
+    // (The Register button is GONE — operator ruling 2026-11-08: the
+    // provider entry is derived state, synced automatically by the
+    // settings observer (compute, diff, write-only-when-drifted).
+    // Editing provider_id/host/port here syncs the entry; the picker's
+    // model list is the endpoint's live /v1/models while a server is
+    // up. No manual registration surface remains.)
 
     // zed-kask: D100 (the review's F4) — the three policy fields the
     // content struct carries that the page lacked: the local-leg set, the
@@ -346,12 +341,12 @@ pub(crate) fn render_private_inference_page(
                          {names}). Every discovered fleet model, carded — a brief plus \
                          its weights joins by a data act (Register or a restart), \
                          never a rebuild. The provider entry and the endpoint token are \
-                         provisioned automatically (a token you enter here wins), so \
-                         the private models appear in the agent panel model selector \
-                         with zero manual steps; Register is the explicit mid-session \
-                         refresh (e.g. after host/port edits, or after dropping a new \
-                         brief). One model holds the RAM at a time — launching another \
-                         swaps (stops the current server, then loads the new one).",
+                         provisioned automatically (a token you enter here wins); the \
+                         provider entry syncs itself from these fields, and while a \
+                         server is up the agent panel's model list for this provider \
+                         is the endpoint's live /v1/models. One model holds the RAM \
+                         at a time — launching another swaps (stops the current server, \
+                         then loads the new one).",
                         fleet.len(),
                     ))
                     .size(LabelSize::Small)
@@ -398,19 +393,21 @@ pub(crate) fn render_private_inference_page(
         .child(
             v_flex()
                 .gap_1()
-                .child(Label::new("Provider Registration"))
+                .child(Label::new("Provider Entry (automatic)"))
                 .child(
                     Label::new(
-                        "Register writes the language_models.openai_compatible entry \
-                         (api_url from the endpoint, one model card per discovered \
-                         fleet model). Idempotent; a refusal (empty provider id, a broken \
-                         brief, a failed discovery) writes nothing and the last-action \
-                         memo names the reason.",
+                        "No registration step: the language_models.openai_compatible \
+                         entry is derived from the provider id and endpoint above \
+                         and syncs automatically when they change (compute, diff, \
+                         write-only-when-drifted — the same pattern the MCP servers \
+                         follow). It carries no model cards: while a server is up, \
+                         the agent panel's model list for this provider is the \
+                         endpoint's live /v1/models; when stopped, the list is \
+                         empty — never a stale snapshot.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
-                )
-                .child(register_button),
+                ),
         )
         .child(Divider::horizontal())
         .child(
@@ -590,14 +587,28 @@ mod tests {
         assert!(!page.contains(&kask_namespace));
     }
 
-    /// The Register action routes through the bridge's registration
-    /// (`register_provider_entry` — mint-if-absent + the emission in
-    /// one home), never a hand-rolled settings write at the page.
+    /// No manual registration surface remains (operator ruling
+    /// 2026-11-08): the register button and its bridge action are
+    /// GONE, the page states the automatic sync, and the page never
+    /// hand-writes the entry (the bridge owns the emission).
     #[test]
-    fn register_action_routes_through_the_bridge_registration() {
+    fn no_register_button_the_entry_syncs_automatically() {
         let page = include_str!("private_inference.rs");
+        // Assembled (the include_str pin's self-match trap): the
+        // forbidden literal cannot appear spelled in this file.
+        let banned_action = ["register_", "provider_entry"].concat();
         assert!(
-            page.contains("kask_bridge::private_inference_supervisor::register_provider_entry")
+            !page.contains(&banned_action),
+            "the manual registration action is gone"
+        );
+        let banned_button = ["kask-private-inference-", "register"].concat();
+        assert!(
+            !page.contains(&banned_button),
+            "the register button is gone"
+        );
+        assert!(
+            page.contains("Provider Entry (automatic)"),
+            "the page states the automatic sync"
         );
         // The banned hand-rolled emission is ASSEMBLED — an include_str
         // pin over the page's own source would match its own forbidden

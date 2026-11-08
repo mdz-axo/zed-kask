@@ -24,7 +24,9 @@ use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::placement::{GpuBackend, PlacementPolicy, probe_backend};
 use hkask_private_inference::local_leg::supervisor::{LaunchConfig, Supervisor};
 
-use crate::private_inference::{credential_url, local_fleet, refresh_local_fleet};
+use crate::private_inference::{
+    apply_provider_entry, credential_url, discover_local_fleet, provider_entry_matches,
+};
 use crate::settings::{KaskPrivateInferenceSettings, KaskSettings};
 
 // The page renders the supervisor's live state through the bridge —
@@ -129,19 +131,6 @@ pub fn refresh_provider_key(api_key: Option<String>, provider_id: &str, cx: &mut
     provider.set_api_key(api_key, cx).detach();
 }
 
-/// Whether the provider entry already exists in the USER settings —
-/// the auto-registration's write-only-if-absent decision (an
-/// operator's hand-configured or hand-edited entry always wins; a
-/// deliberate deletion returns on the next restart — the row is
-/// system-owned, like the seeded templates).
-pub fn entry_present(content: &settings_content::SettingsContent, provider_id: &str) -> bool {
-    content
-        .language_models
-        .as_ref()
-        .and_then(|lm| lm.openai_compatible.as_ref())
-        .is_some_and(|entries| entries.contains_key(provider_id))
-}
-
 /// The served fleet for the page's Launch buttons — the discovered
 /// fleet's cards `(model_id, display_name)`, the same source the
 /// provider entry's model cards render. Pure, so the projection is
@@ -158,12 +147,13 @@ pub fn fleet_cards_from(fleet: &[fleet::FleetModel]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The fleet's cards from the lazily discovered fleet — the page's
-/// render path (a memoized memory read, never a directory scan on
-/// render, D-S6). Discovery failures log and degrade to an empty
-/// list; the action outcomes surface the typed reason.
+/// The fleet's cards, discovered NOW — seed (idempotent) + scan +
+/// decode on every call: the scan IS the refresh, never a memoized
+/// cache (a memoized fleet is a stale fleet). The page's render path
+/// stays cheap (a handful of small TOML reads) and a dropped brief +
+/// weights surface on the next render with no button and no restart.
 pub fn fleet_cards() -> Vec<(String, String)> {
-    match local_fleet() {
+    match discover_local_fleet() {
         Ok(fleet) => fleet_cards_from(&fleet),
         Err(err) => {
             tracing::warn!("private-inference fleet discovery failed: {err}");
@@ -324,7 +314,16 @@ pub fn launch_private_model(model_id: String, cx: &mut App) {
             }
         };
         record_outcome(outcome);
-        cx.update(|cx| cx.refresh_windows());
+        cx.update(|cx| {
+            // The nudge: the registry re-discovers the provider's
+            // models on the settings-observer channel (the same push
+            // the credential-write nudge uses), so the picker's live
+            // endpoint list reflects the launch — no button, no manual
+            // refresh. The entry sync rides the same observer and is a
+            // no-op here (the entry is derived and unchanged).
+            settings::SettingsStore::notify_observers(cx);
+            cx.refresh_windows();
+        });
     })
     .detach();
 }
@@ -346,7 +345,12 @@ pub fn stop_private_model(cx: &mut App) {
             }
         };
         record_outcome(outcome);
-        cx.update(|cx| cx.refresh_windows());
+        cx.update(|cx| {
+            // The same nudge on stop: the picker's live list drops the
+            // stopped model on the registry's re-discovery.
+            settings::SettingsStore::notify_observers(cx);
+            cx.refresh_windows();
+        });
     })
     .detach();
 }
@@ -376,16 +380,19 @@ async fn mint_flow(
     }
 }
 
-/// Register the provider entry — the page's explicit Register action:
-/// mint-if-absent provisioning, then the M3 emission (an overwrite —
-/// Register is the explicit refresh after host/port edits). Idempotent.
-pub fn register_provider_entry(cx: &mut App) {
-    let settings = KaskSettings::get_global(cx).private_inference.clone();
+/// Sync the provider entry — the automatic registration (operator
+/// ruling 2026-11-08: no button, no manual refresh): compute the
+/// desired entry from the CURRENT policy, diff against the settings
+/// content, write only when drifted (the `sync_kask_mcp_runtime_servers`
+/// env-diff pattern), with mint-if-absent token provisioning first.
+/// The startup path and the settings observer call it; a matching
+/// entry is never touched (the no-op-write skip holds), so the
+/// operator's policy rows are the ONE home and the entry is their
+/// projection — never a second home for the endpoint or the fleet.
+pub fn sync_provider_entry(cx: &mut App) {
     let provider = zed_credentials::global(cx);
-    // Register is the explicit refresh: re-discover the fleet so a
-    // dropped brief (and its weights) surfaces now, never a rebuild.
-    refresh_local_fleet();
     cx.spawn(async move |cx: &mut AsyncApp| {
+        let settings = cx.update(|cx| KaskSettings::get_global(cx).private_inference.clone());
         mint_flow(&settings, provider.as_ref(), cx).await;
         cx.update(|cx| {
             SettingsStore::global(cx).update_settings_file(
@@ -397,56 +404,23 @@ pub fn register_provider_entry(cx: &mut App) {
                         .and_then(|kask| kask.private_inference.clone())
                         .map(Into::into)
                         .unwrap_or_default();
-                    let outcome = match local_fleet() {
-                        Ok(fleet) => {
-                            if let Err(err) = crate::private_inference::apply_provider_entry(
-                                settings, &pi, &fleet,
-                            ) {
-                                tracing::warn!("private-inference registration refused: {err}");
-                                Some(err.to_string())
-                            } else {
-                                None
-                            }
-                        }
-                        Err(err) => {
-                            tracing::warn!("private-inference fleet discovery failed: {err}");
-                            Some(err.to_string())
-                        }
-                    };
-                    record_outcome(outcome);
+                    if pi.provider_id.trim().is_empty() {
+                        // An honest misconfiguration, never auto-written under.
+                        return;
+                    }
+                    if provider_entry_matches(settings, &pi) {
+                        return; // The diff: a matching entry is never touched.
+                    }
+                    if let Err(err) = apply_provider_entry(settings, &pi) {
+                        tracing::warn!("private-inference entry sync refused: {err}");
+                        record_outcome(Some(err.to_string()));
+                    }
                 },
             );
+            cx.refresh_windows();
         });
-        cx.update(|cx| cx.refresh_windows());
     })
     .detach();
-}
-
-/// The startup registration — the "downloaded = available" half: when
-/// the provider entry is absent, register it (mint + write, once, at
-/// startup — the settings-store notification registers the provider
-/// live); when it is present, provision the token if the slot is empty
-/// and NEVER touch the entry (an operator's hand-edited row wins).
-/// A deliberate deletion of the entry returns at the next restart: the
-/// row is system-owned, like the seeded templates.
-pub fn ensure_registered(cx: &mut App) {
-    let settings = KaskSettings::get_global(cx).private_inference.clone();
-    if settings.provider_id.trim().is_empty() {
-        // An honest misconfiguration, never auto-written under.
-        return;
-    }
-    let present = SettingsStore::global(cx)
-        .raw_user_settings()
-        .is_some_and(|user| entry_present(&user.content, &settings.provider_id));
-    if present {
-        let provider = zed_credentials::global(cx);
-        cx.spawn(async move |cx: &mut AsyncApp| {
-            mint_flow(&settings, provider.as_ref(), cx).await;
-        })
-        .detach();
-        return;
-    }
-    register_provider_entry(cx);
 }
 
 #[cfg(test)]
@@ -474,14 +448,20 @@ mod tests {
     }
 
     #[test]
-    fn entry_present_decides_write_only_if_absent() {
+    fn the_entry_is_derived_state_present_or_drifted_means_synced() {
+        // The sync's observable (the bridge's `the_sync_diff_writes_only_when_drifted`
+        // pins the diff; this pins the supervisor's read of it through the
+        // same content shape): absent → not matching; under ANOTHER id →
+        // not matching; matching the policy → matching. There is no
+        // "present wins" rule anymore — the entry is derived state.
+        let pi = KaskPrivateInferenceSettings::default();
         let mut content = settings_content::SettingsContent::default();
         assert!(
-            !entry_present(&content, "private-local"),
-            "absent registers"
+            !crate::private_inference::provider_entry_matches(&content, &pi),
+            "absent entries never match — the sync writes them"
         );
 
-        // An entry under ANOTHER id is absent for this one.
+        // An entry under ANOTHER id is still absent for this one.
         content
             .language_models
             .get_or_insert_default()
@@ -489,29 +469,18 @@ mod tests {
             .get_or_insert_default()
             .insert(
                 "other".into(),
-                crate::private_inference::provider_entry(
-                    &KaskPrivateInferenceSettings::default(),
-                    &seeded_fleet(),
-                )
-                .expect("entry builds"),
+                crate::private_inference::provider_entry(&pi),
             );
-        assert!(!entry_present(&content, "private-local"));
+        assert!(!crate::private_inference::provider_entry_matches(
+            &content, &pi
+        ));
 
-        // An existing entry always wins — never overwritten at startup.
-        content
-            .language_models
-            .get_or_insert_default()
-            .openai_compatible
-            .get_or_insert_default()
-            .insert(
-                "private-local".into(),
-                crate::private_inference::provider_entry(
-                    &KaskPrivateInferenceSettings::default(),
-                    &seeded_fleet(),
-                )
-                .expect("entry builds"),
-            );
-        assert!(entry_present(&content, "private-local"));
+        // The policy's own entry → matching (the sync never touches it).
+        crate::private_inference::apply_provider_entry(&mut content, &pi).expect("apply");
+        assert!(
+            crate::private_inference::provider_entry_matches(&content, &pi),
+            "the derived entry matches the policy — the sync skips the write"
+        );
     }
 
     #[gpui::test]
