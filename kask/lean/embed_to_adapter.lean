@@ -9,6 +9,13 @@ entries are all modeled here over bare functions. Core Lean 4 only;
 checked with the project's pinned Lake toolchain via lean_check. (Note:
 `ℕ` notation is Mathlib — this file spells out `Nat`.)
 
+Corrective-phase extension (2026-11-07/08; research run 3d2c6f7b39ec213c
++ the S2/S3 commissioning): the sparse-support preservation corollary
+(T6) — the indicator trigger's explicit support S, the measured S-mass
+margin, and exact preservation of the off-support coordinate subspace
+and the S-sum-zero hyperplane (the constraint the dense trigger made
+behaviorally vacuous, now stated where it disciplines design).
+
 STATED ASSUMPTIONS (project ground rules, prompt §2 rule 3):
 1. `RingF` models a commutative ring — the standard commutative-ring facts,
    each a class field; R and Q are intended models. Idealized
@@ -294,6 +301,134 @@ theorem lora_runtime_semantics (W B A : Nat → Nat → R) (r n : Nat) (s : R)
   simp only [mul_add]
   rw [sumTo_add, e2]
 
+-- ── T6 (corrective phase S3): the sparse-support preservation corollary ──────
+--
+-- For the rank-one edit (stated additively here, W + u ⊗ k; the
+-- subtraction's sign convention lives in the scalar), T3 pins the action
+-- ΔW·x = (k ⬝ x)·u and preservation on {x : k ⬝ x = 0}
+-- (`rank_one_edit_preserves_orthogonal`). This corollary makes the trigger
+-- support explicit for the indicator trigger k = ind S c — the exact form
+-- the corrective phase's explicit column-list path builds (S2's
+-- `Columns` spec: k = indicator(S), the anchor paper's 64-column
+-- mechanism, provenance run 3d2c6f7b39ec213c):
+--
+--  * `indicator_dot`: k ⬝ x = c · Σ_{j∈S} x_j — the edit's injection scalar
+--    is the S-restricted sum of x (the S-mass), scaled by c.
+--  * `rank_one_edit_preserves_off_support`: every activation that vanishes
+--    on S is preserved EXACTLY — the coordinate subspace x|_S = 0 sits
+--    inside the kernel (each term k_j·x_j is zero on S because x_j is,
+--    and off S because k_j is).
+--  * `rank_one_edit_preserves_sum_zero`: the preserved set also contains
+--    the S-sum-zero hyperplane {x : Σ_{j∈S} x_j = 0}. For the indicator
+--    trigger the kernel is AT LEAST this hyperplane; over a
+--    zero-divisor-free ring with u ≠ 0 it is exactly it. The reverse
+--    inclusion needs cancellation and zero-divisor-freeness, which RingF
+--    does not state — reported as interpretation, not formalized here
+--    (the file's own precedent, stated-assumptions note 2).
+--  * `indicator_edit_action`: the whole effect of the edit on any input is
+--    c · (Σ_{j∈S} x_j) · u — the design-margin composition.
+--
+-- THE DESIGN CRITERION (the orthogonality margin, measured not hoped): S
+-- is chosen so non-target activations carry small S-mass; the margin
+-- construct is `sumWhere S x` — the S-restricted sum, measurable on any
+-- capture set. A trigger whose support carries large S-mass on
+-- non-target activations is not orthogonally scoped, whatever its dose
+-- — the E2 boundary (exp_bf786b1696244b22844c567cf9dbebbc, resolved /
+-- rejected: the dense trigger, S = everything, carries the full input
+-- mass of every activation and did not scope at any swept dose). A
+-- support S with near-zero S-mass on non-target activations preserves
+-- them exactly (off S) or to the measured margin (the hyperplane).
+
+/-- The indicator trigger over support `S` (a decidable characteristic
+function on the input coordinates): `c` on the selected columns, `zero`
+off them — k = indicator(S), the explicit column-list path's exact form. -/
+def ind (S : Nat → Bool) (c : R) (j : Nat) : R :=
+  match S j with
+  | true => c
+  | false => zero
+
+/-- The S-restricted sum Σ_{j<n, S j} x_j — the measured S-mass of an
+activation: the margin construct of the design criterion. -/
+def sumWhere (S : Nat → Bool) (x : Nat → R) (n : Nat) : R :=
+  sumTo (fun j => match S j with | true => x j | false => zero) n
+
+theorem ind_true (S : Nat → Bool) (c : R) (j : Nat) (h : S j = true) :
+    ind S c j = c := by
+  simp only [ind, h]
+
+theorem ind_false (S : Nat → Bool) (c : R) (j : Nat) (h : S j = false) :
+    ind S c j = zero := by
+  simp only [ind, h]
+
+/-- A sum whose every term below the bound is zero is zero. -/
+theorem sumTo_zero_terms (f : Nat → R) (n : Nat) :
+    (∀ j, j < n → f j = zero) → sumTo f n = zero := by
+  induction n with
+  | zero => intro _; rfl
+  | succ n ih =>
+      intro h
+      show add (sumTo f n) (f n) = zero
+      rw [ih (fun j hj => h j (by omega)), h n (by omega), add_zero]
+
+/-- `indicator_dot`: for the indicator trigger, the edit's injection scalar
+is the S-mass of x, scaled — k ⬝ x = c · Σ_{j∈S} x_j. -/
+theorem indicator_dot (S : Nat → Bool) (c : R) (x : Nat → R) (n : Nat) :
+    dot (ind S c) x n = mul c (sumWhere S x n) := by
+  show sumTo (fun j => mul (ind S c j) (x j)) n
+       = mul c (sumTo (fun j => match S j with | true => x j | false => zero) n)
+  rw [← sumTo_mul_left c (fun j => match S j with | true => x j | false => zero) n]
+  apply sumTo_congr
+  intro j _
+  cases hS : S j with
+  | true =>
+      rw [ind_true S c j hS]
+  | false =>
+      rw [ind_false S c j hS, zero_mul (x j), mul_zero c]
+
+/-- The off-support coordinate subspace is preserved exactly: every
+activation that vanishes on S is untouched by the edit — the containment
+half of the sparse-support preservation corollary (the design criterion's
+zero-mass case: S-components exactly zero). -/
+theorem rank_one_edit_preserves_off_support (W : Nat → Nat → R) (u : Nat → R)
+    (S : Nat → Bool) (c : R) (x : Nat → R) (n i : Nat)
+    (hx : ∀ j, j < n → S j = true → x j = zero) :
+    matVec (fun i' j => add (W i' j) (outer u (ind S c) i' j)) n x i
+      = matVec W n x i := by
+  have hdot : dot (ind S c) x n = zero := by
+    show sumTo (fun j => mul (ind S c j) (x j)) n = zero
+    apply sumTo_zero_terms
+    intro j hj
+    cases hS : S j with
+    | true =>
+        rw [ind_true S c j hS, hx j hj hS, mul_zero c]
+    | false =>
+        rw [ind_false S c j hS, zero_mul (x j)]
+  exact rank_one_edit_preserves_orthogonal W u (ind S c) x n i hdot
+
+/-- The S-sum-zero hyperplane is preserved: the indicator trigger's kernel
+contains {x : Σ_{j∈S} x_j = 0} — the measured-margin case of the design
+criterion (small S-mass, not necessarily zero per-coordinate). -/
+theorem rank_one_edit_preserves_sum_zero (W : Nat → Nat → R) (u : Nat → R)
+    (S : Nat → Bool) (c : R) (x : Nat → R) (n i : Nat)
+    (h : sumWhere S x n = zero) :
+    matVec (fun i' j => add (W i' j) (outer u (ind S c) i' j)) n x i
+      = matVec W n x i := by
+  have hdot : dot (ind S c) x n = zero := by
+    rw [indicator_dot S c x n, h, mul_zero c]
+  exact rank_one_edit_preserves_orthogonal W u (ind S c) x n i hdot
+
+/-- `indicator_edit_action` — the design-margin composition: the entire
+effect of the indicator-triggered edit on any input is the scalar
+c · (Σ_{j∈S} x_j) injecting u. The margin construct is `sumWhere S x`:
+measured on any capture set, never hoped for. -/
+theorem indicator_edit_action (W : Nat → Nat → R) (u : Nat → R) (S : Nat → Bool)
+    (c : R) (x : Nat → R) (n i : Nat) :
+    matVec (fun i' j => add (W i' j) (outer u (ind S c) i' j)) n x i
+      = add (matVec W n x i) (mul (mul c (sumWhere S x n)) (u i)) := by
+  have hact := rank_one_edit_action W u (ind S c) x n i
+  rw [indicator_dot S c x n] at hact
+  exact hact
+
 end EmbedToAdapter
 
 #print axioms EmbedToAdapter.bridge_linear
@@ -303,3 +438,7 @@ end EmbedToAdapter
 #print axioms EmbedToAdapter.no_linear_edit_is_constant
 #print axioms EmbedToAdapter.lora_runtime_semantics
 #print axioms EmbedToAdapter.sumTo_exchange
+#print axioms EmbedToAdapter.indicator_dot
+#print axioms EmbedToAdapter.rank_one_edit_preserves_off_support
+#print axioms EmbedToAdapter.rank_one_edit_preserves_sum_zero
+#print axioms EmbedToAdapter.indicator_edit_action
