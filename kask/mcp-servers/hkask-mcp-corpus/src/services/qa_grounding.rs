@@ -274,7 +274,7 @@ pub(crate) fn read_grounding_candidates(
 /// reconcile, and entity references must be unique.
 pub(crate) fn read_grounding_chunks(
     path: &str,
-) -> Result<Vec<hkask_types::corpus::TaggedChunk>, McpToolError> {
+) -> Result<(Vec<hkask_types::corpus::TaggedChunk>, usize), McpToolError> {
     let (chunks, dropped_malformed) = read_tagged_chunks(path)?;
     if dropped_malformed > 0 {
         tracing::warn!(
@@ -298,7 +298,11 @@ pub(crate) fn read_grounding_chunks(
             )));
         }
     }
-    Ok(chunks)
+    // The dropped-line count rides out with the chunks (dual-axis review
+    // T6): admission soundness is unchanged (dropped chunks fail citations
+    // as unknown_chunk_ref), but the caller must surface it so an operator
+    // can distinguish a complete source set from a silently truncated one.
+    Ok((chunks, dropped_malformed))
 }
 
 fn chunk_index(
@@ -550,7 +554,7 @@ fn serialize_rows(rows: &[QaGroundingRow]) -> Result<String, McpToolError> {
 /// recorded honestly; only the ingestion gate decides admission.
 pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value, McpToolError> {
     let candidates = read_grounding_candidates(&request.generated_jsonl)?;
-    let chunks = read_grounding_chunks(&request.source_chunks_jsonl)?;
+    let (chunks, dropped_malformed) = read_grounding_chunks(&request.source_chunks_jsonl)?;
     let index = chunk_index(&chunks);
     let rows = candidates
         .iter()
@@ -698,6 +702,7 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
     Ok(json!({
         "protocol": QA_GROUNDING_PROTOCOL,
         "manifest": output_path.join(MANIFEST_FILE).to_string_lossy(),
+        "malformed_source_lines_skipped": dropped_malformed,
         "manifest_sha256": sha256_hex(manifest_body.as_bytes()),
         "grounding_rows": output_path.join(GROUNDING_ROWS_FILE).to_string_lossy(),
         "candidates": manifest.counts.candidates,
@@ -776,7 +781,7 @@ pub(crate) fn verify_grounding_gate(
         )));
     }
 
-    let chunks = read_grounding_chunks(source_chunks_path)?;
+    let (chunks, _) = read_grounding_chunks(source_chunks_path)?;
     let index = chunk_index(&chunks);
     let mut by_row_key = HashMap::with_capacity(artifact_rows.len());
     for row in artifact_rows {
