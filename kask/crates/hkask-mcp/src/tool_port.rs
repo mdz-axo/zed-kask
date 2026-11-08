@@ -1,3 +1,24 @@
+//! Tool dispatch port (dual-axis review Q6: folded from the retired
+//! `hkask-tool-port` crate — the deletion test found the crate's
+//! dyn-compat claim unexercised by any `Arc<dyn ToolPort>` consumer and
+//! `get_tool_info` was dead trait surface; the types live on here, in the
+//! sole implementor).
+//!
+//! # No per-call capability gate
+//!
+//! `invoke` performs **no** per-call capability check. Every production
+//! mint site derives the resource from the same tool name it passes to
+//! `invoke`, so a check would compare a value against itself and deny
+//! nothing. Capability *separation* is enforced at the boundaries that
+//! hold a list the caller cannot choose: the per-request `tool_allowlist`
+//! on the inference IPC dispatch and the per-server MCP env/credential
+//! allowlists.
+//!
+//! The FIDES `ToolTaint` labels also lived here once. They were removed
+//! with the runtime-policy gate they fed: every `ToolInfo` was labelled
+//! `Pure` at its only construction site, so the `Source`→`Sink` block
+//! could not fire.
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -91,9 +112,11 @@ pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 ///
 /// # Dyn-compatibility
 ///
-/// All methods return `Pin<Box<dyn Future + Send + '_>>` (via [`ToolFuture`]) so the trait
-/// is object-safe: `Arc<dyn ToolPort>` works. This eliminates the adapter layers that
-/// previously wrapped `McpRuntime` to satisfy a non-dyn `ToolPort`.
+/// The invoke method returns `Pin<Box<dyn Future + Send + '_>>` (via
+/// [`ToolFuture`]) so the trait stays object-safe. The Q6 fold removed the
+/// dead `get_tool_info` trait arm — every caller (including the trait's own
+/// tests) resolved to `McpRuntime`'s inherent method, so the arm forwarded
+/// nothing; the inherent method remains.
 pub trait ToolPort: Send + Sync {
     /// Invoke a tool on behalf of `agent`.
     ///
@@ -111,16 +134,6 @@ pub trait ToolPort: Send + Sync {
         args: serde_json::Value,
         agent: hkask_types::WebID,
     ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>>;
-
-    /// Get a registered tool's metadata under a specific server. Server-scoped
-    /// by the same identity `invoke` uses: the caller names the server, so tool
-    /// names need only be unique within one server — two servers may expose the
-    /// same name without shadowing each other.
-    fn get_tool_info<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-    ) -> ToolFuture<'a, Option<ToolInfo>>;
 }
 
 /// Canonical tool metadata for a tool the caller already located by server:

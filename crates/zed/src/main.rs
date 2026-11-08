@@ -4102,7 +4102,7 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
         args: serde_json::Value,
     ) -> gpui::Task<Result<String, hkask_tool_invoker::InvokeError>> {
         use hkask_tool_invoker::InvokeError;
-        use hkask_tool_port::ToolPort;
+        use hkask_mcp::ToolPort;
         use hkask_types::WebID;
 
         // Accounting identity for the call meter — not a credential.
@@ -4127,21 +4127,21 @@ impl hkask_tool_invoker::ToolInvoker for PanelToolInvoker {
                 .map_err(|error| {
                     let message = error.to_string();
                     match error {
-                        hkask_tool_port::ToolPortError::Unavailable(_) => {
+                        hkask_mcp::ToolPortError::Unavailable(_) => {
                             InvokeError::Unavailable(message)
                         }
-                        hkask_tool_port::ToolPortError::Interrupted(_) => {
+                        hkask_mcp::ToolPortError::Interrupted(_) => {
                             InvokeError::Interrupted(message)
                         }
                         // The tool's typed kind crosses the seam (SP-03):
                         // panels classify structurally, never by message
                         // text. Pre-dispatch refusals carry no tool kind.
-                        hkask_tool_port::ToolPortError::EnergyBudgetExceeded(_)
-                        | hkask_tool_port::ToolPortError::NotFound(_) => InvokeError::Failed {
+                        hkask_mcp::ToolPortError::EnergyBudgetExceeded(_)
+                        | hkask_mcp::ToolPortError::NotFound(_) => InvokeError::Failed {
                             message,
                             kind: None,
                         },
-                        hkask_tool_port::ToolPortError::InvocationFailed { kind, .. } => {
+                        hkask_mcp::ToolPortError::InvocationFailed { kind, .. } => {
                             InvokeError::Failed { message, kind }
                         }
                     }

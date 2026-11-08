@@ -7676,7 +7676,6 @@ version = "0.40.2"
 dependencies = [
  "futures 0.3.34",
  "hkask-regulation",
- "hkask-tool-port",
  "hkask-types",
  "libc",
  "rmcp",
@@ -7768,7 +7767,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tracing",
  "uuid",
 ]
 
@@ -8120,15 +8118,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
-]
-
-[[package]]
-name = "hkask-tool-port"
-version = "0.40.2"
-dependencies = [
- "hkask-types",
- "serde_json",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -22392,7 +22381,6 @@ dependencies = [
  "hkask-mcp",
  "hkask-regulation",
  "hkask-tool-invoker",
- "hkask-tool-port",
  "hkask-types",
  "http_client",
  "image",

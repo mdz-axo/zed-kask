@@ -6,7 +6,8 @@
 //! The Curator's types must live in a crate that both Curator (hkask-agents)
 //! and Cybernetics (hkask-regulation) can depend on without inversion.
 //!
-//! NOTE: hkask-types must NOT depend on hkask-tool-port (cycle prevention).
+//! NOTE: hkask-types must NOT depend on hkask-mcp (cycle prevention —
+//! the ToolPort dispatch types live there since the Q6 fold).
 //! Methods that need capability tokens (e.g., `issue_consolidation_token`) live
 //! as free functions or extension traits in crates that have the capability dep.
 

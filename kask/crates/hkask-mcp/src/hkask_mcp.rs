@@ -6,12 +6,14 @@
 //! and cybernetic regulation. This is the heavy runtime layer used by the
 //! REPL/API/CLI — MCP server binaries depend on hkask-mcp-server instead.
 //!
-//! `invoke` performs no per-call authorization; see `ToolPort::invoke` and
-//! the tool-port README for why the prior capability gate was removed. Authority lives in the
-//! inference IPC `tool_allowlist` and the per-server MCP env allowlists.
+//! `invoke` performs no per-call authorization; see
+//! `tool_port::ToolPort::invoke` for why the prior capability gate was removed. Authority lives in
+//! the inference IPC `tool_allowlist` and the per-server MCP env allowlists.
 
 pub mod runtime;
+pub mod tool_port;
 
 pub use runtime::{McpRuntime, McpTool, set_spawn_runtime};
+pub use tool_port::{ToolFuture, ToolInfo, ToolPort, ToolPortError};
 
 // ── Canonical MCP server registry ─────────────────────────────────────────

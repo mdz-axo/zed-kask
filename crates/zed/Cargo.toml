@@ -72,7 +72,6 @@ activity_indicator.workspace = true
 agent-client-protocol.workspace = true
 kask_bridge.workspace = true
 hkask-mcp.workspace = true
-hkask-tool-port.workspace = true
 hkask_tool_invoker.workspace = true
 hkask-types.workspace = true
 hkask-keystore.workspace = true

@@ -37,7 +37,7 @@
 //! (`connections.contains_key`) would short-circuit every recovery attempt and
 //! the only route back to a working connection was an operator settings change.
 
-use hkask_tool_port::ToolInfo;
+use crate::tool_port::ToolInfo;
 use hkask_types::process_global::ProcessGlobal;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{Peer, RoleClient, ServiceExt};
@@ -1498,28 +1498,20 @@ impl Default for McpRuntime {
 // `tool_allowlist` on the inference IPC dispatch and the per-server MCP
 // env/credential allowlists.
 
-impl hkask_tool_port::ToolPort for McpRuntime {
+impl crate::tool_port::ToolPort for McpRuntime {
     fn invoke<'a>(
         &'a self,
         server: &'a str,
         tool: &'a str,
         args: Value,
         agent: hkask_types::WebID,
-    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
         // The un-provenanced entry: every non-thread-routed caller (the
         // bridge's skill execution, panel paths, IPC dispatch) keeps the
         // pre-M5 wire form — no `_meta` stamp, which the child read side
         // treats as public (fail-closed for recall). A provenance stamp is
         // a recall-routing signal, never a capability grant.
         self.invoke_governed(server, tool, args, agent, None)
-    }
-
-    fn get_tool_info<'a>(
-        &'a self,
-        server: &'a str,
-        tool: &'a str,
-    ) -> hkask_tool_port::ToolFuture<'a, Option<hkask_tool_port::ToolInfo>> {
-        Box::pin(async move { McpRuntime::get_tool_info(self, server, tool).await })
     }
 }
 
@@ -1540,7 +1532,7 @@ impl McpRuntime {
         args: Value,
         agent: hkask_types::WebID,
         call_provenance: hkask_types::InferenceProvenance,
-    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
         self.invoke_governed(server, tool, args, agent, Some(call_provenance))
     }
 
@@ -1555,7 +1547,7 @@ impl McpRuntime {
         args: Value,
         agent: hkask_types::WebID,
         call_provenance: Option<hkask_types::InferenceProvenance>,
-    ) -> hkask_tool_port::ToolFuture<'a, Result<Value, hkask_tool_port::ToolPortError>> {
+    ) -> crate::tool_port::ToolFuture<'a, Result<Value, crate::tool_port::ToolPortError>> {
         Box::pin(async move {
             // Metering + span emit. Skipped when governance is not configured
             // (tests, lightweight embedders).
@@ -1600,7 +1592,7 @@ impl McpRuntime {
                             ceiling,
                             "runaway-loop breaker tripped - agent exhausted its per-tick call ceiling"
                         );
-                        return Err(hkask_tool_port::ToolPortError::EnergyBudgetExceeded(
+                        return Err(crate::tool_port::ToolPortError::EnergyBudgetExceeded(
                             format!(
                                 "runaway-loop breaker: {agent:?} reached its per-tick ceiling of \
                                  {ceiling} calls (tool {tool}); resets next regulation tick"
@@ -1693,7 +1685,7 @@ impl McpRuntime {
         tool: &str,
         args: Value,
         call_provenance: Option<hkask_types::InferenceProvenance>,
-    ) -> Result<Value, hkask_tool_port::ToolPortError> {
+    ) -> Result<Value, crate::tool_port::ToolPortError> {
         // `args` is owned and unused after this point — move the map out instead
         // of cloning (non-object args collapse to an empty map, matching the prior
         // `as_object().cloned().unwrap_or_default()`).
@@ -1726,7 +1718,7 @@ impl McpRuntime {
                     "Tool dispatch found no live transport - reconnecting and retrying once"
                 );
                 if !self.try_reconnect(server).await {
-                    return Err(hkask_tool_port::ToolPortError::Unavailable(format!(
+                    return Err(crate::tool_port::ToolPortError::Unavailable(format!(
                         "Server '{server}' transport closed and could not be reconnected: {detail}"
                     )));
                 }
@@ -1833,7 +1825,7 @@ impl McpRuntime {
 
     /// The error for a server with no live connection and no working reconnect,
     /// distinguishing an unknown tool from an unavailable server.
-    async fn unavailable_error(&self, server: &str, tool: &str) -> hkask_tool_port::ToolPortError {
+    async fn unavailable_error(&self, server: &str, tool: &str) -> crate::tool_port::ToolPortError {
         // Server-scoped existence check, mirroring dispatch identity: the
         // same tool name registered on another server must not flip this
         // classification between NotFound and Unavailable.
@@ -1843,12 +1835,12 @@ impl McpRuntime {
             .and_then(|e| e.metadata.as_ref())
             .is_some_and(|s| s.tools.iter().any(|t| t.name == tool));
         if !tool_registered {
-            return hkask_tool_port::ToolPortError::NotFound(hkask_types::NotFound {
+            return crate::tool_port::ToolPortError::NotFound(hkask_types::NotFound {
                 entity_type: "tool".to_string(),
                 id: format!("Tool '{tool}' is not registered on server '{server}'"),
             });
         }
-        hkask_tool_port::ToolPortError::Unavailable(format!(
+        crate::tool_port::ToolPortError::Unavailable(format!(
             "Server '{server}' is not connected and could not be restarted — check that the \
              hkask-mcp-{server} binary runs (set HKASK_MCP_{}_BIN to override the path)",
             server.to_uppercase()
@@ -1890,16 +1882,16 @@ fn interrupted_effect_note(server: &str, tool: &str) -> String {
 }
 
 impl DispatchError {
-    fn into_port_error(self) -> hkask_tool_port::ToolPortError {
+    fn into_port_error(self) -> crate::tool_port::ToolPortError {
         match self {
             DispatchError::NotDelivered(detail) => {
-                hkask_tool_port::ToolPortError::Unavailable(format!("not delivered: {detail}"))
+                crate::tool_port::ToolPortError::Unavailable(format!("not delivered: {detail}"))
             }
             DispatchError::Interrupted(detail) => {
-                hkask_tool_port::ToolPortError::Interrupted(detail)
+                crate::tool_port::ToolPortError::Interrupted(detail)
             }
             DispatchError::Failed { detail, kind } => {
-                hkask_tool_port::ToolPortError::InvocationFailed { detail, kind }
+                crate::tool_port::ToolPortError::InvocationFailed { detail, kind }
             }
         }
     }
@@ -2494,8 +2486,8 @@ mod tool_identity_tests {
 #[cfg(test)]
 mod metering_tests {
     use super::*;
+    use crate::tool_port::{ToolPort, ToolPortError};
     use hkask_regulation::{CyberneticsLoop, NoopEventSink, RegulationLedger};
-    use hkask_tool_port::{ToolPort, ToolPortError};
     use hkask_types::WebID;
     use std::sync::Arc;
     use tokio::sync::RwLock;

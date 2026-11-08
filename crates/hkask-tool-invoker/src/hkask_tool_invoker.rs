@@ -13,7 +13,7 @@
 //!    crate (which would invert sane layering: leaf widgets → heavy panel).
 //!
 //!    The `McpRuntime`/`ToolPort` implementation machinery stays in
-//!    `crates/zed/src/main.rs` (it needs `hkask-tool-port` + `hkask-mcp`);
+//!    `crates/zed/src/main.rs` (it needs `hkask-mcp`);
 //!    only the trait + the global accessor live here.
 //!
 //! 2. [`BlockProvenance`] — the payload a rendered widget block carries so the
