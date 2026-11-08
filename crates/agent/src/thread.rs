@@ -6,7 +6,8 @@ use crate::{
     ListAgentsAndModelsTool, ListDirectoryTool, ListMcpToolsTool, MovePathTool, OntoAnchorTool,
     ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool, SandboxedTerminalTool,
     SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ToolPermissionDecision, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    ToolPermissionDecision, UnfoldPlanTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
 use action_log::ActionLog;
@@ -2813,6 +2814,7 @@ impl Thread {
         self.add_tool(LeanCheckTool::new(self.project.clone()));
         self.add_tool(OntoAnchorTool);
         self.add_tool(RenderTemplateTool);
+        self.add_tool(UnfoldPlanTool);
 
         self.add_tool(AskUserTool);
         self.add_tool(GoalCloseTool);

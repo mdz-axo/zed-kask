@@ -422,7 +422,8 @@ impl Default for KaskThreadState {
 /// The host default tools that count as kask instruments for the native-first
 /// classification. Context-server (MCP) tools are classified against the
 /// live registry by the caller; these built-ins are name-matched.
-pub(crate) const KASK_HOST_INSTRUMENT_TOOLS: [&str; 3] = ["lisp_eval", "render_template", "skill"];
+pub(crate) const KASK_HOST_INSTRUMENT_TOOLS: &[&str] =
+    &["lisp_eval", "render_template", "skill", "unfold_plan"];
 
 /// A turn's user prompt under this many words is not substantive work —
 /// acknowledgments and mode toggles must not count as native-first drift.

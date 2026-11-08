@@ -647,6 +647,7 @@ fn agent_profile_tools_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sc
         "skill_bundle",
         "spawn_agent",
         "terminal",
+        "unfold_plan",
         "write_file",
     ];
     let properties = tool_names

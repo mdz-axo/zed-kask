@@ -1319,6 +1319,7 @@
           "lean_check": true,
           "onto_anchor": true,
           "render_template": true,
+          "unfold_plan": true,
           "kanban_goal_close": true,
           "kanban_goal_correct_outcome": true,
           "write_file": true,
@@ -1358,6 +1359,7 @@
           "lean_check": false,
           "onto_anchor": true,
           "render_template": true,
+          "unfold_plan": true,
         },
       },
       "minimal": {

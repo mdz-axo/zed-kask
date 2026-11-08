@@ -1431,6 +1431,8 @@ mod tests {
             "read_file",
             "rename_symbol",
             "thinking",
+            // Deterministic planner over an unfolded plan; no permission checks.
+            "unfold_plan",
             // streaming_edit_file uses "edit_file" for permission lookups,
             // so its rules are configured under the edit_file entry.
             "streaming_edit_file",

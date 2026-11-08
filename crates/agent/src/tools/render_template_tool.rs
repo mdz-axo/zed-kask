@@ -41,7 +41,28 @@ pub struct RenderTemplateToolInput {
     )]
     #[schemars(schema_with = "hkask_types::tool_schema::json_text_schema")]
     pub context: std::collections::HashMap<String, serde_json::Value>,
+    /// Optional path to a JSON file holding the context object. Use this when
+    /// the context exceeds what fits in a single tool-call argument: write the
+    /// object to a file and pass its path instead of inlining the JSON text.
+    /// The file must contain a single JSON object document. When both this and
+    /// `context` are supplied, the inline `context` is merged over the file's
+    /// object (inline values win). Bounded by `MAX_CONTEXT_FILE_BYTES`.
+    ///
+    /// Anchoring: the model's single-response output budget is the binding
+    /// limit, so a large context cannot cross the model boundary as one
+    /// argument — a truncated inline `context` fails with
+    /// `expected complete JSON text: EOF while parsing ...` and is never
+    /// retried (`ToolCallTruncated` is not retried by design). The file
+    /// reference is the same pattern the corpus review uses for large
+    /// payloads (`.agents/skills/mcp-tool-review/SKILL.md`: write in chunks,
+    /// merge, validate — no truncation risk), applied at the tool boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_path: Option<String>,
 }
+
+/// Upper bound on a context file loaded through `context_path`, so a
+/// mis-specified path cannot pull an unbounded file into the render.
+const MAX_CONTEXT_FILE_BYTES: usize = 1024 * 1024;
 
 fn deserialize_template_ref_field<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
@@ -134,10 +155,20 @@ pub fn render_registry_template(input: &RenderTemplateToolInput) -> Result<Strin
             .to_string()
     })?;
 
+    // A large context crosses the model boundary as a file reference rather
+    // than one tool-call argument: load it, then let inline values win.
+    let mut context = input.context.clone();
+    if let Some(path) = &input.context_path {
+        let file_context = load_context_file(path)?;
+        for (key, value) in file_context {
+            context.entry(key).or_insert(value);
+        }
+    }
+
     // Resolve the template file, trying ref as-is, then .j2.
     let content = read_template_file(base_path, &input.template_ref)?;
 
-    validate_contract_inputs(&content, &input.context).map_err(|error| {
+    validate_contract_inputs(&content, &context).map_err(|error| {
         format!(
             "Template contract validation failed for '{}': {error}",
             input.template_ref
@@ -152,8 +183,38 @@ pub fn render_registry_template(input: &RenderTemplateToolInput) -> Result<Strin
     // render_str environment has no templates, so includes fail.
     let mut env = minijinja::Environment::new();
     bind_registry_loader(&mut env, base_path);
-    env.render_str(&template_body, &input.context)
+    env.render_str(&template_body, &context)
         .map_err(|e| format!("Template rendering failed: {e}"))
+}
+
+/// Load a context object from a JSON file (the `context_path` contract).
+///
+/// The file must hold one JSON object document; anything else is rejected
+/// before rendering. The read is size-bounded so a mis-specified path cannot
+/// pull an unbounded file into the render.
+fn load_context_file(
+    path: &str,
+) -> Result<std::collections::HashMap<String, serde_json::Value>, String> {
+    let metadata =
+        std::fs::metadata(path).map_err(|error| format!("context_path '{path}': {error}"))?;
+    if !metadata.is_file() {
+        return Err(format!("context_path '{path}' is not a regular file"));
+    }
+    if metadata.len() > MAX_CONTEXT_FILE_BYTES as u64 {
+        return Err(format!(
+            "context_path '{path}' is {} bytes, over the {} byte bound",
+            metadata.len(),
+            MAX_CONTEXT_FILE_BYTES
+        ));
+    }
+    let text =
+        std::fs::read_to_string(path).map_err(|error| format!("context_path '{path}': {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| format!("context_path '{path}': {error}"))?;
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("context_path '{path}' must contain a JSON object document"))?;
+    Ok(object.clone().into_iter().collect())
 }
 
 /// Read a template file from the registry, trying ref as-is, then `.j2`.
@@ -1381,6 +1442,87 @@ mod tests {
             .expect_err("invalid context must be rejected");
             assert!(error.to_string().contains("context"));
         }
+    }
+
+    #[test]
+    fn context_path_loads_a_json_object_file() {
+        let dir =
+            std::env::temp_dir().join(format!("render-template-context-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("context.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string(&serde_json::json!({"task": "from-file", "items": [1, 2]}))
+                .expect("serialize context"),
+        )
+        .expect("write context file");
+        let input: RenderTemplateToolInput = serde_json::from_value(serde_json::json!({
+            "template_ref": "essentialist/essentialist-flow",
+            "context_path": path.to_string_lossy().into_owned(),
+        }))
+        .expect("context_path input");
+        assert!(input.context.is_empty(), "inline context stays empty");
+        let loaded = load_context_file(&input.context_path.clone().unwrap()).expect("load");
+        assert_eq!(loaded["task"], "from-file");
+        assert_eq!(loaded["items"], serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn context_path_rejects_non_object_and_missing_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "render-template-context-bad-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let array_path = dir.join("array.json");
+        std::fs::write(&array_path, "[1,2]").expect("write array file");
+        assert!(
+            load_context_file(&array_path.to_string_lossy()).is_err(),
+            "non-object context file must be rejected"
+        );
+        assert!(
+            load_context_file(&dir.join("missing.json").to_string_lossy()).is_err(),
+            "missing context file must be rejected"
+        );
+    }
+
+    #[test]
+    fn context_path_renders_a_real_template_end_to_end() {
+        // The original failure: a context payload large enough that the model
+        // could not emit it as one tool-call argument. Through context_path the
+        // same payload renders without crossing the model boundary inline.
+        let dir = std::env::temp_dir().join(format!(
+            "render-template-context-e2e-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("context.json");
+        let large_value = "x".repeat(64 * 1024);
+        let context = serde_json::json!({
+            "prompt": large_value,
+            "prompt_type": "agent-task",
+            "effort_tier": "medium",
+            "risks": [],
+            "checkability_map": [],
+            "task": "large-context render",
+            "unfold_mode_resolved": "task_graph",
+            "finer_pico_framing": {},
+            "reference_models": [],
+            "prior_enhanced_prompt": "",
+            "critic_feedback": []
+        });
+        std::fs::write(&path, serde_json::to_string(&context).expect("serialize")).expect("write");
+        crate::set_template_base_path(registry_template_base());
+        let input: RenderTemplateToolInput = serde_json::from_value(serde_json::json!({
+            "template_ref": "prompt-enhance/enhance-rewrite",
+            "context_path": path.to_string_lossy().into_owned(),
+        }))
+        .expect("context_path input");
+        let rendered = render_registry_template(&input).expect("large context renders");
+        assert!(
+            rendered.contains("large-context render"),
+            "rendered prompt must carry the file-supplied task"
+        );
     }
 
     #[test]
