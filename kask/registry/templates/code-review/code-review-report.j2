@@ -1,4 +1,4 @@
-{# goal: Produce the verdict + named structural remedies + coverage honesty + decoupling disclosure + lessons_learned/next_review_focus loop closure with durable lessons routed to curator memory and the .rules proposal path. Verdict driven by Blocker presence, not nit count. Never a bare "LGTM". #}
+{# goal: Produce the verdict + named structural remedies + coverage honesty + decoupling disclosure + lessons_learned/next_review_focus loop closure with durable lessons routed to curator memory and the code-first-gated .rules proposal path. Verdict driven by Blocker presence, not nit count. Never a bare "LGTM". #}
 [inference]
 contract:
   input:
@@ -138,7 +138,13 @@ Emit:
   memory tool (memory_insert is the curator's reflective instrument, never a
   skill write path). A lesson naming a RECURRING defect class or a repo trap
   routes to the `.rules` proposal path in the change report — never edit
-  `.rules` inline. One-off lessons stay in prior_review_handoff only.
+  `.rules` inline — and the proposal must pass the code-first test: already
+  enforced or taught by code (a gate, a check script, a teaching error, the
+  compiler) → no proposal; a feasible code fix (make the error teach, add
+  the pin) → propose the code change; a code defect → fix it. A rule is
+  proposed only for genuine agent-side discipline no mechanical enforcement
+  can see — shell composition, process ordering, semantic relations between
+  commands. One-off lessons stay in prior_review_handoff only.
 - **next_review_focus**: what the next pass should concentrate on; EMPTY string
   if the review converged clean (zero open Blockers).
 
@@ -186,7 +192,10 @@ adjudicate's `blocker_delta` baseline is typed and emitted, never inferred.
   author-review is disclosed as a self-check, never presented as independent.
 - lessons_learned must be concrete and derived from this review's findings, not
   generic platitudes; recurring defect classes route to curator memory / the
-  .rules proposal path (never edit `.rules` inline).
+  .rules proposal path (never edit `.rules` inline; every rule proposal passes
+  the code-first test — in the code → no proposal, belongs in the code →
+  propose the code change, a bug → fix it; rules only for agent-side
+  discipline no mechanical enforcement can see).
 - next_review_focus is empty when the review converged clean (zero open
   Blockers).
 - Emit prior_review_handoff: blockers as an integer count — the typed

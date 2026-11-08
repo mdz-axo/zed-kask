@@ -69,7 +69,11 @@ For each reification candidate, determine the reification target:
 2. **Create template** — the pattern is a prompt structure or output format.
    - Propose a .j2 template that captures the structure.
 
-3. **Create rule** — the pattern is a simple constraint or guideline.
+3. **Create rule** — only for genuine agent-side discipline no mechanical
+   enforcement can see, and only after the code-first test: already enforced
+   or taught by code → no proposal; a feasible code fix (a teaching error,
+   a pin, a gate) → propose the code change; a code defect → fix it. If it
+   passes:
    - Propose a `.rules` entry or system prompt addition.
 
 ### Post-reification hygiene (forgetting — NOT learning)

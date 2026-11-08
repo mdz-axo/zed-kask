@@ -51,11 +51,13 @@ Surfaces in scope: {{ surface_map.priority_surfaces | length }}
    cover (dynamic attack execution, runtime behavior, surfaces outside the
    target). Never a bare clean bill.
 4. One ratchet proposal per confirmed finding at should_fix or above:
-   - `rules_trap`: one actionable constraint (non-obvious, repeatedly
-     encountered, specific enough to act on)
    - `check_script`: a `kask/scripts/check-*.sh` gate with its selftest
-     fixture (the positive-violation pattern)
+     fixture (the positive-violation pattern) — the load-bearing component
    - `test_pin`: the test that pins the fixed behavior
+   - `rules_trap`: only when the code-first test passes — genuine
+     agent-side discipline no mechanical enforcement can see; when the
+     check script already enforces the behavior, emit `null` with the
+     one-line reason (a rule would be redundant)
 
    All proposals are pending operator ratification — this skill never writes
    them.
@@ -74,7 +76,7 @@ Produce `report` as JSON:
     "coverage_honesty": { "checked": ["..."], "not_checked": ["..."], "residual_risk": "..." },
     "defense_layer_coverage": "carried from adjudicated",
     "ratchet_proposals": [
-      { "finding_id": "...", "rules_trap": "...", "check_script": "...", "test_pin": "..." }
+      { "finding_id": "...", "rules_trap": "... or null with the reason when the check script already enforces it", "check_script": "...", "test_pin": "..." }
     ],
     "limitations": "..."
   }

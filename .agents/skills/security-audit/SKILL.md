@@ -1,6 +1,6 @@
 ---
 name: security-audit
-description: "Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A, with deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop that proposes ratchet entries (.rules traps + selftest-pinned check scripts + regression tests) for operator ratification."
+description: "Target-scoped deep security audit of zed-kask code — a change, crate, MCP server, or named surface — against the OWASP LLM Top-10 (2025), MITRE ATLAS v5.1 and NIST SSDF SP 800-218A, with deterministic evidence sweeps first, falsifier-backed findings citing file:line with verbatim evidence, defense-layer coverage verdicts, coverage honesty, and a hardening loop that proposes ratchet entries (selftest-pinned check scripts + regression tests, with .rules traps only where the code-first test passes — genuine agent-side discipline no mechanical enforcement can see) for operator ratification."
 audience: platform
 ---
 
@@ -205,9 +205,12 @@ SA-2 false → the run is INVALID: re-run the harness for the missing surface cl
    severity, coverage honesty (`checked` / `not_checked` / `residual_risk` —
    never a bare clean bill), defense-layer coverage verdicts, and one ratchet
    proposal per confirmed finding at severity should-fix or above — each
-   proposal names the `.rules` trap, the selftest-pinned check script, and the
-   test pin. Proposals are pending operator ratification in the algedonic
-   review.
+   proposal names the selftest-pinned check script and the test pin (the
+   mechanical ratchet); a `.rules` trap is added only when the code-first test
+   passes — the behavior is genuine agent-side discipline no mechanical
+   enforcement can see (when the check script already enforces the behavior,
+   a rule is redundant and is not proposed). Proposals are pending operator
+   ratification in the algedonic review.
 3. If invoked as `code-review`'s delegate, return the findings as raw
    material to the caller.
 
