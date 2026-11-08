@@ -134,7 +134,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
 // The shared dual-axis machinery (the both-axes combinator, the central
 // annotate stamp, and the both-directions totality tests) comes from the
 // framework crate's `dual_axis_annotate!` macro — one definition across
-// the nine stamped servers instead of a copy per server.
+// the eight stamped servers instead of a copy per server.
 
 hkask_mcp_server::dual_axis_annotate!(
     tool_to_pko,
@@ -152,7 +152,7 @@ mod tests {
     // The both-directions totality tests (coverage + the phantom-name
     // reverse scan) are emitted by the framework crate's
     // `dual_axis_annotate!` macro above (its own `dual_axis_tests`
-    // module) — one definition across the nine stamped servers, including
+    // module) — one definition across the eight stamped servers, including
     // its own generated TOOL_NAMES include. This module keeps the
     // scenarios-specific tests.
 

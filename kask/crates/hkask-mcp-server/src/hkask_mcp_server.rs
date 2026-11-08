@@ -118,7 +118,7 @@ macro_rules! tool_surface_pin {
 /// mapping table — the P5.4 scaffold every `ontology.rs` repeats
 /// (the `tool_surface_pin!` precedent).
 ///
-/// Nine servers carry the same invariant code: the `tool_to_dual_axis`
+/// Eight servers carry the same invariant code: the `tool_to_dual_axis`
 /// combinator, the `annotate` stamp, and the both-directions totality
 /// test. Repeating it per server formed ~19 duplication clusters
 /// (measured by the ratchet after the A-3 rollout) — this macro collapses

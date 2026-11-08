@@ -55,7 +55,7 @@ pub struct KaskSettings {
     /// Kask-wide general configuration: global inference concurrency + batching.
     pub general: KaskGeneralSettings,
 
-    /// MCP server configuration — which of the 10 built-in servers to load.
+    /// MCP server configuration — which of the 8 built-in servers to load.
     pub mcp: KaskMcpSettings,
 
     /// Curator configuration.
