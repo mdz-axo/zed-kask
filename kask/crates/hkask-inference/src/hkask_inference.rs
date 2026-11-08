@@ -155,6 +155,17 @@ async fn connect_bridge(label: &str) -> Option<InferenceIpcClient> {
 /// MCP server starts before the IPC socket exists and never gets
 /// restarted with it.
 #[must_use]
+/// Resolve the shared inference port for an MCP server's `run()` entry.
+///
+/// The one canonical explanation of the startup sequencing (the
+/// near-verbatim copies at server call sites collapsed here,
+/// 2026-11-07): the call is async and MUST be awaited before entering
+/// the sync server-construction closure `run_server` takes — the closure
+/// is sync, so the await cannot happen inside it. The returned
+/// `LazyInferencePort` defers the bridge connection itself to each
+/// inference call (it re-tries `InferenceIpcClient::from_env()` per
+/// call), so resolution here is cheap and an absent bridge surfaces at
+/// call time, not at startup.
 pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::InferencePort> {
     std::sync::Arc::new(LazyInferencePort::new()) as std::sync::Arc<dyn hkask_types::InferencePort>
 }

@@ -1802,15 +1802,13 @@ pub(crate) async fn embed_for_semantic_recall(
 }
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Construct the inference port before entering the sync server-
-    // construction closure. `resolve_inference_port` is async (it constructs
-    // a `LazyInferencePort` — the bridge connection itself is deferred to
-    // each `embed()` call, which re-tries `InferenceIpcClient::from_env()`);
-    // the closure passed to `run_server` is sync, so the await must happen
-    // here. Used by `curator_semantic_search` and `curator_consult` to embed
-    // recall queries, by the insert paths (`memory_insert`,
-    // `curator_report_skill_use_issue`) to embed stored memories, and by
-    // the distillation timer to embed lessons.
+    // The async resolution must happen before the sync server-construction
+    // closure — the canonical explanation lives on
+    // `hkask_inference::resolve_inference_port` (the near-verbatim copies
+    // collapsed there, 2026-11-07). Used by `curator_semantic_search` and
+    // `curator_consult` to embed recall queries, by the insert paths
+    // (`memory_insert`, `curator_report_skill_use_issue`) to embed stored
+    // memories, and by the distillation timer to embed lessons.
     let inference_port = hkask_inference::resolve_inference_port().await;
     hkask_mcp_server::run_server(
         SERVER_NAME,

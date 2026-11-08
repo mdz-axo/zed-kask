@@ -978,12 +978,10 @@ const HTTP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 const HTTP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
-    // Construct the inference port before entering the sync server-
-    // construction closure. `resolve_inference_port` is async (it constructs
-    // a `LazyInferencePort` — the bridge connection itself is deferred to
-    // each `generate()` call, which re-tries `InferenceIpcClient::from_env()`);
-    // the closure passed to `run_server` is sync, so the await must happen
-    // here. Used by the EQM scoring tool.
+    // The async resolution must happen before the sync server-construction
+    // closure — the canonical explanation lives on
+    // `hkask_inference::resolve_inference_port` (the near-verbatim copies
+    // collapsed there, 2026-11-07). Used by the EQM scoring tool.
     let inference_port = hkask_inference::resolve_inference_port().await;
 
     // A malformed numeric env var warns and falls back through the shared
