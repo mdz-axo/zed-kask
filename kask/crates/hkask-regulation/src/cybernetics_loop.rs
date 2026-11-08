@@ -503,7 +503,7 @@ impl CyberneticsLoop {
 
     /// Meter one governed tool call, auto-registering an unknown agent at the
     /// default runaway ceiling. The tool-dispatch path uses this rather than
-    /// [`Self::charge_call`] — see [`CallCapManager::charge_metered`].
+    /// [`Self::charge_call_metered`] — see [`CallCapManager::charge_metered`].
     ///
     /// expect: "The system enforces energy homeostasis through energy budget membrane regulation"
     pub async fn charge_call_metered(&self, agent: &WebID) -> CallMeterOutcome {

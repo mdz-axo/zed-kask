@@ -59,9 +59,6 @@ pub(crate) const DEFAULT_TOOL_RELIABILITY_THRESHOLD: f64 = 0.80;
 /// misconfiguration; recalibrate once the baseline is known.
 pub(crate) const DEFAULT_NATIVE_FIRST_RATE_THRESHOLD: f64 = 0.50;
 
-/// Default maximum regulation cycles retained for history queries.
-///
-/// Bounds memory growth in long-running sessions. An operator running a
 /// Default maximum skill feedback spans retained per skill+phase.
 ///
 /// Bounds memory growth for skill self-improvement signal storage.

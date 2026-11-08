@@ -12,7 +12,7 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 | `metacognition` | Curator's sense→compare→compute→act governance loop |
 | `set_points` | Loop 6 set-points config & loaders |
 | `sensor_provider` | Pluggable metric sensors (Fermi Extractor pattern) — public for cross-loop registration |
-| `types::loops` | `CurationInput`, `ExperienceClassification`, `RegulatoryAction` |
+| `loops` | The four-module LoopView assembly (`loops::core`, `loops::signals`, `loops::actions`) |
 
 ## Key Types
 
@@ -31,7 +31,7 @@ pre-execution check it could apply was an unconfigured rate limit. The live tool
 gates are `McpRuntime::invoke` (call metering) and the per-agent `mcp_tools`
 allowlist.
 
-The OCAP-gated tool invocation membrane (`McpRuntime::invoke`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `CallCapManager`, and `ToolStats` primitives via the call-charge pattern (`CyberneticsLoop::charge_call`).
+The metered tool invocation membrane (`McpRuntime::invoke`) lives in `hkask-mcp`; it consumes this crate's `CyberneticLoop` and `CallCapManager` via the call-charge pattern (`CyberneticLoop::charge_call_metered`). `invoke` performs no per-call authorization (P4.2) — authority lives at the parent grant, the per-request `tool_allowlist`, and the per-server env allowlists.
 
 ## Outcome threshold configuration
 
@@ -45,5 +45,4 @@ The default warning/critical success-rate thresholds remain 0.50/0.25.
 ## Dependencies
 
 - `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError, `InferencePort`)
-- `hkask-tool-port` — OCAP delegation tokens
 - `tokio`, `tracing`, `serde`, `chrono`

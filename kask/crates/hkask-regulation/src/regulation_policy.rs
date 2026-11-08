@@ -378,7 +378,6 @@ impl RegulationPolicy {
     }
 }
 
-/// Extract (deficit, threshold) from a `RegulationData` variant.
 /// Extract the metric value and threshold from a `RegulationData` variant.
 ///
 /// Returns `Some((value, threshold))` for variants that carry a quantitative
