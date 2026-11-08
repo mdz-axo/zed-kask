@@ -564,12 +564,22 @@ impl ResearchServer {
             let output = serde_json::to_value(&search_output)
                 .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }));
 
-            // Cache only clean responses. A compound carrying provider
-            // failures — in single-provider mode that is an empty result
-            // plus a failure record — must not be cached: a transient
-            // provider failure would otherwise be replayed as a
-            // "successful" empty result for the full cache TTL.
-            if compound.providers_failed.is_empty() {
+            // Cache only clean, PUBLIC-provenance responses (operator
+            // ruling 2026-11-07, dual-axis review Q4): a private call's
+            // deep-search output is reordered by the private leg's LOCAL
+            // rerank model — caching it would serve a private thread's
+            // model-mediated ordering to a later same-query caller within
+            // the TTL (the D100 known-interaction class; the write gate
+            // removes the blemish — private deep searches are rare and the
+            // rerank is loopback, so the re-run cost is one provider
+            // search). A compound carrying provider failures — in
+            // single-provider mode that is an empty result plus a failure
+            // record — must not be cached either: a transient provider
+            // failure would otherwise be replayed as a "successful" empty
+            // result for the full cache TTL.
+            let private_call = hkask_mcp_server::current_call_provenance()
+                == hkask_types::InferenceProvenance::PrivateInference;
+            if compound.providers_failed.is_empty() && !private_call {
                 self.cache.insert(ckey, output.clone()).await;
             }
 
@@ -2477,4 +2487,28 @@ mod tool_surface_tests {
         27,
         tool_surface_is_exactly_27_registered_tools,
     );
+}
+
+/// Source pin (the D31 register style): the response-cache write is
+/// provenance-gated — a private call's deep-search output (reordered by
+/// the private leg's local rerank) must never populate the shared cache
+/// (dual-axis review Q4; operator ruling 2026-11-07).
+#[cfg(test)]
+mod provenance_gate_tests {
+    #[test]
+    fn the_cache_write_is_provenance_gated() {
+        let source = include_str!("hkask_mcp_research.rs");
+        let production = source
+            .split("mod tool_surface_tests")
+            .next()
+            .unwrap_or(source);
+        assert!(
+            production.contains("current_call_provenance()"),
+            "the cache write must read the call provenance"
+        );
+        assert!(
+            production.contains("&& !private_call"),
+            "the cache write must be gated on a public call context"
+        );
+    }
 }
