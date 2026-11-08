@@ -200,6 +200,18 @@ enum DatabaseAccess {
     ReadOnly,
 }
 
+/// The journal sidecar that marks a possibly-live database (`-wal`,
+/// `-shm`, or a hot `-journal`) — the immutable read-only open assumes
+/// the file never changes, so its presence is warned, not refused
+/// (operator ruling 2026-11-07, dual-axis review T4; the sealed federated
+/// sources the open is designed for are never written while open).
+fn journal_sidecar(path: &str) -> Option<String> {
+    ["-wal", "-shm", "-journal"]
+        .iter()
+        .map(|suffix| format!("{path}{suffix}"))
+        .find(|sidecar| std::path::Path::new(sidecar).exists())
+}
+
 fn immutable_sqlite_uri(path: &str) -> String {
     let mut encoded = String::with_capacity(path.len());
     for byte in path.bytes() {
@@ -332,6 +344,19 @@ impl Database {
     /// initialization. `sqlite_pool()` uses SQLite read-only flags and
     /// `PRAGMA query_only`, so write methods fail at the storage boundary.
     pub fn open_read_only(path: &str, passphrase: &str) -> Result<Self, DatabaseError> {
+        // A live database carries a journal sidecar — the immutable=1 open
+        // below assumes the file never changes and can return stale reads
+        // against an active writer. Warn (do not refuse) when the path
+        // looks live (operator ruling 2026-11-07, dual-axis review T4).
+        if let Some(sidecar) = journal_sidecar(path) {
+            tracing::warn!(
+                target: "reg.storage",
+                path,
+                sidecar,
+                "read-only immutable open on a database with a journal sidecar — \
+                 the file may be live; reads assume it never changes"
+            );
+        }
         Self::open_impl(path, passphrase, None, DatabaseAccess::ReadOnly)
     }
 
@@ -905,6 +930,37 @@ pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The live-DB detection the sidecar warn rides on (dual-axis review
+    /// T4): a journal sidecar names the file; a clean path names none —
+    /// and the warn exists in the production half (source pin, the D31
+    /// register style).
+    #[test]
+    fn journal_sidecar_detection_names_the_live_marker() {
+        let directory = tempfile::tempdir().expect("temporary database");
+        let path = directory
+            .path()
+            .join("ro-warn.db")
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            journal_sidecar(&path).is_none(),
+            "a clean path has no sidecar"
+        );
+        std::fs::write(format!("{path}-wal"), b"wal-bytes").expect("sidecar");
+        assert_eq!(
+            journal_sidecar(&path),
+            Some(format!("{path}-wal")),
+            "the -wal sidecar is detected"
+        );
+
+        let source = include_str!("connection.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        assert!(
+            production.contains("journal sidecar"),
+            "the live-database warn must stay in the production half"
+        );
+    }
 
     /// expect: "The SQLite connection retains its maintenance lease after the pool manager is gone" [P1]
     #[test]
