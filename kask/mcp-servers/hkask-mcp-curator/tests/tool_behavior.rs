@@ -910,7 +910,15 @@ async fn memory_insert_inherits_the_evidence_inference_provenance() {
         .store(private_evidence)
         .expect("seed private evidence");
 
-    let response = insert_citing_seed(&server, private_id).await;
+    // Q2 (operator ruling 2026-11-07): citing private-marked evidence
+    // belongs to a PRIVATE call context — the direct-ID provenance
+    // boundary refuses it from a public one, matching the flow this pin
+    // models (a private thread's ingest).
+    let response = hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        insert_citing_seed(&server, private_id),
+    )
+    .await;
     assert_eq!(
         response["inserted"].as_bool(),
         Some(true),
@@ -959,6 +967,68 @@ async fn memory_insert_inherits_the_evidence_inference_provenance() {
 }
 
 // ── M5: the recall/export filters (FR-4's read side, falsifier (b)) ───────
+
+/// M5 mutation-surface extension (operator ruling 2026-11-07, dual-axis
+/// review Q2): a public call context naming a private-marked h_mem ID is
+/// refused at the provenance boundary — never an existence oracle with
+/// read/write/delete power; a private context flows unchanged.
+#[tokio::test]
+async fn public_contexts_cannot_mutate_private_marked_rows() {
+    let (server, memory) = make_server_with_embeddings();
+    let private = hkask_storage::HMem::new(
+        "curator:thread:m5-mutation",
+        "private",
+        serde_json::Value::String("a private turn".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    let private_id = private.id;
+    memory.store(private).expect("seed private row");
+
+    // Public context (the default): update is refused typed.
+    let refused = server
+        .memory_update(Parameters(MemoryUpdateRequest {
+            h_mem_id: private_id.to_string(),
+            new_confidence: 0.9,
+            new_value: None,
+            reason: Some("public mutation probe".to_string()),
+        }))
+        .await
+        .expect_err("a public context cannot update a private-marked row");
+    assert!(
+        refused.to_string().contains("provenance boundary"),
+        "the refusal names the boundary: {refused}"
+    );
+
+    // Public context: contradiction-forget is refused too.
+    let refused = server
+        .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
+            target_h_mem_id: private_id.to_string(),
+            h_mem_ids: vec![private_id.to_string()],
+            strategy: "forget".to_string(),
+            new_confidence: None,
+            reason: "public forget probe".to_string(),
+        }))
+        .await
+        .expect_err("a public context cannot delete a private-marked row");
+    assert!(
+        refused.to_string().contains("provenance boundary"),
+        "the refusal names the boundary: {refused}"
+    );
+
+    // Private context (the positive control): the same update flows.
+    hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.memory_update(Parameters(MemoryUpdateRequest {
+            h_mem_id: private_id.to_string(),
+            new_confidence: 0.9,
+            new_value: None,
+            reason: Some("private mutation control".to_string()),
+        })),
+    )
+    .await
+    .expect("a private context mutates its private rows");
+}
 
 /// Seed the M5 mixed-visibility fixture the private-row legs share: one
 /// public row and one private-marked row on the same entity.
@@ -1237,7 +1307,14 @@ async fn private_marked_rows_embed_their_passages_via_the_private_model() {
         .store(private_evidence)
         .expect("seed private evidence");
 
-    let response = insert_citing_seed(&server, private_id).await;
+    // Q2 (operator ruling 2026-11-07): citing private-marked evidence
+    // belongs to a PRIVATE call context — the direct-ID provenance
+    // boundary refuses it from a public one.
+    let response = hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        insert_citing_seed(&server, private_id),
+    )
+    .await;
     assert_eq!(
         response["inserted"].as_bool(),
         Some(true),

@@ -171,6 +171,21 @@ fn fetch_existing_h_mem(
         .get_by_id(&id)
         .map_err(|e| map_memory_store_error(e, fetch_error_ctx))?
         .ok_or_else(|| McpToolError::not_found(not_found_message))?;
+    // M5 mutation-surface extension (operator ruling 2026-11-07, dual-axis
+    // review Q2): the provenance partition covers the direct-ID surface,
+    // not just the recall legs — a public call context naming a
+    // private-marked row is refused at the boundary (least privilege: an
+    // ID the caller can name is not an access grant), never an existence
+    // oracle with read/write/delete power. A private context flows
+    // unchanged.
+    if !call_admits(&h_mem) {
+        return Err(McpToolError::permission_denied(
+            "the named h_mem is private-marked and this call context is public — the \
+             provenance boundary refuses the direct-ID access (recall legs filter with \
+             surfaced excluded_private_rows; the mutation surface refuses typed)"
+                .to_string(),
+        ));
+    }
     Ok((id, h_mem))
 }
 
