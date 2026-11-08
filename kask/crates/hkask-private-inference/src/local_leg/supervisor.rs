@@ -11,9 +11,12 @@
 //! liveness + digest, never trusted as a file, slice plan D-S3).
 //!
 //! One serving instance at a time on the fixed policy port (S2, plan
-//! §10 delta 9): launching a different model while one serves is a
-//! typed refusal (`ServingOtherModel`) — the PI stops first; the
-//! supervisor never swaps models silently.
+//! §10 delta 9): Launch = swap (operator ruling 2026-11-05) — launching
+//! another model while one serves stops and drains the current server,
+//! then loads the new one (the explicit click is the intent); a fresh
+//! session swaps a previous session's server by pid only after
+//! verifying the recorded process identity (the pid-recycling guard).
+//! The supervisor never swaps models silently.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
