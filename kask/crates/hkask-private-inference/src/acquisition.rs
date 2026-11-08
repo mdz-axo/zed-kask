@@ -182,6 +182,34 @@ pub async fn fetch_file(
         Err(err) => return Err(err.into()),
     };
 
+    // Already complete (dual-axis review P4): a fully downloaded file is
+    // verified and returned instead of sending `bytes={size}-` (a 416 the
+    // generic Api arm turns into an opaque dead-end every retry hits).
+    if resume_from == file.size {
+        if let Some(expected) = &file.lfs_sha256 {
+            let computed = sha256_file(dest).await?;
+            if &computed != expected {
+                tokio::fs::remove_file(dest).await?;
+                return Err(AcquisitionError::ChecksumMismatch {
+                    path: dest.display().to_string(),
+                    expected: expected.clone(),
+                    computed,
+                });
+            }
+        }
+        return Ok(FetchOutcome::Completed { bytes: resume_from });
+    }
+    // An over-long partial is corrupt beyond the expected size — remove it
+    // so a retry starts clean instead of 416-looping (dual-axis review P4).
+    if resume_from > file.size {
+        tokio::fs::remove_file(dest).await?;
+        return Err(AcquisitionError::SizeMismatch {
+            path: dest.display().to_string(),
+            expected: file.size,
+            actual: resume_from,
+        });
+    }
+
     let mut request = client.get(&url);
     if resume_from > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
@@ -242,6 +270,11 @@ pub async fn fetch_file(
     }
 
     if written != file.size {
+        if written > file.size {
+            // Over-long transfer (dual-axis review P4): remove the partial
+            // so a retry starts clean — a short partial stays resumable.
+            tokio::fs::remove_file(dest).await?;
+        }
         return Err(AcquisitionError::SizeMismatch {
             path: dest.display().to_string(),
             expected: file.size,
@@ -289,6 +322,60 @@ async fn sha256_file(path: &Path) -> Result<String, AcquisitionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sha256_hex_of(bytes: &[u8]) -> String {
+        use sha2::Digest as _;
+        format!("{:x}", sha2::Sha256::digest(bytes))
+    }
+
+    /// A complete local file is verified and returned without any request
+    /// (dual-axis review P4) — the 416 dead-end is unreachable for
+    /// complete files.
+    #[tokio::test]
+    async fn a_complete_partial_is_verified_and_returned_without_a_request() {
+        let dest = std::env::temp_dir().join("hkask-p4-complete-probe.gguf");
+        let _ = std::fs::remove_file(&dest);
+        let bytes = b"complete-file-bytes";
+        std::fs::write(&dest, bytes).expect("seed complete file");
+        let file = RepoFile {
+            path: "model.gguf".to_string(),
+            size: bytes.len() as u64,
+            lfs_sha256: Some(sha256_hex_of(bytes)),
+        };
+        let outcome = fetch_file("repo", &file, &dest, None)
+            .await
+            .expect("complete file short-circuits before any request");
+        assert!(
+            matches!(outcome, FetchOutcome::Completed { bytes } if bytes == file.size),
+            "got: {outcome:?}"
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+
+    /// An over-long partial is removed and refused (dual-axis review P4)
+    /// — the retry starts clean instead of 416-looping on the stale bytes.
+    #[tokio::test]
+    async fn an_overlong_partial_is_removed_and_refused() {
+        let dest = std::env::temp_dir().join("hkask-p4-overlong-probe.gguf");
+        let _ = std::fs::remove_file(&dest);
+        std::fs::write(&dest, b"far-too-long").expect("seed over-long partial");
+        let file = RepoFile {
+            path: "model.gguf".to_string(),
+            size: 3,
+            lfs_sha256: None,
+        };
+        let error = fetch_file("repo", &file, &dest, None)
+            .await
+            .expect_err("over-long partial refused before any request");
+        assert!(
+            matches!(error, AcquisitionError::SizeMismatch { .. }),
+            "got: {error:?}"
+        );
+        assert!(
+            !dest.exists(),
+            "the corrupt over-long partial is removed for a clean retry"
+        );
+    }
 
     const REAL_TREE_RESPONSE: &str = r#"[
         {"type":"file","path":"UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00004.gguf","size":10946618,"lfs":{"oid":"aabbcc","size":10946618,"pointerSize":133}},
