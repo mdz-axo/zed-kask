@@ -74,18 +74,7 @@ impl CorpusServer {
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
-            if let Some(provider) = provider {
-                let sidecar = cache_dir.join(format!("{}.origin.json", safe_label));
-                let sidecar_str = sidecar.to_str().ok_or_else(|| {
-                    McpToolError::invalid_argument("sidecar path is not valid UTF-8")
-                })?;
-                let body = serde_json::to_vec(&json!({
-                    "label": &label,
-                    "origin_provider": provider,
-                }))
-                .map_err(|e| McpToolError::internal(format!("Serialize origin sidecar: {e}")))?;
-                write_contained(sidecar_str, &body)?;
-            }
+            write_origin_sidecar(&cache_dir, &safe_label, &label, provider)?;
             let mut result = json!({
                 "label": label,
                 "path": cache_path.display().to_string(),
@@ -93,13 +82,15 @@ impl CorpusServer {
             });
             if let Some(provider) = provider {
                 result[hkask_types::corpus::ORIGIN_PROVIDER_FIELD] = json!(provider);
-                result["origin_sidecar"] = json!(
-                    cache_dir
-                        .join(format!("{}.origin.json", safe_label))
-                        .display()
-                        .to_string()
-                );
             }
+            // The sidecar ALWAYS exists now (dual-axis review T5) — the
+            // response says where it is, provider or not.
+            result["origin_sidecar"] = json!(
+                cache_dir
+                    .join(format!("{}.origin.json", safe_label))
+                    .display()
+                    .to_string()
+            );
             Ok(result)
         })
         .await
@@ -765,10 +756,64 @@ impl RetrievedPassage {
     }
 }
 
+/// Write the provenance sidecar (task c1d65229, always-write per
+/// dual-axis review T5): the originating search provider travels with the
+/// cached file so `chunk_directory` can stamp it on chunk rows;
+/// Brave-derived content is then excluded from QA export paths that
+/// could otherwise become model-training material outside this system
+/// (Brave API ToS clause xiii). Fail closed — a lost sidecar breaks the
+/// downstream license exclusion. ALWAYS written, including with no
+/// provider: a re-cache with `origin_provider: None` overwrites any
+/// stale sidecar from a prior Brave-cached label instead of letting the
+/// old provider keep stamping the new content (provenance must be true —
+/// null is an explicit non-Brave provenance, not an inherited one).
+fn write_origin_sidecar(
+    cache_dir: &std::path::Path,
+    safe_label: &str,
+    label: &str,
+    provider: Option<&str>,
+) -> Result<(), McpToolError> {
+    let sidecar = cache_dir.join(format!("{safe_label}.origin.json"));
+    let sidecar_str = sidecar
+        .to_str()
+        .ok_or_else(|| McpToolError::invalid_argument("sidecar path is not valid UTF-8"))?;
+    let body = serde_json::to_vec(&json!({
+        "label": label,
+        "origin_provider": provider,
+    }))
+    .map_err(|e| McpToolError::internal(format!("Serialize origin sidecar: {e}")))?;
+    write_contained(sidecar_str, &body)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::index::IndexedPassage;
+
+    /// The sidecar write is ALWAYS performed, provider or not (dual-axis
+    /// review T5): a re-cache with no provider OVERWRITES a stale Brave
+    /// sidecar instead of letting the old provider keep stamping the new
+    /// content — provenance must be true.
+    #[test]
+    fn re_cache_without_a_provider_overwrites_a_stale_brave_sidecar() {
+        // write_contained validates against the allowed roots — the test
+        // fixture lives under the crate's target dir (an allowed root,
+        // gitignored).
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/t5-sidecar-probe");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        write_origin_sidecar(&dir, "label", "label", Some("brave")).expect("first write");
+        let first = std::fs::read_to_string(dir.join("label.origin.json")).expect("read");
+        assert!(first.contains("brave"));
+        write_origin_sidecar(&dir, "label", "label", None).expect("rewrite");
+        let second = std::fs::read_to_string(dir.join("label.origin.json")).expect("reread");
+        assert!(
+            second.contains("\"origin_provider\":null"),
+            "the stale Brave provenance is overwritten, not inherited: {second}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn make_passage(text: &str, embedding: Vec<f32>) -> IndexedPassage {
         IndexedPassage {
