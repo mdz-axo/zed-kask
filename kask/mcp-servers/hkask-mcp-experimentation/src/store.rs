@@ -898,9 +898,19 @@ impl ExperimentationStore {
                 (None, None) => true,
                 _ => false,
             };
+            // The headroom attestation is part of the payload the seal
+            // freezes (dual-axis review H6): a retried seal citing a
+            // different scientific_headroom is a different attempt —
+            // refuse, never silently converge.
+            let headroom_matches = match (&existing.scientific_headroom, scientific_headroom) {
+                (Some(a), Some(b)) => value_column(a)? == value_column(b)?,
+                (None, None) => true,
+                _ => false,
+            };
             if existing.baseline_variant_id == baseline_variant_id
                 && existing.fingerprint == fingerprint
                 && pass_rate_matches
+                && headroom_matches
             {
                 return Ok(existing);
             }
@@ -2729,6 +2739,42 @@ mod tests {
             .expect("legacy seal");
         assert!(a.baseline_pass_rate == Some(0.6));
         assert!(a.scientific_headroom.is_none());
+    }
+
+    /// A retried headroom seal converges only on the IDENTICAL attestation
+    /// (dual-axis review H6): a different scientific_headroom under the
+    /// same seal is a different attempt — AlreadySealed, never a silent
+    /// convergence.
+    #[test]
+    fn a_headroom_seal_refuses_a_different_headroom_on_replay() {
+        let store = store();
+        let experiment = propose_design(&store, &design_spec("fixed"));
+        let baseline = baseline_with_fitness(&store, &experiment.id, 0.6);
+        let headroom = ScientificHeadroom {
+            design_family: "single_arm".to_string(),
+            criterion: "the single-arm interval width is below the ratified margin".to_string(),
+            evidence: vec!["power simulation report".to_string()],
+        };
+        let seal = store
+            .seal_experiment(&experiment.id, &baseline.id, None, Some(&headroom))
+            .expect("headroom seal");
+
+        // An identical retry converges on the existing record.
+        let retried = store
+            .seal_experiment(&experiment.id, &baseline.id, None, Some(&headroom))
+            .expect("identical replay converges");
+        assert_eq!(retried.id, seal.id);
+
+        // A different headroom attestation is a different attempt.
+        let different = ScientificHeadroom {
+            design_family: "single_arm".to_string(),
+            criterion: "A DIFFERENT criterion under the same seal".to_string(),
+            evidence: vec!["power simulation report".to_string()],
+        };
+        let error = store
+            .seal_experiment(&experiment.id, &baseline.id, None, Some(&different))
+            .expect_err("different headroom refused");
+        assert!(matches!(error, ExperimentationError::AlreadySealed(_, _)));
     }
 
     /// Criterion 2: a design-family seal attests `scientific_headroom` with no
