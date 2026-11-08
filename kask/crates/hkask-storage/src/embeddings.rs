@@ -263,39 +263,34 @@ impl EmbeddingStore {
         let (id, blob) = self.prepare_new_row(vector)?;
         let dim = vector.len() as i32;
 
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        conn.execute_batch("BEGIN TRANSACTION;")?;
-        let result = conn.execute(
+        // RAII transaction (the hmem.rs precedent): the Drop rollback also
+        // covers a failed COMMIT — a manually-BEGIN'd connection that
+        // fails its COMMIT goes back into the pool mid-transaction and
+        // poisons the next borrower ("cannot start a transaction within a
+        // transaction") until process restart.
+        let transaction =
+            conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        transaction.execute(
             "INSERT INTO embeddings (id, entity_ref, dimensions, model, passage_text) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![id, entity_ref, dim, model, passage_text],
-        );
-        if let Err(e) = result {
-            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings INSERT error");
-            }
-            return Err(EmbeddingError::Storage(e));
-        }
+        )?;
         // vec0 is keyed on its implicit integer rowid, which mirrors
         // embeddings.rowid. Link the vector to the metadata row by
         // reusing the rowid SQLite just assigned.
         // SAFETY (connection affinity): last_insert_rowid() is per-
         // connection state. This is safe because the INSERT above and
-        // this call happen on the same PooledConnection within the
-        // same transaction. Refactoring to self.exec() (which acquires
-        // a different pool connection) would break this — the rowid
-        // would be from the wrong connection.
-        let rowid: i64 = conn.last_insert_rowid();
-        let vec_result = conn.execute(&self.vec_insert_sql(), rusqlite::params![rowid, &blob]);
-        if let Err(e) = vec_result {
-            if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings INSERT error");
-            }
-            return Err(EmbeddingError::Storage(e));
-        }
-        conn.execute_batch("COMMIT;")?;
+        // this call happen on the same connection (through the
+        // transaction's borrow) within the same transaction.
+        // Refactoring to self.exec() (which acquires a different pool
+        // connection) would break this — the rowid would be from the
+        // wrong connection.
+        let rowid: i64 = transaction.last_insert_rowid();
+        transaction.execute(&self.vec_insert_sql(), rusqlite::params![rowid, &blob])?;
+        transaction.commit()?;
         tracing::debug!(
             target: "storage.embedding",
             id = %id, entity_ref = %entity_ref, model = %model, dimensions = dim,
@@ -705,42 +700,32 @@ impl EmbeddingStore {
     /// pre: id names one stored embedding
     /// post: matching metadata and vec0 rows are deleted; sibling embeddings survive
     pub fn delete_by_id(&self, id: &str) -> Result<(), EmbeddingError> {
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        conn.execute_batch("BEGIN TRANSACTION;")?;
-        if let Err(error) = conn.execute(
+        // RAII transaction: the Drop rollback covers every failure arm —
+        // including a failed COMMIT, which the manual BEGIN/COMMIT shape
+        // left open on the pooled connection.
+        let transaction =
+            conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        transaction.execute(
             "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
             rusqlite::params![id],
-        ) {
-            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after vec_embeddings DELETE error");
-            }
-            return Err(EmbeddingError::Storage(error));
-        }
-        let deleted = match conn.execute(
+        )?;
+        let deleted = transaction.execute(
             "DELETE FROM embeddings WHERE id = ?1",
             rusqlite::params![id],
-        ) {
-            Ok(deleted) => deleted,
-            Err(error) => {
-                if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
-                    tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after embeddings DELETE error");
-                }
-                return Err(EmbeddingError::Storage(error));
-            }
-        };
+        )?;
         if deleted == 0 {
-            if let Err(rollback_error) = conn.execute_batch("ROLLBACK;") {
-                tracing::warn!(target: "reg.storage", error = %rollback_error, "ROLLBACK failed after missing embedding ID");
-            }
+            // Dropping the un-committed transaction rolls the (idempotent)
+            // vec delete back before the connection returns to the pool.
             return Err(EmbeddingError::NotFound(NotFound {
                 entity_type: "embedding".to_string(),
                 id: id.to_string(),
             }));
         }
-        conn.execute_batch("COMMIT;")?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -783,38 +768,31 @@ impl EmbeddingStore {
         if ids.is_empty() {
             return Ok(0);
         }
-        let conn = self
+        let mut conn = self
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        conn.execute_batch("BEGIN TRANSACTION;")?;
+        // RAII transaction: any statement failure (or a failed COMMIT)
+        // rolls back through Drop before the connection returns to the pool.
+        let transaction =
+            conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         for id in &ids {
             // vec0 is rowid-keyed; resolve the UUID to the embeddings
             // rowid and delete the vector by integer key (same pattern
             // as delete).
-            if let Err(e) = conn.execute(
+            transaction.execute(
                 "DELETE FROM vec_embeddings WHERE rowid = (SELECT rowid FROM embeddings WHERE id = ?1)",
                 rusqlite::params![id],
-            ) {
-                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after vec_embeddings DELETE error");
-                }
-                return Err(EmbeddingError::Storage(e));
-            }
+            )?;
             // Delete from embeddings on the SAME connection — not via
             // self.exec, which would acquire a second pool connection and
             // self-deadlock on SQLite's single-writer lock.
-            if let Err(e) = conn.execute(
+            transaction.execute(
                 "DELETE FROM embeddings WHERE id = ?1",
                 rusqlite::params![id],
-            ) {
-                if let Err(rb_err) = conn.execute_batch("ROLLBACK;") {
-                    tracing::warn!(target: "reg.storage", error = %rb_err, "ROLLBACK failed after embeddings DELETE error");
-                }
-                return Err(EmbeddingError::Storage(e));
-            }
+            )?;
         }
-        conn.execute_batch("COMMIT;")?;
+        transaction.commit()?;
         Ok(ids.len())
     }
 
@@ -1024,6 +1002,64 @@ impl EmbeddingStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Source pin (the D31 register style, tests-mod excluded): the write
+    /// paths hold RAII transactions — a manual BEGIN/COMMIT shape returns a
+    /// pooled connection mid-transaction when its COMMIT fails, poisoning
+    /// every later borrower ("cannot start a transaction within a
+    /// transaction") until process restart. The RAII Drop rollback covers
+    /// that arm.
+    #[test]
+    fn write_paths_use_raii_transactions_not_manual_begin_commit() {
+        let source = include_str!("embeddings.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        assert_eq!(
+            production.matches("execute_batch(\"BEGIN").count(),
+            0,
+            "manual BEGIN poisons the pool on a failed COMMIT"
+        );
+    }
+
+    /// The no-poison invariant: a write that fails mid-transaction must
+    /// leave its pooled connection clean — the next operation on the same
+    /// pool succeeds (forced via a RAISE(FAIL) trigger, the mechanism the
+    /// hmem.rs precedent names).
+    #[test]
+    fn a_failed_write_leaves_the_pooled_connection_reusable() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = crate::Database::open(
+            &dir.path().join("reuse.db").to_string_lossy(),
+            "reuse-fixture",
+        )?;
+        let pool = db.sqlite_pool()?;
+        let driver = Arc::new(crate::database::sqlite::SqliteDriver::new(pool.clone()));
+        let dim = crate::embedding_dim();
+        let store = EmbeddingStore::from_driver(driver, dim)?;
+        store.store("probe", &vec![0.5; dim], "model", Some("p"))?;
+
+        {
+            let conn = pool.get()?;
+            conn.execute(
+                "CREATE TRIGGER fail_metadata BEFORE INSERT ON embeddings \
+                 BEGIN SELECT RAISE(FAIL, 'forced mid-transaction failure'); END",
+                [],
+            )?;
+        }
+        assert!(
+            store
+                .store("probe", &vec![0.5; dim], "model", Some("p2"))
+                .is_err(),
+            "the trigger must fail the metadata INSERT mid-transaction"
+        );
+        {
+            let conn = pool.get()?;
+            conn.execute("DROP TRIGGER fail_metadata", [])?;
+        }
+        // The connection the failed write used must be back in the pool
+        // clean — no open transaction leaked by the failed path.
+        store.store("probe", &vec![0.5; dim], "model", Some("p3"))?;
+        Ok(())
+    }
 
     /// Approved slice 1: real pooled writers (not an in-memory single-
     /// connection queue) must leave exactly one paired replacement value.
