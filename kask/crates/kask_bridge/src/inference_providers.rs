@@ -119,6 +119,22 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://deepinfra.com/",
         serves_embeddings: true,
     },
+    // Together AI serves open-weight models through an OpenAI-compatible
+    // API (chat completions at `/chat/completions`, model discovery at
+    // `/models`, embeddings at `/embeddings`). Operators must set
+    // `TOGETHER_API_KEY` (via Settings → AI → LLM Providers, which writes the
+    // keychain slot at the provider `api_url`, or via the env var). No MCP
+    // child declares `TOGETHER_API_KEY` yet, so `credential_urls_for_mcp`
+    // excludes it until one does.
+    InferenceProviderDescriptor {
+        id: "together",
+        name: "Together AI",
+        api_url: "https://api.together.ai/v1",
+        env_var: "TOGETHER_API_KEY",
+        credential_key: "together",
+        dashboard_url: "https://api.together.ai/",
+        serves_embeddings: true,
+    },
 ];
 
 /// A typed descriptor for a data service credential — the single source of
