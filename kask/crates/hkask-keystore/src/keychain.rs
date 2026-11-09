@@ -195,10 +195,14 @@ impl Keychain {
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty, secret is non-empty
     /// post: secret stored at `kask://credentials/<key>` with label `zed-github-account`
-    pub fn store_by_key(&self, key: &str, secret: &str) -> Result<(), KeychainError> {
+    /// Byte-faithful: the stored bytes are the given bytes — non-UTF-8
+    /// secrets are preserved, never re-encoded (card f6cb3ae9: one
+    /// non-UTF-8 entry measured live in this machine's keyring; a lossy
+    /// text rewrite corrupted exactly this class).
+    pub fn store_by_key(&self, key: &str, secret: &[u8]) -> Result<(), KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
-        let secret = secret.to_string();
+        let secret = Zeroizing::new(secret.to_vec());
         let keyring = open_keyring();
         block_on(async move {
             let keyring = keyring.await?;
@@ -207,7 +211,7 @@ impl Keychain {
                 .create_item(
                     KEYRING_LABEL,
                     &[("url", url.as_str()), ("username", "kask")],
-                    secret.as_bytes(),
+                    secret.as_slice(),
                     true,
                 )
                 .await?;
@@ -218,13 +222,17 @@ impl Keychain {
 
     /// Retrieve a secret from the OS keychain at `kask://credentials/<key>`.
     ///
-    /// Returns `Zeroizing<String>` so the secret is wiped when the caller drops
-    /// it.
+    /// Returns `Zeroizing<Vec<u8>>` — the stored bytes exactly, wiped when
+    /// the caller drops them. Byte-faithful by design (card f6cb3ae9): the
+    /// keychain holds byte arrays and the platform writer stores raw bytes,
+    /// so a lossy text rewrite here corrupted non-UTF-8 secrets on every
+    /// read; callers that need text convert explicitly and validate
+    /// (`std::str::from_utf8`), never silently.
     ///
     /// expect: "My keys are generated, stored, and rotated under my sovereignty"
     /// pre:  key is non-empty
     /// post: returns Ok(secret) if stored, Err(NotFound) if not
-    pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<String>, KeychainError> {
+    pub fn retrieve_by_key(&self, key: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         let url = credential_url(key);
         let key = key.to_string();
         let keyring = open_keyring();
@@ -288,14 +296,14 @@ impl Keychain {
         &self,
         url: &str,
         username: &str,
-        secret: &str,
+        secret: &[u8],
     ) -> Result<(), KeychainError> {
         let keyring = open_keyring();
         async_std::task::spawn(Self::store_url(
             keyring,
             url.to_string(),
             username.to_string(),
-            Zeroizing::new(secret.to_string()),
+            Zeroizing::new(secret.to_vec()),
         ))
         .await
     }
@@ -304,7 +312,7 @@ impl Keychain {
         keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
         url: String,
         username: String,
-        secret: Zeroizing<String>,
+        secret: Zeroizing<Vec<u8>>,
     ) -> Result<(), KeychainError> {
         let keyring = keyring.await?;
         keyring.unlock().await?;
@@ -312,7 +320,7 @@ impl Keychain {
             .create_item(
                 KEYRING_LABEL,
                 &[("url", url.as_str()), ("username", username.as_str())],
-                secret.as_bytes(),
+                secret.as_slice(),
                 true,
             )
             .await?;
@@ -333,7 +341,7 @@ impl Keychain {
     pub async fn retrieve_by_url_async(
         &self,
         url: &str,
-    ) -> Result<Zeroizing<String>, KeychainError> {
+    ) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         let keyring = open_keyring();
         let key = url.to_string();
         match async_std::future::timeout(
@@ -383,7 +391,7 @@ impl Keychain {
         keyring: impl std::future::Future<Output = Result<oo7::Keyring, KeychainError>> + Send,
         url: String,
         log: Option<(&'static str, String)>,
-    ) -> Result<Zeroizing<String>, KeychainError> {
+    ) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         match Self::labeled_item_at(keyring, &url).await? {
             Some(item) => {
                 item.unlock().await?;
@@ -391,9 +399,12 @@ impl Keychain {
                 if let Some((operation, key)) = log {
                     info!(target: "reg.keystore", operation = %operation, key = %key, "REG");
                 }
-                Ok(Zeroizing::new(
-                    String::from_utf8_lossy(&secret).into_owned(),
-                ))
+                // Byte-faithful: the keychain stores byte arrays and the
+                // platform writer stores raw bytes (LinuxPlatform::
+                // write_credentials), so a lossy text rewrite here corrupted
+                // non-UTF-8 secrets on every read (card f6cb3ae9: one such
+                // entry measured live in this machine's keyring).
+                Ok(Zeroizing::new(secret.to_vec()))
             }
             None => Err(KeychainError::NotFound(NotFound {
                 entity_type: "secret".to_string(),
@@ -481,7 +492,7 @@ pub fn provision_db_passphrase_string() -> Result<Zeroizing<String>, KeychainErr
         Ok(passphrase) => Ok(passphrase),
         Err(KeychainError::NotFound(_)) => {
             let word = DEFAULT_PASSPHRASE.to_string();
-            Keychain.store_by_key(KEY_DB_PASSPHRASE, &word)?;
+            Keychain.store_by_key(KEY_DB_PASSPHRASE, word.as_bytes())?;
             info!(
                 "Provisioned the DB passphrase with the first-run default and stored it \
                  in the keychain. Change it via the settings UI (Security page) or the \
@@ -524,7 +535,7 @@ pub fn resolve(secret_ref: &SecretRef) -> Result<Zeroizing<Vec<u8>>, KeychainErr
             let keychain = Keychain;
             let secret = keychain.retrieve_by_key(key_name)?;
             info!(target: "reg.keystore", operation = "resolve_keychain", key_name = %key_name, "REG");
-            Ok(Zeroizing::new(secret.as_bytes().to_vec()))
+            Ok(secret)
         }
     }
 }
@@ -656,7 +667,7 @@ mod integration_tests {
         let kc = Keychain;
 
         // Store
-        kc.store_by_key(TEST_KEY, TEST_VALUE)
+        kc.store_by_key(TEST_KEY, TEST_VALUE.as_bytes())
             .expect("store_by_key should succeed");
 
         // Retrieve — should return the same value
@@ -664,9 +675,9 @@ mod integration_tests {
             .retrieve_by_key(TEST_KEY)
             .expect("retrieve_by_key should find the stored value");
         assert_eq!(
-            retrieved.as_str(),
-            TEST_VALUE,
-            "retrieve_by_key must return the same value that store_by_key wrote"
+            retrieved.as_slice(),
+            TEST_VALUE.as_bytes(),
+            "retrieve_by_key must return the same bytes that store_by_key wrote"
         );
 
         // Delete
@@ -687,7 +698,7 @@ mod integration_tests {
         let kc = Keychain;
 
         // Write via the store path
-        kc.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)
+        kc.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE.as_bytes())
             .expect("store_by_key for DB passphrase should succeed");
 
         // Read via the resolve path — this proves both paths hit the
@@ -726,7 +737,7 @@ mod integration_tests {
 
     #[test]
     fn empty_env_passphrase_falls_through_to_keychain() -> Result<(), KeychainError> {
-        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE.as_bytes())?;
         for value in ["", " \t\n"] {
             TEST_ENVIRONMENT.with(|environment| {
                 environment
@@ -740,7 +751,7 @@ mod integration_tests {
 
     #[test]
     fn environment_override_does_not_replace_stored_passphrase() -> Result<(), KeychainError> {
-        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE.as_bytes())?;
         TEST_ENVIRONMENT.with(|environment| {
             environment
                 .borrow_mut()
@@ -748,15 +759,15 @@ mod integration_tests {
         });
         assert_eq!(provision_db_passphrase_string()?.as_str(), "override");
         assert_eq!(
-            Keychain.retrieve_by_key(KEY_DB_PASSPHRASE)?.as_str(),
-            TEST_VALUE
+            Keychain.retrieve_by_key(KEY_DB_PASSPHRASE)?.as_slice(),
+            TEST_VALUE.as_bytes()
         );
         Ok(())
     }
 
     #[test]
     fn destructive_test_operations_are_isolated_from_other_keyrings() -> Result<(), KeychainError> {
-        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE)?;
+        Keychain.store_by_key(KEY_DB_PASSPHRASE, TEST_VALUE.as_bytes())?;
         std::thread::spawn(|| -> Result<(), KeychainError> {
             assert!(matches!(
                 Keychain.retrieve_by_key(KEY_DB_PASSPHRASE),
@@ -778,8 +789,12 @@ mod integration_tests {
             let url = "kask://credentials/__hkask_async_url_round_trip__";
             let kc = Keychain;
             kc.delete_by_url_async(url).await?;
-            kc.store_by_url_async(url, "kask", TEST_VALUE).await?;
-            assert_eq!(kc.retrieve_by_url_async(url).await?.as_str(), TEST_VALUE);
+            kc.store_by_url_async(url, "kask", TEST_VALUE.as_bytes())
+                .await?;
+            assert_eq!(
+                kc.retrieve_by_url_async(url).await?.as_slice(),
+                TEST_VALUE.as_bytes()
+            );
             kc.delete_by_url_async(url).await?;
             kc.delete_by_url_async(url).await?;
             assert!(matches!(

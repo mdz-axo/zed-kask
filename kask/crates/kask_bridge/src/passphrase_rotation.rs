@@ -117,7 +117,7 @@ pub fn schedule_db_passphrase_rotation(
             last_error: None,
         },
     )?;
-    Keychain.store_by_key(KEY_DB_PASSPHRASE_PENDING, new_passphrase)?;
+    Keychain.store_by_key(KEY_DB_PASSPHRASE_PENDING, new_passphrase.as_bytes())?;
     Ok(())
 }
 
@@ -168,9 +168,14 @@ pub fn run_pending_db_passphrase_rotation() -> Result<bool, PassphraseRotationEr
     let Some(state) = read_pending_rotation_state()? else {
         return Ok(false);
     };
-    let new_passphrase = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE_PENDING)?;
+    let new_passphrase_bytes = Keychain.retrieve_by_key(KEY_DB_PASSPHRASE_PENDING)?;
+    let new_passphrase = std::str::from_utf8(&new_passphrase_bytes).map_err(|error| {
+        PassphraseRotationError::InvalidNewPassphrase(format!(
+            "the pending passphrase is not valid UTF-8: {error}"
+        ))
+    })?;
     let old_passphrase = resolve_db_passphrase_string()?;
-    let summary = match apply_db_rotation(&old_passphrase, &new_passphrase, &state.rotate_paths) {
+    let summary = match apply_db_rotation(&old_passphrase, new_passphrase, &state.rotate_paths) {
         Ok(summary) => summary,
         Err(error) => {
             let detail = error.to_string();
@@ -193,7 +198,7 @@ pub fn run_pending_db_passphrase_rotation() -> Result<bool, PassphraseRotationEr
     // Rotation complete — NOW the keychain may carry the new passphrase.
     // Writing it before every database is consistent is the one state that
     // leaves databases unopenable; this ordering is the whole invariant.
-    Keychain.store_by_key(KEY_DB_PASSPHRASE, &new_passphrase)?;
+    Keychain.store_by_key(KEY_DB_PASSPHRASE, new_passphrase.as_bytes())?;
     cancel_pending_db_rotation()?;
     tracing::info!(
         target: "hkask.identity",

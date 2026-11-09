@@ -113,7 +113,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
             }
             .filter(|s| !s.is_empty());
             if let Some(secret) = secret {
-                return Ok(Some(("kask".to_string(), secret.as_bytes().to_vec())));
+                return Ok(Some(("kask".to_string(), secret.to_vec())));
             }
             Ok(None)
         }
@@ -131,9 +131,12 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         let username = username.to_string();
         let password = password.to_vec();
         async move {
-            let secret = String::from_utf8_lossy(&password).into_owned();
+            // Byte-faithful store: the password is bytes, and a lossy text
+            // rewrite here corrupted non-UTF-8 credentials BEFORE they were
+            // even persisted (card f6cb3ae9) — the keystore stores bytes
+            // exactly.
             hkask_keystore::Keychain
-                .store_by_url_async(&url, &username, &secret)
+                .store_by_url_async(&url, &username, &password)
                 .await?;
             Ok(())
         }

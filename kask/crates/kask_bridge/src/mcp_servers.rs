@@ -766,7 +766,7 @@ async fn typed_keychain_read(url: &str) -> TypedKeychainRead {
         }
     }
     match hkask_keystore::Keychain.retrieve_by_url_async(url).await {
-        Ok(secret) => Ok(secret.as_bytes().to_vec()),
+        Ok(secret) => Ok(secret.to_vec()),
         Err(error) => Err(error),
     }
 }
