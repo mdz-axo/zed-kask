@@ -1,6 +1,11 @@
-use agent_skills::{Skill, SkillIndex, SkillSource};
+use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
+use anyhow::Context as _;
 use fs::RemoveOptions;
-use gpui::{App, FontWeight, PromptLevel, ScrollHandle, SharedString, prelude::*};
+use gpui::{
+    App, ClipboardItem, Entity, FontWeight, PromptLevel, ScrollHandle, SharedString, Task,
+    prelude::*,
+};
+use project::{Project, WorktreeId};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -8,6 +13,147 @@ use util::paths::PathExt as _;
 
 use crate::pages::SkillCreatorOpenMode;
 use crate::{SettingsUiFile, SettingsWindow};
+
+fn project_for_skill(
+    skill: &Skill,
+    settings_window: &SettingsWindow,
+    cx: &App,
+) -> Option<Entity<Project>> {
+    let SkillSource::ProjectLocal { worktree_id, .. } = &skill.source else {
+        return None;
+    };
+    let worktree_id = WorktreeId::from_usize(worktree_id.0);
+    // Collab projects use the host's worktree ids, which can repeat, so also check the path.
+    // The file path, unlike `directory_path`, is in the worktree's path style.
+    crate::all_projects(settings_window.original_window.as_ref(), cx).find(|project| {
+        project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .is_some_and(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree
+                    .path_style()
+                    .starts_with(&skill.skill_file_path, worktree.abs_path())
+            })
+    })
+}
+
+pub(crate) fn copy_skill_share_link(
+    skill: &Skill,
+    settings_window: &SettingsWindow,
+    cx: &mut Context<SettingsWindow>,
+) -> Task<()> {
+    let skill_file_path = skill.skill_file_path.clone();
+    let directory_path = skill.directory_path.clone();
+    let project = project_for_skill(skill, settings_window, cx);
+    let fs = workspace::AppState::global(cx).fs.clone();
+    cx.spawn(async move |settings_window, cx| {
+        let content = match &project {
+            Some(project) => {
+                let Some(project_path) = project.update(cx, |project, cx| {
+                    project.project_path_for_absolute_path(&skill_file_path, cx)
+                }) else {
+                    log::error!(
+                        "failed to read skill file {} for sharing: outside the project's worktrees",
+                        skill_file_path.display()
+                    );
+                    return;
+                };
+                let buffer = project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                    .await;
+                buffer.map(|buffer| buffer.update(cx, |buffer, _cx| buffer.text()))
+            }
+            None => fs.load(&skill_file_path).await,
+        };
+        match content {
+            Ok(content) => {
+                let link = encode_skill_share_link(&content);
+                settings_window
+                    .update(cx, |settings_window, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        settings_window.last_copied_skill_directory_path = Some(directory_path);
+                        cx.notify();
+                    })
+                    .ok();
+            }
+            Err(error) => {
+                log::error!(
+                    "failed to read skill file {} for sharing: {error:#}",
+                    skill_file_path.display()
+                );
+            }
+        }
+    })
+}
+
+/// Move a skill directory to the trash, project-aware: a project-local
+/// skill trashes through the project entry (so worktrees see the deletion)
+/// and a global skill through the host filesystem. The row is hidden from
+/// the settings list immediately (`hidden_deleted_skill_directory_paths`)
+/// and re-shown only if the trash fails.
+pub(crate) fn trash_skill(
+    skill: &Skill,
+    settings_window: &mut SettingsWindow,
+    cx: &mut Context<SettingsWindow>,
+) -> Task<()> {
+    let directory_path = skill.directory_path.clone();
+    if !settings_window
+        .hidden_deleted_skill_directory_paths
+        .insert(directory_path.clone())
+    {
+        return Task::ready(());
+    }
+    cx.notify();
+
+    let project = project_for_skill(skill, settings_window, cx);
+    let fs = workspace::AppState::global(cx).fs.clone();
+    cx.spawn(async move |settings_window, cx| {
+        let trash_result = match &project {
+            Some(project) => {
+                let trash_task = project.update(cx, |project, cx| {
+                    let project_path = project
+                        .project_path_for_absolute_path(&directory_path, cx)
+                        .context("skill directory is outside the project's worktrees")?;
+                    let entry_id = project
+                        .entry_for_path(&project_path, cx)
+                        .map(|entry| entry.id);
+                    // Already deleted outside Zed.
+                    anyhow::Ok(entry_id.and_then(|entry_id| project.trash_entry(entry_id, cx)))
+                });
+                match trash_task {
+                    Ok(Some(trash_task)) => trash_task.await.map(|_| ()),
+                    Ok(None) => Ok(()),
+                    Err(error) => Err(error),
+                }
+            }
+            None => fs
+                .trash(
+                    &directory_path,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await
+                .map(|_| ()),
+        };
+        if let Err(error) = trash_result {
+            log::error!(
+                "failed to move skill directory {} to trash: {error:#}",
+                directory_path.display()
+            );
+            settings_window
+                .update(cx, |settings_window, cx| {
+                    settings_window
+                        .hidden_deleted_skill_directory_paths
+                        .remove(&directory_path);
+                    cx.notify();
+                })
+                .ok();
+        }
+    })
+}
 
 /// Skills shown on the Skills page for the currently selected settings file:
 /// - User file → global skills only
@@ -111,7 +257,7 @@ pub(crate) fn render_skills_setup_page(
 
 fn render_skill_row(
     skill: &Skill,
-    _settings_window: &SettingsWindow,
+    settings_window: &SettingsWindow,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let skill_file_path = skill.skill_file_path.clone();
@@ -124,7 +270,17 @@ fn render_skill_row(
         _ => ("global", "on this machine"),
     };
 
+    let delete_skill = skill.clone();
+
+    let share_copied = settings_window.last_copied_skill_directory_path.as_deref()
+        == Some(skill.directory_path.as_path());
     let warning_message = skill.load_warnings.first().map(|warning| warning.message());
+
+    let (share_icon, share_icon_color) = if share_copied {
+        (IconName::Check, Color::Success)
+    } else {
+        (IconName::Link, Color::Muted)
+    };
 
     let group = format!("group-{}", skill.name);
 
@@ -145,6 +301,28 @@ fn render_skill_row(
                 .icon_color(Color::Accent)
                 .tooltip(Tooltip::text("Core skill — always on, not editable")),
             )
+        })
+        // zed-kask: D1 — core skills are locked; the share button is a
+        // non-core surface (sharing a locked skill is inconsistent).
+        .when(!is_core, |this| {
+            this.child({
+                let share_skill = skill.clone();
+                IconButton::new(
+                    SharedString::from(format!("share-{}", skill.name)),
+                    share_icon,
+                )
+                .tab_index(0_isize)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(share_icon_color)
+                .tooltip(Tooltip::text("Copy Share Link"))
+                .visible_on_hover(&group)
+                .on_click(cx.listener(
+                    move |settings_window, _event, _window, cx| {
+                        copy_skill_share_link(&share_skill, settings_window, cx).detach();
+                    },
+                ))
+            })
         })
         .child(
             Label::new(skill.name.clone()).when(is_core, |this| this.weight(FontWeight::SEMIBOLD)),
@@ -216,51 +394,20 @@ fn render_skill_row(
                                     cx,
                                 );
 
-                                let app_state = workspace::AppState::global(cx);
-                                let fs = app_state.fs.clone();
+                                let delete_skill = delete_skill.clone();
                                 cx.spawn(async move |settings_window, cx| {
                                     if answer.await != Ok(0) {
                                         return;
                                     }
 
-                                    let confirmed = settings_window
-                                        .update(cx, |settings_window, cx| {
-                                            let inserted = settings_window
-                                                .hidden_deleted_skill_directory_paths
-                                                .insert(directory_path.clone());
-                                            if inserted {
-                                                cx.notify();
-                                            }
-                                            inserted
+                                    let Ok(trash_task) =
+                                        settings_window.update(cx, |settings_window, cx| {
+                                            trash_skill(&delete_skill, settings_window, cx)
                                         })
-                                        .unwrap_or(false);
-                                    if !confirmed {
+                                    else {
                                         return;
-                                    }
-
-                                    let trash_result = fs
-                                        .trash(
-                                            &directory_path,
-                                            RemoveOptions {
-                                                recursive: true,
-                                                ignore_if_not_exists: true,
-                                            },
-                                        )
-                                        .await;
-                                    if let Err(error) = trash_result {
-                                        log::error!(
-                                            "failed to move skill directory {} to trash: {error:#}",
-                                            directory_path.display()
-                                        );
-                                        settings_window
-                                            .update(cx, |settings_window, cx| {
-                                                settings_window
-                                                    .hidden_deleted_skill_directory_paths
-                                                    .remove(&directory_path);
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                    }
+                                    };
+                                    trash_task.await;
                                 })
                                 .detach();
                             },

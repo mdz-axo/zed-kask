@@ -98,6 +98,7 @@ impl Serving {
             // never the PI page's slot).
             state_dir: resolve_under_data_dir(Path::new("private-inference/dme-harness")),
             models_root: resolve_under_artifacts_dir(Path::new("private-inference/models")),
+            briefs_dir: resolve_under_artifacts_dir(Path::new("private-inference/model-briefs")),
             policy,
         };
         let prepared = prepare_launch(&config)

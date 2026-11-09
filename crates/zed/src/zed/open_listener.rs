@@ -58,6 +58,11 @@ pub enum OpenRequestKind {
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
+    InstallSkill {
+        /// Full `SKILL.md` contents embedded in a share link
+        /// (`zed-kask://skill?data=…`).
+        content: String,
+    },
     DockMenuAction {
         index: usize,
     },
@@ -90,6 +95,10 @@ impl std::fmt::Debug for OpenRequestKind {
             } => f
                 .debug_struct("AgentPanel")
                 .field("external_source_prompt", external_source_prompt)
+                .finish(),
+            Self::InstallSkill { content } => f
+                .debug_struct("InstallSkill")
+                .field("content_len", &content.len())
                 .finish(),
             Self::DockMenuAction { index } => f
                 .debug_struct("DockMenuAction")
@@ -167,6 +176,8 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
+            } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
+                this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = app_path.and_then(|path| path.strip_prefix("agent")) {
                 this.parse_agent_url(agent_path)
             } else if matches!(app_path, Some("" | "open" | "open/")) {
@@ -220,6 +231,13 @@ impl OpenRequest {
         self.kind = Some(OpenRequestKind::AgentPanel {
             external_source_prompt,
         });
+    }
+
+    fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
+        // Format: <scheme>://skill?data=<base64url of SKILL.md contents>
+        let content = agent_skills::decode_skill_share_link(url)?;
+        self.kind = Some(OpenRequestKind::InstallSkill { content });
+        Ok(())
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -782,9 +800,7 @@ pub(crate) fn open_options_for_behavior(
 
     // If reuse flag is passed, open a new workspace in an existing window.
     let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
-        workspace::workspace_windows_for_location(location, cx)
-            .into_iter()
-            .next()
+        workspace::workspace_windows_for_location(location, cx).next()
     } else {
         None
     };
@@ -1483,6 +1499,52 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_parse_skill_install_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\nDo the thing.\n".to_string();
+        let link = agent_skills::encode_skill_share_link(&content);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![link],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::InstallSkill {
+                content: parsed_content,
+            }) => {
+                assert_eq!(parsed_content, content);
+            }
+            _ => panic!("Expected InstallSkill kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_malformed_skill_install_url_errors(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let result = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed-kask://skill?data=!!!notbase64".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+
+        assert!(result.is_err());
+    }
+
+    #[gpui::test]
     fn test_parse_agent_url_with_prompt(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
         let prompt = "Write me a script\nThanks";
@@ -1980,13 +2042,11 @@ mod tests {
         let window_to_replace = workspace::find_existing_workspace(
             &paths,
             &workspace::OpenOptions::default(),
-            &workspace::SerializedWorkspaceLocation::Local,
+            &project::ProjectHost::Local,
             &mut cx.to_async(),
         )
-        .await
-        .0
         .unwrap()
-        .0;
+        .window;
 
         let errored_reuse = cx
             .spawn({

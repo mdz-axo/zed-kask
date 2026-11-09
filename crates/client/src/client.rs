@@ -2404,6 +2404,9 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            // zed-kask: D93 — tests that sign in through `Client` must not
+            // touch the OS keychain on the GPUI test scheduler.
+            zed_credentials_provider::set_fake_credentials_provider(cx);
         });
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput, deserialize_teaching_field};
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use gpui::{App, Task};
 use language_model::LanguageModelToolResultContent;
@@ -1462,7 +1462,7 @@ mod tests {
         }))
         .expect("context_path input");
         assert!(input.context.is_empty(), "inline context stays empty");
-        let loaded = load_context_file(&input.context_path.clone().unwrap()).expect("load");
+        let loaded = load_context_file(&input.context_path.unwrap()).expect("load");
         assert_eq!(loaded["task"], "from-file");
         assert_eq!(loaded["items"], serde_json::json!([1, 2]));
     }

@@ -206,6 +206,17 @@ unused_objc2 = { package = "objc2", version = "0.1.0" }
         let workspace = load_workspace().expect("failed to load cargo metadata");
         let mut violations = Vec::new();
 
+        // zed-kask: D80 — the eval_cli feature-propagation pairings are the
+        // documented fix for the E0004 non-exhaustive-match trap (a dev-dep
+        // feature request does not reach the normal-dependency unit, so the
+        // request must ride a normal dep). They forward the feature only;
+        // no source `use` of these crates exists in eval_cli.
+        const KASK_ALLOWED_NORMAL_TEST_SUPPORT: &[(&str, &str)] = &[
+            ("eval_cli", "recent_projects"),
+            ("eval_cli", "remote_connection"),
+            ("eval_cli", "title_bar"),
+        ];
+
         for package in workspace.workspace_packages() {
             for dependency in &package.dependencies {
                 if dependency.kind == DependencyKind::Development
@@ -214,6 +225,11 @@ unused_objc2 = { package = "objc2", version = "0.1.0" }
                         .iter()
                         .any(|feature| feature == "test-support")
                 {
+                    continue;
+                }
+
+                let name = dependency.rename.as_deref().unwrap_or(&dependency.name);
+                if KASK_ALLOWED_NORMAL_TEST_SUPPORT.contains(&(&package.name, name)) {
                     continue;
                 }
 

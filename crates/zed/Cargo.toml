@@ -60,7 +60,7 @@ name = "zed-kask"
 path = "src/main.rs"
 
 [[bin]]
-name = "zed_visual_test_runner"
+name = "zed-visual-test-runner"
 path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
@@ -187,6 +187,7 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
+project_bookmarks.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 recent_projects.workspace = true

@@ -9,7 +9,7 @@ use crate::{
     AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
 };
 use action_log::ActionLog;
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity};

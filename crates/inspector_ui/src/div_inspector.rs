@@ -1021,9 +1021,19 @@ mod tests {
 
     fn assert_inspector_watchers(fs: &FakeFs, baseline: &[PathBuf]) {
         let mut expected = baseline.to_vec();
+        // zed-kask: D41 — config-file watchers are directory-anchored: the
+        // watch root is the file's parent directory (an atomic rename-over
+        // survives), so the tasks and debug-scenario watches anchor on the
+        // config directory, not the file paths upstream's assertion names.
         expected.extend([
-            paths::tasks_file().clone(),
-            paths::debug_scenarios_file().clone(),
+            paths::tasks_file()
+                .parent()
+                .expect("the tasks file lives in a directory")
+                .to_path_buf(),
+            paths::debug_scenarios_file()
+                .parent()
+                .expect("the debug scenarios file lives in a directory")
+                .to_path_buf(),
             PathBuf::from(ZED_INSPECTOR_STYLE_JSON),
         ]);
         expected.sort();

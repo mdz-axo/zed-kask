@@ -64,6 +64,27 @@ ignore = [
     { id = "RUSTSEC-2026-0398", reason = "zstd seekable decompress offset-past-end Vec::set_len; upstream graph. Not kask-introduced." },
     { id = "RUSTSEC-2026-0403", reason = "zstd legacy-frame decompress failure commits unwritten output position; upstream graph. Not kask-introduced." },
     { id = "RUSTSEC-2026-0410", reason = "zstd-sys wasm32 allocator shim missing allocation-failure check; upstream graph. Not kask-introduced." },
+    # 2026-11-08 upstream sync: nine advisories published against upstream-graph
+    # deps since the 2026-10-27 sync — four wasmtime/wasmtime-wasi (the wasm
+    # extension host), two pulldown-cmark (upstream markdown rendering; the
+    # wikilink flags are not enabled in this graph's usage), one zip extract
+    # abort (same two copies and same read-only corpus usage as the 0367–0369
+    # zip trio below), one calamine CFB/OLE2 parser panic/OOM (kask-reachable
+    # via hkask-mcp-corpus's document-conversion chain — same posture as the
+    # zip trio: DoS-only on crafted input the operator's own corpus child
+    # reads; the operator's own documents are the threat-model input), and
+    # pin-utils unmaintained (transitive). All terminate in upstream crates;
+    # none is kask-introduced. Ignores pending an upstream bump, NOT accepted
+    # risk. Re-review with the next sync.
+    { id = "RUSTSEC-2026-0414", reason = "pulldown-cmark exponential event growth with ENABLE_WIKILINKS; upstream markdown graph. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0420", reason = "wasmtime-wasi wasip3 UDP send address confusion; upstream wasm extension host. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0422", reason = "wasmtime typed functions with i31/nullref arguments may panic; upstream wasm extension host. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0423", reason = "wasmtime cross-engine type confusion with host-created struct-types-with-supertypes; upstream wasm extension host. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0424", reason = "wasmtime unchecked memory usage in transferring borrowed resources between components; upstream wasm extension host. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0429", reason = "zip ZipArchive::extract aborts on a symlink entry with a large declared size; same two copies (8.6.0 via calamine/docx-rs, 2.4.2 via pptx-to-md) and same read-only corpus document-conversion usage as the 0367–0369 zip trio — extract() is never called. Not kask-introduced." },
+    { id = "RUSTSEC-2026-0433", reason = "pulldown-cmark quadratic parsing of nested image wikilinks with ENABLE_WIKILINKS; upstream markdown graph. Not kask-introduced; pending upstream bump." },
+    { id = "RUSTSEC-2026-0436", reason = "calamine CFB/OLE2 parser panic or unbounded allocation on crafted .xls/.xlsx; kask-reachable via hkask-mcp-corpus's document-conversion chain, which reads the operator's own documents — DoS-only (bounds-checked panic / child-process OOM), no memory unsafety per the advisory; the corpus child is the blast radius. Not kask-introduced; pending upstream fix." },
+    { id = "RUSTSEC-2026-0441", reason = "pin-utils unmaintained with no safe upgrade; transitive via upstream graph. Not kask-introduced." },
     # Triage pass 2026-10-25 (the operator pulled the re-review ahead): after
     # patch-bumping everything fixable in-range (ammonia 4.2.4, rustls 0.23.46
     # + rustls-webpki 0.103.16, rtrb 0.3.5, tokio, wasmtime/wasmtime-wasi 48.0.7,
@@ -89,6 +110,9 @@ ignore = [
 # allowlist below is a policy for THIRD-PARTY code, and zed-kask is itself GPL,
 # so checking our own crates against it is a category error that drowned the 4
 # genuine third-party rejections in noise.
+]
+
+[licenses]
 allow = [
     "MIT",
     "MIT-0",

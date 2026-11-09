@@ -71,6 +71,7 @@ x_ai = { workspace = true, features = ["schemars"] }
 x_ai_subscribed.workspace = true
 
 [dev-dependencies]
+zed_credentials_provider = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 cloud_llm_client.workspace = true
@@ -84,7 +85,6 @@ language_model = { workspace = true, features = ["test-support"] }
 open_router = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-zed_credentials_provider.workspace = true
 
 [package.metadata.cargo-shear]
 ignored = ["component"]

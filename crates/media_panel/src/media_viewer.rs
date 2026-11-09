@@ -35,7 +35,7 @@
 use std::{collections::HashSet, ops::Range, sync::Arc, time::Duration};
 
 use acp_thread::AgentThreadEntry;
-use agent_client_protocol::schema::v2::ToolCallId;
+use agent_client_protocol::v2::schema::ToolCallId;
 use gpui::{
     Context, Entity, HighlightStyle, InteractiveText, KeyDownEvent, Keystroke, ListAlignment,
     ListOffset, ListState, MouseButton, Render, SharedString, StrikethroughStyle, StyledText, Task,

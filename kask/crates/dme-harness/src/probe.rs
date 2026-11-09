@@ -61,7 +61,10 @@ pub fn run(args: ProbeArgs) -> Result<()> {
     // path the supervisor launches) — parse for dtype/params, hash for
     // provenance.
     let models_root = resolve_under_artifacts_dir(Path::new("private-inference/models"));
-    let files = fleet::resolve_model_files(&models_root, &args.model_id)
+    let briefs_dir = resolve_under_artifacts_dir(Path::new("private-inference/model-briefs"));
+    let model = fleet::discover_model(&briefs_dir, &models_root, &args.model_id)
+        .with_context(|| format!("discover the fleet model `{}`", args.model_id))?;
+    let files = fleet::resolve_model_files(&models_root, &model.brief)
         .with_context(|| format!("resolve the fleet artifact for `{}`", args.model_id))?;
     let artifact = files
         .first()

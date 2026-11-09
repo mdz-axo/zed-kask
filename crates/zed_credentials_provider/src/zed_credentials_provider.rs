@@ -26,6 +26,26 @@ pub fn global(cx: &App) -> Arc<dyn CredentialsProvider> {
         .unwrap_or_else(|| new(cx))
 }
 
+/// Install the shared [`FakeCredentialsProvider`] as the global
+/// credentials provider, returning the installed instance so harnesses can
+/// inspect its state (reads, keys).
+///
+/// zed-kask: D93 — the fork's provider is always the OS-keychain one
+/// (`global` falls back to it when no global is set), so any test that
+/// exercises a credentials-reading path runs keychain I/O on the GPUI test
+/// scheduler and fails with "Parking forbidden". Harnesses install the
+/// fake instead — the FakeFs/FakeHttpClient pattern: the fake itself lives
+/// with its trait (`credentials_provider::test_support`); the global's
+/// installer lives with the global.
+#[cfg(feature = "test-support")]
+pub fn set_fake_credentials_provider(
+    cx: &mut App,
+) -> Arc<credentials_provider::test_support::FakeCredentialsProvider> {
+    let provider = Arc::new(credentials_provider::test_support::FakeCredentialsProvider::default());
+    cx.set_global(ZedCredentialsProvider(provider.clone()));
+    provider
+}
+
 fn new(_cx: &App) -> Arc<dyn CredentialsProvider> {
     // zed-kask: always use the OS keychain via the keystore's `Keychain`.
     // Its awaited URL operations run oo7 on async-std's executor; GPUI's

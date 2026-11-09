@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = ["credentials_provider/test-support"]
+
 [lib]
 path = "src/zed_credentials_provider.rs"
 test = false

@@ -375,15 +375,12 @@ fn register_language_model_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
+    use gpui::{AppContext as _, BorrowAppContext as _};
     use http_client::FakeHttpClient;
     use language_model::IconOrSvg;
     use release_channel::AppVersion;
-    use std::future::Future;
-    use std::pin::Pin;
     use ui::IconName;
 
     #[test]
@@ -429,40 +426,18 @@ mod tests {
         assert_eq!(google["parametersJsonSchema"], parameters);
     }
 
-    struct FakeCredentialsProvider;
+    // zed-kask: D93 — the local `FakeCredentialsProvider` struct was removed at
+    // the 2026-11-08 upstream merge: the shared fake lives with its trait in
+    // `credentials_provider::test_support`, installed via
+    // `zed_credentials_provider::set_fake_credentials_provider`.
 
-    impl CredentialsProvider for FakeCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    pub(crate) fn set_fake_credentials_provider(cx: &mut App) {
-        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(Arc::new(
-            FakeCredentialsProvider,
-        )));
+    // zed-kask: D93 — delegates to the shared installer (the fake lives with
+    // its trait in `credentials_provider::test_support`; the installer lives
+    // with the global in `zed_credentials_provider`).
+    pub(crate) fn set_fake_credentials_provider(
+        cx: &mut App,
+    ) -> Arc<credentials_provider::test_support::FakeCredentialsProvider> {
+        zed_credentials_provider::set_fake_credentials_provider(cx)
     }
 
     fn init_test(cx: &mut App) -> (Arc<Client>, Arc<dyn CredentialsProvider>) {
@@ -482,7 +457,10 @@ mod tests {
             FakeHttpClient::with_404_response(),
             cx,
         );
-        (client, Arc::new(FakeCredentialsProvider))
+        (
+            client,
+            zed_credentials_provider::set_fake_credentials_provider(cx),
+        )
     }
 
     fn update_compatible_provider_settings(

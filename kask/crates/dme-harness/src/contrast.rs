@@ -722,8 +722,10 @@ mod tests {
         // u: [1,1,0,0] − [0,0,1,1] = [1,1,−1,−1], unit-norm → ±0.5
         let u_bytes = std::fs::read(out.path().join("u-15.f32")).unwrap();
         let u: Vec<f32> = u_bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
             .collect();
         assert_eq!(u, vec![0.5, 0.5, -0.5, -0.5]);
         // the prompt phase's 99s never entered
