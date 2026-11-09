@@ -1,7 +1,15 @@
-5666
+2782
 # Duplication-cluster ratchet (simplification program, Phase 1.2).
 # Metric: jscpd 5.4.0 --min-tokens 70 statistics.total.clones
 # over kask/ + fork-diverged files vs the scan base pinned in
 # duplication-scan-base.txt. The scan reads the shared working tree.
 # Bump in the same commit as the addition that justifies it; refresh after
 # removals and in the upstream-merge commit (together with the scan-base pin).
+#
+# Refreshed 2026-11-09 with the scan-base pin: the pin had not been
+# refreshed by the 2026-11-08 upstream merge, so the scan set had widened
+# to 723 paths and the count read 6344 against the stale 5666 baseline.
+# With the pin current (d2a4fb6ded, the merge's second parent) the scan set
+# is 263 paths and the count is 2782. The 654 groups the merge added were
+# upstream files entering the set, not fork duplication; kask/ itself grew
+# 15 groups (180 -> 195) since the previous baseline commit.

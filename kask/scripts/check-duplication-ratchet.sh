@@ -14,6 +14,7 @@
 # depth 1 plus one fetched commit) computes the same set as a full clone.
 # Refresh the pin in the upstream-merge commit, the same doctrine as the
 # dead-code baseline: refreshing is part of reviewing what upstream brought.
+# check-duplication-pin.sh enforces that doctrine mechanically.
 #
 # Adding duplication therefore requires a visible, reviewable act: bumping
 # duplication-ratchet-baseline.txt in the same commit, with the justification

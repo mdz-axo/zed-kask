@@ -83,6 +83,9 @@
 #   feature (D99) — without it, http_client's #[derive(Deserialize)]
 #   depends on cross-crate feature unification and standalone cargo scopes
 #   (-p http_client, -p bedrock) fail to compile (the D80 class).
+# - check-duplication-pin.sh: the scan-base pin names the second parent of
+#   the most recent upstream merge — a stale pin silently widens the
+#   fork-diverged scan set (observed 2026-11-09: 263 -> 723 paths).
 # - check-duplication-ratchet.sh: no net-new duplication clusters (jscpd,
 #   min-tokens 70, over kask/ + fork-diverged files vs the pinned scan
 #   base) beyond duplication-ratchet-baseline.txt — the simplification
@@ -238,6 +241,8 @@ jobs:
         run: |
           bash kask/scripts/check-no-mod-rs.sh
           bash kask/scripts/check-no-smol-timer.sh
+      - name: Duplication scan-base pin — current with the last upstream merge
+        run: bash kask/scripts/check-duplication-pin.sh
       - name: Duplication ratchet — no net-new clone clusters beyond the baseline
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq jq

@@ -17,24 +17,15 @@
 
 set -uo pipefail
 
-GATE="$(cd "$(dirname "$0")" && pwd)/check-duplication-ratchet.sh"
+# Shared synthetic-repo setup and pass/fail accounting (one implementation
+# for every check-*-selftest.sh gate).
+# shellcheck disable=SC1091  # the harness path is CWD-independent by design
+. "$(cd "$(dirname "$0")" && pwd)/selftest-harness.sh"
 
-[ -f "$GATE" ] || { echo "FAIL: gate not found at $GATE"; exit 1; }
+selftest_init check-duplication-ratchet.sh
+
 command -v npx >/dev/null 2>&1 || { echo "FAIL: npx not found — the ratchet selftest requires node/npx."; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found — the ratchet selftest requires jq."; exit 1; }
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-FAILURES=0
-
-expect() { # expect <actual-exit> <expected-exit> <label>
-  if [ "$1" -ne "$2" ]; then
-    echo "FAIL: $3 (expected exit $2, got $1)"
-    FAILURES=$((FAILURES + 1))
-  else
-    echo "ok: $3"
-  fi
-}
 
 git init -q "$WORK"
 git -C "$WORK" config user.email selftest@local
@@ -128,11 +119,4 @@ bash "$WORK/scripts/check-duplication-ratchet.sh" --refresh >/dev/null
 gate_exit
 expect $? 0 "refresh re-baselines the tree"
 
-if [ "$FAILURES" -eq 0 ]; then
-  echo ""
-  echo "SELFTEST OK: duplication ratchet is alive (RED + cleanup + below-baseline + refresh all pinned)"
-  exit 0
-fi
-echo "" >&2
-echo "SELFTEST FAIL: $FAILURES case(s) did not behave as expected — the gate is vacuous or broken." >&2
-exit 1
+selftest_finish "duplication ratchet is alive (RED + cleanup + below-baseline + refresh all pinned)"
