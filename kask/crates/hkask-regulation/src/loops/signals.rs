@@ -90,7 +90,7 @@ pub enum SignalMetric {
     /// `render_template`, `skill`). Higher is worse: the turn did real work
     /// from native generation alone, the drift class the
     /// affordance-injection intervention targets. Set-point:
-    /// native_first_rate_threshold (default 0.50). Without this metric the
+    /// native_first_rate_threshold (default 0.75). Without this metric the
     /// loop senses tool FAILURES but never instrument ABSENCE — the
     /// unsensed leg of the drift feedback loop.
     NativeFirstRate,

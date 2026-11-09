@@ -568,7 +568,9 @@ fn build_regulation_action_produces_action_for_all_new_reasons() {
             (ContextServerHealth, BelowSetPoint, 0.0, 1.0),
             (OcrSilentFailures, AboveSetPoint, 14.0, 0.0),
             (ExperimentationStuckExperiments, AboveSetPoint, 2.0, 0.0),
-            (NativeFirstRate, AboveSetPoint, 0.7, 0.5),
+            // NativeFirstRate exemplar carries the recalibrated default
+            // set point (0.75, card 24670321, operator-ratified 2026-11-09)
+            (NativeFirstRate, AboveSetPoint, 0.8, 0.75),
         ];
 
         for &(metric, direction, value, set_point) in cases {

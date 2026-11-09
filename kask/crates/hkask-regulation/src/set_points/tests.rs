@@ -100,9 +100,9 @@ fn algedonic_events_max_round_trips_from_config() {
 }
 
 /// `native_first_rate_threshold` round-trips from YAML config and the
-/// default stays 0.50 — the operator's calibration knob (recalibrated from
-/// the measured baseline 2026-10-31 via `HKASK_REG_CONFIG`). Pins the wire
-/// key itself: `SetPointsConfig` has no `deny_unknown_fields`, so a
+/// default is the operator-ratified 0.75 (recalibrated 2026-11-09 from the
+/// measured 168h deviation distribution, algedonic card 24670321). Pins the
+/// wire key itself: `SetPointsConfig` has no `deny_unknown_fields`, so a
 /// renamed field would load an operator's config file successfully while
 /// silently stranding the calibration at the default.
 #[test]
@@ -113,8 +113,8 @@ fn native_first_rate_threshold_round_trips_from_config() {
     assert_eq!(points.native_first_rate_threshold, 0.65);
     assert_eq!(
         SetPoints::default().native_first_rate_threshold,
-        0.50,
-        "the compiled default is the pre-baseline guess, unchanged"
+        0.75,
+        "the compiled default is the operator-ratified 0.75 (2026-11-09)"
     );
 }
 

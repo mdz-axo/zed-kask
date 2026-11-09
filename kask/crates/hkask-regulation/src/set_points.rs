@@ -52,12 +52,13 @@ pub(crate) const DEFAULT_TOOL_RELIABILITY_THRESHOLD: f64 = 0.80;
 
 /// Default ceiling for the native-first rate sensor — the maximum fraction
 /// of completed substantive agent turns that may use zero kask instruments
-/// before the loop escalates. 0.50: at most half of substantive turns may
-/// complete without instruments. The operator's standing drift complaint
-/// says the live rate sits well above this, so the first readings are
-/// expected to deviate — that is the sensor working, not a
-/// misconfiguration; recalibrate once the baseline is known.
-pub(crate) const DEFAULT_NATIVE_FIRST_RATE_THRESHOLD: f64 = 0.50;
+/// before the loop escalates. 0.75: recalibrated from the measured baseline
+/// (algedonic card 24670321, operator-ratified 2026-11-09) — the 19 windowed
+/// readings that fired under the interim 0.65 sat in the 0.67-0.82 band with
+/// native-heavy sessions spiking to 1.0, so 0.75 puts the modal band in-band
+/// while lopsided all-native stretches still surface. The operator calibrates
+/// via `HKASK_REG_CONFIG` under the key `native_first_rate_threshold`.
+pub(crate) const DEFAULT_NATIVE_FIRST_RATE_THRESHOLD: f64 = 0.75;
 
 /// Default maximum skill feedback spans retained per skill+phase.
 ///
@@ -158,7 +159,7 @@ pub struct SetPoints {
     pub tool_reliability_threshold: f64,
     /// Maximum fraction of completed substantive agent turns that may use
     /// zero kask instruments before the native-first sensor deviates.
-    /// Default: 0.50.
+    /// Default: 0.75 (operator-ratified 2026-11-09).
     pub native_first_rate_threshold: f64,
     // ── History retention (v0.33.0) ──
     /// Maximum skill feedback spans retained per skill+phase.
@@ -387,7 +388,7 @@ impl SetPoints {
         // and the sensor reads "healthy" forever — the mirror image of the
         // 0.0 reliability floor above. 0.0 is strict but meaningful (any
         // native-first substantive turn deviates). Reject the ceiling and
-        // negatives so load_set_points falls back to the 0.50 default
+        // negatives so load_set_points falls back to the 0.75 default
         // instead of running a blind sensor.
         if !(0.0 <= self.native_first_rate_threshold && self.native_first_rate_threshold < 1.0) {
             return Err(anyhow::anyhow!(
