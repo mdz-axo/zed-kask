@@ -7,7 +7,7 @@ use crate::types::{Perspective, ScenarioEvent, SubQuestion};
 // ── Request types for MCP tools ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct BuildEventsRequest {
+pub struct BuildEventsRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Time horizon for the scenario
@@ -35,7 +35,7 @@ pub struct BrainstormRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FrameRequest {
+pub struct FrameRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
     /// Optional: complete JSON text encoding the pre-populated answer object
@@ -77,7 +77,7 @@ pub(crate) struct DependencySpecRequest {
 /// Request for `scenario_propagate`: update one event's prior and recompute
 /// the whole tree.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PropagateRequest {
+pub struct PropagateRequest {
     /// The current tree's events (e.g. from a prior
     /// scenario_from_markets_set / scenario_quantify output).
     pub events: Vec<ScenarioEvent>,
@@ -132,7 +132,7 @@ pub struct PosteriorEvidenceEntry {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CrossValidateRequest {
+pub struct CrossValidateRequest {
     /// Event or question identifier
     pub event_id: String,
     /// Label for the first estimate source (e.g., 'superforecasting_skill')
@@ -158,7 +158,7 @@ pub struct QuantifyRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct UpdateRequest {
+pub struct UpdateRequest {
     /// Forecast record ID
     pub forecast_id: String,
     /// Event ID being updated
@@ -226,7 +226,7 @@ pub struct SynthesizeRequest {
     /// Event ID to synthesize perspectives for
     pub event_id: String,
     /// Perspectives to aggregate
-    pub(crate) perspectives: Vec<Perspective>,
+    pub perspectives: Vec<Perspective>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

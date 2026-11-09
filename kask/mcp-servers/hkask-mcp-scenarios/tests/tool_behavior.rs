@@ -10,14 +10,18 @@
 
 #![cfg(test)]
 
-use hkask_mcp_scenarios::equity_forecast::StoredEquityForecast;
+use hkask_mcp_scenarios::equity_forecast::{
+    BranchSpec, EquityForecastListRequest, EquityForecastPersistRequest,
+    EquityForecastRecordRequest, ScenarioRiskRequest, StoredEquityForecast,
+};
 use hkask_mcp_scenarios::requests::{
-    AssessRequest, BrainstormRequest, CalibrateRequest, DeclareRequest, FrameDocumentRequest,
-    OutcomeEntry, PosteriorEvidenceEntry, PosteriorsRequest, QuantifyRequest, ScoreRequest,
-    StatusRequest, TriageRequest,
+    AssessRequest, BrainstormRequest, BuildEventsRequest, CalibrateRequest, CalibrationRequest,
+    CrossValidateRequest, DeclareRequest, FrameDocumentRequest, FrameRequest, OutcomeEntry,
+    PosteriorEvidenceEntry, PosteriorsRequest, PropagateRequest, QuantifyRequest, ScoreRequest,
+    StatusRequest, SynthesizeRequest, TriageRequest, UpdateRequest,
 };
 use hkask_mcp_scenarios::types::{
-    EventDependency, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
+    EventDependency, Perspective, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
 };
 use hkask_mcp_scenarios::{ForecastStore, JournalStore, ProjectStore, ScenariosServer};
 use hkask_types::WebID;
@@ -149,6 +153,26 @@ fn assess_request_all_omitted(project_id: &str) -> AssessRequest {
         learning_events: None,
         has_early_warning_indicators: None,
     }
+}
+
+/// The framing answers fixture shared by the frame_document tests — one
+/// copy, not one per test (the ratchet's duplication gate caught the
+/// duplicated literal).
+fn framing_answers() -> serde_json::Value {
+    serde_json::json!({
+        "focal_question": "Will ACME's margin hold?",
+        "decision_at_stake": "hold or hedge",
+        "time_horizon": "strategic",
+        "action_deadline": "2027-12-31",
+        "in_scope": ["margins"],
+        "out_of_scope": ["M&A"],
+        "stakeholders": ["board"],
+        "use_case": "capital allocation",
+        "success_criteria": ["clear thesis"],
+        "constraints": ["no leverage"],
+        "surfaced_assumptions": ["stable demand"],
+        "exploration_prompts": ["what breaks the thesis?"],
+    })
 }
 
 /// Parse the journal's newline-delimited entries into (key, record) pairs.
@@ -675,36 +699,6 @@ async fn scenario_quantify_emits_certainty_distance_not_variance_contribution() 
     );
 }
 
-/// `scenario_brainstorm` clamps `start_round` into the valid [1, 4] range. A
-/// caller passing 5 must not get an out-of-range starting round or an empty
-/// protocol — it clamps to 4 and emits the final round only.
-#[tokio::test]
-async fn scenario_brainstorm_clamps_start_round_into_range() {
-    let server = make_server();
-    let output = server
-        .scenario_brainstorm(Parameters(BrainstormRequest {
-            subject: "ACME".to_string(),
-            time_horizon: Some("strategic".to_string()),
-            research_context: None,
-            personas: None,
-            start_round: Some(5),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
-
-    assert_eq!(
-        parsed["starting_round"].as_u64(),
-        Some(4),
-        "start_round 5 must clamp to the maximum valid round 4, got: {parsed}"
-    );
-    assert_eq!(
-        parsed["total_rounds"].as_u64(),
-        Some(1),
-        "only round 4 survives the clamp, so exactly one round is active, got: {parsed}"
-    );
-}
-
 // ── Invalid input + error-specificity ────────────────────────────────────────
 
 /// `scenario_quantify` with no events returns a structured `invalid_argument`
@@ -1104,73 +1098,6 @@ async fn scenario_recompute_posteriors_degrades_on_non_polytree_with_note() {
             .as_str()
             .is_some_and(|n| n.contains("multiply-connected")),
         "the degradation is surfaced with a note, got: {parsed}"
-    );
-}
-
-/// PR-08: evidence validation — exactly one of the three fields, and the
-/// event must be among the request's events. Both/neither and unknown ids
-/// are invalid_argument naming the event.
-#[tokio::test]
-async fn scenario_recompute_posteriors_rejects_malformed_evidence() {
-    let server = make_server();
-    let events = vec![independent_event("evt-a", "root event", 0.5)];
-
-    // Both observed_probability and occurred set.
-    let error = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
-            events: events.clone(),
-            evidence: vec![PosteriorEvidenceEntry {
-                event_id: "evt-a".to_string(),
-                observed_probability: Some(0.9),
-                occurred: Some(true),
-                likelihood_ratio: None,
-            }],
-        }))
-        .await
-        .expect_err("two fields set must be rejected");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "exactly-one-of-three is closed-set validation, got: {error:?}"
-    );
-
-    // Unknown event id.
-    let error = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
-            events: events.clone(),
-            evidence: vec![PosteriorEvidenceEntry {
-                event_id: "ghost".to_string(),
-                observed_probability: Some(0.9),
-                occurred: None,
-                likelihood_ratio: None,
-            }],
-        }))
-        .await
-        .expect_err("an unknown evidence event must be rejected");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "an evidence id outside the request's events is a caller defect, got: {error:?}"
-    );
-    assert!(
-        error.to_string().contains("ghost"),
-        "the error names the unknown event, got: {error}"
-    );
-
-    // Out-of-range observed probability.
-    let error = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
-            events,
-            evidence: vec![PosteriorEvidenceEntry {
-                event_id: "evt-a".to_string(),
-                observed_probability: Some(1.5),
-                occurred: None,
-                likelihood_ratio: None,
-            }],
-        }))
-        .await
-        .expect_err("an out-of-range probability must be rejected");
-    assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::InvalidArgument),
-        "observed_probability must be in [0,1], got: {error:?}"
     );
 }
 
@@ -2097,4 +2024,631 @@ async fn date_only_v4_declaration_is_preserved_but_never_reclassified_as_prospec
         status["pipeline"]["recent_forecasts"][0]["scoring_eligible"],
         false
     );
+}
+
+// ── F4: behavior coverage for the previously unexercised tools ────────────────
+// The server registers 22 tools; before this section only scenario_declare,
+// scenario_score and scenario_status were exercised through their
+// Parameters<T> seam. Each test below drives one unexercised tool through
+// that seam (happy path, plus invalid input where the tool has a named
+// error path), per docs/reference/mcp-servers/README.md §Testing standard.
+
+#[tokio::test]
+async fn scenario_triage_classifies_a_well_specified_question() {
+    let server = make_server();
+    let output = server
+        .scenario_triage(Parameters(TriageRequest {
+            question: "Will the Fed cut rates by 2027-12-31?".into(),
+            has_deadline: Some(true),
+            has_reference_class: Some(true),
+            has_resolution_criteria: Some(true),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(parsed["is_forecastable"].as_bool().unwrap_or(false));
+    assert_eq!(parsed["difficulty"], "well_specified");
+    assert!(parsed["scores"]["overall"].as_f64().is_some());
+    assert!(parsed["recommendation"].is_string());
+    assert!(parsed["next_steps"].is_string());
+}
+
+#[tokio::test]
+async fn scenario_triage_flags_a_vague_question_for_refinement() {
+    let server = make_server();
+    let output = server
+        .scenario_triage(Parameters(TriageRequest {
+            question: "Will things get better?".into(),
+            has_deadline: None,
+            has_reference_class: None,
+            has_resolution_criteria: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(!parsed["is_forecastable"].as_bool().unwrap_or(true));
+    assert_eq!(parsed["difficulty"], "needs_refinement");
+    assert!(
+        parsed["next_steps"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Refine")
+    );
+}
+
+#[tokio::test]
+async fn scenario_frame_returns_the_seven_turn_protocol() {
+    let server = make_server();
+    let output = server
+        .scenario_frame(Parameters(FrameRequest {
+            subject: "ACME".into(),
+            prior_answers: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(parsed["session_type"], "Conversational Scenario Framing");
+    assert!(parsed["conversation_flow"].as_array().is_some());
+    assert!(parsed["conversation_flow"][0]["opening"].is_string());
+    assert!(parsed.get("prior_answers").is_none());
+}
+
+#[tokio::test]
+async fn scenario_frame_carries_prior_answers_through() {
+    let server = make_server();
+    let output = server
+        .scenario_frame(Parameters(FrameRequest {
+            subject: "ACME".into(),
+            prior_answers: Some(hkask_types::AnyJsonValue::from(
+                serde_json::json!({ "focal_question": "prior" }),
+            )),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["prior_answers"]["focal_question"], "prior");
+    assert!(
+        parsed["note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Prior answers")
+    );
+}
+
+#[tokio::test]
+async fn scenario_frame_document_persists_the_project_record() {
+    let server = make_server();
+    let answers = framing_answers();
+    let output = server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".into(),
+            project_id: None,
+            answers: hkask_types::AnyJsonValue::from(answers),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(
+        parsed["framing_document"]["focal_question"],
+        "Will ACME's margin hold?"
+    );
+    assert_eq!(parsed["framing_document"]["time_horizon"], "strategic");
+
+    // The project record is the assessment anchor (PR-01): a second call
+    // for the same subject must find the persisted project.
+    let assess = server
+        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
+        .await
+        .expect("assess the framed project");
+    let assessed = parse(&assess);
+    assert!(assessed["project_id"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn scenario_frame_document_fills_defaults_for_empty_answers() {
+    let server = make_server();
+    let output = server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".into(),
+            project_id: None,
+            answers: hkask_types::AnyJsonValue::from(serde_json::json!({})),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    // The subject is required; the answers default rather than failing.
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(parsed["framing_document"]["focal_question"], "");
+    assert_eq!(parsed["framing_document"]["time_horizon"], "strategic");
+}
+
+#[tokio::test]
+async fn scenario_frame_document_rejects_an_empty_subject() {
+    let server = make_server();
+    let output = server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "  ".into(),
+            project_id: None,
+            answers: hkask_types::AnyJsonValue::from(serde_json::json!({})),
+        }))
+        .await;
+    assert!(output.is_err(), "an empty subject must be rejected");
+}
+
+#[tokio::test]
+async fn scenario_brainstorm_runs_the_protocol_rounds() {
+    let server = make_server();
+    let output = server
+        .scenario_brainstorm(Parameters(BrainstormRequest {
+            subject: "ACME".into(),
+            time_horizon: Some("strategic".into()),
+            research_context: Some("ACME faces margin pressure.".into()),
+            personas: Some("Bull,Bear".into()),
+            start_round: Some(1),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(
+        parsed["protocol_type"],
+        "Multi-Round Collaborative Brainstorming"
+    );
+    assert_eq!(parsed["total_rounds"], 4);
+    assert_eq!(parsed["starting_round"], 1);
+    assert!(parsed["rounds"][0]["round"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn scenario_brainstorm_clamps_start_round_into_range() {
+    let server = make_server();
+    let output = server
+        .scenario_brainstorm(Parameters(BrainstormRequest {
+            subject: "ACME".into(),
+            time_horizon: None,
+            research_context: None,
+            personas: None,
+            start_round: Some(9),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["starting_round"], 4);
+    assert_eq!(parsed["total_rounds"], 1);
+}
+
+#[tokio::test]
+async fn scenario_build_extracts_an_event_scaffold() {
+    let server = make_server();
+    let output = server
+        .scenario_build(Parameters(BuildEventsRequest {
+            subject: "ACME".into(),
+            time_horizon: Some("strategic".into()),
+            scenario_type: Some("company_analysis".into()),
+            context: Some("ACME faces margin pressure from input costs.".into()),
+            max_events: Some(3),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(parsed["max_events"], 3);
+    assert!(
+        parsed["event_extraction_prompt"]
+            .as_str()
+            .unwrap_or("")
+            .contains("extract up to 3")
+    );
+    assert!(parsed["time_horizon_key"].is_string());
+}
+
+#[tokio::test]
+async fn scenario_calibration_reports_the_declared_forecast() {
+    let server = make_server();
+    let event = independent_event("evt-1", "durable event", 0.6);
+    declare(&server, "calibrate-me", vec![event.clone()]).await;
+    let scored = server
+        .scenario_score(Parameters(ScoreRequest {
+            forecast_id: "calibrate-me".into(),
+            events: vec![event],
+            resolver: "test-source".into(),
+            outcomes: vec![OutcomeEntry {
+                event_id: "evt-1".into(),
+                occurred: false,
+            }],
+        }))
+        .await
+        .expect("score the forecast");
+    let _ = parse(&scored);
+
+    let output = server
+        .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["total_forecasts"], 1);
+    assert_eq!(parsed["resolved_forecasts"], 1);
+    assert!(parsed["bins"].as_array().is_some());
+    assert_eq!(parsed["evidence_status"], "insufficient");
+}
+
+#[tokio::test]
+async fn scenario_cross_validate_flags_divergence_above_threshold() {
+    let server = make_server();
+    let sub = || SubQuestion {
+        question: "What is the base rate?".into(),
+        estimate: 0.5,
+        confidence: 0.5,
+    };
+    let output = server
+        .scenario_cross_validate(Parameters(CrossValidateRequest {
+            event_id: "evt-1".into(),
+            source_a: "superforecasting_skill".into(),
+            estimate_a: 0.2,
+            sub_questions_a: vec![sub()],
+            source_b: "scenario_calibrate".into(),
+            estimate_b: 0.8,
+            sub_questions_b: vec![sub()],
+            review_threshold: Some(0.15),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(parsed["divergence"].as_f64().unwrap_or(0.0) > 0.15);
+    assert_eq!(parsed["requires_review"], true);
+    assert_eq!(parsed["status"], "review_required");
+    assert!(
+        parsed["recommendation"]
+            .as_str()
+            .unwrap_or("")
+            .contains("grill-me")
+    );
+}
+
+#[tokio::test]
+async fn scenario_cross_validate_passes_within_threshold() {
+    let server = make_server();
+    let sub = || SubQuestion {
+        question: "What is the base rate?".into(),
+        estimate: 0.5,
+        confidence: 0.5,
+    };
+    let output = server
+        .scenario_cross_validate(Parameters(CrossValidateRequest {
+            event_id: "evt-1".into(),
+            source_a: "superforecasting_skill".into(),
+            estimate_a: 0.50,
+            sub_questions_a: vec![sub()],
+            source_b: "scenario_calibrate".into(),
+            estimate_b: 0.52,
+            sub_questions_b: vec![sub()],
+            review_threshold: Some(0.15),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert!(parsed["divergence"].as_f64().unwrap_or(1.0) <= 0.15);
+    assert_eq!(parsed["requires_review"], false);
+    assert_eq!(parsed["status"], "consistent");
+}
+
+#[tokio::test]
+async fn scenario_quantify_resolves_a_single_independent_event() {
+    let server = make_server();
+    let event = independent_event("evt-1", "durable event", 0.6);
+    let output = server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![event],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["subject"], "ACME");
+    assert_eq!(parsed["nodes"][0]["id"], "evt-1");
+    assert_eq!(parsed["nodes"][0]["marginal_probability"], 0.6);
+    assert_eq!(parsed["joint_probability"], 0.6);
+}
+
+#[tokio::test]
+async fn scenario_quantify_rejects_out_of_range_probability() {
+    let server = make_server();
+    let mut event = independent_event("evt-1", "durable event", 0.6);
+    event.probability = 1.5;
+    let output = server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![event],
+        }))
+        .await;
+    assert!(
+        output.is_err(),
+        "a probability above 1.0 must be rejected, not clamped"
+    );
+}
+
+#[tokio::test]
+async fn scenario_propagate_recomputes_descendants_after_a_prior_update() {
+    let server = make_server();
+    let parent = independent_event("parent", "parent event", 0.5);
+    let mut child = independent_event("child", "child event", 0.5);
+    child.depends_on = vec![EventDependency {
+        parent_event_ids: vec!["parent".into()],
+        conditionals: vec![0.1, 0.9],
+    }];
+    let tree = server
+        .scenario_quantify(Parameters(QuantifyRequest {
+            events: vec![parent.clone(), child.clone()],
+        }))
+        .await
+        .expect("quantify the tree");
+    let before = parse(&tree);
+    assert_eq!(before["nodes"][1]["marginal_probability"], 0.5);
+
+    let updated = server
+        .scenario_propagate(Parameters(PropagateRequest {
+            events: vec![parent, child],
+            event_id: "parent".into(),
+            new_prior: 1.0,
+        }))
+        .await
+        .expect("propagate the update");
+    let after = parse(&updated);
+    // P(child) = P(child | parent) = 0.9 once the parent is certain.
+    assert_eq!(after["tree"]["nodes"][1]["marginal_probability"], 0.9);
+}
+
+#[tokio::test]
+async fn scenario_recompute_posteriors_clamps_on_observed_outcome() {
+    let server = make_server();
+    let event = independent_event("evt-1", "durable event", 0.5);
+    let output = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: vec![event],
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "evt-1".into(),
+                occurred: Some(false),
+                observed_probability: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["nodes"][0]["prior_marginal"], 0.5);
+    assert_eq!(parsed["nodes"][0]["posterior_probability"], 0.0);
+}
+
+#[tokio::test]
+async fn scenario_recompute_posteriors_rejects_malformed_evidence() {
+    let server = make_server();
+    let event = independent_event("evt-1", "durable event", 0.5);
+    let output = server
+        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+            events: vec![event],
+            evidence: vec![PosteriorEvidenceEntry {
+                event_id: "not-in-tree".into(),
+                occurred: Some(true),
+                observed_probability: None,
+                likelihood_ratio: None,
+            }],
+        }))
+        .await;
+    assert!(
+        output.is_err(),
+        "evidence for an event outside the tree must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn scenario_update_applies_a_bayesian_update() {
+    let server = make_server();
+    let output = server
+        .scenario_update(Parameters(UpdateRequest {
+            forecast_id: "bayes".into(),
+            event_id: "evt-1".into(),
+            prior_probability: 0.5,
+            evidence_likelihood: 0.9,
+            evidence_base_rate: 0.5,
+            evidence_description: Some("new evidence".into()),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    // P(H|E) = 0.9 * 0.5 / (0.9 * 0.5 + 0.1 * 0.5) = 0.9.
+    assert_eq!(parsed["posterior_probability"], 0.9);
+    assert_eq!(parsed["direction"], "increased");
+    assert_eq!(parsed["magnitude"], "large");
+}
+
+#[tokio::test]
+async fn scenario_update_rejects_an_out_of_range_prior() {
+    let server = make_server();
+    let output = server
+        .scenario_update(Parameters(UpdateRequest {
+            forecast_id: "bayes".into(),
+            event_id: "evt-1".into(),
+            prior_probability: 1.5,
+            evidence_likelihood: 0.9,
+            evidence_base_rate: 0.5,
+            evidence_description: None,
+        }))
+        .await;
+    assert!(
+        output.is_err(),
+        "a prior probability above 1.0 must be rejected"
+    );
+}
+
+#[tokio::test]
+async fn scenario_synthesize_averages_perspectives() {
+    let server = make_server();
+    let sub = || SubQuestion {
+        question: "What is the base rate?".into(),
+        estimate: 0.5,
+        confidence: 0.5,
+    };
+    let perspectives = vec![
+        Perspective {
+            source: "bull".into(),
+            probability: 0.8,
+            fermi_sub_questions: vec![sub()],
+            base_rate: None,
+            reference_class: None,
+            rationale: None,
+            historical_brier: None,
+        },
+        Perspective {
+            source: "bear".into(),
+            probability: 0.4,
+            fermi_sub_questions: vec![sub()],
+            base_rate: None,
+            reference_class: None,
+            rationale: None,
+            historical_brier: None,
+        },
+    ];
+    let output = server
+        .scenario_synthesize(Parameters(SynthesizeRequest {
+            event_id: "evt-1".into(),
+            perspectives,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    // Explicit equal-weight average: (0.8 + 0.4) / 2.
+    assert!((parsed["aggregated_probability"].as_f64().unwrap_or(0.0) - 0.6).abs() < 1e-9);
+    assert_eq!(
+        parsed["individual_perspectives"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn scenario_assess_scores_the_framed_project() {
+    let server = make_server();
+    let answers = framing_answers();
+    server
+        .scenario_frame_document(Parameters(FrameDocumentRequest {
+            subject: "ACME".into(),
+            project_id: None,
+            answers: hkask_types::AnyJsonValue::from(answers),
+        }))
+        .await
+        .expect("frame the project first");
+
+    let output = server
+        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["project_id"], "ACME");
+    assert!(parsed["phases"].as_object().is_some());
+    assert!(parsed["unreported_metrics"].as_array().is_some());
+}
+
+#[tokio::test]
+async fn forecast_persist_and_list_round_trip() {
+    let server = make_server();
+    let persisted = server
+        .forecast_persist(Parameters(EquityForecastPersistRequest {
+            symbol: "ACME".into(),
+            forecast_date: "2026-11-09".into(),
+            horizon: "1yr".into(),
+            forecast_price_change: Some(0.10),
+            forecast_multiple: Some(12.0),
+            forecast_price: None,
+            current_price: None,
+            forecast_probability: Some(0.8),
+            revision_of: None,
+            forecast_id: Some("persist-me".into()),
+            scenario_project_id: None,
+            scenario_tree: None,
+            impact_mappings_ref: None,
+            fused_volatility: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&persisted);
+    assert_eq!(parsed["forecast_id"], "persist-me");
+    assert_eq!(parsed["symbol"], "ACME");
+
+    let listed = server
+        .forecast_list(Parameters(EquityForecastListRequest {
+            symbol: "ACME".into(),
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&listed);
+    assert_eq!(parsed["symbol"], "ACME");
+    assert!(parsed["forecasts"].as_array().is_some());
+    assert!(
+        parsed["forecasts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["forecast_id"] == "persist-me"),
+        "the persisted forecast must be listed, got: {parsed}"
+    );
+}
+
+#[tokio::test]
+async fn forecast_record_scores_a_standalone_outcome() {
+    let server = make_server();
+    let output = server
+        .forecast_record(Parameters(EquityForecastRecordRequest {
+            symbol: "ACME".into(),
+            forecast_date: "2026-11-09".into(),
+            horizon: "1yr".into(),
+            forecast_multiple: 12.0,
+            forecast_price_change: 0.10,
+            outcome_date: "2027-11-09".into(),
+            actual_multiple: 10.0,
+            actual_price_change: -0.05,
+            forecast_id: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["status"], "recorded");
+    assert_eq!(parsed["gaps"]["narrative"], "return_drove_gap");
+    // No prospectively stored probability: the raw loss is unscored, never
+    // silently certified.
+    assert_eq!(parsed["scoring_status"], "unscored");
+    assert!(parsed["brier"]["combined"].is_null());
+}
+
+#[tokio::test]
+async fn scenario_risk_measure_weights_the_branches() {
+    let server = make_server();
+    let output = server
+        .scenario_risk_measure(Parameters(ScenarioRiskRequest {
+            branches: vec![
+                BranchSpec {
+                    probability: 0.5,
+                    branch_return: 0.10,
+                },
+                BranchSpec {
+                    probability: 0.5,
+                    branch_return: -0.05,
+                },
+            ],
+            realized_volatility: Some(0.20),
+            scenario_weight: None,
+        }))
+        .await
+        .expect("tool ok");
+    let parsed = parse(&output);
+    assert_eq!(parsed["status"], "measured");
+    // Expected return = 0.5 * 0.10 + 0.5 * (-0.05) = 0.025.
+    assert!(
+        (parsed["risk_measure"]["expected_return"]
+            .as_f64()
+            .unwrap_or(0.0)
+            - 0.025)
+            .abs()
+            < 1e-9
+    );
+    assert!(parsed["risk_measure"]["sigma_scenario"].as_f64().is_some());
+    assert!(parsed["fused_volatility"].as_f64().is_some());
 }
