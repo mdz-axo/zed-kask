@@ -3104,6 +3104,23 @@ mod tests {
         ));
     }
 
+    /// expect: "Projection to a JSON object requires every pair to be a 2-element list with a string key; empty, non-string-key, mixed-key and malformed shapes stay arrays" [H4B]
+    #[test]
+    fn h4b_projection_shape_precondition() {
+        let form = "(list (list (list 1 \"one\") (list 2 \"two\")) (list (list \"k\" 1) (list 2 \"two\")) (list (list \"k\" 1) (list \"j\" 2)) (list) (list (list \"k\" 1 2)))";
+        let result = eval_sandboxed(form, &serde_json::json!({})).expect("projection shapes");
+        assert_eq!(
+            result,
+            serde_json::json!([
+                [[1, "one"], [2, "two"]],
+                [["k", 1], [2, "two"]],
+                {"k": 1, "j": 2},
+                [],
+                [["k", 1, 2]]
+            ])
+        );
+    }
+
     /// expect: "Counting is per-call, stops before accepting cap+1, and formatting guards raw Value depth" [H4B]
     #[test]
     fn h4b_counter_isolation_and_depth() {

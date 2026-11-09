@@ -400,10 +400,63 @@ fn lint_form(form: &LispValue, report: &mut impl FnMut(String)) {
     if head == Some("or") {
         lint_unguarded_union_comparison(&items[1..], report);
     }
+    lint_alist_keys(form, report);
 
     for item in items.iter().skip(1) {
         lint_form(item, report);
     }
+}
+
+/// Flag alist-like forms whose literal keys are not all strings: the result
+/// will not project to a JSON object, and the silent array fallback is the
+/// failure mode the projection precondition documents. Only literal keys are
+/// decidable statically — symbols may be strings at runtime, so forms with
+/// variable keys are skipped rather than false-positived.
+fn lint_alist_keys(form: &LispValue, report: &mut impl FnMut(String)) {
+    let LispValue::List(list) = form else {
+        return;
+    };
+    let items = list.to_vec();
+    let Some("list") = items.first().and_then(symbol_name) else {
+        return;
+    };
+    // Direct pair-like arguments: (list <key> <value> ...).
+    let mut keys: Vec<LispValue> = Vec::new();
+    for item in items.iter().skip(1) {
+        let LispValue::List(pair) = item else {
+            continue;
+        };
+        let pair_items = pair.to_vec();
+        if pair_items.len() >= 3 {
+            keys.push(pair_items[1].clone());
+        }
+    }
+    if keys.len() < 2 {
+        return;
+    }
+    if keys.iter().any(|key| {
+        !matches!(
+            key,
+            LispValue::String(_)
+                | LispValue::Int(_)
+                | LispValue::Float(_)
+                | LispValue::Bool(_)
+                | LispValue::Nil
+        )
+    }) {
+        return;
+    }
+    let string_keys = keys
+        .iter()
+        .filter(|key| matches!(key, LispValue::String(_)))
+        .count();
+    if string_keys == 0 || string_keys == keys.len() {
+        return;
+    }
+    report(
+        "mixed alist keys: this form will not project to a JSON object — use string keys for every pair"
+            .into(),
+    );
 }
 
 fn lint_unguarded_union_comparison(branches: &[LispValue], report: &mut impl FnMut(String)) {
@@ -670,6 +723,27 @@ form: "(= (+ a b) 3)"
             lint_form(form, &mut |message| messages.push(message));
         }
         assert_eq!(messages.len(), 3);
+    }
+
+    #[test]
+    fn alist_key_lint_flags_mixed_keys_only() {
+        let forms = parse(
+            "(begin (list (list \"k\" 1) (list \"j\" 2)) (list (list \"k\" 1) (list 2 \"two\")) (list (list 1 \"one\") (list 2 \"two\")) (list (list k 1) (list \"j\" 2)))",
+        )
+        .expect("fixture should parse");
+        let mut messages = Vec::new();
+        for form in &forms {
+            lint_form(form, &mut |message| messages.push(message));
+        }
+        assert_eq!(
+            messages.len(),
+            1,
+            "only the mixed-key form should be flagged: {messages:?}"
+        );
+        assert!(
+            messages[0].contains("mixed alist keys"),
+            "flag should name the mixed-key failure: {messages:?}"
+        );
     }
 
     #[test]

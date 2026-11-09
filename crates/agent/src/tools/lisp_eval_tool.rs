@@ -32,7 +32,17 @@ use ui::SharedString;
 /// Evaluation is bounded by `max_steps` and `max_depth` to prevent infinite loops.
 ///
 /// JSON objects become association lists — use `(assoc "key" alist)` to access
-/// fields. Pretty JSON results are capped at 1048576 UTF-8 bytes, excluding envelopes. Its pretty-printed UTF-8 document
+/// fields. Projection back to a JSON object requires every element to be a
+/// 2-element list whose first element is a string; empty lists, non-string
+/// keys, mixed keys and malformed pairs stay JSON arrays with no signal, so
+/// validate shapes before projecting. Duplicate keys collapse to the last
+/// pair (current pinned behavior, under operator review) — use unique string
+/// keys when every entry must survive projection. `(assoc "key" alist)`
+/// returns nil when the alist is a string (the documented stable-0 default for
+/// LLM prose output) and errors for other non-list values; use
+/// `(assoc! "key" alist)` when a missing key must fail — it errors naming the
+/// key and available keys.
+/// Pretty JSON results are capped at 1048576 UTF-8 bytes, excluding envelopes. Its pretty-printed UTF-8 document
 /// is limited to 1048576 bytes, excluding tool/MCP envelopes.
 ///
 /// Example: count open threats from a prior step's output:
