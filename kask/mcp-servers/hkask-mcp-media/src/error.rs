@@ -51,6 +51,16 @@ pub enum MediaError {
     #[error("{0}")]
     FfmpegFailed(String),
 
+    /// ffprobe succeeded but the container duration is absent, non-string,
+    /// or unparseable — the probe fails closed instead of fabricating 0.0
+    /// (the fabricated zero anchored layer-store validation and every
+    /// pass's planning horizon; research card a3b79378: 47/47 library
+    /// files carry parseable durations, so fail-closed changes zero
+    /// existing behavior, and the Option-duration alternative serves a
+    /// container class measured at zero incidence here).
+    #[error("Media duration unavailable for {input}: {reason}")]
+    DurationUnavailable { input: String, reason: String },
+
     /// Vision LLM API errors.
     #[error("{0}")]
     VisionApi(String),
@@ -121,6 +131,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         MediaError::YtDlpVideoUnavailable(_) => McpToolError::not_found(e.to_string()),
         MediaError::YtDlpExtractor(_) => McpToolError::unavailable(e.to_string()),
         MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()),
+        MediaError::DurationUnavailable { .. } => McpToolError::invalid_argument(e.to_string()),
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)

@@ -574,11 +574,10 @@ impl FfmpegRunner {
                 .find(|st| st.get("codec_type").and_then(|t| t.as_str()) == Some("audio"))
         });
         let format = json.get("format");
-        let duration = format
-            .and_then(|f| f.get("duration"))
-            .and_then(|d| d.as_str())
-            .and_then(|s| s.parse::<f64>().ok())
-            .unwrap_or(0.0);
+        // Fail-closed: duration anchors layers_store validation and every
+        // pass's planning horizon — an absent or unparseable value is a
+        // typed error, never a fabricated 0.0 (card a3b79378).
+        let duration = Self::parse_container_duration(input, format)?;
         let width = video_stream
             .and_then(|s| s.get("width"))
             .and_then(|w| w.as_u64())
@@ -627,6 +626,31 @@ impl FfmpegRunner {
             has_video_stream: video_stream.is_some(),
             has_audio_stream: audio_stream.is_some(),
         })
+    }
+
+    /// Fail-closed container-duration parse: an absent, non-string, or
+    /// unparseable `format.duration` is a typed error, never a silent
+    /// `0.0` — the fabricated zero is the poison value that anchored
+    /// `layers_store` validation and every pass's planning horizon
+    /// (research card a3b79378's measured verdict: fail-closed; the
+    /// Option-duration alternative serves a container class measured at
+    /// zero incidence in this operator's library).
+    fn parse_container_duration(
+        input: &str,
+        format: Option<&serde_json::Value>,
+    ) -> Result<f64, crate::MediaError> {
+        let raw = format
+            .and_then(|f| f.get("duration"))
+            .and_then(|d| d.as_str())
+            .ok_or_else(|| crate::MediaError::DurationUnavailable {
+                input: input.to_string(),
+                reason: "format.duration is absent or not a string".to_string(),
+            })?;
+        raw.parse::<f64>()
+            .map_err(|_| crate::MediaError::DurationUnavailable {
+                input: input.to_string(),
+                reason: format!("format.duration {raw:?} does not parse as seconds"),
+            })
     }
 
     /// Audio-only container inputs for [`FfmpegRunner::clip`]: these trim by
@@ -2184,6 +2208,43 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains(&missing.to_string_lossy().to_string()));
         assert!(message.contains("No such file or directory"), "{message}");
+    }
+
+    /// The probe fails closed when the container duration is absent,
+    /// non-string, or unparseable — never a fabricated 0.0 (card
+    /// a3b79378: the poison value anchored layer validation and every
+    /// pass's planning horizon).
+    #[test]
+    fn container_duration_fails_closed_instead_of_fabricating_zero() {
+        let absent = serde_json::json!({});
+        assert!(matches!(
+            FfmpegRunner::parse_container_duration("x.ts", absent.get("format")),
+            Err(crate::MediaError::DurationUnavailable { .. })
+        ));
+        let not_a_string = serde_json::json!({"format": {"duration": 12.5}});
+        assert!(matches!(
+            FfmpegRunner::parse_container_duration("x.ts", not_a_string.get("format")),
+            Err(crate::MediaError::DurationUnavailable { .. })
+        ));
+        let na = serde_json::json!({"format": {"duration": "N/A"}});
+        assert!(matches!(
+            FfmpegRunner::parse_container_duration("capture.ts", na.get("format")),
+            Err(crate::MediaError::DurationUnavailable { .. })
+        ));
+        let garbage = serde_json::json!({"format": {"duration": "later"}});
+        assert!(matches!(
+            FfmpegRunner::parse_container_duration("x.ts", garbage.get("format")),
+            Err(crate::MediaError::DurationUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn container_duration_parses_numeric_seconds() {
+        let probed = serde_json::json!({"format": {"duration": "12.5"}});
+        assert_eq!(
+            FfmpegRunner::parse_container_duration("x.mp4", probed.get("format")).unwrap(),
+            12.5
+        );
     }
 
     /// The render path's ffmpeg primitives must run real ffmpeg to
