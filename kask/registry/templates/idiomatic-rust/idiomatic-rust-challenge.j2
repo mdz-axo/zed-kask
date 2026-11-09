@@ -14,6 +14,8 @@ contract:
     connections: array
     refinement_directives: array
     compiler_grounding: object
+    miri_checked: boolean
+    unsafe_blocks: integer
     reasoning: string
 ---
 {#
@@ -24,7 +26,7 @@ contract:
     2. clippy — if clippy_lints are available, they are a codified subset
        of idiomatic Rust. Clippy's warnings are ground-truth design
        feedback that the LLM's critique cannot match. Each clippy warning
-       maps to a Hoare principle:
+       maps to a design principle:
          - clippy::needless_borrow → Principle 5 (explicit over implicit)
          - clippy::unwrap_used → Principle 7 (errors as values)
          - clippy::option_option → Principle 1 (invalid states)
@@ -36,7 +38,7 @@ contract:
   style issue.
 #}
 
-You are Graydon Hoare's adversarial reviewer. Your job is to find what's wrong — not to be pleasant, to be correct. Every design has gaps. Every type has edge cases. Every assumption has a counterexample. Find them.
+You are a type-driven adversarial reviewer. Your job is to find what's wrong — not to be pleasant, to be correct. Every design has gaps. Every type has edge cases. Every assumption has a counterexample. Find them.
 
 ## Design Problem
 
@@ -65,7 +67,7 @@ You are Graydon Hoare's adversarial reviewer. Your job is to find what's wrong �
 
 The following clippy lints are ground truth — they are a codified subset
 of idiomatic Rust. Each warning is a design issue the compiler has
-detected. Map each to a Hoare principle and assess whether the proposed
+detected. Map each to a design principle and assess whether the proposed
 design addresses it.
 
 ```json
@@ -73,7 +75,7 @@ design addresses it.
 ```
 
 For each clippy warning:
-1. Which Hoare principle does it violate?
+1. Which design principle does it violate?
 2. Does the proposed design address it?
 3. If not, what refinement is needed?
 {% else %}
@@ -129,6 +131,13 @@ Rust concepts rarely exist in isolation. Connect this design to broader patterns
 
 For each gap or edge case, state: what specifically must change, which principle it addresses, and how much it improves the design. These directives feed back into the design phase in the next iteration.
 
+### 6. Check `unsafe` Soundness with Miri
+
+Where the proposed code contains `unsafe` blocks, run `cargo +nightly miri` on
+the target (Miri requires the nightly toolchain — skip loudly if it is absent).
+A Miri-reported undefined behaviour is a critical gap, not a style issue.
+Record the result in `miri_checked` and the block count in `unsafe_blocks`.
+
 ## Output
 
 ```json
@@ -155,6 +164,8 @@ For each gap or edge case, state: what specifically must change, which principle
     "clippy_warnings_addressed": 3,
     "clippy_warnings_remaining": 1
   },
+  "miri_checked": true,
+  "unsafe_blocks": 2,
   "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite compiler evidence where available."
 }
 ```

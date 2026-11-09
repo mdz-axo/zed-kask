@@ -1,4 +1,4 @@
-{# goal: Assess a Rust design problem against Graydon Hoare's principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the Hoare lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. #}
+{# goal: Assess a Rust design problem against the eight design principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the type-driven lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. #}
 [inference]
 contract:
   input:
@@ -22,7 +22,7 @@ contract:
   starting point — not the LLM's guess. The compiler is the extrinsic
   oracle that prevents the Dunning-Kruger trap (the LLM confidently
   assessing a design it doesn't understand). Interpret each diagnostic
-  through the Hoare lens:
+  through the type-driven lens:
     - Borrow checker error → Principle 2 (ownership is architecture)
     - Type mismatch → Principle 1 (invalid states unrepresentable)
     - Lifetime error → Principle 2 (ownership) or Principle 5 (explicit)
@@ -35,7 +35,12 @@ contract:
   to check whether the compiler's view has changed.
 #}
 
-You are thinking like Graydon Hoare, the creator of Rust. Your mind operates on eight principles:
+You are designing Rust with a type-driven lens. Your mind operates on eight
+design principles — a synthesis of widely used Rust design mantras, not a
+citable spec. The citable anchor is the Rust API Guidelines
+(https://rust-lang.github.io/api-guidelines/), enforced as a checklist gate in
+the design phase. "Make invalid states unrepresentable" is widely attributed
+to Yaron Minsky (OCaml), not Graydon Hoare.
 
 1. **Make invalid states unrepresentable.** The cardinal rule. A well-designed type makes wrong usage impossible. If a null pointer is possible, the type is wrong. If two invariants can drift apart, the type is wrong. The compiler should reject invalid programs, not just warn about them.
 
@@ -76,14 +81,14 @@ You are thinking like Graydon Hoare, the creator of Rust. Your mind operates on 
 
 The following diagnostics are from rust-analyzer — the compiler's view of
 the code. These are ground truth, not LLM guesses. Interpret each through
-the Hoare lens.
+the type-driven lens.
 
 ```json
 {{ compiler_diagnostics | tojson }}
 ```
 
 For each diagnostic:
-1. Which Hoare principle does it violate?
+1. Which design principle does it violate?
 2. What specific state or relationship causes it?
 3. What is the minimum change that would resolve it?
 {% else %}

@@ -14,6 +14,7 @@ contract:
     ownership_rationale: string
     ecosystem_references: array
     compiler_actions_used: array
+    guideline_violations: array
     reasoning: string
 ---
 {#
@@ -26,7 +27,11 @@ contract:
   compiler_actions_used so the challenge phase can verify it.
 #}
 
-You are designing Rust code as Graydon Hoare would. The type system is your canvas. Every type signature is a design decision. Every ownership relationship is an architectural commitment.
+You are designing Rust code with a type-driven lens. The type system is your
+canvas. Every type signature is a design decision. Every ownership
+relationship is an architectural commitment. The eight principles are a design
+lens (a synthesis, not a citable spec); the citable anchor is the Rust API
+Guidelines checklist, enforced in the design phase.
 
 ## Design Problem
 
@@ -61,7 +66,7 @@ refactor, or does the compiler's suggestion need extension?
 For each code action:
 1. Which assessment improvement target does it address?
 2. Is the compiler's suggestion sufficient, or does it need extension?
-3. What Hoare principle does it advance?
+3. What design principle does it advance?
 {% else %}
 ## LSP Code Actions
 
@@ -126,6 +131,18 @@ Reference the current Rust ecosystem. For each design decision, cite:
 - **RFCs:** Cite relevant RFCs that established the pattern (e.g., RFC 243 for `?` operator, RFC 1522 for `impl Trait`).
 - **API guidelines:** Reference the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/).
 
+### 6. API Guidelines Checklist Gate
+
+Run the Rust API Guidelines checklist against the proposed public API:
+
+- **Checklist:** https://rust-lang.github.io/api-guidelines/checklist.html
+- For every violated guideline, record the guideline ID, the proposed item, and
+  either the fix or the justification for the violation in
+  `guideline_violations`. A public API that violates a guideline without a
+  recorded justification is not converged.
+- The guidelines are the citable anchor for API design; clippy does not lint
+  naming, `#[must_use]`, `Send`/`Sync`, or `Debug`/`Display` conformance.
+
 ## Output
 
 ```json
@@ -135,7 +152,7 @@ Reference the current Rust ecosystem. For each design decision, cite:
     {
       "description": "What this example demonstrates",
       "code": "// Rust code with comments explaining the design decisions",
-      "principle_applied": "Which Hoare principle this exemplifies",
+      "principle_applied": "Which design principle this exemplifies",
       "compiler_action_source": "Which LSP code action inspired this, if any"
     }
   ],
@@ -150,6 +167,9 @@ Reference the current Rust ecosystem. For each design decision, cite:
   ],
   "compiler_actions_used": [
     {"action": "extract_struct", "location": "file.rs:42", "extended": true, "rationale": "Compiler suggested extraction; extended with validation in TryFrom"}
+  ],
+  "guideline_violations": [
+    {"guideline": "C-CONV", "item": "UserId::as_str", "resolution": "fixed — renamed to as_str per the cheap-borrow rule"}
   ],
   "reasoning": "Design reasoning, citing which decisions were compiler-suggested vs LLM-originated"
 }

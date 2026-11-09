@@ -136,7 +136,7 @@ The bench instruments — what a zed-kask user (the principal investigator) invo
 | `tdd` | Test-driven development: red → green, one vertical slice at a time, tests only at agreed seams; refactoring is not in the loop (code-review owns it) |
 | `bug-hunt` | Bug hunting expeditions against target crates using Weinberg, Beizer, Bach, Hendrickson methodologies |
 | `refactor-architecture` | End-to-end architecture refactoring: discover friction, rank candidates, walk design tree, audit duplication, plan strangler-fig migration, verify integrity |
-| `idiomatic-rust` | Type-driven Rust design through Graydon Hoare's principles |
+| `idiomatic-rust` | Type-driven Rust design through eight design principles, grounded by rust-analyzer and clippy |
 
 #### Disciplines and methods for your work
 
