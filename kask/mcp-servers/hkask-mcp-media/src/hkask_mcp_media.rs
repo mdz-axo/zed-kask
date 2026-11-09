@@ -733,8 +733,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 "HKASK_SERPAPI_API_KEY",
                 "SerpApi key for YouTube search metadata",
             ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_DB_PASSPHRASE",
+            hkask_mcp_server::db_passphrase_requirement_optional_with(
                 "SQLCipher passphrase for the protected voice-profile database; other media tools remain available without it",
             ),
         ],

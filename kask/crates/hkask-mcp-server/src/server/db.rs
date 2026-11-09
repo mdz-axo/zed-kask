@@ -93,10 +93,29 @@ pub fn open_server_db(
 /// servers before the extraction — dual-axis review Batch C).
 #[must_use = "result must be used"]
 pub fn db_passphrase_requirement() -> crate::CredentialRequirement {
-    crate::CredentialRequirement::required(
-        "HKASK_DB_PASSPHRASE",
+    db_passphrase_requirement_with(
         "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",
     )
+}
+
+/// The same requirement with a server-specific description — the servers
+/// whose requirement carries their own wording (corpus, experimentation,
+/// media, research) route through this instead of inlining the literal.
+#[must_use = "result must be used"]
+pub fn db_passphrase_requirement_with(
+    description: impl Into<String>,
+) -> crate::CredentialRequirement {
+    crate::CredentialRequirement::required("HKASK_DB_PASSPHRASE", description)
+}
+
+/// The optional form with a server-specific description — the servers
+/// that degrade without the passphrase (corpus, media, research) instead
+/// of refusing to start.
+#[must_use = "result must be used"]
+pub fn db_passphrase_requirement_optional_with(
+    description: impl Into<String>,
+) -> crate::CredentialRequirement {
+    crate::CredentialRequirement::optional("HKASK_DB_PASSPHRASE", description)
 }
 
 #[cfg(test)]
@@ -133,5 +152,30 @@ mod tests {
         let reopened = open_server_db(&nested_path, &credentials).expect("nested open");
         assert_eq!(reopened.path, nested_path);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The parameterized requirement carries the server's own description
+    /// while the env var stays the shared `HKASK_DB_PASSPHRASE` — the
+    /// literal no server should inline.
+    #[test]
+    fn db_passphrase_requirement_variants_share_the_env_var() {
+        let shared = db_passphrase_requirement();
+        assert_eq!(shared.env_var, "HKASK_DB_PASSPHRASE");
+        assert!(shared.required);
+        assert!(
+            shared
+                .description
+                .contains("SQLCipher encryption passphrase")
+        );
+
+        let custom = db_passphrase_requirement_with("corpus memory DB — fail closed");
+        assert_eq!(custom.env_var, "HKASK_DB_PASSPHRASE");
+        assert!(custom.required);
+        assert_eq!(custom.description, "corpus memory DB — fail closed");
+
+        let optional = db_passphrase_requirement_optional_with("media voice profiles");
+        assert_eq!(optional.env_var, "HKASK_DB_PASSPHRASE");
+        assert!(!optional.required);
+        assert_eq!(optional.description, "media voice profiles");
     }
 }

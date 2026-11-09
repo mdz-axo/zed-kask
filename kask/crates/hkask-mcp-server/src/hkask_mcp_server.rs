@@ -18,10 +18,11 @@ pub mod server;
 
 pub use server::{
     CredentialRequirement, McpError, ServerContext, ServerDatabase, ToolContext,
-    current_call_provenance, db_passphrase_requirement, execute_tool, open_server_db,
-    parse_env_warn, resolve_credential, resolve_db_passphrase, resolve_server_db_path,
-    run_stdio_server, validate_identifier, validate_path, validate_tool_url_permissive,
-    validate_tool_url_with_dns, with_call_provenance,
+    current_call_provenance, db_passphrase_requirement, db_passphrase_requirement_optional_with,
+    db_passphrase_requirement_with, execute_tool, open_server_db, parse_env_warn,
+    resolve_credential, resolve_db_passphrase, resolve_server_db_path, run_stdio_server,
+    validate_identifier, validate_path, validate_tool_url_permissive, validate_tool_url_with_dns,
+    with_call_provenance,
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, ensure_existing_dir, ensure_existing_file,

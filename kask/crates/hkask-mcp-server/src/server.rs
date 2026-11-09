@@ -25,7 +25,10 @@ mod db;
 mod error;
 mod http_helpers;
 
-pub use db::{ServerDatabase, db_passphrase_requirement, open_server_db, resolve_server_db_path};
+pub use db::{
+    ServerDatabase, db_passphrase_requirement, db_passphrase_requirement_optional_with,
+    db_passphrase_requirement_with, open_server_db, resolve_server_db_path,
+};
 pub mod call_provenance;
 pub mod test_support;
 mod tool_execution;

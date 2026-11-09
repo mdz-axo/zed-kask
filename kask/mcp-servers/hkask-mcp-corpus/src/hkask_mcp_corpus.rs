@@ -288,15 +288,19 @@ mod tool_surface_tests {
     /// `kanban_startup_requires_durable_storage` precedent) catches a silent
     /// reversion to the undeclared form, where the framework seam never
     /// learns the DB dependency and standalone launches lose the startup
-    /// observability.
+    /// observability. The requirement is declared through the shared
+    /// `db_passphrase_requirement_optional_with` helper (its `optional`
+    /// semantics are pinned by hkask-mcp-server's
+    /// `db_passphrase_requirement_variants_share_the_env_var`); this pin
+    /// asserts the wiring and the description's degraded-mode wording.
     /// pre: the production startup source is compiled
     /// post: the optional HKASK_DB_PASSPHRASE declaration is present
     #[test]
     fn corpus_declares_its_db_passphrase_optionally_with_degraded_mode() {
         let source = include_str!("hkask_mcp_corpus.rs");
         let declaration = [
-            "CredentialRequirement::optional(",
-            "\n            \"HKASK_DB_PASSPHRASE\"",
+            "db_passphrase_requirement_optional_with(",
+            "\n            \"SQLCipher passphrase for the corpus memory DB",
         ]
         .concat();
         assert!(
@@ -305,7 +309,7 @@ mod tool_surface_tests {
              (vec![]) or required form is a surface change requiring a register update"
         );
         assert!(
-            source.contains("document processing runs without it"),
+            source.contains("document processing (convert/ocr/is_complex/chunk) runs degraded"),
             "the declaration's description must name the degraded mode honestly"
         );
     }
@@ -501,8 +505,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 llm_ocr,
             ))
         },
-        vec![hkask_mcp_server::CredentialRequirement::optional(
-            "HKASK_DB_PASSPHRASE",
+        vec![hkask_mcp_server::db_passphrase_requirement_optional_with(
             "SQLCipher passphrase for the corpus memory DB — DB-backed tools (embed, query, dedup, consolidate, assertions, compose, QA ingest) fail closed with permission_denied without it; document processing (convert/ocr/is_complex/chunk) runs degraded",
         )],
     )

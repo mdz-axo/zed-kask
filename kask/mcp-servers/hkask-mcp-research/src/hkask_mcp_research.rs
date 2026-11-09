@@ -2415,8 +2415,7 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
             "HKASK_SEMANTIC_SCHOLAR_API_KEY",
             "Semantic Scholar API key (optional — the provider runs keyless on the free tier's shared ~1 req/s limit; the free key from semanticscholar.org/product/api lifts it)",
         ),
-        opt(
-            "HKASK_DB_PASSPHRASE",
+        hkask_mcp_server::db_passphrase_requirement_optional_with(
             "SQLCipher passphrase for the research DB — RSS and research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",
         ),
     ]

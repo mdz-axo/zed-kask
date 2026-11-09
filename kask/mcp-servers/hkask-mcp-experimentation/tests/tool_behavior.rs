@@ -873,9 +873,13 @@ async fn linked_goal_id_round_trips_through_the_declaration() {
 #[test]
 fn experimentation_declares_its_db_passphrase_as_required() {
     let source = include_str!("../src/server.rs");
+    // The requirement is declared through the shared helper
+    // (db_passphrase_requirement_with — `required` semantics, pinned by
+    // hkask-mcp-server's db_passphrase_requirement_variants_share_the_env_var);
+    // this pin asserts the wiring, not the literal construction.
     let declaration = [
-        "CredentialRequirement::required(",
-        "\n            \"HKASK_DB_PASSPHRASE\"",
+        "db_passphrase_requirement_with(",
+        "\n            \"SQLCipher encryption passphrase for the experiment registry",
     ]
     .concat();
     assert!(

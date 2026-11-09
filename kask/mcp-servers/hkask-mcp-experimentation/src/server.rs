@@ -734,8 +734,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             );
             Ok(ExperimentationServer::new(ctx.webid, store))
         },
-        vec![hkask_mcp_server::CredentialRequirement::required(
-            "HKASK_DB_PASSPHRASE",
+        vec![hkask_mcp_server::db_passphrase_requirement_with(
             "SQLCipher encryption passphrase for the experiment registry — the server refuses to start without it (the registry is the record of record from day one; no legacy-import path)",
         )],
     )
