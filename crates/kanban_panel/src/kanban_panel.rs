@@ -58,9 +58,7 @@ use workspace::{
 mod board_picker;
 mod fetch;
 
-pub mod panel_button;
 pub mod task_actions;
-pub use panel_button::KanbanPanelButton;
 
 use board_picker::{BoardPickerDelegate, PickerBoard};
 use task_actions::{
@@ -283,6 +281,21 @@ actions!(
         ToggleFocus,
     ]
 );
+
+/// The status bar button type that opens/focuses the Kanban Board panel.
+pub type KanbanPanelButton = hkask_panel_ui::PanelToggleButton<Toggle>;
+
+/// Construct the Kanban Board status bar button — the panel's literals
+/// over the shared `PanelToggleButton` implementation.
+pub fn panel_button() -> KanbanPanelButton {
+    hkask_panel_ui::PanelToggleButton::new(
+        "kanban-panel-button",
+        IconName::ListTodo,
+        "Kanban Board",
+        "Toggle Kanban Board",
+        Toggle,
+    )
+}
 
 /// Register the panel's actions on every new `Workspace`.
 pub fn init(cx: &mut App) {

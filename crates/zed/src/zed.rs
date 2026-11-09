@@ -632,8 +632,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let git_blame_status = cx.new(|_| git_ui::GitBlameStatus::default());
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
-        let kanban_panel_button = cx.new(|_| kanban_panel::panel_button::new());
-        let media_panel_button = cx.new(|_| media_panel::panel_button::new());
+        let kanban_panel_button = cx.new(|_| kanban_panel::panel_button());
+        let media_panel_button = cx.new(|_| media_panel::panel_button());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);

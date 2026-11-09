@@ -11,7 +11,6 @@
 //! render inline (the D18 seam).
 
 pub mod media_viewer;
-pub mod panel_button;
 #[cfg(test)]
 mod test_fixtures;
 
@@ -28,7 +27,6 @@ use workspace::{
 };
 
 pub use media_viewer::MediaViewer;
-pub use panel_button::MediaPanelButton;
 
 actions!(
     media_panel,
@@ -40,6 +38,21 @@ actions!(
         ToggleFocus,
     ]
 );
+
+/// The status bar button type that opens/focuses the Media panel.
+pub type MediaPanelButton = hkask_panel_ui::PanelToggleButton<Toggle>;
+
+/// Construct the Media panel status bar button — the panel's literals
+/// over the shared `PanelToggleButton` implementation.
+pub fn panel_button() -> MediaPanelButton {
+    hkask_panel_ui::PanelToggleButton::new(
+        "media-panel-button",
+        IconName::Image,
+        "Media",
+        "Toggle Media",
+        Toggle,
+    )
+}
 
 /// Register the panel's actions on every new `Workspace`.
 pub fn init(cx: &mut App) {
