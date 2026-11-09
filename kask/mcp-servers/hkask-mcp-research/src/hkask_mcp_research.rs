@@ -2259,35 +2259,21 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // Databases live in the internal data dir (the ONLY thing that
                 // lives there — artifact files and outputs go to the visible
                 // artifacts dir under {server}-mcp/{artifact-type}/). Default
-                // DB path is `{kask_data_dir}/mcp/research/research.db`, resolved
-                // via `resolve_under_data_dir`. Override via `HKASK_RESEARCH_DB`.
+                // DB path is `{kask_data_dir}/mcp/research/research.db`.
                 // The DB is plaintext SQLite by recorded design decision
                 // (operator ruling 2026-09-29, F-P1): MCP-server data stays
                 // unencrypted so this server runs in an independent
                 // MCP-server pattern without the zed keychain or
                 // HKASK_DB_PASSPHRASE.
-                let research_db_path = std::env::var("HKASK_RESEARCH_DB").ok().unwrap_or_else(|| {
-                    let default_path = hkask_types::agent_paths::resolve_under_data_dir(
-                        &hkask_types::agent_paths::mcp_server_db("research", "research"),
-                    );
-                    if let Some(parent) = default_path.parent() {
-                        if let Err(error) = std::fs::create_dir_all(parent) {
-                            tracing::warn!(
-                                target: "hkask.research.init",
-                                path = %default_path.display(),
-                                %error,
-                                "Failed to create default research DB directory \
-                                 — the subsequent DB open will surface the failure"
-                            );
-                        }
-                    }
-                    tracing::info!(
-                        target: "hkask.research.init",
-                        path = %default_path.display(),
-                        "Using default research database path (HKASK_RESEARCH_DB not set)"
-                    );
-                    default_path.to_string_lossy().to_string()
-                });
+                // D28 path resolution through the shared helper — the
+                // env override (HKASK_RESEARCH_DB), the per-agent default,
+                // the parent self-heal and the warn/info logging are one
+                // implementation (the research DB is plaintext by design;
+                // only its path resolution is shared).
+                let research_db_path = hkask_mcp_server::resolve_server_db_path(
+                    "HKASK_RESEARCH_DB",
+                    &hkask_types::agent_paths::mcp_server_db("research", "research"),
+                );
 
                 // Resolve passphrase via the canonical 2-tier chain
                 // (ctx.credentials → resolve_credential which does env → keychain).
