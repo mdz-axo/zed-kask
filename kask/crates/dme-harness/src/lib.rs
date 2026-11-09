@@ -29,6 +29,9 @@ pub mod engine;
 // The converter (embedding-to-edit bridge), the contrast-u instrument
 // leg, and the edit leg need no in-process engine — only the shared GGUF
 // component.
+#[cfg(test)]
+mod test_util;
+
 pub mod contrast;
 pub mod convert;
 pub mod edit;

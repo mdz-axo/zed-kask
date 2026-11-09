@@ -12,12 +12,14 @@
 //!   cargo test -p hkask-private-inference --test emit_leg_plans -- --ignored --nocapture
 //! ```
 
-use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::manifest::decode;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, compile_placement, probe_hardware,
 };
+
+#[path = "common/fleet_brief.rs"]
+mod fleet_brief;
 
 #[path = "common/shards.rs"]
 mod shards;
@@ -55,12 +57,7 @@ fn emits_the_p0_matrix_leg_plans_from_detected_hardware() {
     let model = paths[0].clone();
     // The discovered fleet is the brief home (seed + discover — the
     // production path), never a CWD-relative file read.
-    let briefs_dir = tempfile::tempdir().expect("briefs dir");
-    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
-    let models_root = tempfile::tempdir().expect("models root");
-    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "qwen3-8-flash-next")
-        .expect("the discovered fleet carries the Qwen brief")
-        .brief;
+    let brief = fleet_brief::discover_brief("qwen3-8-flash-next");
     for (leg, flash_attn, n_gpu_layers) in [
         ("a-cpu-control [build/bin]", true, 0u32),
         ("b-dgpu-vulkan-fa-on [build-vulkan/bin]", true, 999),

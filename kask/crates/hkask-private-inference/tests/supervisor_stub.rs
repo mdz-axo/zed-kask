@@ -15,7 +15,6 @@ use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::gguf::{GgufMeta, GgufTensor};
 use hkask_private_inference::local_leg::manifest;
 use hkask_private_inference::local_leg::placement::{
@@ -24,6 +23,9 @@ use hkask_private_inference::local_leg::placement::{
 use hkask_private_inference::local_leg::supervisor::{
     LaunchConfig, PreparedLaunch, StatusSnapshot, SupervisionError, Supervisor,
 };
+
+#[path = "common/fleet_brief.rs"]
+mod fleet_brief;
 
 const STUB: &str = env!("CARGO_BIN_EXE_stub-llama-server");
 
@@ -57,12 +59,7 @@ fn prepared(port: u16) -> PreparedLaunch {
     let manifest = manifest::shipped_manifest().expect("shipped manifest");
     // The discovered fleet is the brief home (seed + discover — the
     // production path), never a CWD-relative file read.
-    let briefs_dir = tempfile::tempdir().expect("briefs dir");
-    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
-    let models_root = tempfile::tempdir().expect("models root");
-    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "gemma-4-31b")
-        .expect("gemma is in the discovered fleet")
-        .brief;
+    let brief = fleet_brief::discover_brief("gemma-4-31b");
     let meta = GgufMeta {
         gguf_version: 3,
         kv: BTreeMap::new(),

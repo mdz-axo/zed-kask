@@ -12,11 +12,13 @@
 //!   cargo test -p hkask-private-inference --test live_gpu_plan -- --ignored --nocapture
 //! ```
 
-use hkask_private_inference::local_leg::fleet;
 use hkask_private_inference::local_leg::gguf;
 use hkask_private_inference::local_leg::placement::{
     PlacementPolicy, VramSource, compile_placement, probe_hardware,
 };
+
+#[path = "common/fleet_brief.rs"]
+mod fleet_brief;
 
 #[path = "common/shards.rs"]
 mod shards;
@@ -69,12 +71,7 @@ fn emits_the_gpu_launch_plan_from_detected_vram() {
     // The model brief carries the PLE pin; the policy carries machine-level
     // knobs only. The discovered fleet is the brief home (seed +
     // discover — the production path), never a CWD-relative file read.
-    let briefs_dir = tempfile::tempdir().expect("briefs dir");
-    fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
-    let models_root = tempfile::tempdir().expect("models root");
-    let brief = fleet::discover_model(briefs_dir.path(), models_root.path(), "qwen3-8-flash-next")
-        .expect("the discovered fleet carries the Qwen brief")
-        .brief;
+    let brief = fleet_brief::discover_brief("qwen3-8-flash-next");
 
     // Shard 1 is the metadata-only header shard; llama.cpp discovers the
     // split set from the `-00001-of-00004` naming convention.

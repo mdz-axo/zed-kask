@@ -812,6 +812,7 @@ pub fn run(args: ConvertArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::TempDir;
 
     fn write_f32(path: &Path, vals: &[f32]) {
         std::fs::write(path, f32_bytes(vals)).unwrap();
@@ -819,24 +820,6 @@ mod tests {
 
     /// A std-only temp-dir guard: a unique dir under the system temp,
     /// removed on drop — the fixtures carry no external dev-dep.
-    struct TempDir(PathBuf);
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let p = std::env::temp_dir()
-                .join(format!("dme-convert-test-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&p);
-            std::fs::create_dir_all(&p).unwrap();
-            Self(p)
-        }
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     fn fixture_captures(dir: &Path, anchors: &[(&str, Vec<f32>)]) -> (String, PathBuf) {
         let dir = dir.join("captures");
@@ -964,29 +947,71 @@ mod tests {
         assert!((cov[2] - 2.25).abs() < 1e-12, "ch2 {}", cov[2]);
     }
 
+    /// A convert fixture: the temp dir, the capture fixtures, the manifest
+    /// and vectors files, and the config path — the repeated per-test setup
+    /// the ratchet's duplication gate caught.
+    struct ConvertFixture {
+        dir: TempDir,
+        manifest_path: PathBuf,
+        vectors_path: PathBuf,
+        capture_dir: PathBuf,
+        config_path: PathBuf,
+    }
+
+    impl ConvertFixture {
+        fn new(name: &str, captures: &[(&str, Vec<f32>)], vectors: &[f32]) -> Self {
+            let dir = TempDir::new(name);
+            let (manifest, cdir) = fixture_captures(dir.path(), captures);
+            let manifest_path = dir.path().join("manifest.jsonl");
+            std::fs::write(&manifest_path, manifest).unwrap();
+            let vectors_path = dir.path().join("vectors.f32");
+            write_f32(&vectors_path, vectors);
+            let config_path = dir.path().join("cfg.json");
+            Self {
+                dir,
+                manifest_path,
+                vectors_path,
+                capture_dir: cdir,
+                config_path,
+            }
+        }
+
+        fn dir(&self) -> &Path {
+            self.dir.path()
+        }
+
+        /// Write the test's config and return the args that run the convert.
+        fn write_config(&self, cfg: serde_json::Value) -> ConvertArgs {
+            std::fs::write(&self.config_path, serde_json::to_string(&cfg).unwrap()).unwrap();
+            ConvertArgs {
+                config: self.config_path.clone(),
+                vectors: self.vectors_path.clone(),
+                capture_manifest: self.manifest_path.clone(),
+                capture_dir: self.capture_dir.clone(),
+                out_dir: self.dir.path().join("out"),
+            }
+        }
+    }
+
     /// M2/S2-6: the full leg on constructed ground truth — an exact
     /// integer bridge, a held-out anchor, a trigger, a calibration set and
     /// the control — emitting every output plus a manifest whose EditSpec
     /// parses through the edit leg's own loader.
     #[test]
     fn convert_end_to_end_on_constructed_ground_truth() {
-        let dir = TempDir::new("e2e");
-        let (manifest, cdir) = fixture_captures(
-            dir.path(),
+        let fixture = ConvertFixture::new(
+            "e2e",
             &[
                 ("a0", vec![1.0, 0.0, 1.0]),
                 ("a1", vec![0.0, 1.0, 1.0]),
                 ("a2", vec![2.0, 3.0, 5.0]),
                 ("a3", vec![3.0, 1.0, 4.0]),
             ],
+            &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0],
         );
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0]);
-        let dummy_gguf = dir.path().join("target.gguf");
+        let dummy_gguf = fixture.dir().join("target.gguf");
         std::fs::write(&dummy_gguf, b"dummy").unwrap();
-        let cfg = serde_json::json!({
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [
                 {"id": "a0", "split": "train"},
@@ -1004,20 +1029,11 @@ mod tests {
             "total_weights": 1000000,
             "control": {"seed": 20261106},
             "input_gguf": dummy_gguf.display().to_string(),
-            "output_gguf": (dir.path().join("edited.gguf")).display().to_string()
-        });
-        let cpath = dir.path().join("convert-config.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let out = dir.path().join("out");
-        run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: out.clone(),
-        })
-        .expect("convert runs");
+            "output_gguf": fixture.dir().join("edited.gguf").display().to_string()
+        }));
+        run(args).expect("convert runs");
 
+        let out = fixture.dir().join("out");
         // u = phi(v_a3) = [3, 1, 4] exactly (the constructed bridge)
         let u = read_f32s(&out.join("u.f32"), 3).unwrap();
         for (got, want) in u.iter().zip([3.0f32, 1.0, 4.0]) {
@@ -1082,13 +1098,12 @@ mod tests {
     /// M2/S2-7: an anchor with no captures refuses loudly.
     #[test]
     fn refuses_an_anchor_without_captures() {
-        let dir = TempDir::new("refuse-missing");
-        let (manifest, cdir) = fixture_captures(dir.path(), &[("a0", vec![1.0, 0.0, 1.0])]);
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0]);
-        let cfg = serde_json::json!({
+        let fixture = ConvertFixture::new(
+            "refuse-missing",
+            &[("a0", vec![1.0, 0.0, 1.0])],
+            &[1.0, 0.0, 0.0, 1.0],
+        );
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [{"id": "a0", "split": "train"}, {"id": "a1", "split": "held_out"}],
             "site": "l_out", "layer": 12, "layers": [12], "tensor": "ffn_down",
@@ -1098,17 +1113,8 @@ mod tests {
             "dims": {"hidden": 3, "trigger": 3},
             "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
-        });
-        let cpath = dir.path().join("cfg.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let err = run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: dir.path().join("out"),
-        })
-        .expect_err("missing anchor captures must refuse");
+        }));
+        let err = run(args).expect_err("missing anchor captures must refuse");
         assert!(
             err.to_string().contains("no captures for anchor a1"),
             "wrong refusal: {err:#}"
@@ -1118,13 +1124,12 @@ mod tests {
     /// M2/S2-8: a declared dim that disagrees with the captures refuses.
     #[test]
     fn refuses_a_dim_mismatch() {
-        let dir = TempDir::new("refuse-dim");
-        let (manifest, cdir) = fixture_captures(dir.path(), &[("a0", vec![1.0, 0.0, 1.0])]);
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0]);
-        let cfg = serde_json::json!({
+        let fixture = ConvertFixture::new(
+            "refuse-dim",
+            &[("a0", vec![1.0, 0.0, 1.0])],
+            &[1.0, 0.0],
+        );
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [{"id": "a0", "split": "train"}],
             "site": "l_out", "layer": 12, "layers": [12], "tensor": "ffn_down",
@@ -1134,17 +1139,8 @@ mod tests {
             "dims": {"hidden": 4, "trigger": 3},
             "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
-        });
-        let cpath = dir.path().join("cfg.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let err = run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: dir.path().join("out"),
-        })
-        .expect_err("dim mismatch must refuse");
+        }));
+        let err = run(args).expect_err("dim mismatch must refuse");
         assert!(
             err.to_string().contains("dims.hidden is 4"),
             "wrong refusal: {err:#}"
@@ -1155,16 +1151,12 @@ mod tests {
     /// bias-edit limitation (`no_linear_edit_is_constant`).
     #[test]
     fn refuses_constant_steering() {
-        let dir = TempDir::new("refuse-constant");
-        let (manifest, cdir) = fixture_captures(
-            dir.path(),
+        let fixture = ConvertFixture::new(
+            "refuse-constant",
             &[("a0", vec![1.0, 1.0, 1.0]), ("a1", vec![1.0, 1.0, 1.0])],
+            &[1.0, 0.0, 0.0, 1.0],
         );
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0]);
-        let cfg = serde_json::json!({
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [{"id": "a0", "split": "train"}, {"id": "a1", "split": "train"}],
             "site": "l_out", "layer": 12, "layers": [12], "tensor": "ffn_down",
@@ -1174,17 +1166,8 @@ mod tests {
             "dims": {"hidden": 3, "trigger": 3},
             "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
-        });
-        let cpath = dir.path().join("cfg.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let err = run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: dir.path().join("out"),
-        })
-        .expect_err("constant steering must refuse");
+        }));
+        let err = run(args).expect_err("constant steering must refuse");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("constant steering") && msg.contains("no_linear_edit_is_constant"),
@@ -1195,13 +1178,12 @@ mod tests {
     /// M2/S2-10: the vectors file must hold exactly anchors x dim f32s.
     #[test]
     fn refuses_a_misaligned_vectors_file() {
-        let dir = TempDir::new("refuse-vectors");
-        let (manifest, cdir) = fixture_captures(dir.path(), &[("a0", vec![1.0, 0.0, 1.0])]);
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0, 9.0]); // 3 f32s for 1 anchor x dim 2
-        let cfg = serde_json::json!({
+        let fixture = ConvertFixture::new(
+            "refuse-vectors",
+            &[("a0", vec![1.0, 0.0, 1.0])],
+            &[1.0, 0.0, 9.0], // 3 f32s for 1 anchor x dim 2
+        );
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [{"id": "a0", "split": "train"}],
             "site": "l_out", "layer": 12, "layers": [12], "tensor": "ffn_down",
@@ -1211,17 +1193,8 @@ mod tests {
             "dims": {"hidden": 3, "trigger": 3},
             "total_weights": 100,
             "input_gguf": "x", "output_gguf": "y"
-        });
-        let cpath = dir.path().join("cfg.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let err = run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: dir.path().join("out"),
-        })
-        .expect_err("misaligned vectors file must refuse");
+        }));
+        let err = run(args).expect_err("misaligned vectors file must refuse");
         assert!(
             err.to_string().contains("vectors file holds"),
             "wrong refusal: {err:#}"
@@ -1260,24 +1233,19 @@ mod tests {
     /// from captures).
     #[test]
     fn column_list_round_trips_into_the_spec() {
-        let dir = TempDir::new("cols-e2e");
-        // bridge anchors only — no trigger-anchor captures needed
-        let (manifest, cdir) = fixture_captures(
-            dir.path(),
+        let fixture = ConvertFixture::new(
+            "cols-e2e",
             &[
                 ("a0", vec![1.0, 0.0, 1.0]),
                 ("a1", vec![0.0, 1.0, 1.0]),
                 ("a2", vec![2.0, 3.0, 5.0]),
                 ("a3", vec![3.0, 1.0, 4.0]),
             ],
+            &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0],
         );
-        let mpath = dir.path().join("manifest.jsonl");
-        std::fs::write(&mpath, manifest).unwrap();
-        let vpath = dir.path().join("vectors.f32");
-        write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0]);
-        let ranked = dir.path().join("ranked.txt");
+        let ranked = fixture.dir().join("ranked.txt");
         std::fs::write(&ranked, "2\n0\n1\n").unwrap(); // ranked: 2, 0, 1 — take 2
-        let cfg = serde_json::json!({
+        let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [
                 {"id": "a0", "split": "train"},
@@ -1295,25 +1263,15 @@ mod tests {
             "dims": {"hidden": 3, "trigger": 3},
             "total_weights": 1000000,
             "input_gguf": "x", "output_gguf": "y"
-        });
-        let cpath = dir.path().join("convert-config.json");
-        std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-        let out = dir.path().join("out");
-        run(ConvertArgs {
-            config: cpath,
-            vectors: vpath,
-            capture_manifest: mpath,
-            capture_dir: cdir,
-            out_dir: out.clone(),
-        })
-        .expect("the column-list convert runs");
+        }));
+        run(args).expect("the column-list convert runs");
 
         // the columns file: the top-2 of the ranking, order preserved
-        let cols_text = std::fs::read_to_string(out.join("columns.txt")).unwrap();
+        let cols_text = std::fs::read_to_string(fixture.dir().join("out").join("columns.txt")).unwrap();
         assert_eq!(cols_text, "2\n0\n");
         // the emitted spec: the sha-bound Columns trigger, parseable by
         // the edit leg's own loader
-        let spec = crate::edit::load_spec(&out.join("edit-spec.json")).expect("spec parses");
+        let spec = crate::edit::load_spec(&fixture.dir().join("out").join("edit-spec.json")).expect("spec parses");
         match &spec.trigger {
             crate::edit::TriggerSpec::Columns {
                 count,
@@ -1331,12 +1289,12 @@ mod tests {
         }
         assert_eq!(spec.layers, vec![15, 19]);
         // no dense artifacts on this path
-        assert!(!out.join("k.f32").exists());
-        assert!(!out.join("covdiag.f32").exists());
+        assert!(!fixture.dir().join("out").join("k.f32").exists());
+        assert!(!fixture.dir().join("out").join("covdiag.f32").exists());
         // the manifest: the columns trigger record + the projection
         // (2 layers x hidden 3 x |S| 2 = 12)
         let man: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(out.join("convert-manifest.json")).unwrap(),
+            &std::fs::read_to_string(fixture.dir().join("out").join("convert-manifest.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(man["trigger"]["kind"], "columns");
@@ -1365,23 +1323,19 @@ mod tests {
             ("0\n", "the selection needs 2"),
             ("x\n0\n1\n", "not a column index"),
         ] {
-            let dir = TempDir::new("cols-refuse");
-            let (manifest, cdir) = fixture_captures(
-                dir.path(),
+            let fixture = ConvertFixture::new(
+                "cols-refuse",
                 &[
                     ("a0", vec![1.0, 0.0, 1.0]),
                     ("a1", vec![0.0, 1.0, 1.0]),
                     ("a2", vec![2.0, 3.0, 5.0]),
                     ("a3", vec![3.0, 1.0, 4.0]),
                 ],
+                &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0],
             );
-            let mpath = dir.path().join("manifest.jsonl");
-            std::fs::write(&mpath, manifest).unwrap();
-            let vpath = dir.path().join("vectors.f32");
-            write_f32(&vpath, &[1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 1.0]);
-            let ranked = dir.path().join("ranked.txt");
+            let ranked = fixture.dir().join("ranked.txt");
             std::fs::write(&ranked, body).unwrap();
-            let cfg = serde_json::json!({
+            let args = fixture.write_config(serde_json::json!({
                 "vectors_dim": 2,
                 "anchors": [
                     {"id": "a0", "split": "train"},
@@ -1399,17 +1353,8 @@ mod tests {
                 "dims": {"hidden": 3, "trigger": 3},
                 "total_weights": 1000000,
                 "input_gguf": "x", "output_gguf": "y"
-            });
-            let cpath = dir.path().join("cfg.json");
-            std::fs::write(&cpath, serde_json::to_string(&cfg).unwrap()).unwrap();
-            let err = run(ConvertArgs {
-                config: cpath,
-                vectors: vpath,
-                capture_manifest: mpath,
-                capture_dir: cdir,
-                out_dir: dir.path().join("out"),
-            })
-            .expect_err("the bad ranked list must refuse");
+            }));
+            let err = run(args).expect_err("the bad ranked list must refuse");
             assert!(
                 err.to_string().contains(needle),
                 "wrong refusal for {body:?}: {err:#}"
