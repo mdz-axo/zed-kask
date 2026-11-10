@@ -416,20 +416,23 @@ materialize):
 - **Batch 5** (commit `a7409e0ecb`): the ACE 2005 evaluation plan
   (NIST, US-gov PD, restored from the Wayback Machine) — 425 accepted
   sources, 278,569 fine passages.
+- **Batch 6** (commit `6d5eadd027`): the Lakens equivalence-testing
+  primer and the Nosek preregistration-revolution preprints, both CC0
+  (OSF Preprints) — 427 accepted sources, 279,045 fine passages.
 
-The coverage audit (95 cited models across the skills) reads 81 covered /
-14 absent after these revisions. The absent set is named, not hidden:
+The coverage audit (95 cited models across the skills) reads 83 covered /
+12 absent after these revisions. The absent set is named, not hidden:
 Socher's *Eureka Machine* and Recursive's automated-research write-ups
 (both all-rights-reserved), JCGM 100:2008 (copyrighted), Wasserstein &
-Lazar (T&F copyright), Lakens et al. (TDM license only), Wald's
-*Sequential Analysis* (copyrighted), Nosek et al. (standard PNAS
-license), Mayo's *Severe Testing* (copyrighted), Paul & Elder's
-*Socratic Questioning* (copyrighted), Gruber's 1993 ontology paper
-(copyrighted), CoNLL-2012 (CC BY-NC-SA, excluded) and Wiener's
-*Cybernetics* (CC BY-NC-ND, excluded). Schwartz's *Art of the Long View*
-is carried by the wave-4 bridge note (`wave4-bridges.md`, R6) and
-Krathwohl's taxonomy by the Bloom carrier's reference list — both
-recorded as partial coverage, not fabricated full coverage.
+Lazar (T&F copyright), Wald's *Sequential Analysis* (copyrighted),
+Nosek's PNAS preregistration piece (standard PNAS license), Mayo's
+*Severe Testing* (copyrighted), Paul & Elder's *Socratic Questioning*
+(copyrighted), Gruber's 1993 ontology paper (copyrighted), CoNLL-2012
+(CC BY-NC-SA, excluded) and Wiener's *Cybernetics* (CC BY-NC-ND,
+excluded). Schwartz's *Art of the Long View* is carried by the wave-4
+bridge note (`wave4-bridges.md`, R6) and Krathwohl's taxonomy by the
+Bloom carrier's reference list — both recorded as partial coverage, not
+fabricated full coverage.
 ## Canonical QA records
 
 `PreparedQaPrompt` requires exactly `prompt_id`, protocol
