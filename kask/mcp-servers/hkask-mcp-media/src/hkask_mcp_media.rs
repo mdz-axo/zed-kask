@@ -1,6 +1,6 @@
 // `forbid(unsafe_code)` in production builds; test builds allow it for
 // `std::env::set_var` (artifacts-dir isolation in the persistence tests) —
-// the same `cfg_attr(not(test), …)` pattern as hkask-email/hkask-inference.
+// the same `cfg_attr(not(test), …)` pattern as hkask-inference.
 #![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
 //! hKask MCP Media — source-media research and curation.

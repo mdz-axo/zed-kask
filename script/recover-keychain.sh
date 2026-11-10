@@ -85,7 +85,6 @@ declare -a CONFLICTS=(
 declare -a LOST=(
   "fred:HKASK_FRED_API_KEY"
   "hkask_abw_api_key:HKASK_ABW_API_KEY"
-  "hkask_smtp_password:HKASK_SMTP_PASSWORD"
   "serpapi:HKASK_SERPAPI_API_KEY"
 )
 

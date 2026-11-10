@@ -160,8 +160,8 @@ pub struct DataServiceDescriptor {
     /// Dashboard URL where the user can obtain or manage the credential.
     pub dashboard_url: &'static str,
     /// Whether this credential should appear as a row in the Data Services
-    /// settings UI. Credentials managed elsewhere (e.g. `HKASK_SMTP_PASSWORD`
-    /// in the Curator page, `HKASK_DB_PASSPHRASE`) set this to `false`.
+    /// settings UI. Credentials managed elsewhere (e.g. `HKASK_DB_PASSPHRASE`)
+    /// set this to `false`.
     pub shows_in_ui: bool,
 }
 
@@ -260,15 +260,6 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
         dashboard_url: "",
         shows_in_ui: false,
     },
-    // Curator SMTP password — managed in the Curator Email settings page,
-    // not in the Data Services page (avoids duplicate reset surfaces).
-    DataServiceDescriptor {
-        env_var: "HKASK_SMTP_PASSWORD",
-        credential_key: "hkask_smtp_password",
-        label: "SMTP Password",
-        dashboard_url: "",
-        shows_in_ui: false,
-    },
     // RunPod — the ONE entry whose key belongs to an inference provider: it
     // lives at the provider `api_url` slot (`https://api.runpod.io`, where the
     // RunPod `ApiKeyState` reads it), not at `kask://credentials/runpod`.
@@ -319,7 +310,7 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
 
 /// Build the `(env_var, credential_url)` pairs for all settings/keychain-backed
 /// data services, including credentials consumed in-process rather than by an
-/// MCP child (RunPod OCR and Curator SMTP).
+/// MCP child (RunPod OCR).
 pub fn data_service_credential_urls() -> Vec<(String, String)> {
     DATA_SERVICES
         .iter()

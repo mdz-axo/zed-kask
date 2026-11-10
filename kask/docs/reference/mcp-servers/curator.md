@@ -71,8 +71,6 @@ path resolution finds the same root the agent uses
   `open_curator_stores` cannot decrypt the DB and startup fails visibly
   (`hkask_mcp_curator.rs:297`; the canonical 2-tier chain at
   `kask/crates/hkask-mcp-server/src/server/credentials.rs:76`).
-  No email-transport vars are injected here — the curator server has no
-  email role (`mcp_servers.rs:119-124`).
 - **Distillation**: `DistillationConfig::from_env()` — the consolidation
   pass's configuration surface.
 

@@ -595,7 +595,7 @@ impl super::CyberneticsLoop {
     }
 
     /// Route an escalation through the review board, live Curator channel,
-    /// archive and email fallback. A repeat comment on an open card suppresses
+    /// and archive fallback. A repeat comment on an open card suppresses
     /// duplicate live/archive events. Informational dispositions are not incidents.
     /// Returns true only when the board or archive confirms retention.
     async fn route_action_as_alert(&self, action: &RegulatoryAction) -> bool {
@@ -725,18 +725,8 @@ impl super::CyberneticsLoop {
                 }
             }
 
-            // Email notification: fires when live channel is down, regardless of
-            // archive outcome. Serves as notification (archive succeeded) or last
-            // resort (archive failed/unavailable).
-            if let Some(ref email_sink) = self.alert_email_sink {
-                email_sink.send_alert_email(&alert);
-                if archive_persisted {
-                    tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as notification (live channel down, archive persisted)");
-                } else {
-                    tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as last resort (archive unavailable)");
-                }
-            } else if !archive_persisted {
-                tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel, event_sink, or email sink");
+            if !archive_persisted {
+                tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel or event_sink");
             }
         }
         if archive_persisted && self.alert_escalation_sink.is_none() {

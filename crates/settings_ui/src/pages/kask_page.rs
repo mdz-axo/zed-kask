@@ -4,7 +4,6 @@
 //! - Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles)
 //! - MCP Servers (built-in servers + load toggles + `load_default` master toggle)
 //! - Curator (`interaction_mode` dropdown + `always_on` toggle + `algedonic_threshold`)
-//! - Curator Email (MXroute SMTP config + keychain-backed password)
 //! - Memory (`consolidation_cadence_secs` + `confidence_floor`)
 //!
 //! API keys are stored in the OS keychain under the `kask://credentials/<key>`
@@ -23,8 +22,7 @@ mod general;
 mod security;
 
 pub(crate) use {
-    condenser::render_condenser_page, corpus::render_corpus_page,
-    curator::render_curator_email_page, curator::render_curator_page,
+    condenser::render_condenser_page, corpus::render_corpus_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
@@ -56,10 +54,6 @@ use zed_credentials_provider as zed_credentials;
 use crate::SettingsWindow;
 use crate::components::{SettingsInputField, SettingsSectionHeader};
 use crate::{SettingsPage, SettingsPageItem, SubPageLink, USER};
-
-/// The URL prefix for kask-namespaced credentials in the keychain.
-/// Re-exported from `kask_bridge` so there's a single source of truth.
-pub(crate) use kask_bridge::KASK_CREDENTIAL_NAMESPACE;
 
 /// Session-level cache of credential URLs written during this session.
 /// The keychain read is async, so we can't check it synchronously on render.
@@ -604,29 +598,6 @@ pub(crate) fn kask_page() -> SettingsPage {
             render: render_curator_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
-            title: "Curator Email".into(),
-            r#type: Default::default(),
-            json_path: Some("kask.curator.email"),
-            description: Some(
-                "Configure outbound algedonic alert email via MXroute. The SMTP \
-                 password is stored in the system keychain; non-secret fields live \
-                 in settings.json. When unconfigured, the alert sink falls back \
-                 to log-only."
-                    .into(),
-            ),
-            search_aliases: &[
-                "alert",
-                "curator",
-                "email",
-                "imap",
-                "mxroute",
-                "smtp",
-            ],
-            in_json: true,
-            files: USER,
-            render: render_curator_email_page,
-        }),
-        SettingsPageItem::SubPageLink(SubPageLink {
             title: "Memory".into(),
             r#type: Default::default(),
             json_path: Some("kask.memory"),
@@ -882,11 +853,6 @@ mod tests {
         // presence in the feed set would mean a removal regressed.
         assert!(!credential_url_feeds_mcp_servers(
             "kask://credentials/hkask_abw_api_key"
-        ));
-
-        // In-process-only credentials do not restart children.
-        assert!(!credential_url_feeds_mcp_servers(
-            "kask://credentials/hkask_smtp_password"
         ));
 
         // The LEGACY inference-provider kask slots feed nothing — nudging on

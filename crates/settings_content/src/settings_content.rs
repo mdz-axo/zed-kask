@@ -1793,10 +1793,6 @@ pub struct KaskCuratorSettingsContent {
     /// How the user works with the Curator (the user–Curator dyad level).
     /// Set only by the user. Default: `collaboration` (Level 2).
     pub interaction_mode: Option<CuratorInteractionMode>,
-    /// Curator email configuration (outbound algedonic alerts via MXroute).
-    /// When `None`, the alert email sink falls back to the log-only sink.
-    #[serde(default)]
-    pub email: Option<KaskCuratorEmailSettingsContent>,
 }
 
 /// The level the user–Curator dyad works at, chosen by the user
@@ -1816,27 +1812,6 @@ pub enum CuratorInteractionMode {
     /// Level 3 — collaboration plus bidirectional learning: the user and the
     /// Curator challenge and learn from each other.
     LearningCollaboration,
-}
-
-/// Curator email configuration (non-secret fields).
-///
-/// The SMTP password is stored in the OS keychain under
-/// `kask://credentials/hkask_smtp_password`, not here. The composition root
-/// reads it from the keychain and injects it as `HKASK_SMTP_PASSWORD` into
-/// MCP server child processes.
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct KaskCuratorEmailSettingsContent {
-    /// MXroute server hostname (e.g. "tuesday.mxrouting.net").
-    pub mxroute_server: Option<String>,
-    /// Full email address used for SMTP auth and the `From` header.
-    pub smtp_username: Option<String>,
-    /// From address (defaults to `smtp_username` when unset).
-    pub curator_email: Option<String>,
-    /// Alert recipient (defaults to `smtp_username` when unset).
-    pub alert_email: Option<String>,
-    /// Comma-separated list of senders authorized to reply with curator
-    /// commands (P12 allowlist). Empty means inbound replies are rejected.
-    pub authorized_emails: Option<Vec<String>>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

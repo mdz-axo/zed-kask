@@ -318,8 +318,8 @@ struct McpServer {
 ///   outbound HTTPS calls; omitting these breaks certificate verification on
 ///   distributions that rely on them.
 ///
-/// Deliberately absent: every `*_API_KEY`, `HKASK_SMTP_PASSWORD`,
-/// `HKASK_DB_PASSPHRASE`, and every other secret. A server that needs one of
+/// Deliberately absent: every `*_API_KEY`, `HKASK_DB_PASSPHRASE`,
+/// and every other secret. A server that needs one of
 /// those must declare it in its credential allowlist
 /// (`kask_bridge::mcp_servers`), which is the point of the boundary.
 pub(crate) const PASSTHROUGH_ENV_VARS: &[&str] = &[
@@ -692,12 +692,11 @@ impl McpRuntime {
             cmd.kill_on_drop(true);
             // `Command` inherits the parent env by default, and the parent
             // process may have API keys in its environment (set via shell
-            // env vars) and sets HKASK_SMTP_PASSWORD. Inheriting meant every
+            // env vars) and DB passphrases. Inheriting meant every
             // MCP child received every secret regardless of its per-server
-            // allowlist — a server allowlisted `Some(&[])` still got the SMTP
-            // password and all the API keys, silently nullifying the
-            // credential scoping that `filter_credentials_for_server` exists
-            // to provide.
+            // allowlist — a server allowlisted `Some(&[])` still got all the
+            // secrets, silently nullifying the credential scoping that
+            // `filter_credentials_for_server` exists to provide.
             //
             // `env` is the caller's already-filtered per-server set (a
             // `ServerEnv` composed by `build_mcp_server_env`), so after the
@@ -2069,7 +2068,7 @@ mod env_isolation_tests {
     }
 
     /// A parent environment shaped like the real one: shell env vars
-    /// have set the provider keys and login has set the SMTP password.
+    /// have set the provider keys and login has set the DB passphrase.
     fn parent_with_secrets() -> Vec<(&'static str, &'static str)> {
         vec![
             ("PATH", "/usr/bin:/bin"),
@@ -2077,7 +2076,6 @@ mod env_isolation_tests {
             ("RUST_LOG", "hkask=debug"),
             ("OPENROUTER_API_KEY", "parent-openrouter-secret"),
             ("HKASK_FRED_API_KEY", "parent-fred-secret"),
-            ("HKASK_SMTP_PASSWORD", "parent-smtp-secret"),
             ("HKASK_DB_PASSPHRASE", "parent-db-secret"),
         ]
     }

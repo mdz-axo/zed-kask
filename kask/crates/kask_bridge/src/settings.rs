@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings};
 pub use settings_content::CuratorInteractionMode;
 use settings_content::{
-    KaskCondenserSettingsContent, KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent,
-    KaskCuratorSettingsContent, KaskGeneralSettingsContent, KaskMcpSettingsContent,
-    KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskPrivateInferenceSettingsContent,
-    KaskResearchSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
+    KaskCondenserSettingsContent, KaskCorpusSettingsContent, KaskCuratorSettingsContent,
+    KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
+    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
+    KaskPrivateInferenceSettingsContent, KaskResearchSettingsContent, KaskScenariosSettingsContent,
+    KaskSettingsContent,
 };
 
 use collections::HashMap;
@@ -182,11 +182,6 @@ pub struct KaskCuratorSettings {
     /// collaboration, Level 3 learning collaboration. Set only by the user;
     /// read by `NativeAgent::new_session` for each new Curator thread.
     pub interaction_mode: CuratorInteractionMode,
-
-    /// Curator email configuration (outbound algedonic alerts via MXroute).
-    /// When `None` or unconfigured, the alert email sink falls back to the
-    /// log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
-    pub email: KaskCuratorEmailSettings,
 }
 
 impl Default for KaskCuratorSettings {
@@ -195,34 +190,8 @@ impl Default for KaskCuratorSettings {
             always_on: true,
             algedonic_threshold: 0.8,
             interaction_mode: CuratorInteractionMode::default(),
-            email: KaskCuratorEmailSettings::default(),
         }
     }
-}
-
-/// Curator email configuration (non-secret fields).
-///
-/// The SMTP password is stored in the OS keychain under
-/// `kask://credentials/hkask_smtp_password`, not here. The composition root
-/// reads it from the keychain and injects it as `HKASK_SMTP_PASSWORD` into
-/// MCP server child processes.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct KaskCuratorEmailSettings {
-    /// MXroute server hostname (e.g. "tuesday.mxrouting.net").
-    pub mxroute_server: String,
-
-    /// Full email address used for SMTP auth and the `From` header.
-    pub smtp_username: String,
-
-    /// From address (defaults to `smtp_username` when empty).
-    pub curator_email: String,
-
-    /// Alert recipient (defaults to `smtp_username` when empty).
-    pub alert_email: String,
-
-    /// Comma-separated list of senders authorized to reply with curator
-    /// commands (P12 allowlist). Empty means inbound replies are rejected.
-    pub authorized_emails: Vec<String>,
 }
 
 /// Memory consolidation and recall configuration.
@@ -917,19 +886,6 @@ impl From<KaskGeneralSettingsContent> for KaskGeneralSettings {
     }
 }
 
-impl From<KaskCuratorEmailSettingsContent> for KaskCuratorEmailSettings {
-    fn from(c: KaskCuratorEmailSettingsContent) -> Self {
-        let default = Self::default();
-        Self {
-            mxroute_server: c.mxroute_server.unwrap_or(default.mxroute_server),
-            smtp_username: c.smtp_username.unwrap_or(default.smtp_username),
-            curator_email: c.curator_email.unwrap_or(default.curator_email),
-            alert_email: c.alert_email.unwrap_or(default.alert_email),
-            authorized_emails: c.authorized_emails.unwrap_or(default.authorized_emails),
-        }
-    }
-}
-
 impl From<KaskCuratorSettingsContent> for KaskCuratorSettings {
     fn from(c: KaskCuratorSettingsContent) -> Self {
         let default = Self::default();
@@ -937,7 +893,6 @@ impl From<KaskCuratorSettingsContent> for KaskCuratorSettings {
             always_on: c.always_on.unwrap_or(default.always_on),
             algedonic_threshold: c.algedonic_threshold.unwrap_or(default.algedonic_threshold),
             interaction_mode: c.interaction_mode.unwrap_or(default.interaction_mode),
-            email: c.email.map(Into::into).unwrap_or(default.email),
         }
     }
 }
@@ -1554,7 +1509,6 @@ mod tests {
                 always_on: None,
                 algedonic_threshold: None,
                 interaction_mode: None,
-                email: None,
             }),
             memory: Some(KaskMemorySettingsContent {
                 consolidation_cadence_secs: None,

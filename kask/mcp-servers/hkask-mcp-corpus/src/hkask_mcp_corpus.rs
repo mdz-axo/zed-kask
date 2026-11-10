@@ -4,7 +4,7 @@
 // `render_docproc_template` has no deployment fallback, so OCR-executor and
 // docproc tests must set the root explicitly). Production still forbids
 // unsafe outright. Same pattern as hkask-mcp-curator, hkask-mcp-media,
-// hkask-email, hkask-inference, hkask-keystore.
+// hkask-inference, hkask-keystore.
 #![warn(clippy::let_underscore_future)]
 //! hKask MCP Corpus — Unified corpus MCP server.
 //!

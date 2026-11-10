@@ -503,9 +503,8 @@ from `mcp_env()`). `KaskMcpDescriptor::command()` and the `McpRuntime` launch
 path both call `filter_credentials_for_server` and
 `filter_config_env_for_server` to filter env vars before injecting them into
 the child process. A server that only needs `OPENROUTER_API_KEY` must not
-receive `HKASK_SMTP_PASSWORD` (credential leak) or `HKASK_SMTP_USERNAME`
-(config leak) — a compromised MCP server process has access to every env var
-in its process. New servers must use `Some(&[])` (no credentials/config) for
+receive unrelated credentials or config — a compromised MCP server process
+has access to every env var in its process. New servers must use `Some(&[])` (no credentials/config) for
 both allowlists and add specific env vars as needed, never `None` (receives
 all). The `all_servers_have_credential_allowlist` test pins this.
 
@@ -687,7 +686,7 @@ error mis-classifies `NotFound`/`Unavailable`/auth variants as `Internal`. Use a
 
 ## Missing credentials must surface as `permission_denied`, not `unavailable`/`invalid_argument`/silent fallback
 
-A missing credential is an authorization failure, not a transient unavailability or a bad argument. All kask MCP servers must classify a missing credential as `McpToolError::permission_denied` with the env var named in the message, not `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback (empty `Vec`, in-memory DB, skipped env injection). Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed domain error → map to `permission_denied` at the tool boundary. Reference: `hkask-mcp-swarm/src/abw_client.rs:require_auth`. Silent fallbacks are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down." Intentional exceptions: prediction-markets live context (curated static defaults), research `web_search` (free providers always available), kata-kanban (ephemeral in-memory boards by design), curator SMTP (fire-and-forget alert sink). Typed variants (`InferenceError::NotConfigured(String)`, `HostProviderError::NotConfigured(String)`, `WebError::NoProviderConfigured(String)`, `HostProviderError::MissingPrecondition(String)`) replace string-matching where the upstream error type is owned by kask.
+A missing credential is an authorization failure, not a transient unavailability or a bad argument. All kask MCP servers must classify a missing credential as `McpToolError::permission_denied` with the env var named in the message, not `unavailable`, `invalid_argument`, `failed_precondition`, or a silent fallback (empty `Vec`, in-memory DB, skipped env injection). Canonical pattern: read credential from `ctx.credentials.get("ENV_VAR")` → if `None`, return a typed domain error → map to `permission_denied` at the tool boundary. Reference: `hkask-mcp-swarm/src/abw_client.rs:require_auth`. Silent fallbacks are broken feedback loops — the operator cannot distinguish "not configured" from "no results" or "provider down." Intentional exceptions: prediction-markets live context (curated static defaults), research `web_search` (free providers always available), kata-kanban (ephemeral in-memory boards by design). Typed variants (`InferenceError::NotConfigured(String)`, `HostProviderError::NotConfigured(String)`, `WebError::NoProviderConfigured(String)`, `HostProviderError::MissingPrecondition(String)`) replace string-matching where the upstream error type is owned by kask.
 
 ## API keys live at exactly one keychain location
 

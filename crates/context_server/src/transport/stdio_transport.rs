@@ -70,10 +70,10 @@ impl StdioTransport {
 
         // Clear the parent env and inject only the passthrough vars + the
         // per-server env map. Without `env_clear()`, the child inherits every
-        // secret in the parent's environment (API keys, SMTP passwords, DB
-        // passphrases), silently nullifying the per-server credential
-        // filtering that `build_mcp_server_env` provides. This mirrors the
-        // governed `McpRuntime` path in `hkask-mcp/src/runtime.rs`.
+        // secret in the parent's environment (API keys, DB passphrases),
+        // silently nullifying the per-server credential filtering that
+        // `build_mcp_server_env` provides. This mirrors the governed
+        // `McpRuntime` path in `hkask-mcp/src/runtime.rs`.
         command.env_clear();
         for key in PASSTHROUGH_ENV_VARS {
             if let Some(value) = std::env::var_os(key) {

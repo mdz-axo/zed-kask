@@ -22,7 +22,7 @@ The crate root declares the current inventory at
 
 | Module | Responsibility | Evidence |
 |---|---|---|
-| `algedonic` | runtime alerts and escalation/email sink traits | `kask/crates/hkask-regulation/src/algedonic.rs:22-119` |
+| `algedonic` | runtime alerts and escalation sink traits | `kask/crates/hkask-regulation/src/algedonic.rs:22-119` |
 | `cybernetics_loop` | sense→compare→compute→act→verify orchestration | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:195-202,588-685,802-941` |
 | `dampener` | directive deduplication and stagnation detection | `kask/crates/hkask-regulation/src/dampener.rs:100-110,231-263` |
 | `energy` | per-agent governed-call caps | `kask/crates/hkask-regulation/src/energy.rs:26-134` |
@@ -41,7 +41,7 @@ The crate root re-exports its supported cross-crate surface at
 
 | Cluster | Public items |
 |---|---|
-| Alerts | `AlertDeliveryOutcome`, `AlertEmailSink`, `AlertEscalationSink`, `AlertPersistError`, `RuntimeAlert` |
+| Alerts | `AlertDeliveryOutcome`, `AlertEscalationSink`, `AlertPersistError`, `RuntimeAlert` |
 | Loop | `CyberneticsLoop` |
 | Loop views | `LivenessTrust`, `LoopModel`, `LoopView`, `OutcomeTrust`, `Reading`, `SenseReading`, `StageActions`, `TriggerOrigin` |
 | Call caps | `CallMeterOutcome`, `DEFAULT_RUNAWAY_CALL_CEILING` |
@@ -143,7 +143,7 @@ status: VERIFIED
 |---|---|---|
 | `Notify` | Logs an informational observation and returns without incident routing | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:576-583` |
 | `Escalate` | Requires target `LoopId::Curation`; otherwise rejects the disposition | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:584-591` |
-| `Escalate` to Curation | Delivers to the review board first (repeat observations on an open card are suppressed), attempts live Curation delivery, then uses archive/email fallbacks | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:593-723` |
+| `Escalate` to Curation | Delivers to the review board first (repeat observations on an open card are suppressed), attempts live Curation delivery, then uses archive fallbacks | `kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:593-723` |
 
 No other central disposition or generic automatic-control extension point is
 implemented.

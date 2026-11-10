@@ -116,14 +116,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_DB_PASSPHRASE",
         ],
         config_env: &[
-            // NOTE: no email-transport vars here. The curator MCP server has
-            // no email sink (it links `hkask-regulation`, not `hkask-email`,
-            // and never reads `HKASK_SMTP_*`/`HKASK_MXROUTE_*`/etc.) — the
-            // algedonic alert email runs in the EDITOR process
-            // (`CuratorAlertEmailSink`, wired from settings at the composition
-            // root; the SMTP password comes from the keychain via the
-            // editor's own process env). The former child-delivery of these
-            // vars was dead surface: zero server-side readers.
             // Curator DB path — injected by the deferred task after
             // provisioning, so the curator MCP server reads from the same
             // `agents/curator/curator.db` the agent writes curator copies to.
@@ -447,7 +439,7 @@ pub(crate) fn find_server(id: &str) -> Option<&'static BuiltinMcpServer> {
 /// credential allowlist are kept.
 ///
 /// This limits the blast radius of a compromised MCP server — a server that
-/// only needs `OPENROUTER_API_KEY` won't receive `HKASK_SMTP_PASSWORD`.
+/// only needs `OPENROUTER_API_KEY` won't receive unrelated credentials.
 #[must_use]
 pub fn filter_credentials_for_server(
     server_id: &str,
@@ -518,7 +510,7 @@ pub async fn build_mcp_server_env(
     cx: &gpui::AsyncApp,
 ) -> hkask_types::ServerEnv {
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
-    //    unfiltered map; the allowlist is what keeps the curator's email
+    //    unfiltered map; the allowlist is what keeps unrelated config out.
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
     let catalog = match crate::database_inventory_path() {
         Ok(path) => path.to_string_lossy().into_owned(),
@@ -945,8 +937,8 @@ async fn provision_default_passphrase(env_var: &str, cx: &gpui::AsyncApp) -> Opt
 /// specified server is allowed to receive — only env vars in the server's
 /// config allowlist are kept.
 ///
-/// This prevents the curator's email config (`HKASK_SMTP_USERNAME`,
-/// `HKASK_MXROUTE_SERVER`, etc.) from being injected into servers that don't
+/// This prevents a server's config from being injected into servers that don't
+/// allowlist it.
 #[must_use]
 pub(crate) fn filter_config_env_for_server(
     server_id: &str,
@@ -1199,21 +1191,15 @@ mod tests {
     }
 
     // The curator server should receive only the DB passphrase, no data
-    // service API keys and no SMTP password (it has no email sink — the
-    // alert email runs in the editor process). This pins the blast-radius
-    // reduction.
+    // service API keys. This pins the blast-radius reduction.
     #[test]
     fn curator_credentials_do_not_include_data_service_keys() {
-        let all_credentials: Vec<(String, String)> = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"]
+        let all_credentials: Vec<(String, String)> = ["OPENROUTER_API_KEY"]
             .iter()
             .map(|env| (env.to_string(), "url".to_string()))
             .collect();
         let filtered = filter_credentials_for_server("curator", &all_credentials);
         let env_vars: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(
-            !env_vars.contains(&"HKASK_SMTP_PASSWORD"),
-            "curator has no email sink — it must not receive HKASK_SMTP_PASSWORD"
-        );
         assert!(
             !env_vars.contains(&"OPENROUTER_API_KEY"),
             "curator should NOT receive OPENROUTER_API_KEY"
@@ -1315,31 +1301,6 @@ mod tests {
         assert!(filtered.is_empty());
     }
 
-    // The curator server must NOT receive email config vars — it has no
-    // email sink (no server-side reader); the alert email runs in the
-    // editor process. The former delivery was dead surface.
-    #[test]
-    fn curator_config_env_excludes_email_settings() {
-        let mut config_env = std::collections::HashMap::new();
-        config_env.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            "curator@example.com".to_string(),
-        );
-        config_env.insert(
-            "HKASK_MXROUTE_SERVER".to_string(),
-            "mail.example.com".to_string(),
-        );
-        let filtered = filter_config_env_for_server("curator", &config_env);
-        assert!(
-            !filtered.contains_key("HKASK_SMTP_USERNAME"),
-            "curator has no email sink — email transport vars must not reach it"
-        );
-        assert!(
-            !filtered.contains_key("HKASK_MXROUTE_SERVER"),
-            "curator has no email sink — email transport vars must not reach it"
-        );
-    }
-
     // Unknown server IDs fail closed: no config env is injected.
     #[test]
     fn unknown_server_gets_no_config_env() {
@@ -1386,17 +1347,7 @@ mod tests {
         let s = server_by_id("curator");
         // Secret reads: ctx.credentials.get("HKASK_DB_PASSPHRASE")
         // (SQLCipher curator.db) — the only credential the server reads.
-        // The curator MCP server has NO email sink (it links
-        // `hkask-regulation`, not `hkask-email`); the algedonic alert email
-        // runs in the editor process, whose sink is wired from settings and
-        // reads the SMTP password from the keychain via the editor's own
-        // process env — never from MCP child delivery.
         let creds = s.credentials;
-        assert!(
-            !creds.contains(&"HKASK_SMTP_PASSWORD"),
-            "the curator server has no email sink — it must not receive \
-             HKASK_SMTP_PASSWORD (secrets are granted only where read)"
-        );
         assert!(
             creds.contains(&"HKASK_DB_PASSPHRASE"),
             "curator must receive HKASK_DB_PASSPHRASE to open its SQLCipher curator.db \
@@ -1615,27 +1566,29 @@ mod tests {
     /// exercise the filter helpers in isolation, never the composed path.
     ///
     /// This is a synchronous stand-in: it simulates the filter sequence with
-    /// a populated `mcp_env()`-style map (including the curator's email
-    /// config, which `mcp_env()` emits) and asserts no key outside
+    /// a populated `mcp_env()`-style map (including config vars no server
+    /// allowlists) and asserts no key outside
     /// `config_env ∪ credentials ∪ {INFERENCE_SOCKET_ENV}` survives. The
     /// async keychain read is orthogonal — the invariant is the filter order.
     #[test]
     fn build_mcp_server_env_composition_respects_allowlists() {
-        // A `mcp_env()`-shaped map: config vars the curator emits plus a few
-        // vars other servers emit. In a real launch `mcp_env()` produces this.
+        // A `mcp_env()`-shaped map: config vars no server allowlists plus a
+        // few vars other servers emit. In a real launch `mcp_env()` produces this.
         let mut full_config = std::collections::HashMap::new();
         full_config.insert("HKASK_DATA_DIR".to_string(), "/data".to_string());
         full_config.insert(
-            "HKASK_MXROUTE_SERVER".to_string(),
-            "mail.example.com".to_string(),
+            "HKASK_CORPUS_EMBEDDING_MODEL".to_string(),
+            "OpenRouter/research-embedding".to_string(),
         );
         full_config.insert(
-            "HKASK_SMTP_USERNAME".to_string(),
-            "curator@example.com".to_string(),
+            "HKASK_MEDIA_STT_MODEL".to_string(),
+            "OpenRouter/research-stt".to_string(),
         );
         full_config.insert("HKASK_RESEARCH_DB".to_string(), "/research.db".to_string());
-        // A credential-shaped key that lives in `credentials`, not `config_env`.
-        let credential_keys = ["HKASK_SMTP_PASSWORD", "OPENROUTER_API_KEY"];
+        // Credential-shaped keys that live in `credentials`, not `config_env`.
+        // `OPENROUTER_API_KEY` is allowlisted by the media server; `FALAI_API_KEY`
+        // is not allowlisted by any server (fal.ai docres was removed).
+        let credential_keys = ["OPENROUTER_API_KEY", "FALAI_API_KEY"];
 
         for server in BUILT_IN_MCP_SERVERS {
             // Simulate `build_mcp_server_env`'s filter sequence:
@@ -2335,19 +2288,20 @@ mod tests {
     /// We use the `scenarios` server, whose `config_env` allowlist is
     /// `["HKASK_DATA_DIR", "HKASK_SCENARIOS_DATA"]`
     /// and `credentials` allowlist is `[]` (empty). A config var outside the
-    /// allowlist (e.g. `HKASK_MXROUTE_SERVER`,
-    /// which only the curator server may receive) must be filtered out by the
+    /// allowlist (e.g. `HKASK_RESEARCH_DB`,
+    /// which only the research server may receive) must be filtered out by the
     /// composed path.
     #[tokio::test]
     async fn build_mcp_server_env_composed_path_filters_unallowed_config() {
         let _guard = ENV_TEST_LOCK.lock().await;
-        // Build settings whose `mcp_env()` emits a curator-only config var.
-        // We can't easily mutate `mcp_env()` directly, so we rely on the
-        // real `KaskSettings::default()` — if it emits `HKASK_MXROUTE_SERVER`,
+        // Build settings whose `mcp_env()` emits a research-only config var;
         // the composed path must filter it out for the scenarios server. If
-        // the default does not emit it, the test still pins the invariant:
-        // whatever `mcp_env()` emits, only allowlisted keys survive.
-        let settings = crate::KaskSettings::default();
+        // the var survives, the config filter was bypassed (Path A regression).
+        let mut settings = crate::KaskSettings::default();
+        settings.research = crate::KaskResearchSettings {
+            research_db: "/research.db".to_string(),
+        }
+        .into();
         let provider = FakeCredentialsProvider::default();
         // Hygiene: the scenarios server's credentials allowlist is empty,
         // so no keychain read should occur — but an installed empty mock
@@ -2360,18 +2314,13 @@ mod tests {
 
         // The scenarios server's allowlist is
         // `[HKASK_DATA_DIR, HKASK_SCENARIOS_DATA]`.
-        // `HKASK_MXROUTE_SERVER` (curator email config) must not survive —
+        // `HKASK_RESEARCH_DB` (research-only config) must not survive —
         // if it does, the config filter was bypassed (Path A regression).
         assert_eq!(
-            env.get("HKASK_MXROUTE_SERVER"),
+            env.get("HKASK_RESEARCH_DB"),
             None,
             "unallowlisted config var must not survive the composed path — \
              the prior Path A bug leaked the full mcp_env() map"
-        );
-        assert_eq!(
-            env.get("HKASK_SMTP_USERNAME"),
-            None,
-            "curator email config must not leak into the scenarios server"
         );
     }
 

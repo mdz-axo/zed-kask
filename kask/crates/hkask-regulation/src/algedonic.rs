@@ -65,26 +65,6 @@ fn default_occurrence_count() -> u64 {
     1
 }
 
-/// Sink for sending algedonic alerts via email as a last-resort loop closure
-/// when the live channel and persistence are both unavailable (S1->S5 algedonic
-/// fallback path).
-///
-/// Implementations should be non-blocking — spawn async work internally
-/// rather than blocking the cybernetics loop.
-pub trait AlertEmailSink: Send + Sync + std::fmt::Debug {
-    /// Send an alert email. Non-blocking — implementations should spawn
-    /// async work rather than blocking the caller.
-    ///
-    /// Implementations should store a `tokio::runtime::Handle` and use
-    /// `handle.spawn(...)` rather than bare `tokio::spawn(...)`, so the
-    /// method is safe to call from any thread (including the GPUI
-    /// foreground thread, which has no tokio reactor). The sole caller is
-    /// `CyberneticsLoop::tick()`, which runs inside `Tokio::spawn`, but
-    /// the `Send + Sync` bound on this trait means a future caller could
-    /// invoke it from a non-tokio context.
-    fn send_alert_email(&self, alert: &RuntimeAlert);
-}
-
 /// Sink for delivering algedonic alerts to the review board.
 ///
 /// Implementations must be non-blocking and best-effort — a failing or missing

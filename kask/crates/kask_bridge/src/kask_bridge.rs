@@ -100,10 +100,10 @@ pub use passphrase_rotation::{
     schedule_db_passphrase_rotation,
 };
 pub use settings::{
-    KaskCondenserSettings, KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings,
-    KaskGeneralSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskPrivateInferenceSettings,
-    KaskResearchSettings, KaskScenariosSettings, KaskSettings,
+    KaskCondenserSettings, KaskCorpusSettings, KaskCuratorSettings, KaskGeneralSettings,
+    KaskMcpSettings, KaskMediaSettings, KaskMemorySettings, KaskModelsSettings,
+    KaskPredictionMarketsSettings, KaskPrivateInferenceSettings, KaskResearchSettings,
+    KaskScenariosSettings, KaskSettings,
 };
 
 mod metacognition_bridge;
@@ -129,13 +129,12 @@ mod algedonic_board;
 mod algedonic_board_real_tests;
 pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 
-// The credential namespace constant and the test-email helper live in the
-// `credentials` module; re-exported here to preserve the historical public
-// surface (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`, `kask_bridge::spawn_test_email`).
+// The credential namespace constant lives in the `credentials` module;
+// re-exported here to preserve the historical public surface
+// (`kask_bridge::KASK_CREDENTIAL_NAMESPACE`).
 // `purge_removed_abw_api_key` and `purge_removed_reduct_api_key` are the
 // startup purges of the removed ABW and Reduct.cloud keys (D5) — called once
 // from zed's app init.
 pub use credentials::{
     KASK_CREDENTIAL_NAMESPACE, purge_removed_abw_api_key, purge_removed_reduct_api_key,
-    spawn_test_email,
 };

@@ -288,7 +288,6 @@ members = [
     "kask/crates/hkask-inference",
     "kask/crates/hkask-bridge-ontology",
     "kask/crates/hkask-condenser",
-    "kask/crates/hkask-email",
     "kask/crates/hkask-steer-core",
     "kask/crates/dme-harness",
 
@@ -982,7 +981,6 @@ hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 
 hkask-memory = { path = "kask/crates/hkask-memory" }
-hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 hkask-mcp-test-support = { path = "kask/crates/hkask-mcp-test-support" }
 

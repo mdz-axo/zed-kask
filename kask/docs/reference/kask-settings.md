@@ -185,7 +185,6 @@ Providers, find the provider, and add models via its configuration sub-page.
 | `always_on` | `bool` | `true` | Curator agent runs regulation loops in background |
 | `algedonic_threshold` | `f64` | `0.8` | Algedonic signal threshold (0.0–1.0) |
 | `interaction_mode` | `CuratorInteractionMode` | `collaboration` | User–Curator dyad level, set only by the user: `control` (Level 1), `collaboration` (Level 2), `learning_collaboration` (Level 3). Read per new Curator thread; see `architecture/functional-interaction-spec.md` §9 |
-| `email` | `KaskCuratorEmailSettings` | `Default` | Outbound algedonic alerts via MXroute |
 
 Interaction mode adds level-specific guidance to the **system prompt's
 Session Context** for each new Curator thread; it does not replace the shared
@@ -196,31 +195,6 @@ Level 3 also asks both sides to challenge and learn from each other with
 evidence. Level 4 (trust and delegation) is a future design, not a setting.
 The behavior contract and its limits are specified in
 [Functional Interaction Specification §9](../architecture/functional-interaction-spec.md#9-the-usercurator-dyad-and-its-levels).
-
-### Curator Email (`KaskCuratorEmailSettings`)
-
-Non-secret fields. The SMTP password is stored in the OS keychain under
-`kask://credentials/hkask_smtp_password`, not here. The composition root
-reads it from the keychain into the EDITOR process env (the alert email
-sink runs in-process there, wired from settings via
-`CuratorAlertEmailSink::try_from_settings`); MCP server children receive no
-email vars — no server reads them. `alert_email`/`smtp_username` select the
-alert recipient; the SMTP transport itself (`hkask-email`'s `send_email`)
-reads its remaining configuration (`HKASK_MXROUTE_SERVER`,
-`HKASK_SMTP_USERNAME`, `HKASK_CURATOR_EMAIL`) from the editor process env.
-
-| Field | Type | Default | Consumed |
-|-------|------|---------|-----------|
-| `mxroute_server` | `String` | `""` | settings→transport note above |
-| `smtp_username` | `String` | `""` | alert-recipient fallback; note above |
-| `curator_email` | `String` | `""` | settings→transport note above |
-| `alert_email` | `String` | `""` | alert recipient (falls back to `smtp_username`) |
-| `authorized_emails` | `Vec<String>` | `[]` | settings→transport note above |
-
-These are the only `KaskCuratorEmailSettings` fields (`kask/crates/kask_bridge/src/settings.rs:210-226`).
-
-When `email` is `None` or unconfigured, the alert email sink falls back to the
-log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 
 ## Affordance (`KaskAffordanceSettings`)
 
@@ -632,22 +606,6 @@ environment. Shell env vars take precedence over keychain values. `KaskSettings:
 
 `FALAI_API_KEY` is listed under Data Services (fal.ai is a media platform,
 not an OpenAI-compatible chat endpoint).
-
-### Curator Email
-
-Read by `hkask-email` in the EDITOR process (the in-process alert email
-transport); not delivered to MCP server children and not keychain entries
-(except the password, which the composition root reads from the keychain
-into the editor process env).
-
-| Env Var | Service |
-|---------|--------|
-| `HKASK_MXROUTE_SERVER` | MXroute server hostname |
-| `HKASK_SMTP_USERNAME` | SMTP auth + From header |
-| `HKASK_SMTP_PASSWORD` | SMTP password (keychain → editor process env) |
-| `HKASK_CURATOR_EMAIL` | From address (defaults to `HKASK_SMTP_USERNAME`) |
-| `HKASK_ALERT_EMAIL` | Alert recipient (defaults to `HKASK_SMTP_USERNAME`) |
-| `HKASK_AUTHORIZED_EMAILS` | Authorized sender allowlist (comma-separated) |
 
 ### Per-Server Config
 

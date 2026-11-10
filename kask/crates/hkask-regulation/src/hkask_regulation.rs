@@ -20,9 +20,7 @@ pub(crate) mod loops;
 pub(crate) mod sensor_provider;
 
 pub(crate) mod runtime;
-pub use algedonic::{
-    AlertDeliveryOutcome, AlertEmailSink, AlertEscalationSink, AlertPersistError, RuntimeAlert,
-};
+pub use algedonic::{AlertDeliveryOutcome, AlertEscalationSink, AlertPersistError, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{CallMeterOutcome, DEFAULT_RUNAWAY_CALL_CEILING};
 pub use inference_resilience::{

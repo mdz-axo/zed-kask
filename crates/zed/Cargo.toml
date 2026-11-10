@@ -76,7 +76,6 @@ hkask_tool_invoker.workspace = true
 hkask-types.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
-hkask-email.workspace = true
 
 kanban_panel.workspace = true
 media_panel.workspace = true

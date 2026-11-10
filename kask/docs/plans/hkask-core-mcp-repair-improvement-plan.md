@@ -59,7 +59,7 @@ Offline Cargo metadata reported 299 workspace members, including **19 libraries 
 | Persistence and memory | `hkask-storage`, `hkask-event-store`, `hkask-memory`, `hkask-keystore` |
 | Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus`, 2026-10-13, commit `8fb33f8e73`; current settings reader: `hkask-mcp-corpus/src/settings.rs`) |
 | Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser` |
-| Regulation and interaction support | `hkask-regulation`, `hkask-email`, `hkask-steer-core` |
+| Regulation and interaction support | `hkask-regulation`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |
 
 Servers: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49-513`; do not hardcode these counts in new tests.
@@ -661,7 +661,7 @@ Observed output: `{"base_model":"org/modelSHELL_EXPANDED"}`. This demonstrates t
 - Targeted domain inspection: training script generation, corpus output paths, gallery policy, kanban attribution, spreadsheet persistence, event store, regulation charging/advice.
 - Delegated source/test skims covered all server responsibilities, especially swarm, research, corpus, training, media, and kanban.
 - One delegated persistence review failed at startup with an agent-service authentication error. Direct sampling only partially replaced it.
-- Limited: full memory retention/consolidation, rotation, email, ontology semantics, condenser quality, complete financial workflows, cloud/A2A authorization, media parsers, deployed providers.
+- Limited: full memory retention/consolidation, rotation, ontology semantics, condenser quality, complete financial workflows, cloud/A2A authorization, media parsers, deployed providers.
 - Not executed: full workspace build/clippy, full server suites, GUI tests, real-process MCP reconnect tests, power-loss experiments, malicious-input end-to-end tools.
 
 Coding-guidelines, metacognition, deep-module, bug-hunt, refactor-architecture, code-review, falsifiability, lean-prover, and kata-improvement were activated during review. `grill-me` was unavailable; labeled adversarial questions were used instead. Historical calibration was unavailable; no forecast store was contacted or artificial calibration score reported.

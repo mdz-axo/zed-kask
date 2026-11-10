@@ -472,7 +472,6 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 | `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
 | `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (SEPIO, GOLEM, ML-Schema, RDF Data Cube, OMC). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
-| `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
 | `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_budget`) for deterministic compute steps invoked by skills via the `lisp_eval` tool — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
 | `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs`). |
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly) |

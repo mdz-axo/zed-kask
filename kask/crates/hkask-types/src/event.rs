@@ -78,9 +78,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Seam architecture ──
     // reg.architecture.seam.* removed 2026-08-30 — the "seam watcher"
     // that would have emitted them was never built; zero emitters.
-    // Email notification span — emitted by hkask-email (hkask_email.rs) and
-    // kask_bridge credentials (credential-alert emails).
-    "reg.email.sent",
     "reg.consolidation",
     // ── Curation / Curator ──
     "reg.curation",

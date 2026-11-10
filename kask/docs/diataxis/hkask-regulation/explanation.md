@@ -134,7 +134,7 @@ primary durable review path: `route_action_as_alert` delivers the alert to the
 board first, and a repeat observation on an open card suppresses duplicate live
 and archive events so the card's review record stays canonical
 (`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:575-654`). The live
-Curation channel is next; the Regulation archive and email sink are fallbacks
+Curation channel is next; the Regulation archive is the fallback
 when that channel is unavailable
 (`kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:656-722`). When the
 board is unavailable, a successful archive fallback latches the condition locally
@@ -147,7 +147,6 @@ sequenceDiagram
     participant Board as Review board
     participant CI as Curation live channel
     participant RA as Regulation archive
-    participant EM as Email sink
     CL->>Board: deliver alert to board
     alt repeat on open card
         Board-->>CL: Confirmed — suppress duplicates
@@ -157,14 +156,13 @@ sequenceDiagram
     CL->>CI: send live alert
     alt live channel unavailable
         CL->>RA: persist fallback record
-        CL->>EM: notify if configured
     end
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-REG-006
-verified_date: 2026-10-22
-verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:575-723 (route_action_as_alert: board delivery L619-654, live channel L656-668, archive fallback L670-700, email L702-714); kask/crates/hkask-regulation/src/algedonic.rs:97-119 (AlertDeliveryOutcome, AlertEscalationSink)
+verified_date: 2026-11-10
+verified_against: kask/crates/hkask-regulation/src/cybernetics_loop/cycle.rs:601-729 (route_action_as_alert: board delivery L662, live channel L682, archive fallback L696-729); kask/crates/hkask-regulation/src/algedonic.rs:77-119 (AlertDeliveryOutcome, AlertEscalationSink)
 status: VERIFIED
 -->
 

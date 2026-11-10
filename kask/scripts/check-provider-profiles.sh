@@ -56,12 +56,12 @@ adopted="$(
       echo "$b"
     done
     # Data-service credential keys (DATA_SERVICES) → vendor ids. Internal
-    # keys (passphrase, SMTP) are not vendors; mapped keys normalize to the
+    # keys (passphrase) are not vendors; mapped keys normalize to the
     # vendor id the other anchors already emit.
     sed -nE 's/^[[:space:]]*credential_key: "([^"]+)".*/\1/p' "$INFERENCE_SRC" |
       while IFS= read -r k; do
         case "$k" in
-          hkask_db_passphrase | hkask_smtp_password) continue ;;
+          hkask_db_passphrase) continue ;;
           runpod) echo runpod ;;
           *) echo "$k" ;;
         esac

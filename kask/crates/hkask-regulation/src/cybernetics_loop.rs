@@ -149,7 +149,6 @@ pub struct CyberneticsLoop {
     alert_escalation_sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
     /// Direct alerts channel: Cybernetics → Curation (CurationInput).
     alerts_tx: Option<mpsc::UnboundedSender<CurationInput>>,
-    alert_email_sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
     /// Direct tool consumption channel: McpRuntime::invoke → Cybernetics.
     /// Direct curator directive channel: Curation → Cybernetics.
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
@@ -242,7 +241,6 @@ impl CyberneticsLoop {
             event_sink: None,
             alert_escalation_sink: None,
             alerts_tx: None,
-            alert_email_sink: None,
             curator_directive_rx: None,
             loop_quality: RwLock::new(LoopMetrics::default()),
             loop_telemetry_state: Mutex::new(LoopTelemetryState::default()),
@@ -283,32 +281,6 @@ impl CyberneticsLoop {
     pub fn with_alerts_channel(mut self, tx: mpsc::UnboundedSender<CurationInput>) -> Self {
         self.alerts_tx = Some(tx);
         self
-    }
-
-    /// Wire the last-resort alert email sink — sends algedonic alerts via email
-    /// when the live channel and persistence are both unavailable.
-    ///
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_alert_email_sink(
-        mut self,
-        sink: Arc<dyn crate::algedonic::AlertEmailSink>,
-    ) -> Self {
-        self.alert_email_sink = Some(sink);
-        self
-    }
-
-    /// Set or clear the alert email sink after construction.
-    ///
-    /// Used by the composition root to lazily wire the email sink after
-    /// settings load (the env vars `HKASK_SMTP_USERNAME` etc. are populated
-    /// from `KaskSettings::mcp_env()` in the deferred task, not at startup).
-    /// Pass `None` to disable email alerts (the zero-config default).
-    pub fn set_alert_email_sink(
-        &mut self,
-        sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
-    ) {
-        self.alert_email_sink = sink;
     }
 
     /// Replace the regulation event sink after construction.
