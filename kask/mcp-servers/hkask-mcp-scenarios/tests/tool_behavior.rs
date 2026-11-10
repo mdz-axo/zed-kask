@@ -24,6 +24,7 @@ use hkask_mcp_scenarios::types::{
     EventDependency, Perspective, ScenarioEvent, ScenarioType, SubQuestion, TimeHorizon,
 };
 use hkask_mcp_scenarios::{ForecastStore, JournalStore, ProjectStore, ScenariosServer};
+use hkask_mcp_test_support::{invoke_tool, parse_envelope};
 use hkask_types::WebID;
 use rmcp::handler::server::wrapper::Parameters;
 use std::collections::HashMap;
@@ -270,7 +271,7 @@ async fn snapshot_failure_preserves_journal_for_recovery() -> Result<(), Box<dyn
     // Recovery must be observable through the read seam BEFORE any retry:
     // a re-score would repair a broken replay and hide the regression.
     let recovered = file_backed_server(&snapshot_path);
-    let status = parse(
+    let status = parse_envelope(
         &recovered
             .scenario_status(Parameters(StatusRequest {}))
             .await?,
@@ -287,7 +288,7 @@ async fn snapshot_failure_preserves_journal_for_recovery() -> Result<(), Box<dyn
     assert_eq!(snapshot[REGRESSION_KEY]["outcome"], false);
     assert_eq!(snapshot[REGRESSION_KEY]["probability"], 0.9);
     let reopened = file_backed_server(&snapshot_path);
-    let status = parse(
+    let status = parse_envelope(
         &reopened
             .scenario_status(Parameters(StatusRequest {}))
             .await?,
@@ -361,7 +362,7 @@ async fn snapshot_with_uncleared_journal_recovers_exactly_once()
     // Reopen: the journal's last entry (probability 0.9, outcome false) must
     // win over the snapshot without duplicating the record.
     let reopened = file_backed_server(&snapshot_path);
-    let status = parse(
+    let status = parse_envelope(
         &reopened
             .scenario_status(Parameters(StatusRequest {}))
             .await?,
@@ -390,18 +391,10 @@ async fn journal_failure_is_surfaced_before_memory_changes()
         }))
         .await;
     assert!(result.is_err(), "journal failure must reach the caller");
-    let status = parse(&server.scenario_status(Parameters(StatusRequest {})).await?);
+    let status = parse_envelope(&server.scenario_status(Parameters(StatusRequest {})).await?);
     assert_eq!(status["pipeline"]["forecast_count"], 0);
     assert!(!snapshot_path.exists());
     Ok(())
-}
-
-/// Parse a tool output string, unwrapping the `{"content": ...}` envelope.
-/// Panics on unparseable output so a malformed envelope fails the test loudly
-/// rather than silently returning `None`.
-fn parse(output: &str) -> serde_json::Value {
-    hkask_types::tool_response::parse_tool_response(output)
-        .unwrap_or_else(|| panic!("tool output must be valid JSON, got: {output}"))
 }
 
 /// A minimal valid independent event (no dependencies, no sub-questions) with a
@@ -434,11 +427,7 @@ fn independent_event(identifier: &str, name: &str, probability: f64) -> Scenario
 #[tokio::test]
 async fn scenario_status_reports_empty_state() {
     let server = make_server();
-    let output = server
-        .scenario_status(Parameters(StatusRequest {}))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(server, scenario_status, StatusRequest {});
 
     let pipeline = parsed
         .get("pipeline")
@@ -476,13 +465,13 @@ async fn scenario_status_reports_empty_state() {
 async fn scenario_quantify_resolves_single_independent_event() {
     let server = make_server();
     let event = independent_event("evt-1", "ACME launches product X", 0.3);
-    let output = server
-        .scenario_quantify(Parameters(QuantifyRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_quantify,
+        QuantifyRequest {
             events: vec![event],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
 
     assert_eq!(
         parsed["event_count"].as_u64(),
@@ -502,12 +491,7 @@ async fn scenario_quantify_resolves_single_independent_event() {
         "the root's marginal equals its prior with no parents, got: {parsed}"
     );
     // Quantifying caches the tree so a subsequent status reflects it.
-    let status = parse(
-        &server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await
-            .expect("tool ok"),
-    );
+    let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert!(
         status.get("event_tree").is_some_and(|tree| !tree.is_null()),
         "scenario_quantify must populate the tree cache, got: {status}"
@@ -520,16 +504,16 @@ async fn scenario_quantify_resolves_single_independent_event() {
 #[tokio::test]
 async fn scenario_triage_classifies_fully_specified_question_as_well_specified() {
     let server = make_server();
-    let output = server
-        .scenario_triage(Parameters(TriageRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_triage,
+        TriageRequest {
             question: "Will ACME reach $10B revenue by end of 2027?".to_string(),
             has_deadline: Some(true),
             has_reference_class: Some(true),
             has_resolution_criteria: Some(true),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
 
     assert_eq!(
         parsed["difficulty"].as_str(),
@@ -558,16 +542,16 @@ async fn scenario_triage_classifies_fully_specified_question_as_well_specified()
 #[tokio::test]
 async fn scenario_triage_classifies_vague_question_as_needs_refinement() {
     let server = make_server();
-    let output = server
-        .scenario_triage(Parameters(TriageRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_triage,
+        TriageRequest {
             question: "What about the economy?".to_string(),
             has_deadline: Some(false),
             has_reference_class: Some(false),
             has_resolution_criteria: Some(false),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
 
     assert_eq!(
         parsed["difficulty"].as_str(),
@@ -620,11 +604,7 @@ async fn scenario_assess_calibration_curve_is_subject_scoped() {
             .await
             .expect("score ok");
     }
-    let output = server
-        .scenario_assess(Parameters(assess_request_all_omitted("alpha")))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(server, scenario_assess, assess_request_all_omitted("alpha"));
     assert_eq!(
         parsed["calibration"]["resolved_forecasts"].as_u64(),
         Some(1),
@@ -658,13 +638,13 @@ async fn scenario_brainstorm_default_context_never_names_removed_scenario_resear
 async fn scenario_quantify_called_cold_emits_no_sequence_note() {
     let server = make_server();
     let event = independent_event("evt-cold", "cold entry event", 0.4);
-    let output = server
-        .scenario_quantify(Parameters(QuantifyRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_quantify,
+        QuantifyRequest {
             events: vec![event],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert!(
         parsed.get("sequence_note").is_none(),
         "a cold quantify with a caller-supplied tree is a legitimate entry — no advisory, got: {parsed}"
@@ -678,13 +658,13 @@ async fn scenario_quantify_called_cold_emits_no_sequence_note() {
 async fn scenario_quantify_emits_certainty_distance_not_variance_contribution() {
     let server = make_server();
     let event = independent_event("evt-cd", "certainty distance event", 0.9);
-    let output = server
-        .scenario_quantify(Parameters(QuantifyRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_quantify,
+        QuantifyRequest {
             events: vec![event],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     let node = &parsed["nodes"][0];
     let distance = node["certainty_distance"]
         .as_f64()
@@ -774,8 +754,10 @@ async fn scenario_calibrate_withholds_unsupported_historical_correction() {
         }))
         .await
         .expect("resolved history");
-    let output = server
-        .scenario_calibrate(Parameters(CalibrateRequest {
+    let body = invoke_tool!(
+        server,
+        scenario_calibrate,
+        CalibrateRequest {
             question: "Model estimate".into(),
             sub_questions: vec![SubQuestion {
                 question: "Evidence".into(),
@@ -785,10 +767,8 @@ async fn scenario_calibrate_withholds_unsupported_historical_correction() {
             reference_class: None,
             base_rate: None,
             reference_count: None,
-        }))
-        .await
-        .expect("estimate");
-    let body = parse(&output);
+        }
+    );
     assert!(
         body["adjustment_status"]
             .as_str()
@@ -830,11 +810,7 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
         }))
         .await
         .expect("frame_document ok");
-    let output = server
-        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(server, scenario_assess, assess_request_all_omitted("ACME"));
 
     // Every metric that is neither supplied nor derivable is named — six
     // of the seven (perspective_count is not required: the framing
@@ -948,14 +924,14 @@ async fn scenario_recompute_posteriors_matches_finite_bayes() {
             })
             .into_iter()
             .collect();
-        let output = server
-            .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+        let parsed = invoke_tool!(
+            server,
+            scenario_recompute_posteriors,
+            PosteriorsRequest {
                 events: vec![root.clone(), child.clone()],
                 evidence,
-            }))
-            .await
-            .expect("valid finite Bayesian model");
-        let parsed = parse(&output);
+            }
+        );
         let a = parsed["nodes"]
             .as_array()
             .expect("node array")
@@ -1012,8 +988,10 @@ async fn scenario_recompute_posteriors_updates_ancestors_on_leaf_evidence() {
         parent_event_ids: vec!["evt-b".to_string()],
         conditionals: vec![0.2, 0.7],
     }];
-    let output = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_recompute_posteriors,
+        PosteriorsRequest {
             events: vec![root, mid, leaf],
             evidence: vec![PosteriorEvidenceEntry {
                 event_id: "evt-c".to_string(),
@@ -1021,10 +999,8 @@ async fn scenario_recompute_posteriors_updates_ancestors_on_leaf_evidence() {
                 occurred: None,
                 likelihood_ratio: None,
             }],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(
         parsed["method"].as_str(),
         Some("polytree_backward_inference"),
@@ -1074,8 +1050,10 @@ async fn scenario_recompute_posteriors_degrades_on_non_polytree_with_note() {
             conditionals: vec![0.2, 0.7],
         },
     ];
-    let output = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_recompute_posteriors,
+        PosteriorsRequest {
             events: vec![a, b, c, d],
             evidence: vec![PosteriorEvidenceEntry {
                 event_id: "evt-d".to_string(),
@@ -1083,10 +1061,8 @@ async fn scenario_recompute_posteriors_degrades_on_non_polytree_with_note() {
                 observed_probability: None,
                 likelihood_ratio: None,
             }],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(
         parsed["method"].as_str(),
         Some("forward_marginalization_only"),
@@ -1126,8 +1102,10 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
     )
     .await;
     // marginal(evt-dep) = 0.4·0.2 + 0.6·0.8 = 0.56 ≠ prior 0.5
-    let output = server
-        .scenario_score(Parameters(ScoreRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_score,
+        ScoreRequest {
             resolver: "test-source".into(),
             forecast_id: "marginal-scoring".to_string(),
             events: vec![root, dependent],
@@ -1135,10 +1113,8 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
                 event_id: "evt-dep".to_string(),
                 occurred: true,
             }],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
 
     // The response scores the marginal: (0.56 − 1)² = 0.1936, not the
     // prior's (0.5 − 1)² = 0.25.
@@ -1256,11 +1232,7 @@ async fn scenario_assess_derives_counts_and_preparation_from_the_project() {
         }))
         .await
         .expect("quantify ok");
-    let output = server
-        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(server, scenario_assess, assess_request_all_omitted("ACME"));
     // Preparation: scored from the framing document — all four components
     // present, so the full 1.0.
     assert_eq!(
@@ -1358,12 +1330,7 @@ async fn scenario_resolution_requires_frozen_identity_and_unique_outcomes() {
             .to_string()
             .contains("duplicate")
     );
-    let first = parse(
-        &server
-            .scenario_score(Parameters(persistence_score_request(0.8, true)))
-            .await
-            .expect("resolve"),
-    );
+    let first = invoke_tool!(server, scenario_score, persistence_score_request(0.8, true));
     assert!((first["aggregate"]["brier_score"].as_f64().expect("score") - 0.04).abs() < 1e-12);
     assert!(first.get("calibration_note").is_none());
     assert!(first["aggregate"].get("interpretation").is_none());
@@ -1379,12 +1346,7 @@ async fn scenario_resolution_requires_frozen_identity_and_unique_outcomes() {
             .to_string()
             .contains("conflicting")
     );
-    let status = parse(
-        &server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await
-            .expect("status"),
-    );
+    let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert_eq!(
         status["pipeline"]["resolved_count"], 1,
         "replays do not add event weight"
@@ -1455,22 +1417,16 @@ async fn unmatched_outcomes_are_explicit_and_empty_bins_are_insufficient() {
         event_id: "unrelated".into(),
         occurred: false,
     });
-    let scored = parse(
-        &server
-            .scenario_score(Parameters(req))
-            .await
-            .expect("matching and unmatched"),
-    );
+    let scored = invoke_tool!(server, scenario_score, req);
     assert_eq!(
         scored["unmatched_outcome_ids"],
         serde_json::json!(["unrelated"])
     );
     assert_eq!(scored["scored_count"], 1);
-    let curve = parse(
-        &server
-            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
-            .await
-            .expect("curve"),
+    let curve = invoke_tool!(
+        server,
+        scenario_calibration,
+        CalibrationRequest { subject: None }
     );
     assert_eq!(
         curve["evidence_status"], "insufficient",
@@ -1498,7 +1454,7 @@ async fn synthesis_equal_weights_do_not_invent_or_reward_historical_loss() {
         ]
     }))
     .expect("request");
-    let body = parse(
+    let body = parse_envelope(
         &make_server()
             .scenario_synthesize(Parameters(req))
             .await
@@ -1549,11 +1505,10 @@ async fn signed_cancellation_is_descriptive_not_calibration_certification() {
         }))
         .await
         .expect("resolve");
-    let curve = parse(
-        &server
-            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
-            .await
-            .expect("curve"),
+    let curve = invoke_tool!(
+        server,
+        scenario_calibration,
+        CalibrationRequest { subject: None }
     );
     assert!(
         curve["signed_probability_error"]
@@ -1577,17 +1532,12 @@ async fn legacy_scenario_history_survives_without_becoming_score_eligible() {
     let server = file_backed_server(&path);
     let mut request = persistence_score_request(0.8, true);
     request.forecast_id = "legacy".into();
-    let body = parse(
-        &server
-            .scenario_score(Parameters(request))
-            .await
-            .expect("record legacy outcome"),
-    );
+    let body = invoke_tool!(server, scenario_score, request);
     assert_eq!(body["scored_count"], 0);
     assert!(body["aggregate"]["brier_score"].is_null());
     assert_eq!(body["per_event"][0]["scoring_status"], "unscored");
     let reopened = file_backed_server(&path);
-    let status = parse(
+    let status = parse_envelope(
         &reopened
             .scenario_status(Parameters(StatusRequest {}))
             .await
@@ -1621,12 +1571,7 @@ async fn date_only_same_day_declaration_cannot_be_admitted() {
             .to_string()
             .contains("resolution_at")
     );
-    let status = parse(
-        &server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await
-            .expect("status"),
-    );
+    let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert_eq!(status["pipeline"]["forecast_count"], 0);
 }
 
@@ -1657,12 +1602,7 @@ async fn exact_cutoff_admits_short_horizon_but_not_hindsight_or_early_resolution
                 .await
                 .is_err()
         );
-        let status = parse(
-            &server
-                .scenario_status(Parameters(StatusRequest {}))
-                .await
-                .expect("status"),
-        );
+        let status = invoke_tool!(server, scenario_status, StatusRequest {});
         assert_eq!(status["pipeline"]["forecast_count"], 0);
     }
     let server = make_server();
@@ -1681,12 +1621,7 @@ async fn exact_cutoff_admits_short_horizon_but_not_hindsight_or_early_resolution
             .is_err()
     );
     set_clock(&server, at_cutoff);
-    let body = parse(
-        &server
-            .scenario_score(Parameters(persistence_score_request(0.8, true)))
-            .await
-            .expect("resolution at exact cutoff"),
-    );
+    let body = invoke_tool!(server, scenario_score, persistence_score_request(0.8, true));
     assert!((body["aggregate"]["brier_score"].as_f64().expect("score") - 0.04).abs() < 1e-12);
     set_clock(&server, immediately_after_cutoff);
     server
@@ -1739,12 +1674,7 @@ async fn compaction_fault_restarts_and_retries_the_complete_101_event_declaratio
             .await
             .is_err()
     );
-    let status = parse(
-        &server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await
-            .expect("read after fault"),
-    );
+    let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert_eq!(
         status["pipeline"]["forecast_count"], 101,
         "the durable declaration must never expose a partial membership"
@@ -1768,14 +1698,14 @@ async fn compaction_fault_restarts_and_retries_the_complete_101_event_declaratio
     // Retry after the cutoff must retain the original admission timestamp,
     // not reject an already admitted forecast or declare it retrospectively.
     let restarted = file_backed_server(&path);
-    let status = parse(
+    let status = parse_envelope(
         &restarted
             .scenario_status(Parameters(StatusRequest {}))
             .await
             .expect("replayed journal"),
     );
     assert_eq!(status["pipeline"]["forecast_count"], 101);
-    let retried = parse(
+    let retried = parse_envelope(
         &restarted
             .scenario_declare(Parameters(declaration_request("complete", events.clone())))
             .await
@@ -1821,7 +1751,7 @@ async fn compaction_fault_restarts_and_retries_the_complete_101_event_declaratio
             occurred: false,
         })
         .collect();
-    let scored = parse(
+    let scored = parse_envelope(
         &restarted
             .scenario_score(Parameters(ScoreRequest {
                 forecast_id: "complete".into(),
@@ -1849,7 +1779,7 @@ async fn compaction_fault_restarts_and_retries_the_complete_101_event_declaratio
         (scored["aggregate"]["brier_score"].as_f64().expect("score") - 64.09 / 101.0).abs() < 1e-12
     );
     let reopened = file_backed_server(&path);
-    let status = parse(
+    let status = parse_envelope(
         &reopened
             .scenario_status(Parameters(StatusRequest {}))
             .await
@@ -1890,11 +1820,10 @@ async fn complementary_probabilities_report_signed_error_not_overconfidence() {
         }))
         .await
         .expect("resolve");
-    let body = parse(
-        &server
-            .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
-            .await
-            .expect("curve"),
+    let body = invoke_tool!(
+        server,
+        scenario_calibration,
+        CalibrationRequest { subject: None }
     );
     assert!(
         body["signed_probability_error"]
@@ -1928,12 +1857,7 @@ async fn complementary_probabilities_report_signed_error_not_overconfidence() {
         );
         assert!(bin.get("bias").is_none());
     }
-    let status = parse(
-        &server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await
-            .expect("status"),
-    );
+    let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert!(status["calibration"].get("overconfidence_score").is_none());
     assert_eq!(
         status["calibration"]["signed_probability_error_sample_count"],
@@ -1968,14 +1892,10 @@ async fn exact_cutoff_map_must_match_membership_and_retries_cannot_change_it() {
     request.resolver = "another-source".into();
     assert!(server.scenario_declare(Parameters(request)).await.is_err());
     set_clock(&server, immediately_after_cutoff);
-    let replay = parse(
-        &server
-            .scenario_declare(Parameters(declaration_request(
-                "persistence-regression",
-                vec![event],
-            )))
-            .await
-            .expect("identical normal retry after cutoff"),
+    let replay = invoke_tool!(
+        server,
+        scenario_declare,
+        declaration_request("persistence-regression", vec![event],)
     );
     assert_eq!(replay["replayed"], true);
     assert_eq!(replay["event_count"], 1);
@@ -2002,16 +1922,11 @@ async fn date_only_v4_declaration_is_preserved_but_never_reclassified_as_prospec
     );
     let mut request = persistence_score_request(0.8, true);
     request.forecast_id = "date-only".into();
-    let scored = parse(
-        &server
-            .scenario_score(Parameters(request))
-            .await
-            .expect("record unscored history"),
-    );
+    let scored = invoke_tool!(server, scenario_score, request);
     assert_eq!(scored["scored_count"], 0);
     assert_eq!(scored["per_event"][0]["scoring_status"], "unscored");
     let restarted = file_backed_server(&path);
-    let status = parse(
+    let status = parse_envelope(
         &restarted
             .scenario_status(Parameters(StatusRequest {}))
             .await
@@ -2036,16 +1951,16 @@ async fn date_only_v4_declaration_is_preserved_but_never_reclassified_as_prospec
 #[tokio::test]
 async fn scenario_triage_classifies_a_well_specified_question() {
     let server = make_server();
-    let output = server
-        .scenario_triage(Parameters(TriageRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_triage,
+        TriageRequest {
             question: "Will the Fed cut rates by 2027-12-31?".into(),
             has_deadline: Some(true),
             has_reference_class: Some(true),
             has_resolution_criteria: Some(true),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert!(parsed["is_forecastable"].as_bool().unwrap_or(false));
     assert_eq!(parsed["difficulty"], "well_specified");
     assert!(parsed["scores"]["overall"].as_f64().is_some());
@@ -2056,16 +1971,16 @@ async fn scenario_triage_classifies_a_well_specified_question() {
 #[tokio::test]
 async fn scenario_triage_flags_a_vague_question_for_refinement() {
     let server = make_server();
-    let output = server
-        .scenario_triage(Parameters(TriageRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_triage,
+        TriageRequest {
             question: "Will things get better?".into(),
             has_deadline: None,
             has_reference_class: None,
             has_resolution_criteria: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert!(!parsed["is_forecastable"].as_bool().unwrap_or(true));
     assert_eq!(parsed["difficulty"], "needs_refinement");
     assert!(
@@ -2079,14 +1994,14 @@ async fn scenario_triage_flags_a_vague_question_for_refinement() {
 #[tokio::test]
 async fn scenario_frame_returns_the_seven_turn_protocol() {
     let server = make_server();
-    let output = server
-        .scenario_frame(Parameters(FrameRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_frame,
+        FrameRequest {
             subject: "ACME".into(),
             prior_answers: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(parsed["session_type"], "Conversational Scenario Framing");
     assert!(parsed["conversation_flow"].as_array().is_some());
@@ -2097,16 +2012,16 @@ async fn scenario_frame_returns_the_seven_turn_protocol() {
 #[tokio::test]
 async fn scenario_frame_carries_prior_answers_through() {
     let server = make_server();
-    let output = server
-        .scenario_frame(Parameters(FrameRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_frame,
+        FrameRequest {
             subject: "ACME".into(),
             prior_answers: Some(hkask_types::AnyJsonValue::from(
                 serde_json::json!({ "focal_question": "prior" }),
             )),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["prior_answers"]["focal_question"], "prior");
     assert!(
         parsed["note"]
@@ -2120,15 +2035,15 @@ async fn scenario_frame_carries_prior_answers_through() {
 async fn scenario_frame_document_persists_the_project_record() {
     let server = make_server();
     let answers = framing_answers();
-    let output = server
-        .scenario_frame_document(Parameters(FrameDocumentRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_frame_document,
+        FrameDocumentRequest {
             subject: "ACME".into(),
             project_id: None,
             answers: hkask_types::AnyJsonValue::from(answers),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(
         parsed["framing_document"]["focal_question"],
@@ -2138,26 +2053,22 @@ async fn scenario_frame_document_persists_the_project_record() {
 
     // The project record is the assessment anchor (PR-01): a second call
     // for the same subject must find the persisted project.
-    let assess = server
-        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
-        .await
-        .expect("assess the framed project");
-    let assessed = parse(&assess);
+    let assessed = invoke_tool!(server, scenario_assess, assess_request_all_omitted("ACME"));
     assert!(assessed["project_id"].as_str().is_some());
 }
 
 #[tokio::test]
 async fn scenario_frame_document_fills_defaults_for_empty_answers() {
     let server = make_server();
-    let output = server
-        .scenario_frame_document(Parameters(FrameDocumentRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_frame_document,
+        FrameDocumentRequest {
             subject: "ACME".into(),
             project_id: None,
             answers: hkask_types::AnyJsonValue::from(serde_json::json!({})),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     // The subject is required; the answers default rather than failing.
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(parsed["framing_document"]["focal_question"], "");
@@ -2180,17 +2091,17 @@ async fn scenario_frame_document_rejects_an_empty_subject() {
 #[tokio::test]
 async fn scenario_brainstorm_runs_the_protocol_rounds() {
     let server = make_server();
-    let output = server
-        .scenario_brainstorm(Parameters(BrainstormRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_brainstorm,
+        BrainstormRequest {
             subject: "ACME".into(),
             time_horizon: Some("strategic".into()),
             research_context: Some("ACME faces margin pressure.".into()),
             personas: Some("Bull,Bear".into()),
             start_round: Some(1),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(
         parsed["protocol_type"],
@@ -2204,17 +2115,17 @@ async fn scenario_brainstorm_runs_the_protocol_rounds() {
 #[tokio::test]
 async fn scenario_brainstorm_clamps_start_round_into_range() {
     let server = make_server();
-    let output = server
-        .scenario_brainstorm(Parameters(BrainstormRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_brainstorm,
+        BrainstormRequest {
             subject: "ACME".into(),
             time_horizon: None,
             research_context: None,
             personas: None,
             start_round: Some(9),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["starting_round"], 4);
     assert_eq!(parsed["total_rounds"], 1);
 }
@@ -2222,17 +2133,17 @@ async fn scenario_brainstorm_clamps_start_round_into_range() {
 #[tokio::test]
 async fn scenario_build_extracts_an_event_scaffold() {
     let server = make_server();
-    let output = server
-        .scenario_build(Parameters(BuildEventsRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_build,
+        BuildEventsRequest {
             subject: "ACME".into(),
             time_horizon: Some("strategic".into()),
             scenario_type: Some("company_analysis".into()),
             context: Some("ACME faces margin pressure from input costs.".into()),
             max_events: Some(3),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(parsed["max_events"], 3);
     assert!(
@@ -2249,8 +2160,10 @@ async fn scenario_calibration_reports_the_declared_forecast() {
     let server = make_server();
     let event = independent_event("evt-1", "durable event", 0.6);
     declare(&server, "calibrate-me", vec![event.clone()]).await;
-    let scored = server
-        .scenario_score(Parameters(ScoreRequest {
+    let _ = invoke_tool!(
+        server,
+        scenario_score,
+        ScoreRequest {
             forecast_id: "calibrate-me".into(),
             events: vec![event],
             resolver: "test-source".into(),
@@ -2258,16 +2171,14 @@ async fn scenario_calibration_reports_the_declared_forecast() {
                 event_id: "evt-1".into(),
                 occurred: false,
             }],
-        }))
-        .await
-        .expect("score the forecast");
-    let _ = parse(&scored);
+        }
+    );
 
-    let output = server
-        .scenario_calibration(Parameters(CalibrationRequest { subject: None }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(
+        server,
+        scenario_calibration,
+        CalibrationRequest { subject: None }
+    );
     assert_eq!(parsed["total_forecasts"], 1);
     assert_eq!(parsed["resolved_forecasts"], 1);
     assert!(parsed["bins"].as_array().is_some());
@@ -2282,8 +2193,10 @@ async fn scenario_cross_validate_flags_divergence_above_threshold() {
         estimate: 0.5,
         confidence: 0.5,
     };
-    let output = server
-        .scenario_cross_validate(Parameters(CrossValidateRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_cross_validate,
+        CrossValidateRequest {
             event_id: "evt-1".into(),
             source_a: "superforecasting_skill".into(),
             estimate_a: 0.2,
@@ -2292,10 +2205,8 @@ async fn scenario_cross_validate_flags_divergence_above_threshold() {
             estimate_b: 0.8,
             sub_questions_b: vec![sub()],
             review_threshold: Some(0.15),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert!(parsed["divergence"].as_f64().unwrap_or(0.0) > 0.15);
     assert_eq!(parsed["requires_review"], true);
     assert_eq!(parsed["status"], "review_required");
@@ -2315,8 +2226,10 @@ async fn scenario_cross_validate_passes_within_threshold() {
         estimate: 0.5,
         confidence: 0.5,
     };
-    let output = server
-        .scenario_cross_validate(Parameters(CrossValidateRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_cross_validate,
+        CrossValidateRequest {
             event_id: "evt-1".into(),
             source_a: "superforecasting_skill".into(),
             estimate_a: 0.50,
@@ -2325,10 +2238,8 @@ async fn scenario_cross_validate_passes_within_threshold() {
             estimate_b: 0.52,
             sub_questions_b: vec![sub()],
             review_threshold: Some(0.15),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert!(parsed["divergence"].as_f64().unwrap_or(1.0) <= 0.15);
     assert_eq!(parsed["requires_review"], false);
     assert_eq!(parsed["status"], "consistent");
@@ -2338,13 +2249,13 @@ async fn scenario_cross_validate_passes_within_threshold() {
 async fn scenario_quantify_resolves_a_single_independent_event() {
     let server = make_server();
     let event = independent_event("evt-1", "durable event", 0.6);
-    let output = server
-        .scenario_quantify(Parameters(QuantifyRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_quantify,
+        QuantifyRequest {
             events: vec![event],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["subject"], "ACME");
     assert_eq!(parsed["nodes"][0]["id"], "evt-1");
     assert_eq!(parsed["nodes"][0]["marginal_probability"], 0.6);
@@ -2376,24 +2287,24 @@ async fn scenario_propagate_recomputes_descendants_after_a_prior_update() {
         parent_event_ids: vec!["parent".into()],
         conditionals: vec![0.1, 0.9],
     }];
-    let tree = server
-        .scenario_quantify(Parameters(QuantifyRequest {
+    let before = invoke_tool!(
+        server,
+        scenario_quantify,
+        QuantifyRequest {
             events: vec![parent.clone(), child.clone()],
-        }))
-        .await
-        .expect("quantify the tree");
-    let before = parse(&tree);
+        }
+    );
     assert_eq!(before["nodes"][1]["marginal_probability"], 0.5);
 
-    let updated = server
-        .scenario_propagate(Parameters(PropagateRequest {
+    let after = invoke_tool!(
+        server,
+        scenario_propagate,
+        PropagateRequest {
             events: vec![parent, child],
             event_id: "parent".into(),
             new_prior: 1.0,
-        }))
-        .await
-        .expect("propagate the update");
-    let after = parse(&updated);
+        }
+    );
     // P(child) = P(child | parent) = 0.9 once the parent is certain.
     assert_eq!(after["tree"]["nodes"][1]["marginal_probability"], 0.9);
 }
@@ -2402,8 +2313,10 @@ async fn scenario_propagate_recomputes_descendants_after_a_prior_update() {
 async fn scenario_recompute_posteriors_clamps_on_observed_outcome() {
     let server = make_server();
     let event = independent_event("evt-1", "durable event", 0.5);
-    let output = server
-        .scenario_recompute_posteriors(Parameters(PosteriorsRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_recompute_posteriors,
+        PosteriorsRequest {
             events: vec![event],
             evidence: vec![PosteriorEvidenceEntry {
                 event_id: "evt-1".into(),
@@ -2411,10 +2324,8 @@ async fn scenario_recompute_posteriors_clamps_on_observed_outcome() {
                 observed_probability: None,
                 likelihood_ratio: None,
             }],
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["nodes"][0]["prior_marginal"], 0.5);
     assert_eq!(parsed["nodes"][0]["posterior_probability"], 0.0);
 }
@@ -2443,18 +2354,18 @@ async fn scenario_recompute_posteriors_rejects_malformed_evidence() {
 #[tokio::test]
 async fn scenario_update_applies_a_bayesian_update() {
     let server = make_server();
-    let output = server
-        .scenario_update(Parameters(UpdateRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_update,
+        UpdateRequest {
             forecast_id: "bayes".into(),
             event_id: "evt-1".into(),
             prior_probability: 0.5,
             evidence_likelihood: 0.9,
             evidence_base_rate: 0.5,
             evidence_description: Some("new evidence".into()),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     // P(H|E) = 0.9 * 0.5 / (0.9 * 0.5 + 0.1 * 0.5) = 0.9.
     assert_eq!(parsed["posterior_probability"], 0.9);
     assert_eq!(parsed["direction"], "increased");
@@ -2508,14 +2419,14 @@ async fn scenario_synthesize_averages_perspectives() {
             historical_brier: None,
         },
     ];
-    let output = server
-        .scenario_synthesize(Parameters(SynthesizeRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_synthesize,
+        SynthesizeRequest {
             event_id: "evt-1".into(),
             perspectives,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     // Explicit equal-weight average: (0.8 + 0.4) / 2.
     assert!((parsed["aggregated_probability"].as_f64().unwrap_or(0.0) - 0.6).abs() < 1e-9);
     assert_eq!(
@@ -2537,11 +2448,7 @@ async fn scenario_assess_scores_the_framed_project() {
         .await
         .expect("frame the project first");
 
-    let output = server
-        .scenario_assess(Parameters(assess_request_all_omitted("ACME")))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+    let parsed = invoke_tool!(server, scenario_assess, assess_request_all_omitted("ACME"));
     assert_eq!(parsed["project_id"], "ACME");
     assert!(parsed["phases"].as_object().is_some());
     assert!(parsed["unreported_metrics"].as_array().is_some());
@@ -2550,8 +2457,10 @@ async fn scenario_assess_scores_the_framed_project() {
 #[tokio::test]
 async fn forecast_persist_and_list_round_trip() {
     let server = make_server();
-    let persisted = server
-        .forecast_persist(Parameters(EquityForecastPersistRequest {
+    let parsed = invoke_tool!(
+        server,
+        forecast_persist,
+        EquityForecastPersistRequest {
             symbol: "ACME".into(),
             forecast_date: "2026-11-09".into(),
             horizon: "1yr".into(),
@@ -2566,20 +2475,18 @@ async fn forecast_persist_and_list_round_trip() {
             scenario_tree: None,
             impact_mappings_ref: None,
             fused_volatility: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&persisted);
+        }
+    );
     assert_eq!(parsed["forecast_id"], "persist-me");
     assert_eq!(parsed["symbol"], "ACME");
 
-    let listed = server
-        .forecast_list(Parameters(EquityForecastListRequest {
+    let parsed = invoke_tool!(
+        server,
+        forecast_list,
+        EquityForecastListRequest {
             symbol: "ACME".into(),
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&listed);
+        }
+    );
     assert_eq!(parsed["symbol"], "ACME");
     assert!(parsed["forecasts"].as_array().is_some());
     assert!(
@@ -2595,8 +2502,10 @@ async fn forecast_persist_and_list_round_trip() {
 #[tokio::test]
 async fn forecast_record_scores_a_standalone_outcome() {
     let server = make_server();
-    let output = server
-        .forecast_record(Parameters(EquityForecastRecordRequest {
+    let parsed = invoke_tool!(
+        server,
+        forecast_record,
+        EquityForecastRecordRequest {
             symbol: "ACME".into(),
             forecast_date: "2026-11-09".into(),
             horizon: "1yr".into(),
@@ -2606,10 +2515,8 @@ async fn forecast_record_scores_a_standalone_outcome() {
             actual_multiple: 10.0,
             actual_price_change: -0.05,
             forecast_id: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["status"], "recorded");
     assert_eq!(parsed["gaps"]["narrative"], "return_drove_gap");
     // No prospectively stored probability: the raw loss is unscored, never
@@ -2621,8 +2528,10 @@ async fn forecast_record_scores_a_standalone_outcome() {
 #[tokio::test]
 async fn scenario_risk_measure_weights_the_branches() {
     let server = make_server();
-    let output = server
-        .scenario_risk_measure(Parameters(ScenarioRiskRequest {
+    let parsed = invoke_tool!(
+        server,
+        scenario_risk_measure,
+        ScenarioRiskRequest {
             branches: vec![
                 BranchSpec {
                     probability: 0.5,
@@ -2635,10 +2544,8 @@ async fn scenario_risk_measure_weights_the_branches() {
             ],
             realized_volatility: Some(0.20),
             scenario_weight: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
     assert_eq!(parsed["status"], "measured");
     // Expected return = 0.5 * 0.10 + 0.5 * (-0.05) = 0.025.
     assert!(

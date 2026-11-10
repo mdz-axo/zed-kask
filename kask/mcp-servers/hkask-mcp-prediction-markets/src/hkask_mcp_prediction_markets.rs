@@ -1082,7 +1082,7 @@ mod smoke {
     use std::collections::HashSet;
     use std::sync::{Arc, Mutex};
 
-    use hkask_mcp_server::server::test_support::NoopInferencePort;
+    use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort;
 
     /// Construct a server with minimal/test backends: a no-op inference port,
     /// an empty calibration store, and no FRED key — no real data dir is

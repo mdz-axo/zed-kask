@@ -180,7 +180,7 @@ mod tests {
         // built here: the shared noop inference double over an empty
         // gallery state — job_list needs no inference and no
         // credential.
-        use hkask_mcp_server::server::test_support::NoopInferencePort as NoopPort;
+        use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort as NoopPort;
 
         let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
         let gallery_store = Arc::new(

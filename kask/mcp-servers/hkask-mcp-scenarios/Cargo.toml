@@ -35,6 +35,7 @@ uuid.workspace = true
 # property_tests.rs is the layer-2 property suite over the pure event-tree math.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 proptest = { workspace = true }
+hkask-mcp-test-support.workspace = true
 
 [lints]
 workspace = true

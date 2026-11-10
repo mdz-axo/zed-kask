@@ -19,6 +19,7 @@ use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{EmbeddingStore, HMemStore, RegulationArchive};
 use hkask_types::event::{CyclePhase, Span, SpanNamespace};
 use hkask_types::{RegulationRecord, RegulationSink, WebID};
+use hkask_mcp_test_support::{invoke_tool, parse_envelope};
 use rmcp::handler::server::wrapper::Parameters;
 use std::future::Future;
 use std::pin::Pin;
@@ -314,7 +315,7 @@ async fn insert_citing_seed(server: &CuratorServer, seed_id: String) -> serde_js
         "note": null
     }))
     .expect("decode the model-facing tool request");
-    parse(
+    parse_envelope(
         &server
             .memory_insert(Parameters(request))
             .await
@@ -415,14 +416,6 @@ fn make_server_with_embedding_port(
     (server, memory)
 }
 
-/// Parse a tool output string into JSON, unwrapping the `{"content": ...}`
-/// envelope. Error envelopes (`{"error", "kind"}`) have no `content` wrapper
-/// and are returned as-is.
-fn parse(output: &str) -> serde_json::Value {
-    hkask_types::tool_response::parse_tool_response(output)
-        .unwrap_or_else(|| panic!("tool output must be valid JSON, got: {output}"))
-}
-
 // ── Liveness ──────────────────────────────────────────────────────────────
 
 /// `curator_ping` returns `status: "ok"` and reports both stores as live
@@ -430,12 +423,7 @@ fn parse(output: &str) -> serde_json::Value {
 #[tokio::test]
 async fn ping_reports_store_health() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_ping(Parameters(PingRequest {}))
-            .await
-            .expect("tool ok"),
-    );
+    let response = invoke_tool!(server, curator_ping, PingRequest {});
 
     assert_eq!(response["status"].as_str(), Some("ok"), "ping must be ok");
     assert!(response["stores"].get("escalation_queue").is_none());
@@ -512,17 +500,12 @@ async fn memory_recall_rejects_unknown_ontology_axis() {
 #[tokio::test]
 async fn memory_recall_empty_entity_returns_zero_counts() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
+    let response = invoke_tool!(server, curator_memory_recall, MemoryRecallRequest {
                 entity: "never-seen".to_string(),
                 recall_shape: MemoryRecallType::Both,
                 ontology_axis: None,
                 ontology_value: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert!(
         response.get("error").is_none(),
@@ -547,15 +530,10 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
 #[tokio::test]
 async fn semantic_search_no_matches_returns_zero() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "no-such-entity".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert!(
         response.get("error").is_none(),
@@ -592,15 +570,10 @@ async fn semantic_search_matches_question_by_embedding() {
     seed_h_mem(&memory, entity, "turn", turn);
     seed_embedding(&memory, entity);
 
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "kangaroo wallaby emu cassowary".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert!(
         response.get("error").is_none(),
@@ -631,15 +604,10 @@ async fn semantic_search_matches_question_by_embedding() {
 #[tokio::test]
 async fn semantic_search_degrades_to_entity_exact_with_note() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "no-such-entity".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert_eq!(
         response["mode"].as_str(),
@@ -670,15 +638,10 @@ async fn semantic_search_all_hits_failing_resolution_is_not_reported_as_empty() 
         .store_embedding("curator:thread:orphaned-hit", &vector, "test-model", None)
         .expect("seed orphan embedding (no h_mem under the entity)");
 
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert_eq!(
         response["mode"].as_str(),
@@ -709,15 +672,10 @@ async fn semantic_search_partial_resolution_failure_notes_degradation() {
     seed_embedding(&memory, entity);
     seed_embedding(&memory, "curator:thread:partial-orphan");
 
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert_eq!(
         response["count"].as_u64(),
@@ -748,15 +706,10 @@ async fn consult_returns_semantic_fragments_for_question() {
     seed_h_mem(&memory, entity, "turn", turn);
     seed_embedding(&memory, entity);
 
-    let response = parse(
-        &server
-            .curator_consult(Parameters(CuratorConsultRequest {
+    let response = invoke_tool!(server, curator_consult, CuratorConsultRequest {
                 query: "completely unrelated question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert!(
         response.get("error").is_none(),
@@ -783,15 +736,10 @@ async fn consult_all_hits_failing_resolution_is_not_reported_as_empty() {
     let (server, memory) = make_server_with_embeddings();
     seed_embedding(&memory, "curator:thread:consult-orphan");
 
-    let response = parse(
-        &server
-            .curator_consult(Parameters(CuratorConsultRequest {
+    let response = invoke_tool!(server, curator_consult, CuratorConsultRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     for scope in ["entity_wide_fragments", "perspective_scoped_fragments"] {
         assert_eq!(
@@ -819,15 +767,10 @@ async fn consult_partial_resolution_failure_notes_degradation() {
     seed_embedding(&memory, entity);
     seed_embedding(&memory, "curator:thread:consult-partial-orphan");
 
-    let response = parse(
-        &server
-            .curator_consult(Parameters(CuratorConsultRequest {
+    let response = invoke_tool!(server, curator_consult, CuratorConsultRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert_eq!(
         response["entity_wide_fragments"]["count"].as_u64(),
@@ -1060,17 +1003,12 @@ async fn public_call_contexts_never_receive_private_rows() {
     let (server, memory) = make_server_with_embeddings();
     seed_m5_mixed_public_and_private(&memory);
 
-    let response = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
+    let response = invoke_tool!(server, curator_memory_recall, MemoryRecallRequest {
                 entity: "curator:thread:m5-mixed".to_string(),
                 recall_shape: MemoryRecallType::EntityWide,
                 ontology_axis: None,
                 ontology_value: None,
-            }))
-            .await
-            .expect("recall ok"),
-    );
+            });
 
     let leg = &response["entity_wide"];
     assert_eq!(
@@ -1111,7 +1049,7 @@ async fn private_call_contexts_receive_their_private_rows() {
     )
     .await
     .expect("recall ok");
-    let response = parse(&response);
+    let response = parse_envelope(&response);
 
     let leg = &response["entity_wide"];
     assert_eq!(
@@ -1147,15 +1085,10 @@ async fn semantic_search_filters_private_rows_by_call_context() {
     seed_embedding(&memory, entity);
 
     // Public context: the hit is excluded and the exclusion surfaced.
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("search ok"),
-    );
+            });
     assert_eq!(
         response["count"].as_u64(),
         Some(0),
@@ -1198,7 +1131,7 @@ async fn semantic_search_filters_private_rows_by_call_context() {
     )
     .await
     .expect("search ok");
-    let response = parse(&response);
+    let response = parse_envelope(&response);
     assert_eq!(
         response["count"].as_u64(),
         Some(1),
@@ -1393,17 +1326,12 @@ async fn memory_citation_round_trip_from_tool_surface() {
 
     // Recall via the tool — the cited ID must come from the tool output,
     // not from the store.
-    let recall = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
+    let recall = invoke_tool!(server, curator_memory_recall, MemoryRecallRequest {
                 entity: entity.to_string(),
                 recall_shape: MemoryRecallType::EntityWide,
                 ontology_axis: None,
                 ontology_value: None,
-            }))
-            .await
-            .expect("recall ok"),
-    );
+            });
     assert!(
         recall["entity_wide"]["h_mems"][0]["id"]
             .as_str()
@@ -1416,30 +1344,20 @@ async fn memory_citation_round_trip_from_tool_surface() {
         .to_string();
 
     // Consult and semantic search surface the id too.
-    let consult = parse(
-        &server
-            .curator_consult(Parameters(CuratorConsultRequest {
+    let consult = invoke_tool!(server, curator_consult, CuratorConsultRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("consult ok"),
-    );
+            });
     assert!(
         consult["entity_wide_fragments"]["h_mems"][0]["id"]
             .as_str()
             .is_some_and(|id| id == seed_id),
         "consult must surface the h_mem id — got: {consult}",
     );
-    let search = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let search = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("search ok"),
-    );
+            });
     assert!(
         search["results"][0]["id"]
             .as_str()
@@ -1448,18 +1366,13 @@ async fn memory_citation_round_trip_from_tool_surface() {
     );
 
     // The round-trip: cite the tool-surfaced ID as insert evidence.
-    let response = parse(
-        &server
-            .memory_insert(Parameters(MemoryInsertRequest {
+    let response = invoke_tool!(server, memory_insert, MemoryInsertRequest {
                 entity: "zed-kask".to_string(),
                 attribute: "citation_round_trip".to_string(),
                 value: serde_json::json!("pinned").into(),
                 evidence_h_mem_id: recalled_id,
                 note: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
     assert_eq!(
         response["inserted"].as_bool(),
         Some(true),
@@ -1530,17 +1443,12 @@ async fn memory_insert_stamps_model_inference_and_recall_surfaces_the_tier() {
         "the insert receipt carries the ceiling stamp — got: {inserted}"
     );
 
-    let recalled = parse(
-        &server
-            .curator_memory_recall(Parameters(MemoryRecallRequest {
+    let recalled = invoke_tool!(server, curator_memory_recall, MemoryRecallRequest {
                 entity: "zed-kask".to_string(),
                 recall_shape: MemoryRecallType::EntityWide,
                 ontology_axis: None,
                 ontology_value: None,
-            }))
-            .await
-            .expect("recall ok"),
-    );
+            });
     let h_mems = recalled["entity_wide"]["h_mems"]
         .as_array()
         .expect("entity_wide h_mems");
@@ -1615,7 +1523,7 @@ async fn memory_insert_same_value_reassertion_is_not_a_contradiction() {
         .await
         .expect("a same-value re-assertion proceeds");
     assert_eq!(
-        parse(&ok)["provenance"].as_str(),
+        parse_envelope(&ok)["provenance"].as_str(),
         Some("model_inference"),
         "the re-assertion carries the ceiling stamp"
     );
@@ -1659,15 +1567,10 @@ async fn memory_insert_embeds_value_for_semantic_recall() {
 
     // End-to-end: a natural-language query sharing no tokens with the entity
     // name must find the inserted memory via KNN.
-    let search = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let search = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "what model does the agent use by default".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("search ok"),
-    );
+            });
     assert!(
         search["results"].as_array().is_some_and(|results| {
             results
@@ -1688,9 +1591,7 @@ async fn memory_insert_embeds_value_for_semantic_recall() {
 async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
     let (server, memory) = make_server_with_embeddings();
 
-    let response = parse(
-        &server
-            .curator_report_skill_use_issue(Parameters(ReportSkillUseIssueRequest {
+    let response = invoke_tool!(server, curator_report_skill_use_issue, ReportSkillUseIssueRequest {
                 skill_name: "grounding-verify".to_string(),
                 tool_name: "lisp_eval".to_string(),
                 step_ordinal: 2,
@@ -1698,10 +1599,7 @@ async fn skill_use_issue_stores_at_floor_and_is_semantically_recallable() {
                 tool_input: None,
                 failure_type: None,
                 failure_origin: SkillUseFailureOrigin::AgentExecution,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
     assert_eq!(
         response["reported"].as_bool(),
         Some(true),
@@ -1844,18 +1742,13 @@ async fn resolve_contradiction_finds_target_by_id() {
     let forget_id = forget_target.id.to_string();
     memory.store(forget_target).expect("seed forget target");
 
-    let response = parse(
-        &server
-            .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
+    let response = invoke_tool!(server, memory_resolve_contradiction, MemoryResolveContradictionRequest {
                 h_mem_ids: vec![forget_id.clone()],
                 strategy: "forget".to_string(),
                 target_h_mem_id: forget_id,
                 new_confidence: None,
                 reason: "duplicate ruling merge".to_string(),
-            }))
-            .await
-            .expect("forget must resolve by ID"),
-    );
+            });
     assert_eq!(
         response["resolved"].as_bool(),
         Some(true),
@@ -1880,18 +1773,13 @@ async fn resolve_contradiction_finds_target_by_id() {
         .store(confidence_target)
         .expect("seed confidence target");
 
-    let response = parse(
-        &server
-            .memory_resolve_contradiction(Parameters(MemoryResolveContradictionRequest {
+    let response = invoke_tool!(server, memory_resolve_contradiction, MemoryResolveContradictionRequest {
                 h_mem_ids: vec![confidence_id.clone()],
                 strategy: "update_confidence".to_string(),
                 target_h_mem_id: confidence_id,
                 new_confidence: Some(0.5),
                 reason: "floor reset".to_string(),
-            }))
-            .await
-            .expect("update_confidence must resolve by ID"),
-    );
+            });
     assert_eq!(
         response["resolved"].as_bool(),
         Some(true),
@@ -1938,15 +1826,10 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
     let id = opaque.id.to_string();
     memory.store(opaque).expect("seed opaque row");
 
-    let dry = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let dry = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("dry run ok"),
-    );
+            });
     assert_eq!(dry["candidate_count"].as_u64(), Some(1));
     assert_eq!(dry["candidates"][0]["h_mem_id"].as_str(), Some(id.as_str()));
     assert_eq!(dry["candidates"][0]["requires_passage_repair"], true);
@@ -1957,15 +1840,10 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
             .expect("dry read")
             .is_some()
     );
-    let run = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let run = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(false),
-            }))
-            .await
-            .expect("repair"),
-    );
+            });
     assert_eq!(run["backfilled"], 1);
     assert_eq!(run["results"][0]["passage_repaired"], true);
     let written_id = run["results"][0]["h_mem_id"]
@@ -1982,15 +1860,10 @@ async fn backfill_repairs_legacy_rows_without_canonical_passage() {
             .has_embedding_for_passage("opaque-entity", &passage)
             .expect("repair coverage")
     );
-    let repeat = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let repeat = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("repeat"),
-    );
+            });
     assert_eq!(repeat["candidate_count"], 0);
 }
 
@@ -2047,15 +1920,10 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
         .expect("seed turn embedding");
 
     // Dry run: lists the ruling and mutable lesson, embeds nothing.
-    let dry = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let dry = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("dry run ok"),
-    );
+            });
     assert_eq!(dry["dry_run"].as_bool(), Some(true));
     assert_eq!(
         dry["candidate_count"].as_u64(),
@@ -2069,15 +1937,10 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     );
 
     // Real run: both knowledge rows gain canonical embeddings; turns and watermark untouched.
-    let run = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let run = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(false),
-            }))
-            .await
-            .expect("backfill ok"),
-    );
+            });
     assert_eq!(
         run["backfilled"].as_u64(),
         Some(2),
@@ -2103,15 +1966,10 @@ async fn backfill_embeddings_covers_knowledge_layer_and_excludes_turns() {
     );
 
     // Idempotent: a second run finds no candidates.
-    let second = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let second = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: None,
-            }))
-            .await
-            .expect("second run ok"),
-    );
+            });
     assert_eq!(
         second["candidate_count"].as_u64(),
         Some(0),
@@ -2157,15 +2015,10 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
         )
         .expect("seed first embedding");
 
-    let dry = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let dry = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("dry run"),
-    );
+            });
     assert_eq!(dry["candidate_count"].as_u64(), Some(1));
     assert_eq!(
         dry["candidates"][0]["attribute"].as_str(),
@@ -2173,15 +2026,10 @@ async fn backfill_is_passage_scoped_and_excludes_goals() {
         "the missing sibling passage is selected even though its entity has another vector"
     );
 
-    let run = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let run = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: None,
                 dry_run: Some(false),
-            }))
-            .await
-            .expect("backfill"),
-    );
+            });
     assert_eq!(run["backfilled"].as_u64(), Some(1));
     let second_passage =
         hkask_memory::semantic_passage_for_h_mem(&second).expect("canonical second passage");
@@ -2239,28 +2087,18 @@ async fn model_mismatch_sweep_restores_gated_rows_until_search_excludes_nothing(
     );
 
     // The dry run names exactly the stale row.
-    let dry = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let dry = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("dry run ok"),
-    );
+            });
     assert_eq!(dry["candidate_count"].as_u64(), Some(1));
     assert_eq!(dry["candidates"][0]["entity"].as_str(), Some("sweep/stale"));
 
     // The sweep re-embeds it under the current model.
-    let swept = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let swept = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
                 dry_run: Some(false),
-            }))
-            .await
-            .expect("sweep ok"),
-    );
+            });
     assert_eq!(swept["re_embedded"].as_u64(), Some(1));
 
     // AFTER: the same search excludes nothing and both rows rank.
@@ -2298,15 +2136,10 @@ async fn model_mismatch_sweep_accepts_the_provider_actual_form() {
         )
         .expect("seed legacy row");
 
-    let dry = parse(
-        &server
-            .curator_memory_backfill_embeddings(Parameters(BackfillEmbeddingsRequest {
+    let dry = invoke_tool!(server, curator_memory_backfill_embeddings, BackfillEmbeddingsRequest {
                 mode: Some("model_mismatch".to_string()),
                 dry_run: Some(true),
-            }))
-            .await
-            .expect("dry run ok"),
-    );
+            });
     assert_eq!(
         dry["actual_model"].as_str(),
         Some("provider/actual-form"),
@@ -2364,17 +2197,12 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     );
 
     // Default scope: turn storage only — the ruling survives.
-    let scoped = parse(
-        &server
-            .curator_memory_prune(Parameters(MemoryPruneRequest {
+    let scoped = invoke_tool!(server, curator_memory_prune, MemoryPruneRequest {
                 max_age_days: 50,
                 spare_recalled_within_days: None,
                 all_layers: None,
                 prefixes: None,
-            }))
-            .await
-            .expect("scoped prune ok"),
-    );
+            });
     assert_eq!(scoped["all_layers"].as_bool(), Some(false));
     assert_eq!(scoped["deleted_count"].as_u64(), Some(1));
     assert_eq!(
@@ -2387,17 +2215,12 @@ async fn curator_memory_prune_defaults_to_turn_storage_scope() {
     );
 
     // Explicit opt-in: full store — the ruling is now deleted.
-    let full = parse(
-        &server
-            .curator_memory_prune(Parameters(MemoryPruneRequest {
+    let full = invoke_tool!(server, curator_memory_prune, MemoryPruneRequest {
                 max_age_days: 50,
                 spare_recalled_within_days: None,
                 all_layers: Some(true),
                 prefixes: None,
-            }))
-            .await
-            .expect("full prune ok"),
-    );
+            });
     assert_eq!(full["all_layers"].as_bool(), Some(true));
     assert_eq!(full["deleted_count"].as_u64(), Some(1));
     assert!(
@@ -2444,17 +2267,12 @@ async fn curator_memory_prune_scoped_prefixes_prune_only_matching_rows() {
 
     // Scoped valve: only the named prefix is pruned; the response names
     // the scope used.
-    let scoped = parse(
-        &server
-            .curator_memory_prune(Parameters(MemoryPruneRequest {
+    let scoped = invoke_tool!(server, curator_memory_prune, MemoryPruneRequest {
                 max_age_days: 50,
                 spare_recalled_within_days: None,
                 all_layers: None,
                 prefixes: Some(vec!["skill_use_issue:".to_string()]),
-            }))
-            .await
-            .expect("scoped-prefix prune ok"),
-    );
+            });
     assert_eq!(scoped["deleted_count"].as_u64(), Some(1));
     assert_eq!(
         scoped["prefixes"].as_array().map(|list| list.len()),
@@ -2529,17 +2347,12 @@ async fn memory_update_finds_target_by_id() {
     let seed_id = seed.id.to_string();
     memory.store(seed).expect("seed update target");
 
-    let response = parse(
-        &server
-            .memory_update(Parameters(MemoryUpdateRequest {
+    let response = invoke_tool!(server, memory_update, MemoryUpdateRequest {
                 h_mem_id: seed_id,
                 new_confidence: 0.6,
                 new_value: Some(serde_json::Value::String("new value".to_string()).into()),
                 reason: Some("test update".to_string()),
-            }))
-            .await
-            .expect("update must resolve by ID"),
-    );
+            });
     assert_eq!(
         response["updated"].as_bool(),
         Some(true),
@@ -2641,15 +2454,10 @@ async fn memory_update_derives_and_embeds_revised_object() {
             .has_embedding_for_passage("revision-target", "old passage")
             .expect("old coverage")
     );
-    let search = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let search = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "optical instrument alignment".into(),
                 limit: None,
-            }))
-            .await
-            .expect("semantic recall"),
-    );
+            });
     assert!(
         search["results"]
             .as_array()
@@ -2760,15 +2568,10 @@ async fn semantic_search_resolves_the_named_passage_not_newer_siblings() {
     memory
         .store_embedding(entity, &unit_vector(), "test-model", Some(passage))
         .expect("only target vector");
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "query with no lexical overlap".into(),
                 limit: Some(1),
-            }))
-            .await
-            .expect("semantic search"),
-    );
+            });
     assert_eq!(
         response["results"][0]["id"], target_id,
         "a named vector must join its passage, not the entity newest rows: {response}"
@@ -2793,15 +2596,10 @@ async fn semantic_search_surfaces_a_named_passage_orphan_without_substituting_a_
             Some("deleted passage"),
         )
         .expect("orphaned passage vector under a surviving entity");
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "any semantic query".into(),
                 limit: Some(5),
-            }))
-            .await
-            .expect("degradation is surfaced in response"),
-    );
+            });
     assert_eq!(
         response["count"], 0,
         "unrelated rows cannot inherit the named vector distance"
@@ -2864,15 +2662,10 @@ async fn semantic_search_caps_fragments_per_entity() {
         .store_embedding(quiet_entity, &vector, "test-model", None)
         .expect("seed quiet embedding");
 
-    let response = parse(
-        &server
-            .curator_semantic_search(Parameters(SemanticSearchRequest {
+    let response = invoke_tool!(server, curator_semantic_search, SemanticSearchRequest {
                 query: "anything at all".to_string(),
                 limit: Some(10),
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     assert_eq!(
         response["mode"].as_str(),
@@ -2962,16 +2755,11 @@ async fn reg_query_filters_namespace_in_sql_before_limit() {
         archive.persist(record).expect("seed regulation record");
     }
 
-    let skill_response = parse(
-        &server
-            .reg_query(Parameters(RegQueryRequest {
+    let skill_response = invoke_tool!(server, reg_query, RegQueryRequest {
                 namespace: Some("reg.skill".to_string()),
                 window_seconds: Some(3600),
                 limit: Some(10),
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
     assert_eq!(skill_response["count"].as_u64(), Some(2));
     assert!(
         skill_response["events"]
@@ -2982,16 +2770,11 @@ async fn reg_query_filters_namespace_in_sql_before_limit() {
         "sense-phase skill feedback must be visible: {skill_response}",
     );
 
-    let exact_response = parse(
-        &server
-            .reg_query(Parameters(RegQueryRequest {
+    let exact_response = invoke_tool!(server, reg_query, RegQueryRequest {
                 namespace: Some("reg.skill.program-manager".to_string()),
                 window_seconds: Some(3600),
                 limit: Some(1),
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
     assert_eq!(exact_response["count"].as_u64(), Some(1));
     assert_eq!(
         exact_response["events"][0]["path"].as_str(),
@@ -2999,16 +2782,11 @@ async fn reg_query_filters_namespace_in_sql_before_limit() {
         "the namespace predicate must run before LIMIT and respect dot boundaries: {exact_response}",
     );
 
-    let all_response = parse(
-        &server
-            .reg_query(Parameters(RegQueryRequest {
+    let all_response = invoke_tool!(server, reg_query, RegQueryRequest {
                 namespace: None,
                 window_seconds: Some(3600),
                 limit: Some(10),
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
     let all_events = all_response["events"].as_array().expect("events array");
     assert_eq!(all_response["count"].as_u64(), Some(4));
     assert_eq!(
@@ -3089,12 +2867,7 @@ async fn algedonic_log_returns_newest_events_and_declares_ordering() {
         archive.persist(&event).expect("insert event");
     }
 
-    let response = parse(
-        &server
-            .curator_algedonic_log(Parameters(AlgedonicLogRequest { hours: Some(1) }))
-            .await
-            .expect("tool ok"),
-    );
+    let response = invoke_tool!(server, curator_algedonic_log, AlgedonicLogRequest { hours: Some(1) });
     assert_eq!(response["ordering"], "newest_first");
     let labels = response["events"]
         .as_array()
@@ -3123,12 +2896,7 @@ async fn algedonic_log_returns_newest_events_and_declares_ordering() {
 #[tokio::test]
 async fn algedonic_log_empty_returns_window_and_events() {
     let server = make_server();
-    let response = parse(
-        &server
-            .curator_algedonic_log(Parameters(AlgedonicLogRequest { hours: Some(24) }))
-            .await
-            .expect("tool ok"),
-    );
+    let response = invoke_tool!(server, curator_algedonic_log, AlgedonicLogRequest { hours: Some(24) });
 
     assert_eq!(
         response["window_hours"].as_u64(),
@@ -3231,7 +2999,7 @@ async fn federated_search_interleaves_sources_without_mutating_corpus()
         "curator experience",
     )?;
 
-    let response = parse(
+    let response = parse_envelope(
         &server
             .curator_federated_search(Parameters(FederatedSearchRequest {
                 query: "compare local experience with external evidence".to_string(),
@@ -3283,7 +3051,7 @@ async fn federated_search_preserves_healthy_source_during_partial_outage()
             limit: Some(4),
         }))
         .await?;
-    let response = parse(&output);
+    let response = parse_envelope(&output);
     assert_eq!(response["sources"][0]["state"], "ready");
     assert_eq!(response["sources"][1]["state"], "ready");
     assert_eq!(response["sources"][2]["state"], "unavailable");
@@ -3321,7 +3089,7 @@ async fn federated_search_reloads_removed_and_restored_manifest()
                 limit: Some(4),
             }))
             .await?;
-        Ok::<_, hkask_mcp_server::server::McpToolError>(parse(&output))
+        Ok::<_, hkask_mcp_server::server::McpToolError>(parse_envelope(&output))
     };
 
     let first = search().await?;
@@ -3408,15 +3176,10 @@ async fn federated_search_surfaces_unconfigured_source_with_curator_results() {
         )
         .expect("store local embedding");
 
-    let response = parse(
-        &server
-            .curator_federated_search(Parameters(FederatedSearchRequest {
+    let response = invoke_tool!(server, curator_federated_search, FederatedSearchRequest {
                 query: "retrieve available experience with source status".to_string(),
                 limit: Some(4),
-            }))
-            .await
-            .expect("tool response"),
-    );
+            });
     assert_eq!(response["count"].as_u64(), Some(1));
     assert_eq!(response["results"][0]["source_kind"], "curator");
     assert_eq!(response["sources"][0]["state"], "ready");
@@ -3446,15 +3209,10 @@ async fn federated_search_ready_path_carries_resolution_failure_count() {
         )
         .expect("seed orphan embedding (no h_mem under the entity)");
 
-    let response = parse(
-        &server
-            .curator_federated_search(Parameters(FederatedSearchRequest {
+    let response = invoke_tool!(server, curator_federated_search, FederatedSearchRequest {
                 query: "any question words".to_string(),
                 limit: None,
-            }))
-            .await
-            .expect("tool ok"),
-    );
+            });
 
     let curator_status = response["sources"]
         .as_array()

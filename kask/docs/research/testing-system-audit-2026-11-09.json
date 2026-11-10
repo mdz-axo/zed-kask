@@ -45,8 +45,8 @@
     {"symbol": "kask_bridge::LanguageModelEmbeddingPort::for_tests*", "before": "#[cfg(test)] pub fn", "disposition": "keep (already test-only)"}
   ],
   "harness_composition": {
-    "before": {"profile_kask_used": false, "runner_script": "missing (referenced by .config/nextest.toml but never existed)", "ci_runner": "cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1 (serial)"},
-    "after": {"profile_kask_used": true, "runner_script": "kask/scripts/test (nextest --profile kask; cargo-test fallback)", "fail_fast": "fail-fast = { max-fail = 1, terminate = \"wait\" } in [profile.kask]", "termination": "slow-timeout grace period 60s terminate-after 1; wait semantics preserve cleanup", "selection": "binary-ID/test-name filters via nextest; --no-tests auto fails on zero tests"}
+    "before": {"profile_kask_used": false, "runner_script": "missing (referenced by .config/nextest.toml but never existed)", "ci_runner": "cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1 (serial)", "shared_seam_surface": "duplicated per server (4 parse/envelope helpers, 368 raw Parameters<T> call sites)"},
+    "after": {"profile_kask_used": true, "runner_script": "kask/scripts/test (nextest --profile kask; cargo-test fallback)", "fail_fast": "fail-fast = { max-fail = 1, terminate = \"wait\" } in [profile.kask]", "termination": "slow-timeout grace period 60s terminate-after 1; wait semantics preserve cleanup", "selection": "binary-ID/test-name filters via nextest; --no-tests auto fails on zero tests", "shared_seam_surface": "kask/crates/hkask-mcp-test-support: parse_envelope + invoke_tool! macro (181 of 368 invocations) + shared NoopInferencePort double"}
   },
   "phase5_verification": {
     "baseline": {"command": "cargo nextest run --profile kask --no-fail-fast -p 'hkask-*' -p kask_bridge -p dme-harness", "tests_run": 3125, "passed": 3120, "failed": 5, "skipped": 13, "wall_seconds": 63.4, "note": "4 failures were in-progress F4 tests being edited concurrently (not in HEAD); 1 was a flaky media-widget test that passes in isolation"},

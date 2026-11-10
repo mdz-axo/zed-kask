@@ -61,7 +61,7 @@ structural rather than stale.
   behavior, command-line options, configuration) — see the research summary
   artifact for the passage records.
 
-## 5. Harness recomposition (committed `a6caa3df7d`)
+## 5. Harness recomposition (committed `a6caa3df7d`, deepened `pending`)
 
 - `kask/scripts/test` — canonical runner: nextest `--profile kask` over the
   frozen package set, `-p` selection, `--list`, zero-test guard, cargo-test
@@ -72,6 +72,13 @@ structural rather than stale.
 - CI `kask-tests` job installs cargo-nextest and runs the canonical runner.
 - Test-only gating: three `test-fixture` features with self dev-dependencies
   and consumer dev-dependency features.
+- Deeper recomposition (this pass): the four `tool_behavior.rs` files' shared
+  seam surface moved into `kask/crates/hkask-mcp-test-support` —
+  `parse_envelope`, the `invoke_tool!` macro (drives `Parameters<T>` and
+  returns the parsed envelope), and the shared `NoopInferencePort` double.
+  181 of 368 tool invocations now go through the macro; the per-crate
+  `test_support` modules were replaced by the consolidated crate for the
+  cross-crate fixtures. Crate-local `cfg(test)` fixtures stay colocated.
 
 ## 6. Verification (before/after)
 

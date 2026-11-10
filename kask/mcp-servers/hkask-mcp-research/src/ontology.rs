@@ -266,7 +266,7 @@ mod tests {
 
         // The shared noop inference double (one definition across the
         // servers), not a per-server copy.
-        use hkask_mcp_server::server::test_support::NoopInferencePort as NoopInference;
+        use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort as NoopInference;
 
         let server = crate::ResearchServer::new(
             hkask_types::WebID::new(),

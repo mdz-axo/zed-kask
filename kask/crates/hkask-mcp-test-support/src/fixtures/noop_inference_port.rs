@@ -1,13 +1,13 @@
-//! Shared test-support doubles for hKask MCP servers.
+//! Shared test doubles for hKask MCP servers.
 //!
 //! `#[doc(hidden)]` keeps this out of the public docs while server
 //! integration tests reach it through the lib (the kata-kanban
-//! `test_support` precedent). Not part of the server API surface.
+//! `test_support` precedent). Not part of any server's API surface.
 //!
 //! The `NoopInferencePort` replaces the per-server inline mock each
-//! server's end-to-end tests hand-rolled (~24 lines each; the
-//! duplication ratchet measured the cross-server copies as clusters
-//! after the A-3 rollout gave every server the same e2e test shape).
+//! server's end-to-end tests hand-rolled (~24 lines each; the duplication
+//! ratchet measured the cross-server copies as clusters after the A-3
+//! rollout gave every server the same e2e test shape).
 
 use std::pin::Pin;
 

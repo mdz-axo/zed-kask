@@ -35,6 +35,8 @@ path = "src/main.rs"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 tempfile.workspace = true
 sha2.workspace = true
+hkask-memory = { workspace = true, features = ["test-fixture"] }
+hkask-mcp-test-support.workspace = true
 
 [lints]
 workspace = true

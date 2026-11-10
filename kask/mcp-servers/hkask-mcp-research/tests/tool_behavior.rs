@@ -40,12 +40,12 @@ use hkask_mcp_research::research::types::{
     SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
+use hkask_mcp_test_support::{invoke_tool, parse_envelope};
 use hkask_types::InferenceError;
 use hkask_types::InferencePort;
 use hkask_types::InferenceResult;
 use hkask_types::McpErrorKind;
 use hkask_types::WebID;
-use hkask_types::tool_response::parse_tool_response;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 use std::time::Duration;
@@ -322,7 +322,7 @@ async fn web_search_surfaces_provider_skips() {
         provider: None,
         run_id: None,
     };
-    let json = parse(&ok(server.web_search(Parameters(request)).await));
+    let json = invoke_tool!(server, web_search, request);
     let skips = json["providers_skipped"]
         .as_array()
         .expect("providers_skipped array");
@@ -386,7 +386,7 @@ async fn web_extract_degraded_pdf_names_the_corpus_route() {
         wait_for_ms: None,
         run_id: None,
     };
-    let json = parse(&ok(server.web_extract(Parameters(request)).await));
+    let json = invoke_tool!(server, web_extract, request);
     let note = json["note"].as_str().unwrap_or_default();
     assert!(note.contains("PDF"), "names the PDF diagnosis: {note}");
     assert!(
@@ -757,10 +757,6 @@ fn make_server_with_research_db() -> ResearchServer {
     )
 }
 
-fn parse(out: &str) -> serde_json::Value {
-    parse_tool_response(out).expect("tool output must be valid JSON")
-}
-
 /// Unwrap a successful tool call: the Ok payload is the `{"content": ...}`
 /// envelope string.
 fn ok(out: Result<String, McpToolError>) -> String {
@@ -795,7 +791,7 @@ const LITERAL_IP_URL: &str = "http://1.2.3.4/path";
 async fn web_ping_returns_ok_with_provider_health() {
     let server = make_server_without_db();
     let out = ok(server.web_ping().await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
     assert_eq!(
         json.get("status").and_then(|status| status.as_str()),
         Some("ok"),
@@ -814,7 +810,7 @@ async fn web_ping_lists_the_free_scholarly_providers_in_the_profile_table() {
     // metacognitive table lists them — an agent reading the ping sees the
     // full set of selectable providers, not just the paid ones.
     let server = make_server_with_pool(Arc::new(FreeProvidersPool));
-    let json = parse(&ok(server.web_ping().await));
+    let json = parse_envelope(&ok(server.web_ping().await));
     let rows: Vec<&serde_json::Value> = json
         .get("provider_profiles")
         .and_then(|p| p.as_array())
@@ -960,7 +956,7 @@ async fn web_search_accepts_quoted_and_padded_strategy_and_freshness() {
                 intent: None,
             }))
             .await;
-        let parsed = parse(&ok(output));
+        let parsed = parse_envelope(&ok(output));
         assert!(
             parsed.get("results").is_some_and(|r| r.is_array()),
             "quoted strategy/freshness must succeed, got: {parsed}"
@@ -984,7 +980,7 @@ async fn web_search_accepts_quoted_intent_and_routes_by_it() {
             intent: Some("  \"academic\"  ".to_string()),
         }))
         .await;
-    let parsed = parse(&ok(output));
+    let parsed = parse_envelope(&ok(output));
     // The normalized intent drove provider selection: the stub's top
     // configured recommendation (arxiv) was queried...
     let selected = pool
@@ -1028,7 +1024,7 @@ async fn web_search_normalizes_provider_before_dispatch() {
             intent: None,
         }))
         .await;
-    let parsed = parse(&ok(output));
+    let parsed = parse_envelope(&ok(output));
     assert_eq!(
         parsed.get("selected_provider").and_then(|p| p.as_str()),
         Some("arxiv"),
@@ -1081,8 +1077,10 @@ async fn web_search_surfaces_provider_recommendations_on_non_intent_paths() {
     // makes the selection, not just the intent pick. A web-strategy call
     // (no intent, no provider) must carry the ranking.
     let server = intent_selection_server().0;
-    let parsed = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
+    let parsed = invoke_tool!(
+        server,
+        web_search,
+        SearchRequest {
             query: "fusion audit probe".to_string(),
             num_results: Some(3),
             include_domains: None,
@@ -1092,8 +1090,8 @@ async fn web_search_surfaces_provider_recommendations_on_non_intent_paths() {
             provider: None,
             run_id: None,
             intent: None,
-        }))
-        .await));
+        }
+    );
     let recommendations = parsed
         .get("provider_recommendations")
         .and_then(|r| r.as_array());
@@ -1109,8 +1107,10 @@ async fn web_search_skips_ranking_for_explicit_provider() {
     // deliberate override — selected_provider carries the choice, the
     // ranking is skipped.
     let server = intent_selection_server().0;
-    let parsed = parse(&ok(server
-        .web_search(Parameters(SearchRequest {
+    let parsed = invoke_tool!(
+        server,
+        web_search,
+        SearchRequest {
             query: "override probe".to_string(),
             num_results: Some(3),
             include_domains: None,
@@ -1120,8 +1120,8 @@ async fn web_search_skips_ranking_for_explicit_provider() {
             provider: Some("arxiv".to_string()),
             run_id: None,
             intent: None,
-        }))
-        .await));
+        }
+    );
     let recommendations = parsed
         .get("provider_recommendations")
         .and_then(|r| r.as_array());
@@ -1502,7 +1502,7 @@ async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
     let out = ok(server
         .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
         .await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
     assert_eq!(
         json.get("count").and_then(|count| count.as_u64()),
         Some(0),
@@ -1518,7 +1518,7 @@ async fn rss_get_unread_count_with_empty_db_returns_zero() {
             stream_id: "feed/test".to_string(),
         }))
         .await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
     assert_eq!(
         json.get("unread_count").and_then(|count| count.as_u64()),
         Some(0),
@@ -1651,20 +1651,20 @@ async fn web_search_enforces_domain_filters_after_provider_results() {
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     request.include_domains = Some(vec!["amf-france.org".to_string()]);
-    let blocked = parse(&ok(server.web_search(Parameters(request)).await));
+    let blocked = invoke_tool!(server, web_search, request);
     assert_eq!(blocked["count"], 0);
     assert_eq!(blocked["results"], serde_json::json!([]));
 
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     request.include_domains = Some(vec!["example.com".to_string()]);
-    let included = parse(&ok(server.web_search(Parameters(request)).await));
+    let included = invoke_tool!(server, web_search, request);
     assert_eq!(included["count"], 3);
 
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     request.exclude_domains = Some(vec!["example.com".to_string()]);
-    let excluded = parse(&ok(server.web_search(Parameters(request)).await));
+    let excluded = invoke_tool!(server, web_search, request);
     assert_eq!(excluded["count"], 0);
     assert_eq!(excluded["results"], serde_json::json!([]));
 }
@@ -1674,23 +1674,23 @@ async fn web_search_enforces_domain_filters_after_provider_results() {
 #[tokio::test]
 async fn filtered_search_does_not_ledger_off_domain_hits() {
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "official-domain boundary".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run id").to_string();
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
     request.include_domains = Some(vec!["amf-france.org".to_string()]);
     request.run_id = Some(run_id.clone());
-    let output = parse(&ok(server.web_search(Parameters(request)).await));
+    let output = invoke_tool!(server, web_search, request);
     assert_eq!(output["count"], 0);
     assert_eq!(output["domain_filter_removed"], 3);
     assert_eq!(output["run_ledger"]["recorded"], 0);
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
-        .await));
+    let manifest = invoke_tool!(server, get_research_run, GetResearchRunRequest { run_id });
     assert_eq!(manifest["sources"], serde_json::json!([]));
 }
 
@@ -1704,9 +1704,7 @@ async fn deep_search_llm_rerank_reorders_results() {
         Arc::new(ScoringInferencePort),
         Some("test-rerank-model"),
     );
-    let output = parse(&ok(server
-        .web_search(Parameters(deep_search_request()))
-        .await));
+    let output = invoke_tool!(server, web_search, deep_search_request());
 
     let rerank = output
         .get("rerank")
@@ -1743,9 +1741,7 @@ async fn deep_search_llm_rerank_failure_surfaces_heuristic_mode() {
         Arc::new(FailingInferencePort),
         Some("test-rerank-model"),
     );
-    let output = parse(&ok(server
-        .web_search(Parameters(deep_search_request()))
-        .await));
+    let output = invoke_tool!(server, web_search, deep_search_request());
 
     let rerank = output
         .get("rerank")
@@ -1844,7 +1840,7 @@ async fn private_call_skips_llm_rerank_with_the_boundary_surfaced() {
         }),
         Some("test-rerank-model"),
     );
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.web_search(Parameters(deep_search_request())),
     )
@@ -1906,7 +1902,7 @@ async fn public_call_reranks_through_the_configured_model() {
         }),
         Some("test-rerank-model"),
     );
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PublicProvider,
         server.web_search(Parameters(deep_search_request())),
     )
@@ -1948,7 +1944,7 @@ async fn private_call_reranks_via_the_private_model_only() {
         Some("test-configured-rerank-model"),
         Some("ollama/qwen3-reranker-4b:latest"),
     );
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.web_search(Parameters(deep_search_request())),
     )
@@ -1988,9 +1984,7 @@ async fn private_call_reranks_via_the_private_model_only() {
         Some("test-configured-rerank-model"),
         Some("ollama/qwen3-reranker-4b:latest"),
     );
-    let output = parse(&ok(server
-        .web_search(Parameters(deep_search_request()))
-        .await));
+    let output = invoke_tool!(server, web_search, deep_search_request());
     let rerank = output
         .get("rerank")
         .expect("the public call surfaces rerank info");
@@ -2018,7 +2012,7 @@ async fn quick_search_has_no_rerank_field() {
     );
     let mut request = deep_search_request();
     request.strategy = Some("quick".to_string());
-    let output = parse(&ok(server.web_search(Parameters(request)).await));
+    let output = invoke_tool!(server, web_search, request);
     assert!(
         output.get("rerank").is_none(),
         "quick strategy must not claim a rerank stage"
@@ -2113,7 +2107,7 @@ async fn web_search_does_not_cache_provider_failures() {
     };
 
     // First call: the failure is surfaced (degradation contract)…
-    let first = parse(&ok(server.web_search(Parameters(make_request())).await));
+    let first = parse_envelope(&ok(server.web_search(Parameters(make_request())).await));
     assert!(
         first["providers_failed"]
             .as_array()
@@ -2122,7 +2116,7 @@ async fn web_search_does_not_cache_provider_failures() {
     );
 
     // …and must NOT be replayed from cache on the identical second call.
-    let second = parse(&ok(server.web_search(Parameters(make_request())).await));
+    let second = parse_envelope(&ok(server.web_search(Parameters(make_request())).await));
     assert_eq!(
         second["count"], 1,
         "the recovered result must reach the caller — a cached failure would return count 0"
@@ -2225,8 +2219,10 @@ fn intent_selection_server() -> (ResearchServer, Arc<IntentSelectionPool>) {
 #[tokio::test]
 async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking() {
     let server = intent_selection_server().0;
-    let output = server
-        .web_search(Parameters(SearchRequest {
+    let parsed = invoke_tool!(
+        server,
+        web_search,
+        SearchRequest {
             query: "rust async runtime benchmarks".to_string(),
             num_results: Some(5),
             include_domains: None,
@@ -2236,10 +2232,8 @@ async fn web_search_intent_selects_top_configured_provider_and_surfaces_ranking(
             intent: Some("academic".to_string()),
             provider: None,
             run_id: None,
-        }))
-        .await
-        .expect("tool ok");
-    let parsed = parse(&output);
+        }
+    );
 
     // The ranking is surfaced — the choice is auditable.
     let recommendations = parsed["provider_recommendations"]
@@ -2323,7 +2317,7 @@ async fn evaluate_evidence_emits_signal_model() {
             ],
         }))
         .await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
 
     let artifacts = json["artifacts"].as_array().expect("artifacts array");
     assert_eq!(artifacts.len(), 2);
@@ -2429,7 +2423,7 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
             ],
         }))
         .await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
     let artifacts = json["artifacts"].as_array().expect("artifacts array");
     // One syndicated story: one unit, not three corroborations.
     assert_eq!(artifacts[0]["corroboration_count"].as_u64(), Some(1));
@@ -2561,20 +2555,24 @@ async fn begin_research_run_rejects_empty_question() {
 #[tokio::test]
 async fn begin_and_get_research_run_roundtrip() {
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "is the wire story corroborated?".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
     assert_eq!(begun["status"].as_str(), Some("planned"));
     assert_eq!(run_id.len(), 16, "run_id is blake3[..16] hex: {run_id}");
 
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest {
+    let manifest = invoke_tool!(
+        server,
+        get_research_run,
+        GetResearchRunRequest {
             run_id: run_id.clone(),
-        }))
-        .await));
+        }
+    );
     assert_eq!(manifest["run_id"].as_str(), Some(run_id.as_str()));
     assert_eq!(
         manifest["question"].as_str(),
@@ -2608,16 +2606,20 @@ async fn web_search_with_run_id_records_sources_server_side() {
     // recomputed confidence).
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
 
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "stub results".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
-    let output = parse(&ok(server
-        .web_search(Parameters(run_scoped_stub_search(Some("deep"), &run_id)))
-        .await));
+    let output = invoke_tool!(
+        server,
+        web_search,
+        run_scoped_stub_search(Some("deep"), &run_id)
+    );
     assert_eq!(
         output["run_ledger"]["recorded"].as_u64(),
         Some(3),
@@ -2628,9 +2630,11 @@ async fn web_search_with_run_id_records_sources_server_side() {
 
     // A repeat call in the same run keeps the first observation: the note
     // names the held rows instead of reporting a bare zero.
-    let repeat = parse(&ok(server
-        .web_search(Parameters(run_scoped_stub_search(Some("deep"), &run_id)))
-        .await));
+    let repeat = invoke_tool!(
+        server,
+        web_search,
+        run_scoped_stub_search(Some("deep"), &run_id)
+    );
     assert_eq!(
         repeat["run_ledger"]["recorded"].as_u64(),
         Some(0),
@@ -2642,9 +2646,7 @@ async fn web_search_with_run_id_records_sources_server_side() {
         "{repeat}"
     );
 
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
-        .await));
+    let manifest = invoke_tool!(server, get_research_run, GetResearchRunRequest { run_id });
     let sources = manifest["sources"].as_array().expect("sources array");
     assert_eq!(sources.len(), 3);
     for source in sources {
@@ -2669,9 +2671,11 @@ async fn web_search_with_unknown_run_id_surfaces_ledger_note() {
     // swallowed and never an error return.
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
 
-    let output = parse(&ok(server
-        .web_search(Parameters(run_scoped_stub_search(None, "deadbeefdeadbeef")))
-        .await));
+    let output = invoke_tool!(
+        server,
+        web_search,
+        run_scoped_stub_search(None, "deadbeefdeadbeef")
+    );
     let note = &output["run_ledger"];
     assert_eq!(note["recorded"].as_u64(), Some(0), "note: {note}");
     assert!(
@@ -2691,11 +2695,13 @@ async fn annotate_verified_requires_server_recorded_source() {
     // the server refuses verification claims about its own output it
     // cannot check.
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "never-served sources".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
     let error = err(server
@@ -2717,17 +2723,17 @@ async fn annotate_verified_requires_server_recorded_source() {
 #[tokio::test]
 async fn annotate_verified_without_basis_is_invalid_argument() {
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "basis required".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
     // Record a source the server actually served.
-    let search = parse(&ok(server
-        .web_search(Parameters(run_scoped_stub_search(None, &run_id)))
-        .await));
+    let search = invoke_tool!(server, web_search, run_scoped_stub_search(None, &run_id));
     let served_url = search["results"][0]["url"]
         .as_str()
         .expect("stub result url")
@@ -2752,16 +2758,16 @@ async fn annotate_verified_without_basis_is_invalid_argument() {
 #[tokio::test]
 async fn annotate_verified_on_server_recorded_source_roundtrips() {
     let server = make_server_with_pool_and_db(Arc::new(FixedResultsPool), Some(research_db_pool()));
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "roundtrip".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
-    let search = parse(&ok(server
-        .web_search(Parameters(run_scoped_stub_search(None, &run_id)))
-        .await));
+    let search = invoke_tool!(server, web_search, run_scoped_stub_search(None, &run_id));
     let served_url = search["results"][0]["url"]
         .as_str()
         .expect("stub result url")
@@ -2770,22 +2776,26 @@ async fn annotate_verified_on_server_recorded_source_roundtrips() {
     // Annotating twice is idempotent (PRIMARY KEY (run_id, url) upsert —
     // re-annotating after a crash is safe).
     for _ in 0..2 {
-        let annotated = parse(&ok(server
-            .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+        let annotated = invoke_tool!(
+            server,
+            annotate_research_run,
+            AnnotateResearchRunRequest {
                 run_id: run_id.clone(),
                 url: served_url.clone(),
                 verification_state: "verified".to_string(),
                 basis: Some("cross-checked against the primary source".to_string()),
-            }))
-            .await));
+            }
+        );
         assert_eq!(annotated["run_id"].as_str(), Some(run_id.as_str()));
     }
 
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest {
+    let manifest = invoke_tool!(
+        server,
+        get_research_run,
+        GetResearchRunRequest {
             run_id: run_id.clone(),
-        }))
-        .await));
+        }
+    );
     let sources = manifest["sources"].as_array().expect("sources");
     assert_eq!(
         sources.len(),
@@ -2833,28 +2843,34 @@ async fn annotate_external_source_as_agent_declared_row() {
     // served) with a non-verified state — recorded recorded_by='agent',
     // excluded from verified eligibility, visible in the manifest.
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "external sources".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
-    let annotated = parse(&ok(server
-        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+    let annotated = invoke_tool!(
+        server,
+        annotate_research_run,
+        AnnotateResearchRunRequest {
             run_id: run_id.clone(),
             url: "https://external.example/1".to_string(),
             verification_state: "inferred".to_string(),
             basis: Some("prior knowledge".to_string()),
-        }))
-        .await));
+        }
+    );
     assert_eq!(annotated["recorded_by"].as_str(), Some("agent"));
 
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest {
+    let manifest = invoke_tool!(
+        server,
+        get_research_run,
+        GetResearchRunRequest {
             run_id: run_id.clone(),
-        }))
-        .await));
+        }
+    );
     let sources = manifest["sources"].as_array().expect("sources");
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0]["recorded_by"].as_str(), Some("agent"));
@@ -2866,11 +2882,13 @@ async fn annotate_external_source_as_agent_declared_row() {
 #[tokio::test]
 async fn annotate_rejects_unknown_verification_state() {
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "enum check".to_string(),
-        }))
-        .await));
+        }
+    );
     let error = err(server
         .annotate_research_run(Parameters(AnnotateResearchRunRequest {
             run_id: begun["run_id"].as_str().expect("run_id").to_string(),
@@ -2897,22 +2915,26 @@ async fn annotate_rejects_unknown_verification_state() {
 #[tokio::test]
 async fn finish_research_run_accepts_quoted_status() {
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "quoted status probe".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
     // `"Blocked"` — quoted, padded, wrong case — must parse to the
     // canonical spelling and finish the run (blocked needs no
     // server-recorded source).
-    let finished = parse(&ok(server
-        .finish_research_run(Parameters(FinishResearchRunRequest {
+    let finished = invoke_tool!(
+        server,
+        finish_research_run,
+        FinishResearchRunRequest {
             run_id,
             status: " \"Blocked\" ".to_string(),
             note: None,
-        }))
-        .await));
+        }
+    );
     assert!(
         finished.is_object(),
         "quoted status must finish the run: {finished}"
@@ -2922,22 +2944,26 @@ async fn finish_research_run_accepts_quoted_status() {
 #[tokio::test]
 async fn annotate_research_run_accepts_quoted_verification_state() {
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "quoted state probe".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
     // Annotating an unseen URL records an agent-declared row — no
     // server-recorded source needed for not_checked.
-    let annotated = parse(&ok(server
-        .annotate_research_run(Parameters(AnnotateResearchRunRequest {
+    let annotated = invoke_tool!(
+        server,
+        annotate_research_run,
+        AnnotateResearchRunRequest {
             run_id,
             url: "https://external.example/quoted".to_string(),
             verification_state: " \"Not_Checked\" ".to_string(),
             basis: None,
-        }))
-        .await));
+        }
+    );
     assert_eq!(
         annotated["verification_state"].as_str(),
         Some("not_checked"),
@@ -2948,8 +2974,10 @@ async fn annotate_research_run_accepts_quoted_verification_state() {
 #[tokio::test]
 async fn cite_sources_accepts_quoted_style() {
     let server = make_server_without_db();
-    let cited = parse(&ok(server
-        .cite_sources(Parameters(CiteSourcesRequest {
+    let cited = invoke_tool!(
+        server,
+        cite_sources,
+        CiteSourcesRequest {
             sources: vec![CiteSource {
                 url: "https://a.example/1".to_string(),
                 title: Some("Quoted Style Probe".to_string()),
@@ -2958,8 +2986,8 @@ async fn cite_sources_accepts_quoted_style() {
                 authors: Some(vec!["A. Author".to_string()]),
             }],
             style: "\"apa\"".to_string(),
-        }))
-        .await));
+        }
+    );
     assert_eq!(cited["style"].as_str(), Some("apa"), "{cited}");
     assert!(
         cited["citations"].as_array().is_some_and(|c| !c.is_empty()),
@@ -3053,7 +3081,7 @@ async fn resolve_paper_canonicalizes_any_identifier_form() {
             run_id: None,
         }))
         .await);
-    let json = parse(&out);
+    let json = parse_envelope(&out);
     assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
     assert_eq!(
         json["identifier"]["value"].as_str(),
@@ -3094,20 +3122,24 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
     // happen regardless: the deterministic floor, never blocked by the
     // enrichment tier.
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "paper identity".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
-    let json = parse(&ok(server
-        .resolve_paper(Parameters(ResolvePaperRequest {
+    let json = invoke_tool!(
+        server,
+        resolve_paper,
+        ResolvePaperRequest {
             query: Some("doi:10.1038/s41586-024-00000-x".to_string()),
             title: None,
             run_id: Some(run_id.clone()),
-        }))
-        .await));
+        }
+    );
     assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
     assert_eq!(
         json["canonical_url"].as_str(),
@@ -3125,9 +3157,7 @@ async fn resolve_paper_with_run_id_records_the_canonical_url() {
         "canonical URL recorded: {json}"
     );
 
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest { run_id }))
-        .await));
+    let manifest = invoke_tool!(server, get_research_run, GetResearchRunRequest { run_id });
     let sources = manifest["sources"].as_array().expect("sources");
     assert_eq!(sources.len(), 1);
     assert_eq!(
@@ -3145,15 +3175,17 @@ async fn resolve_paper_title_mode_surfaces_candidates_and_resolves_the_top() {
     // caller can verify the match (a title search can hit a different work
     // than intended), and the top candidate resolves to the typed identity.
     let server = make_server_with_pool(Arc::new(TitleResolvePool));
-    let json = parse(&ok(server
-        .resolve_paper(Parameters(ResolvePaperRequest {
+    let json = invoke_tool!(
+        server,
+        resolve_paper,
+        ResolvePaperRequest {
             query: None,
             title: Some(
                 "A Recipe For Arbitrary Text Style Transfer with Large Language Models".to_string(),
             ),
             run_id: None,
-        }))
-        .await));
+        }
+    );
     assert_eq!(json["mode"].as_str(), Some("bibliographic"));
     assert_eq!(json["identifier"]["kind"].as_str(), Some("doi"));
     assert_eq!(
@@ -3188,13 +3220,15 @@ async fn resolve_paper_title_mode_ranks_exact_title_matches_first() {
     // exercises the normalization) — and the top candidate's resolution
     // follows the ranking.
     let server = make_server_with_pool(Arc::new(SuperstringFirstTitlePool));
-    let json = parse(&ok(server
-        .resolve_paper(Parameters(ResolvePaperRequest {
+    let json = invoke_tool!(
+        server,
+        resolve_paper,
+        ResolvePaperRequest {
             query: None,
             title: Some("Computing Machinery and Intelligence".to_string()),
             run_id: None,
-        }))
-        .await));
+        }
+    );
     let candidates = json["candidates"].as_array().expect("candidates surfaced");
     assert_eq!(candidates.len(), 3, "every candidate surfaced: {json}");
     assert_eq!(
@@ -3328,8 +3362,10 @@ async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
     // bare success. The degraded extraction is not cached: a second call
     // re-fetches instead of replaying the shell.
     let server = make_server_with_pool(Arc::new(ChromeShellPool));
-    let json = parse(&ok(server
-        .web_extract(Parameters(ExtractRequest {
+    let json = invoke_tool!(
+        server,
+        web_extract,
+        ExtractRequest {
             url: "https://example.com/js-shell".to_string(),
             format: None,
             json_prompt: None,
@@ -3337,8 +3373,8 @@ async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
             main_content_only: None,
             wait_for_ms: None,
             run_id: None,
-        }))
-        .await));
+        }
+    );
     let note = json["note"].as_str().expect("degradation note present");
     assert!(
         note.contains("JS shell") && note.contains("Wayback"),
@@ -3348,8 +3384,10 @@ async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
     // (the stub returns the same shell, but through a fresh fetch — the
     // cache would have replayed the first response unchanged, which the
     // note's presence on the second call also demonstrates).
-    let json2 = parse(&ok(server
-        .web_extract(Parameters(ExtractRequest {
+    let json2 = invoke_tool!(
+        server,
+        web_extract,
+        ExtractRequest {
             url: "https://example.com/js-shell".to_string(),
             format: None,
             json_prompt: None,
@@ -3357,8 +3395,8 @@ async fn web_extract_surfaces_near_empty_body_as_a_degradation_note() {
             main_content_only: None,
             wait_for_ms: None,
             run_id: None,
-        }))
-        .await));
+        }
+    );
     assert!(
         json2["note"].is_string(),
         "degraded extraction not cached as a clean hit: {json2}"
@@ -3374,8 +3412,10 @@ async fn web_extract_degradation_note_names_a_non_2xx_origin_status() {
     // ChromeShellPool test above pins the boundary: a 2xx status keeps
     // the JS-shell cause list.
     let server = make_server_with_pool(Arc::new(GoneOriginPool));
-    let json = parse(&ok(server
-        .web_extract(Parameters(ExtractRequest {
+    let json = invoke_tool!(
+        server,
+        web_extract,
+        ExtractRequest {
             url: "https://example.com/gone".to_string(),
             format: None,
             json_prompt: None,
@@ -3383,8 +3423,8 @@ async fn web_extract_degradation_note_names_a_non_2xx_origin_status() {
             main_content_only: None,
             wait_for_ms: None,
             run_id: None,
-        }))
-        .await));
+        }
+    );
     let note = json["note"].as_str().expect("degradation note present");
     assert!(
         note.contains("HTTP 404") && note.contains("gone or moved"),
@@ -3407,7 +3447,7 @@ async fn web_ping_carries_the_static_provider_profiles() {
     // web_ping — the per-server-version metacognitive lookup lives where a
     // health-check consumer reads it.
     let server = make_server_without_db();
-    let json = parse(&ok(server.web_ping().await));
+    let json = parse_envelope(&ok(server.web_ping().await));
     assert!(
         json["provider_profiles"].is_array(),
         "ping carries the profile table (possibly empty on a stub pool): {json}"
@@ -3486,9 +3526,11 @@ fn semantic_request(duplication: Option<&str>) -> EvaluateEvidenceRequest {
 /// degradation reason — the shared preamble of the shingle-floor tests (the
 /// mode assert pins that the semantic tier degraded, never errored).
 async fn semantic_shingles_reason(server: &ResearchServer) -> String {
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
-        .await));
+    let json = invoke_tool!(
+        server,
+        evaluate_evidence,
+        semantic_request(Some("semantic"))
+    );
     assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
     json["set"]["duplication_reason"]
         .as_str()
@@ -3526,9 +3568,11 @@ async fn evaluate_evidence_semantic_success_clusters_by_cosine() {
     // paraphrased artifacts the shingle floor cannot (different words,
     // parallel vectors) — one unit, one cluster, mode "semantic", no reason.
     let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), Some("test-embed"));
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(semantic_request(Some("semantic"))))
-        .await));
+    let json = invoke_tool!(
+        server,
+        evaluate_evidence,
+        semantic_request(Some("semantic"))
+    );
     assert_eq!(json["set"]["duplication_mode"].as_str(), Some("semantic"));
     assert!(
         json["set"].get("duplication_reason").is_none(),
@@ -3612,7 +3656,7 @@ async fn private_call_dedup_tier_embeds_via_the_private_model() {
         Some("test-configured-embed"),
         Some("test-private-embed"),
     );
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
     )
@@ -3635,7 +3679,7 @@ async fn private_call_dedup_tier_embeds_via_the_private_model() {
     // The public control: the same server routes a public call through the
     // configured model — the tier is provenance-scoped, never a blanket
     // refusal.
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PublicProvider,
         server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
     )
@@ -3669,7 +3713,7 @@ async fn private_call_dedup_degrades_to_the_shingle_floor_when_no_private_model(
         Some("test-configured-embed"),
         None,
     );
-    let output = parse(&ok(hkask_mcp_server::with_call_provenance(
+    let output = parse_envelope(&ok(hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.evaluate_evidence(Parameters(semantic_request(Some("semantic")))),
     )
@@ -3700,9 +3744,11 @@ async fn evaluate_evidence_accepts_quoted_duplication_mode() {
     // past the closed-set gate — same degradation path as the bare form
     // (no embedding model → shingle floor with the surfaced reason).
     let server = make_server_with_embedding(Arc::new(EmbeddingInferencePort), None);
-    let json = parse(&ok(server
-        .evaluate_evidence(Parameters(semantic_request(Some("\"semantic\""))))
-        .await));
+    let json = invoke_tool!(
+        server,
+        evaluate_evidence,
+        semantic_request(Some("\"semantic\""))
+    );
     assert_eq!(json["set"]["duplication_mode"].as_str(), Some("shingles"));
     assert!(
         json["set"].get("duplication_reason").is_some(),
@@ -3713,11 +3759,13 @@ async fn evaluate_evidence_accepts_quoted_duplication_mode() {
 #[tokio::test]
 async fn finish_research_run_transitions_and_preserves_the_sources_ledger() {
     let server = make_server_with_research_db();
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "is the wire story corroborated?".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
 
     // completed/partial require a server-recorded source — a fresh run has none.
@@ -3736,24 +3784,28 @@ async fn finish_research_run_transitions_and_preserves_the_sources_ledger() {
     );
 
     // blocked is a legitimate finish without sources.
-    let finished = parse(&ok(server
-        .finish_research_run(Parameters(FinishResearchRunRequest {
+    let finished = invoke_tool!(
+        server,
+        finish_research_run,
+        FinishResearchRunRequest {
             run_id: run_id.clone(),
             status: "blocked".to_string(),
             note: Some("no sources reachable".to_string()),
-        }))
-        .await));
+        }
+    );
     assert_eq!(finished["status"].as_str(), Some("blocked"));
     assert_eq!(finished["from_status"].as_str(), Some("planned"));
     assert_eq!(finished["note"].as_str(), Some("no sources reachable"));
 
     // The manifest reflects the terminal status AND its transition history;
     // the sources ledger is untouched.
-    let manifest = parse(&ok(server
-        .get_research_run(Parameters(GetResearchRunRequest {
+    let manifest = invoke_tool!(
+        server,
+        get_research_run,
+        GetResearchRunRequest {
             run_id: run_id.clone(),
-        }))
-        .await));
+        }
+    );
     assert_eq!(manifest["status"].as_str(), Some("blocked"));
     let history = manifest["status_history"]
         .as_array()
@@ -3780,11 +3832,13 @@ async fn finish_research_run_rejects_unknown_run_and_nonterminal_status() {
         .await);
     assert_error_kind(&missing, McpErrorKind::NotFound);
 
-    let begun = parse(&ok(server
-        .begin_research_run(Parameters(BeginResearchRunRequest {
+    let begun = invoke_tool!(
+        server,
+        begin_research_run,
+        BeginResearchRunRequest {
             question: "another question".to_string(),
-        }))
-        .await));
+        }
+    );
     let run_id = begun["run_id"].as_str().expect("run_id").to_string();
     let nonterminal = err(server
         .finish_research_run(Parameters(FinishResearchRunRequest {

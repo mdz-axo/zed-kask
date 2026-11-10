@@ -80,7 +80,7 @@ toml.workspace = true
 tracing-subscriber.workspace = true
 # Unit tests exercise the shared NoopInferencePort seam; enable the
 # test-fixture gate on the server crate for this crate's test builds.
-hkask-mcp-server = { workspace = true, features = ["test-fixture"] }
+hkask-mcp-test-support.workspace = true
 
 [lints]
 workspace = true

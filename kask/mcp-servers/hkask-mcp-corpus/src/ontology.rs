@@ -171,7 +171,7 @@ mod tests {
 
         // The shared noop inference double (one definition across the
         // servers), not a per-server copy.
-        use hkask_mcp_server::server::test_support::NoopInferencePort as NoopPort;
+        use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort as NoopPort;
 
         crate::helpers::seed_test_passphrase();
         let port: Arc<dyn InferencePort> = Arc::new(NoopPort);

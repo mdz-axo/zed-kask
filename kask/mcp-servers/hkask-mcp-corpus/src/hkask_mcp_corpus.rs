@@ -526,7 +526,7 @@ mod smoke {
     /// work, while inference-dependent operations must surface a structured
     /// error. The double is shared (`hkask_mcp_server::server::test_support`)
     /// — one definition across the servers, not a copy per server.
-    use hkask_mcp_server::server::test_support::NoopInferencePort;
+    use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort;
 
     fn make_server() -> CorpusServer {
         crate::helpers::seed_test_passphrase();

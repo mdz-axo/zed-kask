@@ -7771,6 +7771,7 @@ dependencies = [
  "hkask-inference",
  "hkask-lisp",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-memory",
  "hkask-storage",
  "hkask-types",
@@ -7803,6 +7804,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-memory",
  "hkask-storage",
  "hkask-types",
@@ -7825,6 +7827,7 @@ dependencies = [
  "chrono",
  "hkask-bridge-ontology",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-storage",
  "hkask-types",
  "regex",
@@ -7876,6 +7879,7 @@ dependencies = [
  "hkask-inference",
  "hkask-keystore",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-storage",
  "hkask-types",
  "image",
@@ -7913,6 +7917,7 @@ dependencies = [
  "hkask-forecast",
  "hkask-inference",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-types",
  "proptest",
  "regex",
@@ -7941,6 +7946,7 @@ dependencies = [
  "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-storage",
  "hkask-types",
  "jsonpath-rust",
@@ -7970,6 +7976,7 @@ dependencies = [
  "hkask-forecast",
  "hkask-mcp-prediction-markets",
  "hkask-mcp-server",
+ "hkask-mcp-test-support",
  "hkask-types",
  "proptest",
  "regex",
@@ -8003,6 +8010,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zed-reqwest",
+]
+
+[[package]]
+name = "hkask-mcp-test-support"
+version = "0.40.2"
+dependencies = [
+ "hkask-types",
+ "rmcp",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

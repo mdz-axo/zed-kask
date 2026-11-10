@@ -17,10 +17,10 @@ use hkask_mcp_experimentation::types::{
     ExperimentStatus, Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric,
     RubricVerification,
 };
+use hkask_mcp_test_support::{invoke_tool, parse_envelope};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
 use hkask_types::WebID;
-use hkask_types::tool_response::unwrap_tool_envelope;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 
@@ -28,13 +28,6 @@ fn make_server() -> ExperimentationServer {
     let store = ExperimentationStore::with_driver(SqliteDriver::in_memory_driver())
         .expect("in-memory experimentation store");
     ExperimentationServer::new(WebID::new(), Arc::new(store))
-}
-
-/// Parse a tool response and unwrap the `{"content": <value>}` envelope —
-/// the canonical response shape (never re-implemented here).
-fn envelope(response: &str) -> serde_json::Value {
-    let value: serde_json::Value = serde_json::from_str(response).expect("tool response is JSON");
-    unwrap_tool_envelope(value)
 }
 
 fn proposal(layer: &str) -> ExperimentProposeRequest {
@@ -75,11 +68,7 @@ fn proposal(layer: &str) -> ExperimentProposeRequest {
 }
 
 async fn propose(server: &ExperimentationServer, layer: &str) -> serde_json::Value {
-    let response = server
-        .experiment_propose(Parameters(proposal(layer)))
-        .await
-        .expect("experiment_propose succeeds");
-    envelope(&response)
+    invoke_tool!(server, experiment_propose, proposal(layer))
 }
 
 async fn register_variant(
@@ -100,17 +89,17 @@ async fn register_variant_with_role(
     parent: Option<&str>,
     role: Option<&str>,
 ) -> serde_json::Value {
-    let response = server
-        .variant_register(Parameters(VariantRegisterRequest {
+    invoke_tool!(
+        server,
+        variant_register,
+        VariantRegisterRequest {
             experiment_id: experiment_id.to_string(),
             genotype_config: AnyJsonValue(serde_json::json!({"name": name})),
             parent_variant_id: parent.map(str::to_string),
             role: role.map(str::to_string),
             variant_key: None,
-        }))
-        .await
-        .expect("variant_register succeeds");
-    envelope(&response)
+        }
+    )
 }
 
 /// Propose an experiment and register its first variant — the preamble the
@@ -172,16 +161,16 @@ async fn full_protocol_runs_through_the_tool_seam() {
         }))
         .await
         .expect("baseline fitness_record succeeds");
-    let sealed = server
-        .experiment_seal(Parameters(ExperimentSealRequest {
+    let sealed = invoke_tool!(
+        server,
+        experiment_seal,
+        ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id.clone(),
             baseline_pass_rate: Some(0.6),
             scientific_headroom: None,
-        }))
-        .await
-        .expect("experiment_seal succeeds");
-    let sealed = envelope(&sealed);
+        }
+    );
     assert_eq!(sealed["status"], "sealed");
     let seal_id = sealed["seal"]["id"].as_str().expect("seal id").to_string();
     assert_eq!(
@@ -192,62 +181,62 @@ async fn full_protocol_runs_through_the_tool_seam() {
         64
     );
 
-    let fitness = server
-        .fitness_record(Parameters(FitnessRecordRequest {
+    let fitness = invoke_tool!(
+        server,
+        fitness_record,
+        FitnessRecordRequest {
             experiment_id: experiment_id.clone(),
             variant_id: challenger_id.clone(),
             runs: vec!["eval_harness run 42".to_string()],
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8, "total_tokens": 1200})),
             seal_id: Some(seal_id.clone()),
-        }))
-        .await
-        .expect("fitness_record succeeds");
-    let fitness = envelope(&fitness);
+        }
+    );
     assert_eq!(fitness["fitness"]["variant_id"], challenger_id.as_str());
     assert_eq!(fitness["fitness"]["run_count"], 3);
     assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
     assert_eq!(fitness["fitness"]["runs"][0], "eval_harness run 42");
 
     // Select — the fossil resolves the experiment.
-    let selection = server
-        .selection_record(Parameters(SelectionRecordRequest {
+    let selection = invoke_tool!(
+        server,
+        selection_record,
+        SelectionRecordRequest {
             experiment_id: experiment_id.clone(),
             verdict: Some("selected".to_string()),
             scientific_outcome: None,
             selected_variant_id: Some(challenger_id.clone()),
             reject_reasons: Vec::new(),
             algedonic_reference: Some("algedonic 2026-09-30#1".to_string()),
-        }))
-        .await
-        .expect("selection_record succeeds");
-    let selection = envelope(&selection);
+        }
+    );
     assert_eq!(selection["status"], "resolved");
     assert_eq!(selection["selection"]["verdict"], "selected");
     assert_eq!(selection["experiment"]["status"], "resolved");
 
     // Retain — lineage and population read the full record back.
-    let lineage = server
-        .lineage_read(Parameters(LineageReadRequest {
+    let lineage = invoke_tool!(
+        server,
+        lineage_read,
+        LineageReadRequest {
             artifact_ref: experiment_id.clone(),
-        }))
-        .await
-        .expect("lineage_read succeeds");
-    let lineage = envelope(&lineage);
+        }
+    );
     assert_eq!(lineage["kind"], "experiment");
     assert_eq!(lineage["variants"].as_array().expect("variants").len(), 2);
     assert_eq!(lineage["selections"][0]["verdict"], "selected");
 
-    let population = server
-        .population_query(Parameters(PopulationQueryRequest {
+    let population = invoke_tool!(
+        server,
+        population_query,
+        PopulationQueryRequest {
             layer: Some("skill".to_string()),
             status: Some(ExperimentStatus::Resolved),
             created_since: None,
             limit: None,
-        }))
-        .await
-        .expect("population_query succeeds");
-    let population = envelope(&population);
+        }
+    );
     assert_eq!(population["count"], 1);
 }
 
@@ -303,17 +292,17 @@ async fn variant_roles_are_enforced_through_the_tool_seam() {
         .expect("id")
         .to_string();
 
-    let baseline = server
-        .variant_register(Parameters(VariantRegisterRequest {
+    let baseline = invoke_tool!(
+        server,
+        variant_register,
+        VariantRegisterRequest {
             experiment_id: experiment_id.clone(),
             genotype_config: AnyJsonValue(serde_json::json!({"name": "baseline"})),
             parent_variant_id: None,
             role: Some("baseline".to_string()),
             variant_key: None,
-        }))
-        .await
-        .expect("baseline registers");
-    let baseline = envelope(&baseline);
+        }
+    );
     assert_eq!(baseline["variant"]["role"], "baseline");
 
     // A second baseline is a typed refusal naming the existing one.
@@ -397,16 +386,16 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .expect("baseline fitness");
 
     // Seal.
-    let sealed = server
-        .experiment_seal(Parameters(ExperimentSealRequest {
+    let sealed = invoke_tool!(
+        server,
+        experiment_seal,
+        ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id.clone(),
             baseline_pass_rate: Some(0.6),
             scientific_headroom: None,
-        }))
-        .await
-        .expect("seal succeeds");
-    let sealed = envelope(&sealed);
+        }
+    );
     assert_eq!(sealed["status"], "sealed");
     assert_eq!(sealed["seal"]["baseline_pass_rate"], 0.6);
     let seal_id = sealed["seal"]["id"].as_str().expect("seal id").to_string();
@@ -430,18 +419,18 @@ async fn experiment_seal_freezes_the_contract_through_the_tool_seam() {
         .await
         .expect_err("missing citation refused");
     assert!(error.to_string().contains("seal_id"), "{error}");
-    let fitness = server
-        .fitness_record(Parameters(FitnessRecordRequest {
+    let fitness = invoke_tool!(
+        server,
+        fitness_record,
+        FitnessRecordRequest {
             experiment_id: experiment_id.clone(),
             variant_id: challenger_id,
             runs: vec!["challenger harness report".to_string()],
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.8})),
             seal_id: Some(seal_id.clone()),
-        }))
-        .await
-        .expect("cited fitness succeeds");
-    let fitness = envelope(&fitness);
+        }
+    );
     assert_eq!(fitness["fitness"]["seal_id"], seal_id.as_str());
 
     // A second, different seal is refused.
@@ -515,19 +504,17 @@ async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
         }))
         .await
         .expect("baseline fitness");
-    let sealed = server
-        .experiment_seal(Parameters(ExperimentSealRequest {
+    let sealed = invoke_tool!(
+        server,
+        experiment_seal,
+        ExperimentSealRequest {
             experiment_id: experiment_id.clone(),
             baseline_variant_id: baseline_id,
             baseline_pass_rate: Some(0.6),
             scientific_headroom: None,
-        }))
-        .await
-        .expect("seal");
-    let seal_id = envelope(&sealed)["seal"]["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
+        }
+    );
+    let seal_id = sealed["seal"]["id"].as_str().expect("id").to_string();
     let challenger = register_variant(&server, &experiment_id, "challenger", None).await;
     let challenger_id = challenger["variant"]["id"]
         .as_str()
@@ -559,26 +546,26 @@ async fn final_evaluation_record_enforces_disjointness_through_the_tool_seam() {
     assert!(error.to_string().contains("c1"), "{error}");
 
     // A disjoint selection set records; the lineage reads it back.
-    let final_eval = server
-        .final_evaluation_record(Parameters(FinalEvaluationRecordRequest {
+    let final_eval = invoke_tool!(
+        server,
+        final_evaluation_record,
+        FinalEvaluationRecordRequest {
             experiment_id: experiment_id.clone(),
             variant_id: challenger_id.clone(),
             runs: vec!["f1".to_string()],
             run_count: 3,
             scores: AnyJsonValue(serde_json::json!({"pass_rate": 0.85})),
-        }))
-        .await
-        .expect("final evaluation succeeds");
-    let final_eval = envelope(&final_eval);
+        }
+    );
     assert_eq!(final_eval["final_evaluation"]["seal_id"], seal_id.as_str());
 
-    let lineage = server
-        .lineage_read(Parameters(LineageReadRequest {
+    let lineage = invoke_tool!(
+        server,
+        lineage_read,
+        LineageReadRequest {
             artifact_ref: experiment_id.clone(),
-        }))
-        .await
-        .expect("lineage_read succeeds");
-    let lineage = envelope(&lineage);
+        }
+    );
     assert_eq!(
         lineage["final_evaluations"].as_array().expect("list").len(),
         1
@@ -744,19 +731,11 @@ async fn replay_keys_converge_retried_calls_through_the_tool_seam() {
 
     let mut first = proposal("skill");
     first.experiment_key = Some("propose-key-1".to_string());
-    let first = server
-        .experiment_propose(Parameters(first))
-        .await
-        .expect("first propose succeeds");
-    let first = envelope(&first);
+    let first = invoke_tool!(server, experiment_propose, first);
 
     let mut second = proposal("skill");
     second.experiment_key = Some("propose-key-1".to_string());
-    let second = server
-        .experiment_propose(Parameters(second))
-        .await
-        .expect("retried propose succeeds");
-    let second = envelope(&second);
+    let second = invoke_tool!(server, experiment_propose, second);
 
     assert_eq!(
         first["experiment"]["id"], second["experiment"]["id"],
@@ -840,11 +819,7 @@ async fn linked_goal_id_round_trips_through_the_declaration() {
     let server = make_server();
     let mut request = proposal("skill");
     request.linked_goal_id = Some("04998f4f-2ae2-4d53-a67d-f178e77072f5".to_string());
-    let response = server
-        .experiment_propose(Parameters(request))
-        .await
-        .expect("propose with linked goal");
-    let response = envelope(&response);
+    let response = invoke_tool!(server, experiment_propose, request);
     assert_eq!(
         response["experiment"]["linked_goal_id"],
         "04998f4f-2ae2-4d53-a67d-f178e77072f5"
@@ -853,16 +828,16 @@ async fn linked_goal_id_round_trips_through_the_declaration() {
         .as_str()
         .expect("id")
         .to_string();
-    let population = server
-        .population_query(Parameters(PopulationQueryRequest {
+    let population = invoke_tool!(
+        server,
+        population_query,
+        PopulationQueryRequest {
             layer: None,
             status: None,
             created_since: None,
             limit: Some(10),
-        }))
-        .await
-        .expect("population query");
-    let population = envelope(&population);
+        }
+    );
     assert_eq!(
         population["experiments"][0]["linked_goal_id"],
         "04998f4f-2ae2-4d53-a67d-f178e77072f5"
@@ -987,14 +962,14 @@ fn design_proposal(design_spec: serde_json::Value) -> ExperimentProposeRequest {
 #[tokio::test]
 async fn design_spec_is_versioned_at_the_tool_boundary() {
     let server = make_server();
-    let response = server
-        .experiment_propose(Parameters(design_proposal(serde_json::json!({
+    let proposed = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
             "spec_version": "design-spec-v1",
             "spec_id": "adc-factorial-v1",
-        }))))
-        .await
-        .expect("versioned design accepted");
-    let proposed = envelope(&response);
+        }))
+    );
     assert_eq!(
         proposed["experiment"]["design_spec"]["spec_id"],
         "adc-factorial-v1"
@@ -1015,13 +990,12 @@ async fn design_spec_is_versioned_at_the_tool_boundary() {
 #[tokio::test]
 async fn scientific_headroom_seals_through_the_tool_seam() {
     let server = make_server();
-    let proposed = envelope(
-        &server
-            .experiment_propose(Parameters(design_proposal(serde_json::json!({
-                "spec_version": "design-spec-v1",
-            }))))
-            .await
-            .expect("propose"),
+    let proposed = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+        }))
     );
     let experiment_id = proposed["experiment"]["id"]
         .as_str()
@@ -1043,21 +1017,19 @@ async fn scientific_headroom_seals_through_the_tool_seam() {
         .await
         .expect("baseline fitness");
 
-    let sealed = envelope(
-        &server
-            .experiment_seal(Parameters(ExperimentSealRequest {
-                experiment_id: experiment_id.clone(),
-                baseline_variant_id: baseline_id.clone(),
-                baseline_pass_rate: None,
-                scientific_headroom: Some(hkask_mcp_experimentation::types::ScientificHeadroom {
-                    design_family: "single_arm".to_string(),
-                    criterion: "the single-arm interval width is below the ratified margin"
-                        .to_string(),
-                    evidence: vec!["power simulation report".to_string()],
-                }),
-            }))
-            .await
-            .expect("headroom seal"),
+    let sealed = invoke_tool!(
+        server,
+        experiment_seal,
+        ExperimentSealRequest {
+            experiment_id: experiment_id.clone(),
+            baseline_variant_id: baseline_id.clone(),
+            baseline_pass_rate: None,
+            scientific_headroom: Some(hkask_mcp_experimentation::types::ScientificHeadroom {
+                design_family: "single_arm".to_string(),
+                criterion: "the single-arm interval width is below the ratified margin".to_string(),
+                evidence: vec!["power simulation report".to_string()],
+            }),
+        }
     );
     assert_eq!(
         sealed["seal"]["scientific_headroom"]["design_family"],
@@ -1066,13 +1038,12 @@ async fn scientific_headroom_seals_through_the_tool_seam() {
     assert!(sealed["seal"]["baseline_pass_rate"].is_null());
 
     // Neither attestation → typed failed_precondition.
-    let fresh = envelope(
-        &server
-            .experiment_propose(Parameters(design_proposal(serde_json::json!({
-                "spec_version": "design-spec-v1",
-            }))))
-            .await
-            .expect("propose"),
+    let fresh = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+        }))
     );
     let fresh_id = fresh["experiment"]["id"].as_str().expect("id").to_string();
     let fresh_baseline =
@@ -1109,43 +1080,40 @@ async fn scientific_headroom_seals_through_the_tool_seam() {
 #[tokio::test]
 async fn design_spec_is_exposed_through_lineage_and_population() {
     let server = make_server();
-    let proposed = envelope(
-        &server
-            .experiment_propose(Parameters(design_proposal(serde_json::json!({
-                "spec_version": "design-spec-v1",
-                "spec_id": "adc-factorial-v1",
-            }))))
-            .await
-            .expect("propose"),
+    let proposed = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+            "spec_id": "adc-factorial-v1",
+        }))
     );
     let experiment_id = proposed["experiment"]["id"]
         .as_str()
         .expect("id")
         .to_string();
 
-    let lineage = envelope(
-        &server
-            .lineage_read(Parameters(LineageReadRequest {
-                artifact_ref: experiment_id.clone(),
-            }))
-            .await
-            .expect("lineage"),
+    let lineage = invoke_tool!(
+        server,
+        lineage_read,
+        LineageReadRequest {
+            artifact_ref: experiment_id.clone(),
+        }
     );
     assert_eq!(
         lineage["experiment"]["design_spec"]["spec_id"],
         "adc-factorial-v1"
     );
 
-    let population = envelope(
-        &server
-            .population_query(Parameters(PopulationQueryRequest {
-                layer: Some("scientific_hypothesis".to_string()),
-                status: None,
-                created_since: None,
-                limit: None,
-            }))
-            .await
-            .expect("population"),
+    let population = invoke_tool!(
+        server,
+        population_query,
+        PopulationQueryRequest {
+            layer: Some("scientific_hypothesis".to_string()),
+            status: None,
+            created_since: None,
+            limit: None,
+        }
     );
     let row = population["experiments"]
         .as_array()
@@ -1161,13 +1129,12 @@ async fn design_spec_is_exposed_through_lineage_and_population() {
 #[tokio::test]
 async fn scientific_outcome_resolves_through_the_tool_seam() {
     let server = make_server();
-    let proposed = envelope(
-        &server
-            .experiment_propose(Parameters(design_proposal(serde_json::json!({
-                "spec_version": "design-spec-v1",
-            }))))
-            .await
-            .expect("propose"),
+    let proposed = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+        }))
     );
     let experiment_id = proposed["experiment"]["id"]
         .as_str()
@@ -1175,18 +1142,17 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
         .to_string();
     register_variant(&server, &experiment_id, "arm", None).await;
 
-    let resolved = envelope(
-        &server
-            .selection_record(Parameters(SelectionRecordRequest {
-                experiment_id: experiment_id.clone(),
-                verdict: None,
-                selected_variant_id: None,
-                reject_reasons: Vec::new(),
-                algedonic_reference: None,
-                scientific_outcome: Some("evidence_of_practical_equivalence".to_string()),
-            }))
-            .await
-            .expect("typed outcome resolves"),
+    let resolved = invoke_tool!(
+        server,
+        selection_record,
+        SelectionRecordRequest {
+            experiment_id: experiment_id.clone(),
+            verdict: None,
+            selected_variant_id: None,
+            reject_reasons: Vec::new(),
+            algedonic_reference: None,
+            scientific_outcome: Some("evidence_of_practical_equivalence".to_string()),
+        }
     );
     assert_eq!(
         resolved["selection"]["scientific_outcome"],
@@ -1198,13 +1164,12 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
     );
 
     // Both verdict and outcome → typed invalid_argument.
-    let fresh = envelope(
-        &server
-            .experiment_propose(Parameters(design_proposal(serde_json::json!({
-                "spec_version": "design-spec-v1",
-            }))))
-            .await
-            .expect("propose"),
+    let fresh = invoke_tool!(
+        server,
+        experiment_propose,
+        design_proposal(serde_json::json!({
+            "spec_version": "design-spec-v1",
+        }))
     );
     let fresh_id = fresh["experiment"]["id"].as_str().expect("id").to_string();
     register_variant(&server, &fresh_id, "arm", None).await;

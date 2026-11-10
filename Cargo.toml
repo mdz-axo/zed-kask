@@ -283,6 +283,7 @@ members = [
     "kask/crates/hkask-memory",
     "kask/crates/hkask-mcp",
     "kask/crates/hkask-mcp-server",
+    "kask/crates/hkask-mcp-test-support",
     "kask/crates/hkask-storage",
     "kask/crates/hkask-inference",
     "kask/crates/hkask-bridge-ontology",
@@ -983,6 +984,7 @@ hkask-lisp = { path = "kask/crates/hkask-lisp" }
 hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
+hkask-mcp-test-support = { path = "kask/crates/hkask-mcp-test-support" }
 
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
