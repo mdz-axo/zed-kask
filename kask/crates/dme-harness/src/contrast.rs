@@ -522,7 +522,6 @@ mod tests {
     use super::*;
     use crate::test_util::TempDir;
 
-
     /// One capture in the writer's own naming, appended to the dir's
     /// manifest.jsonl (single-row captures — the per-step file shape).
     fn write_capture(

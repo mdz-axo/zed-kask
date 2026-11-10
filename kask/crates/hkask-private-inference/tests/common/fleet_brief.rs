@@ -11,7 +11,9 @@ use hkask_private_inference::local_leg::fleet;
 
 /// Discover one model's brief through the production fleet path (seed +
 /// discover — never a CWD-relative file read).
-pub fn discover_brief(model_id: &str) -> hkask_private_inference::local_leg::model_brief::ModelBrief {
+pub fn discover_brief(
+    model_id: &str,
+) -> hkask_private_inference::local_leg::model_brief::ModelBrief {
     let briefs_dir = tempdir().expect("briefs dir");
     fleet::seed_briefs(briefs_dir.path()).expect("the seed set writes");
     let models_root = tempdir().expect("models root");

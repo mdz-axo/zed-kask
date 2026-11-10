@@ -1124,11 +1124,8 @@ mod tests {
     /// M2/S2-8: a declared dim that disagrees with the captures refuses.
     #[test]
     fn refuses_a_dim_mismatch() {
-        let fixture = ConvertFixture::new(
-            "refuse-dim",
-            &[("a0", vec![1.0, 0.0, 1.0])],
-            &[1.0, 0.0],
-        );
+        let fixture =
+            ConvertFixture::new("refuse-dim", &[("a0", vec![1.0, 0.0, 1.0])], &[1.0, 0.0]);
         let args = fixture.write_config(serde_json::json!({
             "vectors_dim": 2,
             "anchors": [{"id": "a0", "split": "train"}],
@@ -1267,11 +1264,13 @@ mod tests {
         run(args).expect("the column-list convert runs");
 
         // the columns file: the top-2 of the ranking, order preserved
-        let cols_text = std::fs::read_to_string(fixture.dir().join("out").join("columns.txt")).unwrap();
+        let cols_text =
+            std::fs::read_to_string(fixture.dir().join("out").join("columns.txt")).unwrap();
         assert_eq!(cols_text, "2\n0\n");
         // the emitted spec: the sha-bound Columns trigger, parseable by
         // the edit leg's own loader
-        let spec = crate::edit::load_spec(&fixture.dir().join("out").join("edit-spec.json")).expect("spec parses");
+        let spec = crate::edit::load_spec(&fixture.dir().join("out").join("edit-spec.json"))
+            .expect("spec parses");
         match &spec.trigger {
             crate::edit::TriggerSpec::Columns {
                 count,
@@ -1294,7 +1293,8 @@ mod tests {
         // the manifest: the columns trigger record + the projection
         // (2 layers x hidden 3 x |S| 2 = 12)
         let man: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(fixture.dir().join("out").join("convert-manifest.json")).unwrap(),
+            &std::fs::read_to_string(fixture.dir().join("out").join("convert-manifest.json"))
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(man["trigger"]["kind"], "columns");

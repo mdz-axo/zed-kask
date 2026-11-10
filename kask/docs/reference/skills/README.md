@@ -20,12 +20,12 @@ mds_categories: [domain, composition]
 >   Native background decode/evaluation uses `eval_sandboxed_with_cancellation`, one monotonic
 >   flag, mandatory teardown, cleanup join and publication/weak pending-owner guards; raw/pure
 >   APIs are unchanged (`kask/crates/hkask-lisp/src/hkask_lisp.rs:2505@eval_sandboxed_with_cancellation`;
->   `crates/agent/src/tools/lisp_eval_tool.rs:374@LispEvalTool::run`). Defaults remain 100000 steps /
->   depth 1024 (`lisp_eval_tool.rs:291@default_max_steps`, `:295@default_max_depth`). Titles read
+>   `crates/agent/src/tools/lisp_eval_tool.rs:384@LispEvalTool::run`). Defaults remain 100000 steps /
+>   depth 1024 (`lisp_eval_tool.rs:301@default_max_steps`, `:305@default_max_depth`). Titles read
 >   form only; copying/display stay foreground. [Bounds and nonpreemptible phases](../lisp-eval-dialect.md#numeric-admission-and-limits)
 >   are not hard time/heap/concurrency guarantees. No host/IPC lisp surface exists —
 >   decode/evaluation runs in-process (the public shared `evaluate_lisp_controlled`,
->   `lisp_eval_tool.rs:487@evaluate_lisp_controlled`).
+>   `lisp_eval_tool.rs:497@evaluate_lisp_controlled`).
 >   H8 direct/routed corpus queries share one body; only Lisp options are offloaded and
 >   observe request-context cancellation, leaving downstream inference/retrieval/generation alone
 >   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel
