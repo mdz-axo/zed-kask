@@ -9530,6 +9530,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "settings_content",
  "sha2 0.10.9",

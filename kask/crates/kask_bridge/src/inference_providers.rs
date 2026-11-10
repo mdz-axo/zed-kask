@@ -543,6 +543,51 @@ mod tests {
         );
     }
 
+    /// D5 + D69: a provider's `api_url` is stated in two files — the shipped
+    /// `default.json` pre-seed (the slot zed's `ApiKeyState` keys the keychain
+    /// by, through the `openai_compatible` settings entry) and the
+    /// `INFERENCE_PROVIDERS` descriptor (the slot kask's
+    /// `credential_url_for_key` resolves). Nothing else ties the two copies:
+    /// if they drift, the editor and kask read DIFFERENT keychain slots for
+    /// the same key — the 2026-08-31 DeepInfra 401 split-brain shape. Walks
+    /// every descriptor whose id names a pre-seeded `openai_compatible`
+    /// entry and asserts the two `api_url`s are identical. Native providers
+    /// (RunPod D29, OpenRouter, ollama) have no `openai_compatible` pre-seed
+    /// and are skipped by construction; `together_dedicated` has no
+    /// descriptor by design (editor-chat only). Pins the shipped pair only —
+    /// a user-side `api_url` override in user settings is a user-owned
+    /// divergence of the same class, out of this test's reach.
+    #[test]
+    fn descriptor_api_urls_match_default_json_pre_seeds() {
+        let default_json = include_str!("../../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json must parse");
+        let pre_seeds = value
+            .get("language_models")
+            .and_then(|lm| lm.get("openai_compatible"))
+            .and_then(|map| map.as_object())
+            .expect("default.json pre-seeds language_models.openai_compatible");
+
+        for provider in INFERENCE_PROVIDERS {
+            let Some(entry) = pre_seeds.get(provider.id) else {
+                continue; // native provider — no openai_compatible pre-seed
+            };
+            let pre_seed_url = entry
+                .get("api_url")
+                .and_then(|url| url.as_str())
+                .unwrap_or_else(|| panic!("pre-seeded entry '{}' must set api_url", provider.id));
+            assert_eq!(
+                pre_seed_url, provider.api_url,
+                "the INFERENCE_PROVIDERS descriptor for '{}' and its default.json \
+                 pre-seed state different api_urls — zed's ApiKeyState (keying the \
+                 keychain by the settings api_url) and kask's credential_url_for_key \
+                 (resolving the descriptor api_url) would read different slots for \
+                 the same key (the D5 401 shape)",
+                provider.id
+            );
+        }
+    }
+
     #[test]
     fn credential_urls_for_mcp_injects_only_provider_keys_with_child_consumers() {
         let urls = super::credential_urls_for_mcp();

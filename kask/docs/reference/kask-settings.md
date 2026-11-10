@@ -149,7 +149,9 @@ configured through the kask settings section — there is no
 native **Settings → AI → LLM Providers**, and each provider's API key
 lives at exactly ONE keychain location: the provider's `api_url`
 (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`,
-`https://api.runpod.io`, `https://api.together.ai/v1`) — the same slot zed's
+`https://api.runpod.io`, `https://api.together.ai/v1`, plus
+`https://api-inference.together.ai/v1` for the pre-seeded Together dedicated
+endpoint) — the same slot zed's
 `ApiKeyState` reads.
 Every consumer — `ApiKeyState`, MCP server env injection
 (`credential_urls_for_mcp` via `credential_url_for_key`), the embedding

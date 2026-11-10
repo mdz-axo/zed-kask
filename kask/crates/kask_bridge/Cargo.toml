@@ -69,6 +69,21 @@ rustix.workspace = true
 [dev-dependencies]
 # Local file URI fixtures; production path parsing belongs to the canonical service.
 url.workspace = true
+# Parses the shipped JSONC `default.json` (comments + trailing commas) for the
+# descriptor/pre-seed api_url cross-pin in `inference_providers` tests — the
+# same parser the agent crate's default.json tests use.
+serde_json_lenient.workspace = true
+# Test-only: kask_bridge's test modules consume `hkask_memory::test_support`
+# fixture builders (context_injector/memory tests), gated behind hkask-memory's
+# `test-fixture` feature so they never ship in production builds. A
+# dev-dependency enables the gate for this crate's test targets only — the
+# consumer-side half of the hkask-mcp-server test-fixture precedent.
+hkask-memory = { workspace = true, features = ["test-fixture"] }
+# Same consumer-side gate for kata-kanban's `test_support`: goals/tests.rs
+# reaches it through the `use hkask_mcp_kata_kanban::*` glob in goals.rs, so
+# the feature must be on for this crate's test builds only — never on the
+# [dependencies] entry, or the fixtures ship in production.
+hkask-mcp-kata-kanban = { path = "../../mcp-servers/hkask-mcp-kata-kanban", features = ["test-fixture"] }
 agent = { workspace = true, features = ["test-support"] }
 # Feature-propagation-only dev-dep: the `agent`/`acp_thread`/`workspace`
 # `test-support` requests above forward `remote/test-support` on (via
