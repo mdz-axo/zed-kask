@@ -388,6 +388,48 @@ probe retrieves the restored model through the federated path.
 The goal-model revision (2026-11-01, commit `eb81939687`) publishes the
 goal-system reference models; the registry reads run `227789ac…` with
 273,220 fine passages.
+
+The reference-model coverage revisions (2026-11-09, operator-directed
+coverage audit of every reference model cited across the skills, MCP
+server docs and panels) publish the remaining cited models with their
+source documentation, each through the full lifecycle (adjudicate,
+convert, rebuild, embed, inventory, reseal, export, register, verify,
+materialize):
+
+- **experimentation-reference-model revision** (commit `d105f4f418`):
+  the P8 experiment protocol (`kask/docs/research/experimentation-reference-model.md`,
+  operator-authored, cc_open) — 408 accepted sources, 273,311 fine
+  passages; the live probe retrieves the protocol through the federated
+  path under run `5b9d2dd5…`.
+- **Batch 2** (commit `ef62f366e3`): 13 more models — the NIST/SEMATECH
+  handbook and NIST SSDF (US-gov PD), the NASA Glenn 1901 wind-tunnel
+  tests (US-gov PD), Munafò et al. (CC BY 4.0), Vygotsky, Catmull, the
+  MCDA, PDCA, Lakatos, Shadish and MITRE-ATLAS/Adversarial-ML Wikipedia
+  carriers (CC BY-SA 4.0), and the Hu et al. amortizing-inference paper
+  (arXiv) — 421 accepted sources, 277,000 fine passages.
+- **Batch 3** (commit `17423cef04`): Greenland, Senn, Rothman, Carlin,
+  Poole, Goodman & Altman (CC BY 4.0) — 422 accepted sources, 277,393
+  fine passages.
+- **Batch 4** (commit `95b8609a13`): Barr et al.'s oracle-problem survey
+  (CC BY 3.0) and the Kanban open guide (CC BY-SA 4.0) — 424 accepted
+  sources, 278,224 fine passages.
+- **Batch 5** (commit `a7409e0ecb`): the ACE 2005 evaluation plan
+  (NIST, US-gov PD, restored from the Wayback Machine) — 425 accepted
+  sources, 278,569 fine passages.
+
+The coverage audit (95 cited models across the skills) reads 81 covered /
+14 absent after these revisions. The absent set is named, not hidden:
+Socher's *Eureka Machine* and Recursive's automated-research write-ups
+(both all-rights-reserved), JCGM 100:2008 (copyrighted), Wasserstein &
+Lazar (T&F copyright), Lakens et al. (TDM license only), Wald's
+*Sequential Analysis* (copyrighted), Nosek et al. (standard PNAS
+license), Mayo's *Severe Testing* (copyrighted), Paul & Elder's
+*Socratic Questioning* (copyrighted), Gruber's 1993 ontology paper
+(copyrighted), CoNLL-2012 (CC BY-NC-SA, excluded) and Wiener's
+*Cybernetics* (CC BY-NC-ND, excluded). Schwartz's *Art of the Long View*
+is carried by the wave-4 bridge note (`wave4-bridges.md`, R6) and
+Krathwohl's taxonomy by the Bloom carrier's reference list — both
+recorded as partial coverage, not fabricated full coverage.
 ## Canonical QA records
 
 `PreparedQaPrompt` requires exactly `prompt_id`, protocol
