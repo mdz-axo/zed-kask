@@ -18,6 +18,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::pin::Pin;
 
+/// Upper bound on the arguments accumulated for one streamed tool call.
+///
+/// A model that loses count while emitting a long repetitive argument (a
+/// 606-byte form can stream out as hundreds of kilobytes of repeated
+/// fragments) would otherwise grow this buffer without bound. The bound is
+/// deliberately aligned with the largest single tool argument the harness
+/// admits today — the `lisp_eval` source ceiling (`hkask_lisp::MAX_SOURCE_BYTES`,
+/// 64 KiB) — so an oversized call is cut off and reported instead of being
+/// buffered to completion and rejected later by the tool.
+const MAX_TOOL_CALL_ARGUMENTS_BYTES: usize = 65_536;
+
 /// A single decoded Chat Completions stream chunk: either an event or a
 /// provider error envelope (`{"error": {...}}`).
 ///
@@ -345,6 +356,9 @@ struct RawToolCall {
     name: String,
     arguments: String,
     thought_signature: Option<String>,
+    /// Set once the accumulated arguments hit `MAX_TOOL_CALL_ARGUMENTS_BYTES`;
+    /// further fragments are dropped and the call is reported as oversized.
+    oversized: bool,
 }
 
 /// Accumulates streamed tool calls, matching chunks by their ID and index when
@@ -506,6 +520,7 @@ impl ChatCompletionEventMapper {
         self.tool_calls
             .calls
             .iter()
+            .filter(|call| !call.oversized)
             .find_map(|call| tool_call_truncation_error(&call.name, &call.arguments))
     }
 
@@ -617,26 +632,29 @@ impl ChatCompletionEventMapper {
                         }
 
                         if let Some(arguments) = function.arguments.clone() {
-                            #[cfg(not(test))]
+                            // Providers differ on delta shape: most stream
+                            // incremental fragments, but some re-send the
+                            // arguments accumulated so far as a cumulative
+                            // snapshot. A snapshot starts with everything
+                            // already accumulated, so replace instead of
+                            // appending it — appending would duplicate the
+                            // whole prefix on every chunk.
+                            if !entry.arguments.is_empty()
+                                && arguments.len() > entry.arguments.len()
+                                && arguments.starts_with(&entry.arguments)
                             {
-                                use std::io::Write as _;
-                                if let Ok(mut f) = std::fs::OpenOptions::new()
-                                    .create(true)
-                                    .append(true)
-                                    .open("/tmp/toolcall_debug.log")
-                                {
-                                    let _ = writeln!(
-                                        f,
-                                        "DELTA name={} delta_len={} accumulated_before={} accumulated_after={} delta_head={:?}",
-                                        entry.name,
-                                        arguments.len(),
-                                        entry.arguments.len(),
-                                        entry.arguments.len() + arguments.len(),
-                                        &arguments[..arguments.len().min(120)]
-                                    );
-                                }
+                                entry.arguments = arguments;
+                            } else if !entry.oversized
+                                && entry.arguments.len() + arguments.len()
+                                    > MAX_TOOL_CALL_ARGUMENTS_BYTES
+                            {
+                                // A runaway argument (a model that lost count
+                                // mid-emission) is cut off here rather than
+                                // buffered to completion; the drain reports it.
+                                entry.oversized = true;
+                            } else {
+                                entry.arguments.push_str(&arguments);
                             }
-                            entry.arguments.push_str(&arguments);
                         }
 
                         if let Some(thought_signature) = function.thought_signature.clone() {
@@ -697,34 +715,28 @@ impl ChatCompletionEventMapper {
                     // zed-kask: D36 — an EOF-classified fragment under a
                     // genuine tool_calls finish is the same cut (the
                     // 2026-09-27 storm came through this door): classify as
-                    // truncation, dispatch nothing, emit no stop.
-                    #[cfg(not(test))]
-                    {
-                        use std::io::Write as _;
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open("/tmp/toolcall_debug.log")
-                        {
-                            for call in &self.tool_calls.calls {
-                                let _ = writeln!(
-                                    f,
-                                    "DRAIN name={} accumulated_len={} head={:?} tail={:?}",
-                                    call.name,
-                                    call.arguments.len(),
-                                    &call.arguments[..call.arguments.len().min(200)],
-                                    call.arguments
-                                        .get(call.arguments.len().saturating_sub(200)..)
-                                        .unwrap_or("")
-                                );
-                            }
-                        }
+                    // truncation, dispatch nothing, emit no stop. A runaway
+                    // argument is reported first — a capped argument string
+                    // is necessarily an incomplete JSON fragment, so the
+                    // truncation classifier would otherwise mask the real
+                    // cause (the bound, not a transport cut).
+                    for call in self.tool_calls.calls.iter().filter(|call| call.oversized) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: call.id.clone().into(),
+                            tool_name: call.name.clone().into(),
+                            raw_input: call.arguments.clone().into(),
+                            json_parse_error: format!(
+                                "tool call arguments exceeded the {} byte bound and were cut off; \
+                                 the call was not executed — resend it with smaller arguments",
+                                MAX_TOOL_CALL_ARGUMENTS_BYTES
+                            ),
+                        }));
                     }
                     if let Some(found) = self.first_eof_truncated_tool_call() {
                         self.push_truncation(&mut events, found);
                         return events;
                     }
-                    events.extend(self.tool_calls.drain().map(
+                    events.extend(self.tool_calls.drain().filter(|call| !call.oversized).map(
                         |tool_call| match parse_tool_arguments(&tool_call.arguments) {
                             Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -2266,5 +2278,82 @@ mod tests {
         assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
         assert_eq!(tool_uses[1].id.to_string(), "call_b");
         assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
+    }
+
+    // zed-kask: some providers re-send the arguments accumulated so far as a
+    // cumulative snapshot on every chunk. Appending those snapshots duplicated
+    // the whole prefix per chunk and inflated a 606-byte form into hundreds of
+    // kilobytes; a snapshot starts with everything already accumulated, so it
+    // replaces instead of appending.
+    #[test]
+    fn replaces_cumulative_argument_snapshots_instead_of_appending() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("lisp_eval".into()),
+                    arguments: Some(r#"{"form": "(list a"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#"{"form": "(list a a"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#"{"form": "(list a a a)"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].raw_input, r#"{"form": "(list a a a)"}"#);
+    }
+
+    // zed-kask: a model that loses count mid-emission streams a runaway
+    // argument (observed live: a 606-byte form arriving as 262 091 bytes).
+    // The accumulation is cut off at the bound and the call is reported
+    // instead of being buffered to completion and rejected by the tool.
+    #[test]
+    fn bounds_runaway_tool_call_arguments() {
+        let mut events = Vec::new();
+        for _ in 0..5_000 {
+            events.push(tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("lisp_eval".into()),
+                    arguments: Some(" a a a a a a a a".into()),
+                    thought_signature: None,
+                }),
+            }]));
+        }
+        events.push(finish_tool_calls_event());
+
+        let mapped = map_completion_events(events);
+        let errors = mapped
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    json_parse_error, ..
+                } => Some(json_parse_error.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("exceeded the 65536 byte bound"));
     }
 }
