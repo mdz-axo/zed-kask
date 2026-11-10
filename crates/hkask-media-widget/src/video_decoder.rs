@@ -784,7 +784,7 @@ impl WidgetVideoPlayer {
                 }) => {
                     if generation == self.generation {
                         poll.events.push(VideoPlaybackEvent::Opened);
-                        if sequence >= self.last_sequence {
+                        if sequence > self.last_sequence {
                             self.last_sequence = sequence;
                             self.apply_snapshot(snapshot);
                         }
@@ -797,7 +797,7 @@ impl WidgetVideoPlayer {
                 }) => {
                     if generation == self.generation {
                         poll.events.push(VideoPlaybackEvent::Seeked);
-                        if sequence >= self.last_sequence {
+                        if sequence > self.last_sequence {
                             self.last_sequence = sequence;
                             self.apply_snapshot(snapshot);
                         }
@@ -810,7 +810,7 @@ impl WidgetVideoPlayer {
                 }) => {
                     if generation == self.generation {
                         poll.events.push(VideoPlaybackEvent::Completed);
-                        if sequence >= self.last_sequence {
+                        if sequence > self.last_sequence {
                             self.last_sequence = sequence;
                             self.apply_snapshot(snapshot);
                         }
@@ -823,7 +823,7 @@ impl WidgetVideoPlayer {
                 }) => {
                     if generation == self.generation {
                         poll.events.push(VideoPlaybackEvent::Failed(error));
-                        if sequence >= self.last_sequence {
+                        if sequence > self.last_sequence {
                             self.last_sequence = sequence;
                             self.state = PlaybackState::Stopped;
                         }

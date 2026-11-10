@@ -316,6 +316,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: kask-tests
+      # The canonical kask runner (nextest --profile kask) needs cargo-nextest;
+      # without it kask/scripts/test falls back to the serial cargo-test gate.
+      - uses: taiki-e/install-action@nextest
       - name: Install native build deps — mold linker (forced by
           .cargo/config.toml), ALSA headers (alsa-sys via cpal), nasm
           (vendored FFmpeg static build), ffmpeg (the runtime binaries
@@ -331,8 +334,8 @@ jobs:
           default output device eagerly; the null sink keeps the
           audio-master clock exercised with samples flowing to nowhere)
         run: printf 'pcm.!default { type null }\n' | sudo tee /etc/asound.conf
-      - name: Kask subtree — cargo test (hkask-* + kask_bridge; fails if zero tests ran)
-        run: bash kask/scripts/cargo-test-nonzero.sh --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1
+      - name: Kask subtree — canonical runner (nextest --profile kask; fails if zero tests ran)
+        run: bash kask/scripts/test
       - name: MCP registration pins — every server's exact-name pin executes
         run: |
           while IFS= read -r server; do

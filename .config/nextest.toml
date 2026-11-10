@@ -1,12 +1,19 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
 
-# Kask-specific profile — timeouts and test groups for kask crates.
+# Kask-specific profile — timeouts, test groups, failing-fast and termination
+# for kask crates.
 # Usage: cargo nextest run --profile kask -p hkask-types -p hkask-mcp ...
-# (See kask/scripts/test for the full package list.)
+#        kask/scripts/test            (the canonical kask runner; package list,
+#                                     profile and fallback in one script)
 # Note: nextest profiles do not support `extends` (that's a cargo profile
 # concept); the `slow-timeout` below is standalone, not inherited.
 [profile.kask]
+# Canonical failing-fast: stop scheduling new tests after the first failure,
+# but wait for running tests to finish naturally so their cleanup completes
+# (nextest termination behavior: `wait` is the safe default; `immediate`
+# sends termination signals respecting the grace period below).
+fail-fast = { max-fail = 1, terminate = "wait" }
 slow-timeout = { period = "60s", terminate-after = 1 }
 
 # Kask SQLite-heavy crates that share a database — serialize to avoid contention.

@@ -78,6 +78,9 @@ proptest = { workspace = true }
 # build-profile gate's TOML half (operator ruling 2026-10-13: zero Python).
 toml.workspace = true
 tracing-subscriber.workspace = true
+# Unit tests exercise the shared NoopInferencePort seam; enable the
+# test-fixture gate on the server crate for this crate's test builds.
+hkask-mcp-server = { workspace = true, features = ["test-fixture"] }
 
 [lints]
 workspace = true

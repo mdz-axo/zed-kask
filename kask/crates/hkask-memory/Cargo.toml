@@ -23,6 +23,15 @@ sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Self dev-dependency: enables `test-fixture` for this crate's own test
+# targets (unit + integration). The `test_support` module is test-only code
+# and must not ship in production builds; a self dev-dependency is the
+# mechanism that turns the feature on for `cargo test -p hkask-memory`
+# without requiring callers to pass --features.
+hkask-memory = { path = ".", features = ["test-fixture"] }
+
+[features]
+test-fixture = []
 
 [lints]
 workspace = true

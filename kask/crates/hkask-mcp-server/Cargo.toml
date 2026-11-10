@@ -30,6 +30,13 @@ libc.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[features]
+# Test-only doubles (server/test_support.rs) are gated to this feature so a
+# production build of the server crate does not ship them. Consumers that
+# exercise the seam in their test builds enable it through a dev-dependency
+# (the hkask-mcp `test-fixture` precedent).
+test-fixture = []
+
 [lints]
 workspace = true
 

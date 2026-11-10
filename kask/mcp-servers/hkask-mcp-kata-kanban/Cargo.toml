@@ -51,7 +51,15 @@ tempfile.workspace = true
 # The one-time obsolete-goal reset (tests/obsolete_goal_reset.rs) resolves the
 # production DB passphrase through the canonical env → keychain chain.
 hkask-keystore.workspace = true
+# Self dev-dependency: enables `test-fixture` for this crate's own test
+# targets (unit + integration). The `test_support` module is test-only code
+# and must not ship in production builds.
+hkask-mcp-kata-kanban = { path = ".", features = ["test-fixture"] }
 
+[features]
+# Test-only fixtures (test_support.rs) are gated to this feature so a
+# production build of the server crate does not ship them.
+test-fixture = []
 
 [lints]
 workspace = true

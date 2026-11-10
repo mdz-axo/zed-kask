@@ -58,6 +58,9 @@ pdf-extract.workspace = true
 # paths, and RSS DB in-process paths.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tempfile.workspace = true
+# Unit tests exercise the shared NoopInferencePort seam; enable the
+# test-fixture gate on the server crate for this crate's test builds.
+hkask-mcp-server = { workspace = true, features = ["test-fixture"] }
 
 [build-dependencies]
 regex.workspace = true

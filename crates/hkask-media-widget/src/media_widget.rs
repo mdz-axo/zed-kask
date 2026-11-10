@@ -1431,14 +1431,28 @@ pub(crate) mod tests {
             {
                 anyhow::bail!("transient storage failure")
             }
+            // The retry must complete synchronously: local bytes decode
+            // in-process, so no background fetch task can set the error
+            // after the test's load call returns. (A remote URL here made
+            // the test timing-dependent — the fetch failure could land
+            // inside the parking window and re-set the error.)
             Ok(ResolvedMedia {
                 kind: MediaKind::Image,
                 path: None,
-                bytes: None,
-                url: Some(SharedString::from("https://example.invalid/recovered.png")),
+                bytes: Some(RETRY_IMAGE_BYTES.to_vec()),
+                url: None,
             })
         }
     }
+
+    /// A minimal valid 1x1 PNG — the retry fixture's successful payload.
+    const RETRY_IMAGE_BYTES: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
 
     /// expect: Pause and Stop update the visible transport state in the same event turn.
     /// [P1] Motivating: controls never display playback state that the child player has already left.

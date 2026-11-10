@@ -14,7 +14,9 @@ pub(crate) mod ontology;
 pub(crate) mod pko;
 /// Integration-test fixtures (the lib-crate test seam — `#[doc(hidden)]`
 /// keeps the public docs clean while the test binaries reach it through
-/// the lib; see the module docs for the no-`mod.rs` rationale).
+/// the lib; see the module docs for the no-`mod.rs` rationale). Gated to
+/// `test-fixture` so production builds do not ship the fixtures.
+#[cfg(feature = "test-fixture")]
 #[doc(hidden)]
 pub mod test_support;
 pub mod types;

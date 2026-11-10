@@ -30,6 +30,7 @@ pub use db::{
     db_passphrase_requirement_with, open_server_db, resolve_server_db_path,
 };
 pub mod call_provenance;
+#[cfg(feature = "test-fixture")]
 pub mod test_support;
 mod tool_execution;
 mod transport;

@@ -27,6 +27,7 @@ pub mod lexical; // Rare-term inverted index — the lexical leg of hybrid retri
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
+#[cfg(feature = "test-fixture")]
 pub mod test_support;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
