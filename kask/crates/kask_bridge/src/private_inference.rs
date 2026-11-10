@@ -80,7 +80,6 @@ pub fn discover_local_fleet() -> Result<Vec<FleetModel>, FleetError> {
 pub fn provider_entry(pi: &KaskPrivateInferenceSettings) -> OpenAiCompatibleSettingsContent {
     OpenAiCompatibleSettingsContent {
         api_url: hkask_private_inference::local_leg::launch::endpoint_url(&pi.host, pi.port),
-        api_key_url: None,
         available_models: Vec::new(),
         custom_headers: None,
         auto_discover: true,

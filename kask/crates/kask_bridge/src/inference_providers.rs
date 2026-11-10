@@ -551,8 +551,7 @@ mod tests {
     /// every descriptor whose id names a pre-seeded `openai_compatible`
     /// entry and asserts the two `api_url`s are identical. Native providers
     /// (RunPod D29, OpenRouter, ollama) have no `openai_compatible` pre-seed
-    /// and are skipped by construction; `together_dedicated` has no
-    /// descriptor by design (editor-chat only). Pins the shipped pair only —
+    /// and are skipped by construction. Pins the shipped pair only —
     /// a user-side `api_url` override in user settings is a user-owned
     /// divergence of the same class, out of this test's reach.
     #[test]

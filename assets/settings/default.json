@@ -2742,25 +2742,6 @@
         "available_models": [],
         "auto_discover": true,
       },
-      "together_dedicated": {
-        "api_url": "https://api-inference.together.ai/v1",
-        "api_key_url": "https://api.together.ai/v1",
-        "available_models": [
-          {
-            "name": "zed-kask/ripple",
-            "display_name": "ripple (Together dedicated)",
-            "max_tokens": 128000,
-            "capabilities": {
-              "tools": true,
-              "images": false,
-              "parallel_tool_calls": true,
-              "prompt_cache_key": false,
-              "max_tokens_parameter": true,
-            },
-          },
-        ],
-        "auto_discover": false,
-      },
     },
     "opencode": {
       "api_url": "https://opencode.ai/zen",

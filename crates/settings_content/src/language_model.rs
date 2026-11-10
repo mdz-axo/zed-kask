@@ -473,13 +473,6 @@ impl MergeFrom for OpenAiReasoningEffort {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
-    /// The keychain URL this provider's API key lives under. Defaults to the
-    /// entry's `api_url`; set it when one vendor serves two hosts (e.g.
-    /// Together's serverless and dedicated-inference hosts share one account
-    /// key) so both provider entries read and write the ONE shared slot
-    /// instead of duplicating the key. Changes only the credential slot —
-    /// requests still go to `api_url`.
-    pub api_key_url: Option<String>,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
     pub custom_headers: Option<HashMap<String, String>>,
     /// Whether to auto-discover models via the provider's `/v1/models` endpoint.

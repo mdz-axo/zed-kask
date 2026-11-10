@@ -12,15 +12,6 @@ use ui_input::InputField;
 
 pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
     fn api_url(&self) -> &str;
-    /// The keychain URL this provider's API key lives under. Defaults to
-    /// `api_url`; an override (the openai_compatible `api_key_url` setting)
-    /// makes a second provider entry of the same vendor — e.g. a dedicated
-    /// serving host beside the serverless host — read and write the ONE
-    /// shared slot rather than duplicating the key (one key, one location,
-    /// per account). Requests always go to `api_url`.
-    fn credential_url(&self) -> &str {
-        self.api_url()
-    }
 }
 
 pub struct ApiCompatibleProviderState<S: ApiCompatibleProviderSettings> {
@@ -52,7 +43,7 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
             Self {
                 id,
                 api_key_state: ApiKeyState::new(
-                    SharedString::new(settings.credential_url()),
+                    SharedString::new(settings.api_url()),
                     EnvVar::new(api_key_env_var_name),
                 ),
                 settings,
@@ -70,9 +61,9 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
         api_key: Option<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let credential_url = SharedString::new(self.settings.credential_url());
+        let api_url = SharedString::new(self.settings.api_url());
         self.api_key_state.store(
-            credential_url,
+            api_url,
             api_key,
             |this| &mut this.api_key_state,
             self.credentials_provider.clone(),
@@ -81,9 +72,9 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
     }
 
     pub fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let credential_url = SharedString::new(self.settings.credential_url());
+        let api_url = SharedString::new(self.settings.api_url());
         self.api_key_state.load_if_needed(
-            credential_url,
+            api_url,
             |this| &mut this.api_key_state,
             self.credentials_provider.clone(),
             cx,
@@ -92,9 +83,9 @@ impl<S: ApiCompatibleProviderSettings> ApiCompatibleProviderState<S> {
 
     pub fn update_settings(&mut self, settings: S, cx: &mut Context<Self>) {
         if self.settings != settings {
-            let credential_url = SharedString::new(settings.credential_url());
+            let api_url = SharedString::new(settings.api_url());
             self.api_key_state.handle_url_change(
-                credential_url,
+                api_url,
                 |this| &mut this.api_key_state,
                 self.credentials_provider.clone(),
                 cx,
@@ -254,10 +245,7 @@ impl<S: ApiCompatibleProviderSettings> Render for ApiCompatibleProviderConfigura
                             Label::new(if env_var_set {
                                 format!("API key set in {env_var_name} environment variable")
                             } else {
-                                format!(
-                                    "API key configured for {}",
-                                    state.settings.credential_url()
-                                )
+                                format!("API key configured for {}", state.settings.api_url())
                             }),
                         )),
                 )

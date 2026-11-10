@@ -150,12 +150,7 @@ native **Settings → AI → LLM Providers**, and each provider's API key
 lives at exactly ONE keychain location: the provider's `api_url`
 (`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`,
 `https://api.runpod.io`, `https://api.together.ai/v1`) — the same slot zed's
-`ApiKeyState` reads. The pre-seeded Together dedicated entry
-(`together_dedicated`, requests to `https://api-inference.together.ai/v1`)
-sets `api_key_url: https://api.together.ai/v1`, so BOTH Together entries —
-two serving hosts, one account — read and write the ONE serverless slot
-(one key, one location, per account); the operator's single key paste at the
-serverless provider authenticates the dedicated entry too.
+`ApiKeyState` reads.
 Every consumer — `ApiKeyState`, MCP server env injection
 (`credential_urls_for_mcp` via `credential_url_for_key`), the embedding
 port (`resolve_embedding_credentials`), and the IPC batch/rerank paths —
