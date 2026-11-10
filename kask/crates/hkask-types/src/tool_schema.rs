@@ -117,15 +117,22 @@ impl JsonSchema for AnyJsonValue {
 /// boolean JSON Schema values in schema-valued positions, returning the
 /// JSON-pointer path of each occurrence.
 ///
-/// schemars renders `serde_json::Value` as the bare boolean `true`. A boolean in
-/// a schema position (a property value, `additionalProperties`, `items`, an
-/// `allOf`/`anyOf`/`oneOf` member, etc.) is rejected by strict-schema-decoding
-/// providers — Ollama fails the whole chat-completion with `400 cannot unmarshal
-/// bool into ... of type api.ToolProperty`; Google Gemini's protobuf `Schema` is
-/// the same class of failure. MCP server tool-input tests should call this on
+/// schemars renders `serde_json::Value` as the bare boolean `true`. A boolean
+/// in a schema position (a property value, `items`, an `allOf`/`anyOf`/`oneOf`
+/// member, etc.) is rejected by strict-schema-decoding providers — Ollama
+/// fails the whole chat-completion with `400 cannot unmarshal bool into ... of
+/// type api.ToolProperty`; Google Gemini's protobuf `Schema` is the same class
+/// of failure. MCP server tool-input tests should call this on
 /// `schema_for!(TheirRequest)` and assert the result is empty, so a future
 /// `serde_json::Value`-typed tool input is caught at CI before it breaks any
 /// strict provider.
+///
+/// One keyword is deliberately NOT a violation: `additionalProperties: false`
+/// is the strict keyword that strict providers require (probe 2026-08-31:
+/// strict-mode structured outputs inject it on every object schema), so the
+/// scanner flags only the open `additionalProperties: true` arm. `false` is
+/// therefore skipped below; every other boolean at a schema position is
+/// reported.
 ///
 /// Only positions whose JSON-Schema-semantic value is itself a schema are
 /// inspected; non-schema boolean fields (`nullable`, `required` arrays, etc.)
@@ -156,7 +163,10 @@ fn collect_in_schema(value: &serde_json::Value, path: &str, found: &mut Vec<Stri
                     }
                 }
             }
-            // Single-schema positions.
+            // Single-schema positions. `additionalProperties: false` is the
+            // strict keyword strict providers require — skipped above; only
+            // the open `true` arm (and a bare boolean replacing a schema) is
+            // the failure class.
             for key in [
                 "additionalProperties",
                 "additionalItems",
@@ -168,6 +178,9 @@ fn collect_in_schema(value: &serde_json::Value, path: &str, found: &mut Vec<Stri
                 "else",
             ] {
                 if let Some(child) = obj.get(key) {
+                    if key == "additionalProperties" && child == &serde_json::json!(false) {
+                        continue;
+                    }
                     collect_in_schema(child, &format!("{path}/{key}"), found);
                 }
             }
@@ -259,6 +272,43 @@ mod tests {
     fn any_json_value_schema_has_no_boolean_positions() {
         let schema = serde_json::to_value(schemars::schema_for!(AnyJsonValue)).expect("schema");
         assert!(find_boolean_schema_positions(&schema).is_empty());
+    }
+
+    /// expect: the strict keyword `additionalProperties: false` is NOT a
+    /// violation (strict providers require it — probe 2026-08-31), while the
+    /// open `additionalProperties: true` arm and a bare boolean replacing a
+    /// property schema ARE violations. [P1] Motivating: the scanner must not
+    /// force servers to weaken `deny_unknown_fields` wire schemas to satisfy
+    /// a check that cannot distinguish the two arms.
+    #[test]
+    fn additional_properties_false_is_strict_not_a_violation() {
+        let strict = json!({
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "additionalProperties": false
+        });
+        assert!(
+            find_boolean_schema_positions(&strict).is_empty(),
+            "additionalProperties: false is the strict keyword, not a bare schema"
+        );
+
+        let open = json!({
+            "type": "object",
+            "properties": {"a": {"type": "string"}},
+            "additionalProperties": true
+        });
+        assert_eq!(
+            find_boolean_schema_positions(&open),
+            vec![String::from("/additionalProperties")],
+            "additionalProperties: true is the open-schema failure class"
+        );
+
+        let bare = json!({"type": "object", "properties": {"a": true}});
+        assert_eq!(
+            find_boolean_schema_positions(&bare),
+            vec![String::from("/properties/a")],
+            "a bare boolean replacing a property schema is the serde_json::Value failure class"
+        );
     }
 
     #[test]

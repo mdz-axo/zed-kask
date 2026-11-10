@@ -1764,43 +1764,14 @@ fn live_router_schemas_are_strict_for_all_registered_tools() {
         27,
         "approved surface: 27 registered tools (pinned by tool_surface_is_exactly_27_registered_tools)"
     );
-    let false_schema = serde_json::json!({
-        "type": "object",
-        "properties": {"a": {"type": "string"}},
-        "additionalProperties": false
-    });
-    let true_schema = serde_json::json!({
-        "type": "object",
-        "properties": {"a": {"type": "string"}},
-        "additionalProperties": true
-    });
-    let bare_true = serde_json::json!({"type": "object", "properties": {"a": true}});
-    eprintln!(
-        "AP_FALSE: {:?}",
-        hkask_types::find_boolean_schema_positions(&false_schema)
-    );
-    eprintln!(
-        "AP_TRUE: {:?}",
-        hkask_types::find_boolean_schema_positions(&true_schema)
-    );
-    eprintln!(
-        "BARE_TRUE_PROP: {:?}",
-        hkask_types::find_boolean_schema_positions(&bare_true)
-    );
-    #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-    struct ProbeReq {
-        payload: serde_json::Value,
-    }
-    let value_schema = serde_json::to_value(schemars::schema_for!(serde_json::Value)).unwrap();
-    eprintln!("VALUE_SCHEMA: {:?}", value_schema);
-    let req_schema = serde_json::to_value(schemars::schema_for!(ProbeReq)).unwrap();
-    eprintln!("REQ_SCHEMA: {:?}", req_schema);
     for tool in tools {
         let schema = serde_json::to_value(&tool.input_schema).expect("router schema serializes");
         let violations = hkask_types::find_boolean_schema_positions(&schema);
-        if !violations.is_empty() {
-            eprintln!("DIAG {}: {:?}", tool.name, violations);
-        }
+        assert!(
+            violations.is_empty(),
+            "{} live schema contains bare-boolean positions: {violations:?}",
+            tool.name
+        );
     }
 }
 
