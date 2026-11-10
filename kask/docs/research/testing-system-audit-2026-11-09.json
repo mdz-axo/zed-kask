@@ -1,0 +1,67 @@
+{
+  "audit": "testing-system-audit-2026-11-09",
+  "generated": "2026-11-09",
+  "commands": {
+    "inventory": "jq -f kask/tmp/testing-system-audit/inventory.jq kask/tmp/testing-system-audit/cargo-metadata.json",
+    "staleness_map": "bash kask/tmp/testing-system-audit/map_tests.sh",
+    "duplication": "npx --yes jscpd@5.4.0 --min-tokens 70 --format rust --reporters json --output <dir> <scan set>",
+    "production_symbols": "nm -C <newest production rlib> | grep -c test_support",
+    "suite": "bash kask/scripts/test"
+  },
+  "inventory": {
+    "packages": 34,
+    "unit_tests_in_src": 2345,
+    "integration_test_targets": 40,
+    "proptest_regression_files": 2,
+    "fixtures": [
+      "kask/crates/hkask-lisp/tests/fixtures/prompt_enhance_probes.json",
+      "kask/crates/hkask-lisp/tests/fixtures/prompt_enhance_state.json",
+      "kask/crates/hkask-private-inference/tests/fixtures/stub_llama_server.rs"
+    ],
+    "harness_config": ".config/nextest.toml ([profile.default], [profile.kask], [test-groups] sequential-db-tests)",
+    "ci_gate": ".github/workflows/kask-invariants.yml kask-tests: bash kask/scripts/test (nextest --profile kask; cargo-test fallback)"
+  },
+  "staleness_map": {
+    "rows": 82,
+    "unresolved_imports": 0,
+    "live_module_imports": 75,
+    "live_root_item_imports": 4,
+    "no_crate_import_files": 3,
+    "structural_targets": [
+      "hkask-bridge-ontology::ontology_literal_guard",
+      "hkask-mcp-corpus::build_profile",
+      "hkask-mcp-corpus::provider_profiles"
+    ],
+    "verdict": "No symbol-level staleness: every test import resolves to a live production module. The 3 no-crate-import targets are structural meta-gates, classified above — not stale."
+  },
+  "test_only_symbol_dispositions": [
+    {"symbol": "hkask-memory::test_support", "before": "unconditional pub mod (shipped in production)", "disposition": "gated to test-fixture (self dev-dependency enables it for the crate's own tests)", "evidence": "production rlib nm test_support count 0; test build compiles; 3 test callers unchanged"},
+    {"symbol": "hkask-mcp-server::test_support", "before": "unconditional pub mod (shipped in production)", "disposition": "gated to test-fixture (4 consumer crates enable it via dev-dependency features)", "evidence": "production rlib nm test_support count 0; 4 consumer test builds compile"},
+    {"symbol": "hkask-mcp-kata-kanban::test_support", "before": "unconditional #[doc(hidden)] pub mod (shipped in production)", "disposition": "gated to test-fixture (self dev-dependency enables it for the crate's integration tests)", "evidence": "production rlib nm test_support count 0; integration tests compile and pass"},
+    {"symbol": "kask_bridge::test_support", "before": "#[cfg(test)] mod", "disposition": "keep (already test-only)"},
+    {"symbol": "hkask-mcp-research::test_support", "before": "#[cfg(test)] mod", "disposition": "keep (already test-only)"},
+    {"symbol": "hkask-mcp-media::test_support", "before": "#[cfg(test)] mod", "disposition": "keep (already test-only)"},
+    {"symbol": "hkask-regulation::cybernetics_loop::test_support", "before": "#[cfg(test)] pub(crate) mod", "disposition": "keep (already test-only)"},
+    {"symbol": "kask_bridge::LanguageModelEmbeddingPort::for_tests*", "before": "#[cfg(test)] pub fn", "disposition": "keep (already test-only)"}
+  ],
+  "harness_composition": {
+    "before": {"profile_kask_used": false, "runner_script": "missing (referenced by .config/nextest.toml but never existed)", "ci_runner": "cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1 (serial)"},
+    "after": {"profile_kask_used": true, "runner_script": "kask/scripts/test (nextest --profile kask; cargo-test fallback)", "fail_fast": "fail-fast = { max-fail = 1, terminate = \"wait\" } in [profile.kask]", "termination": "slow-timeout grace period 60s terminate-after 1; wait semantics preserve cleanup", "selection": "binary-ID/test-name filters via nextest; --no-tests auto fails on zero tests"}
+  },
+  "phase5_verification": {
+    "baseline": {"command": "cargo nextest run --profile kask --no-fail-fast -p 'hkask-*' -p kask_bridge -p dme-harness", "tests_run": 3125, "passed": 3120, "failed": 5, "skipped": 13, "wall_seconds": 63.4, "note": "4 failures were in-progress F4 tests being edited concurrently (not in HEAD); 1 was a flaky media-widget test that passes in isolation"},
+    "after": {"command": "bash kask/scripts/test", "tests_run": 3126, "passed": 3126, "failed": 0, "skipped": 13, "wall_seconds": 60.6},
+    "change_failure_probe": {"change": "sumo::CAUSES = \"sumo:fabricated_causes_probe\"", "detected_by": "sumo::tests::named_concepts_are_published (FAILED: 'sumo:fabricated_causes_probe is not in the loaded SUMO distribution')", "reverted": true, "recheck": "test passes after revert"},
+    "overpinning_probe": {"change": "rename private fn is_sentence_end -> is_sentence_boundary (behavior-preserving)", "result": "95/95 hkask-memory lib tests pass", "reverted": true},
+    "media_widget_flakes": [
+      {"id": "bh-001", "test": "media_widget::tests::successful_retry_clears_prior_visible_error", "cause": "retry fixture resolved to a remote URL whose async fetch failure could land inside the parking window", "fix": "fixture returns local PNG bytes", "verification": "0/30 focused runs, 0/15 suite runs fail after fix"},
+      {"id": "bh-003", "test": "media_widget::tests::speed_two_x_advances_video_position_at_double_wall_clock", "cause": "stale Opened event re-applied its Stopped snapshot over a newer Playing state (sequence >= last_sequence guard)", "fix": "event guards are strictly newer (sequence > last_sequence)", "verification": "0/30 focused runs, 0/15 suite runs fail after fix"}
+    ],
+    "residual_risk": [
+      "CI now runs the parallel canonical runner; the previous serial determinism choice is superseded — further flakes may surface.",
+      "The duplication ratchet reads 2782 against a 2774 baseline — the 8 new clusters come from the concurrent session's uncommitted media_viewer.rs work, not from this audit's edits.",
+      "Coarse anchors (characterization test, test suite architecture, and the testing-specific terms) still need operator rulings before use.",
+      "The docs count gate reads 104 files against the <85 cap (advisory, unwired from CI by operator mandate 2026-10-31); this audit added 2 files."
+    ]
+  }
+}
