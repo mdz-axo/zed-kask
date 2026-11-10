@@ -72,8 +72,8 @@ structural rather than stale.
 - CI `kask-tests` job installs cargo-nextest and runs the canonical runner.
 - Test-only gating: three `test-fixture` features with self dev-dependencies
   and consumer dev-dependency features.
-- Deeper recomposition (this pass): the four `tool_behavior.rs` files' shared
-  seam surface moved into `kask/crates/hkask-mcp-test-support` —
+- Deeper recomposition (committed `35b0eff08a`): the four `tool_behavior.rs`
+  files' shared seam surface moved into `kask/crates/hkask-mcp-test-support` —
   `parse_envelope`, the `invoke_tool!` macro (drives `Parameters<T>` and
   returns the parsed envelope), and the shared `NoopInferencePort` double.
   181 of 368 tool invocations now go through the macro; the per-crate
