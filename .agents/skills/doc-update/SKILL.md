@@ -230,10 +230,10 @@ the doc's claims (mark unverified), never silently pass them through.
 
 | Template | Purpose |
 |----------|---------|
-| `triage.j2` | Render the Phase 0 triage output shapes: per-artifact role decisions with successors, fold rows, and ledger rows. |
+| `triage.j2` | Render the Phase 0 triage output shapes: per-artifact role decisions with successors and fold rows. |
 
 Template context variables (from the template's `[inference]` contract):
-- `triage.j2`: `date`, `count_before`, `count_after`, `reason_category`, `triage_rows`, `fold_rows`, `ledger_rows`
+- `triage.j2`: `date`, `count_before`, `count_after`, `triage_rows`, `fold_rows`
 
 ## Constraints
 

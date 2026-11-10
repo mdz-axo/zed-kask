@@ -3,13 +3,23 @@
 contract:
   input:
     decision_question: string
-    ranking: array
-    weights: array
-    normalized_scores: array
-    criteria: array
+    ranking:
+      type: array
+      description: Each entry {rank, alternative, composite_score, strength, weakness}
+    weights:
+      type: array
+      description: Each entry {criterion, weight, rank}
+    normalized_scores:
+      type: array
+      description: Each entry {alternative, criterion, normalized_score}
+    criteria:
+      type: array
+      description: Each entry {name, type, description}
     danger_threshold: number
     min_flip: number|string
-    critical_weights: array
+    critical_weights:
+      type: array
+      description: Each entry {criterion, flip, direction, new_top (optional)}
   output:
     ranking: array
     top_choice: object
