@@ -927,6 +927,19 @@ pub struct MediaViewer {
     /// The selection popover's focus handle, created lazily on first open
     /// (pure tests construct the viewer without a GPUI context).
     selection_popover_focus: Option<gpui::FocusHandle>,
+    /// S8: the right-click context menu — the completed word range the
+    /// menu's actions apply to (Highlight / Strike out / Copy time /
+    /// Include in reel), opened by a right click on the word surface.
+    /// The range is captured when the menu opens, so the actions never
+    /// read a working selection that has since moved.
+    context_menu: Option<(usize, usize)>,
+    /// The context menu's focus handle, created lazily on first open
+    /// (pure tests construct the viewer without a GPUI context).
+    context_menu_focus: Option<gpui::FocusHandle>,
+    /// S8: the word under the pointer when the right button was pressed —
+    /// the context menu's fallback target (a pending selection or open
+    /// tray owns the range instead).
+    context_menu_fallback: Option<usize>,
     /// S3: the in-transcript search — the typed query, its ordered matches
     /// over working word indices, and the current match. Blank query → no
     /// matches → no marks.
@@ -1063,6 +1076,9 @@ impl MediaViewer {
             drag_last_word: None,
             selection_popover: None,
             selection_popover_focus: None,
+            context_menu: None,
+            context_menu_focus: None,
+            context_menu_fallback: None,
             transcript_search: TranscriptSearch::default(),
             transcript_search_focus: None,
             transcript_search_focus_subscriptions: Vec::new(),
@@ -2557,6 +2573,7 @@ impl MediaViewer {
         self.selection_mode = false;
         self.selection_anchor = None;
         self.selection_popover = None;
+        self.context_menu = None;
         self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
@@ -2630,6 +2647,7 @@ impl MediaViewer {
         self.selection_mode = false;
         self.selection_anchor = None;
         self.selection_popover = None;
+        self.context_menu = None;
         self.reset_transcript_search();
         self.highlight_edit = None;
         self.transcript_follow_task.take();
@@ -2660,6 +2678,7 @@ impl MediaViewer {
         self.transcript_surface = surface;
         self.selection_anchor = None;
         self.selection_popover = None;
+        self.context_menu = None;
         self.highlight_edit = None;
         self.event_selection_anchor = None;
         self.event_selection_span = None;
@@ -3251,6 +3270,7 @@ impl MediaViewer {
                 // (the pending matches are stale in the reloaded view).
                 self.highlight_edit = None;
                 self.selection_popover = None;
+                self.context_menu = None;
                 self.reset_transcript_search();
                 self.transcript = Some(state);
                 self.current_word = None;
@@ -3500,6 +3520,7 @@ impl MediaViewer {
                 // will not run. (Seek clicks keep it: seeking is preview,
                 // the pending range still stands.)
                 self.selection_popover = None;
+                self.context_menu = None;
                 self.selection_anchor = Some(word);
                 self.status = Some(
                     "Click the last word to finish selecting, then create a highlight or cut."
@@ -4347,6 +4368,7 @@ impl MediaViewer {
         // from the tray's Highlight action or a row's Rename never leaves a
         // stale tray rendered beside the modal editor.
         self.selection_popover = None;
+        self.context_menu = None;
         focus.focus(window, cx);
         cx.notify();
     }
@@ -4528,6 +4550,77 @@ impl MediaViewer {
         }
     }
 
+    /// S8: the right-click context menu's target range — the words the
+    /// menu's actions apply to. An open selection popover owns its range;
+    /// otherwise a pending two-click anchor completes to the right-click
+    /// target word, and a bare right click over a word selects that word
+    /// alone. A right click outside the words (no target, no anchor) has
+    /// no range and opens nothing.
+    fn context_menu_range(&self) -> Option<(usize, usize)> {
+        if let Some((start_word, end_word)) = self.selection_popover {
+            return Some((start_word, end_word));
+        }
+        match (self.selection_anchor, self.context_menu_fallback) {
+            (Some(anchor), Some(word)) => Some((anchor.min(word), anchor.max(word))),
+            (Some(anchor), None) => Some((anchor, anchor)),
+            (_, Some(word)) => Some((word, word)),
+            _ => None,
+        }
+    }
+
+    /// S8: a right mouse-up over the word surface opens the context menu
+    /// for the range under the pointer — the pointer alternative to the
+    /// select-then-tray gesture. The menu's actions reuse the tray's
+    /// dispatchers (Highlight opens the label editor, Strike out
+    /// dispatches the strike, Copy time writes the span, Include in reel
+    /// flips or creates membership); the range is captured when the menu
+    /// opens, so the actions never read a working selection that has
+    /// since moved.
+    fn open_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The menu is a word-surface affordance — the events surface has
+        // its own span authoring (tag/redact), not word highlights.
+        if self.transcript_surface != TranscriptSurface::Words {
+            self.status =
+                Some("Right-click the word transcript to choose Highlight or Strike out.".into());
+            cx.notify();
+            return;
+        }
+        let Some((start_word, end_word)) = self.context_menu_range() else {
+            self.status = Some("Right-click a word to choose Highlight or Strike out.".into());
+            cx.notify();
+            return;
+        };
+        // A right click completes a pending two-click selection — the
+        // menu owns the completed range.
+        self.selection_anchor = None;
+        self.context_menu = Some((start_word, end_word));
+        let focus = self
+            .context_menu_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        focus.focus(window, cx);
+        self.status = Some(format!(
+            "Context menu — words {start_word}–{end_word}: Highlight or Strike out."
+        ));
+        cx.notify();
+    }
+
+    /// Dismiss the right-click context menu without acting (its Escape).
+    fn dismiss_context_menu(&mut self, cx: &mut Context<Self>) {
+        if self.context_menu.take().is_some() {
+            self.status = Some("Context menu dismissed.".into());
+            cx.notify();
+        }
+    }
+
+    /// S8: consume the pending selection state the context menu acts on —
+    /// an open tray or a two-click anchor — so the action's range is not
+    /// left dangling after the menu fires.
+    fn clear_pending_selection(&mut self) {
+        self.selection_popover = None;
+        self.selection_anchor = None;
+    }
+
     /// Whether the open view serves the correction tray (S5) — the
     /// index-identical-only actions refuse on such views.
     fn selection_tray_is_correct_only(&self) -> bool {
@@ -4602,6 +4695,20 @@ impl MediaViewer {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        self.open_highlight_editor(start_word, end_word, window, cx);
+    }
+
+    /// Open the label editor over a range to create a highlight — the
+    /// naming step, shared by the selection popover's Highlight arm and
+    /// the right-click context menu's Highlight entry. Index-identical
+    /// views only (the popover_highlight guard's reason).
+    fn open_highlight_editor(
+        &mut self,
+        start_word: usize,
+        end_word: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.selection_tray_is_correct_only() {
             self.status = Some(
                 "Highlight needs an index-identical view — Suggest correction instead.".into(),
@@ -4638,15 +4745,22 @@ impl MediaViewer {
         self.strike_selected_range(start_word, end_word, cx);
     }
 
-    /// The tray's Copy time action: put the selection's time span on the
-    /// clipboard in the panel's marks vocabulary ("in 2.0s out 5.9s" — the
-    /// same readout the trim marks label uses, so one vocabulary serves
-    /// the panel). A view without word timings degrades honestly instead
-    /// of copying a made-up span.
+    /// The tray's Copy time action: close the tray and copy the range's
+    /// time span — the shared range step, also the context menu's Copy
+    /// time entry.
     fn popover_copy_time(&mut self, cx: &mut Context<Self>) {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        self.copy_time_range(start_word, end_word, cx);
+    }
+
+    /// Copy a word range's time span to the clipboard in the panel's
+    /// marks vocabulary ("in 2.0s out 5.9s" — the same readout the trim
+    /// marks label uses, so one vocabulary serves the panel). A view
+    /// without word timings degrades honestly instead of copying a
+    /// made-up span.
+    fn copy_time_range(&mut self, start_word: usize, end_word: usize, cx: &mut Context<Self>) {
         let span = self.transcript.as_ref().and_then(|state| {
             let words = state.words.as_deref()?;
             let first = words.get(start_word)?;
@@ -4793,6 +4907,18 @@ impl MediaViewer {
         let Some((start_word, end_word)) = self.selection_popover.take() else {
             return;
         };
+        self.include_reel_range(start_word, end_word, cx);
+    }
+
+    /// Flip a range's reel membership — the shared range step, also the
+    /// context menu's Include in reel entry. Over a composed clip's range
+    /// it flips that clip's include flag (the row toggle's path — one
+    /// source of truth, no dispatch); over a fresh range it dispatches
+    /// the existing create path with the default label — the reload
+    /// re-matches every researcher highlight into the composer, so the
+    /// one click carries the range into the reel (a clip with no
+    /// highlight behind it would have no reload identity to survive on).
+    fn include_reel_range(&mut self, start_word: usize, end_word: usize, cx: &mut Context<Self>) {
         if self.selection_tray_is_correct_only() {
             self.status = Some(
                 "Include in reel needs an index-identical view — Suggest correction \n                 instead."
@@ -5329,6 +5455,112 @@ impl MediaViewer {
                         })),
                 )
             })
+            .into_any_element()
+    }
+
+    /// S8: the right-click context menu — the pointer alternative to the
+    /// select-then-tray gesture. The entries reuse the tray's dispatchers
+    /// over the captured range: Highlight opens the label editor, Strike
+    /// out dispatches the strike, Copy time writes the span, Include in
+    /// reel flips or creates membership. Escape dismisses.
+    fn render_context_menu(
+        excerpt: &str,
+        include_label: &str,
+        focus: &gpui::FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        div()
+            .id("media-transcript-context-menu")
+            .track_focus(focus)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                if event.keystroke.key.as_str() == "escape" {
+                    this.dismiss_context_menu(cx);
+                }
+                cx.stop_propagation();
+            }))
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .debug_selector(|| "media-transcript-context-menu".into())
+            .child(
+                Label::new(SharedString::from(format!("Right-click — {excerpt}")))
+                    .size(LabelSize::XSmall)
+                    .color(ui::Color::Muted),
+            )
+            .child(
+                div()
+                    .id("media-transcript-context-menu-highlight")
+                    .debug_selector(|| "media-transcript-context-menu-highlight".into())
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Highlight"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some((start_word, end_word)) = this.context_menu {
+                            this.clear_pending_selection();
+                            this.open_highlight_editor(start_word, end_word, window, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-context-menu-strike")
+                    .debug_selector(|| "media-transcript-context-menu-strike".into())
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Strike out"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Error),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some((start_word, end_word)) = this.context_menu {
+                            this.clear_pending_selection();
+                            this.strike_selected_range(start_word, end_word, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-context-menu-copy-time")
+                    .debug_selector(|| "media-transcript-context-menu-copy-time".into())
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from("Copy time"))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some((start_word, end_word)) = this.context_menu {
+                            this.clear_pending_selection();
+                            this.copy_time_range(start_word, end_word, cx);
+                        }
+                    })),
+            )
+            .child(
+                div()
+                    .id("media-transcript-context-menu-include")
+                    .debug_selector(|| "media-transcript-context-menu-include".into())
+                    .cursor_pointer()
+                    .hover(|el| el.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(SharedString::from(include_label))
+                            .size(LabelSize::XSmall)
+                            .color(ui::Color::Default),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some((start_word, end_word)) = this.context_menu {
+                            this.clear_pending_selection();
+                            this.include_reel_range(start_word, end_word, cx);
+                        }
+                    })),
+            )
             .into_any_element()
     }
 
@@ -7228,6 +7460,11 @@ impl MediaViewer {
             .selection_popover_focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
+        // The right-click context menu's focus handle — the same lazy idiom.
+        let context_menu_focus = self
+            .context_menu_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         // The open label editor (S4-3) stays pinned above the list —
         // always in view while a create or rename is pending.
         let pending_editor = self.highlight_edit.clone();
@@ -7333,6 +7570,24 @@ impl MediaViewer {
                 cx.listener(|this, _event, window, cx| {
                     this.word_drag_released(window, cx);
                 }),
+            )
+            // S8: right-click opens the context menu — the pointer
+            // alternative to the select-then-tray gesture. The press
+            // remembers the hovered word as the menu's fallback target;
+            // the release resolves the range (an open tray or pending
+            // anchor wins over the hovered word) and opens the menu.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, _event, _window, cx| {
+                    this.context_menu_fallback = this.drag_last_word;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Right,
+                cx.listener(|this, _event, window, cx| {
+                    this.open_context_menu(window, cx);
+                }),
             );
         // The pinned interaction band (the composed two-pane fix,
         // 2026-11-07): the player, the surface/mode chips, and the search
@@ -7409,6 +7664,24 @@ impl MediaViewer {
                     &selection_popover_focus,
                     cx,
                 )));
+        }
+        // S8: the right-click context menu — pinned above the list like
+        // the selection popover, over the range captured when it opened.
+        if let Some((start_word, end_word)) = self.context_menu {
+            let excerpt = transcript_range_excerpt(state, start_word, end_word);
+            let include_label = if self.reel_clips.iter().any(|clip| {
+                clip.include && clip.start_word == start_word && clip.end_word == end_word
+            }) {
+                "Remove from reel"
+            } else {
+                "Include in reel"
+            };
+            workspace = workspace.child(v_flex().px_3().pt_3().child(Self::render_context_menu(
+                &excerpt,
+                include_label,
+                &context_menu_focus,
+                cx,
+            )));
         }
         workspace = workspace.child(workspace_list);
         let inspector = self.inspector_open.then(|| self.render_inspector(cx));
@@ -8039,6 +8312,7 @@ impl MediaViewer {
             .id(SharedString::from(format!(
                 "media-transcript-block-{block_index}"
             )))
+            .debug_selector(|| format!("media-transcript-block-{block_index}"))
             .min_w_0();
         let marked = current_word
             .is_some_and(|word| block.word_starts.iter().any(|(index, _)| *index == word));
@@ -19987,5 +20261,409 @@ mod viewer_layout_tests {
         );
         cx.debug_bounds("media-events-authoring-section")
             .expect("the authoring section still lays out");
+    }
+
+    /// A real pointer two-click on the rendered words reaches the
+    /// selection path — the click hitboxes map window coordinates to the
+    /// word ranges, and the completed range opens the selection popover.
+    /// [P1] Motivating: the interaction must work through the painted
+    /// surface, not only through the handler methods the unit pins call.
+    #[gpui::test]
+    fn pointer_two_click_selection_opens_the_tray(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-diag-click".into(),
+                media_path: "/generated/diag.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..12)
+                        .map(|index| PaneWord {
+                            word: format!("word{index:02}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: "word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11".into(),
+                paragraph_breaks: Some(vec![5, 11]),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+                correction_edits: Vec::new(),
+                source_words: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+
+        // Test windows start inactive — activate before the pointer path
+        // can dispatch (the production window is active on first click).
+        cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        let paragraph = cx
+            .debug_bounds("media-transcript-paragraph")
+            .expect("block 0 laid out");
+        // Select mode on, then two clicks: anchor word 0, complete on the
+        // word under the second click.
+        cx.update_window_entity(&viewer, |viewer, _, cx| {
+            viewer.selection_mode = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let first = gpui::Point {
+            x: paragraph.left() + gpui::px(4.),
+            y: paragraph.center().y,
+        };
+        let second = gpui::Point {
+            x: paragraph.left() + gpui::px(120.),
+            y: paragraph.center().y,
+        };
+        cx.simulate_mouse_down(first, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(first, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_down(second, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(second, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+
+        viewer.read_with(cx, |viewer, _| {
+            assert!(
+                viewer.selection_anchor.is_none(),
+                "the completed range clears the anchor"
+            );
+            assert_eq!(
+                viewer.selection_popover,
+                Some((0, 1)),
+                "the two pointer clicks complete the ordered range"
+            );
+        });
+        assert!(
+            cx.debug_bounds("media-transcript-selection-popover")
+                .is_some(),
+            "the completed range opens the selection popover"
+        );
+    }
+
+    /// dcterms:identifier: `MediaViewer::context_menu_range`
+    /// expect: an open selection popover owns its range; otherwise a
+    /// pending two-click anchor completes to the hovered word; a bare
+    /// right click over a word selects that word alone; a right click
+    /// outside the words (no hovered word, no anchor) has no range.
+    #[test]
+    fn context_menu_range_prefers_the_open_tray() {
+        let mut viewer = MediaViewer::new();
+        viewer.selection_popover = Some((3, 9));
+        viewer.selection_anchor = Some(1);
+        viewer.context_menu_fallback = Some(7);
+        assert_eq!(
+            viewer.context_menu_range(),
+            Some((3, 9)),
+            "the open tray's range wins"
+        );
+        viewer.selection_popover = None;
+        assert_eq!(
+            viewer.context_menu_range(),
+            Some((1, 7)),
+            "a pending anchor completes to the right-click target"
+        );
+        viewer.selection_anchor = None;
+        assert_eq!(
+            viewer.context_menu_range(),
+            Some((7, 7)),
+            "a bare right click selects the right-click target word"
+        );
+        viewer.context_menu_fallback = None;
+        assert_eq!(
+            viewer.context_menu_range(),
+            None,
+            "a right click outside the words has no range"
+        );
+    }
+
+    /// A right click over the rendered words opens the context menu with
+    /// the Highlight and Strike out entries — the pointer alternative to
+    /// the select-then-tray gesture. [P1] Motivating: the operator's
+    /// "select text, then right-click to choose highlight or strike" is
+    /// reachable through the painted surface.
+    #[gpui::test]
+    fn right_click_opens_context_menu_with_highlight_and_strike(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-context-menu".into(),
+                media_path: "/generated/context-menu.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..12)
+                        .map(|index| PaneWord {
+                            word: format!("word{index:02}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: "word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11".into(),
+                paragraph_breaks: Some(vec![5, 11]),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+                correction_edits: Vec::new(),
+                source_words: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+        cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        let paragraph = cx
+            .debug_bounds("media-transcript-paragraph")
+            .expect("block 0 laid out");
+        let point = gpui::Point {
+            x: paragraph.left() + gpui::px(4.),
+            y: paragraph.center().y,
+        };
+
+        // The pointer rests on a word first (hover tracks it), then the
+        // right click opens the menu for that word.
+        cx.simulate_mouse_move(point, None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_down(point, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(point, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-context-menu").is_some(),
+            "the context menu renders"
+        );
+        assert!(
+            cx.debug_bounds("media-transcript-context-menu-highlight")
+                .is_some(),
+            "the context menu offers Highlight"
+        );
+        assert!(
+            cx.debug_bounds("media-transcript-context-menu-strike")
+                .is_some(),
+            "the context menu offers Strike out"
+        );
+
+        // Choosing Highlight opens the label editor over the range.
+        let highlight = cx
+            .debug_bounds("media-transcript-context-menu-highlight")
+            .expect("Highlight entry laid out");
+        cx.simulate_click(highlight.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        viewer.read_with(cx, |viewer, _| {
+            assert!(
+                matches!(
+                    &viewer.highlight_edit,
+                    Some(HighlightEdit {
+                        kind: HighlightEditKind::Create {
+                            start_word: 0,
+                            end_word: 0
+                        },
+                        ..
+                    })
+                ),
+                "Highlight opens the label editor over the right-clicked word"
+            );
+        });
+    }
+
+    /// Escape dismisses the open context menu without acting — the menu's
+    /// dismissal key, bound on the menu while it holds focus.
+    #[gpui::test]
+    fn context_menu_escape_dismisses(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-context-escape".into(),
+                media_path: "/generated/context-escape.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..12)
+                        .map(|index| PaneWord {
+                            word: format!("word{index:02}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: "word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11".into(),
+                paragraph_breaks: Some(vec![5, 11]),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+                correction_edits: Vec::new(),
+                source_words: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+        cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        let paragraph = cx
+            .debug_bounds("media-transcript-paragraph")
+            .expect("block 0 laid out");
+        let point = gpui::Point {
+            x: paragraph.left() + gpui::px(4.),
+            y: paragraph.center().y,
+        };
+        cx.simulate_mouse_move(point, None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_down(point, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(point, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-context-menu").is_some(),
+            "the context menu opens"
+        );
+        // Escape dismisses the open menu (the menu holds focus).
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        viewer.read_with(cx, |viewer, _| {
+            assert!(
+                viewer.context_menu.is_none(),
+                "Escape dismisses the context menu"
+            );
+        });
+    }
+
+    /// A completed selection followed by a right click opens the context
+    /// menu over that selection, and its Strike out entry dispatches the
+    /// strike path — the operator's "select text, then right-click to
+    /// choose highlight or strike" for the cut half of the pair.
+    #[gpui::test]
+    fn right_click_after_selection_strikes_the_selection(cx: &mut TestAppContext) {
+        init_layout_test_globals(cx);
+        let viewer = cx.new(|_| MediaViewer::new());
+        viewer.update(cx, |viewer, cx| {
+            viewer.transcript = Some(TranscriptPaneState {
+                transcript_id: "t-context-strike".into(),
+                media_path: "/generated/context-strike.wav".into(),
+                gallery_asset_id: None,
+                alignment: "original".into(),
+                alignment_note: None,
+                words: Some(
+                    (0..12)
+                        .map(|index| PaneWord {
+                            word: format!("word{index:02}"),
+                            start_ms: index as u64 * 100,
+                            end_ms: index as u64 * 100 + 90,
+                        })
+                        .collect(),
+                ),
+                working_text: "word00 word01 word02 word03 word04 word05 word06 word07 word08 word09 word10 word11".into(),
+                paragraph_breaks: Some(vec![5, 11]),
+                speaker_spans: None,
+                review: None,
+                layers: Vec::new(),
+                highlights: Vec::new(),
+                strikes: Vec::new(),
+                correction_edits: Vec::new(),
+                source_words: Vec::new(),
+            });
+            viewer.active_tab = ViewerTab::Workspace;
+            viewer.inspector_open = false;
+            cx.notify();
+        });
+        let (_, cx) = cx.add_window_view(|_window, _cx| NarrowPaneHost {
+            viewer: viewer.clone(),
+        });
+        cx.simulate_resize(size(px(480.), px(600.)));
+        cx.run_until_parked();
+        cx.update_window_entity(&viewer, |_, window, _| window.activate_window());
+        cx.run_until_parked();
+        let paragraph = cx
+            .debug_bounds("media-transcript-paragraph")
+            .expect("block 0 laid out");
+        // Select words 3–9 with the two-click gesture, completing the
+        // selection popover, then right-click to reach the context menu.
+        cx.update_window_entity(&viewer, |viewer, _, cx| {
+            viewer.selection_mode = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let first = gpui::Point {
+            x: paragraph.left() + gpui::px(4.),
+            y: paragraph.center().y,
+        };
+        let second = gpui::Point {
+            x: paragraph.left() + gpui::px(120.),
+            y: paragraph.center().y,
+        };
+        cx.simulate_mouse_down(first, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(first, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_down(second, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_up(second, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            viewer.read_with(cx, |viewer, _| viewer.selection_popover.is_some()),
+            "the two clicks complete the selection popover"
+        );
+        // The pointer rests on a word, then the right click opens the menu
+        // over the completed selection.
+        cx.simulate_mouse_move(first, None, gpui::Modifiers::default());
+        cx.run_until_parked();
+        cx.simulate_mouse_down(first, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.simulate_mouse_up(first, gpui::MouseButton::Right, gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("media-transcript-context-menu").is_some(),
+            "the context menu opens over the completed selection"
+        );
+
+        // Strike out dispatches the strike over the selection's range.
+        let strike = cx
+            .debug_bounds("media-transcript-context-menu-strike")
+            .expect("Strike out entry laid out");
+        cx.simulate_click(strike.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        viewer.read_with(cx, |viewer, _| {
+            assert!(
+                viewer
+                    .status
+                    .as_deref()
+                    .is_some_and(|status| { status.contains("Tool invoker not wired") }),
+                "Strike out reached the strike dispatcher: {:?}",
+                viewer.status
+            );
+            assert!(
+                matches!(viewer.edit_request.state, ResourceState::Failed(_)),
+                "the strike refusal failed the edit admission"
+            );
+        });
     }
 }

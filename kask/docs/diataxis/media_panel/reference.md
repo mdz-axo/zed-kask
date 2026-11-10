@@ -501,6 +501,14 @@ screen share on open; the header toggle restores it in one click (:2488).
   reason on the unselectable states; the panel never re-implements the
   server's projection (D5). Highlight rows show an excerpt, with Include in
   reel, Rename, and Delete actions rather than source-word indices.
+- **Right-click context menu (S8)**: the pointer alternative to the
+  select-then-tray gesture — right-click the word surface and the menu
+  offers Highlight / Strike out / Copy time / Include in reel over the
+  range under the pointer (`context_menu_range`: an open selection popover
+  owns its range, else a pending two-click anchor completes to the
+  right-click target word, else that word alone). The entries reuse the
+  tray's dispatchers (`open_highlight_editor`, `strike_selected_range`,
+  `copy_time_range`, `include_reel_range`); Escape dismisses.
 - **Cuts (R2, 2026-10-27)**: the same completed range can be cut instead of
   labeled — from the popover's Cut (or its Delete key) or the editor's Cut
   selection (`strike_selected_range` :3905, `create_workspace_strike`
