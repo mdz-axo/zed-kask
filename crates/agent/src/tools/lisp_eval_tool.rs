@@ -986,4 +986,24 @@ mod tests {
         assert!(error.to_string().contains("env:"));
         assert!(error.to_string().contains("JSON text"));
     }
+
+    // TEMPORARY AUDIT PROBE — remove after diagnosis.
+    #[test]
+    fn zz_audit_probe_form_length_at_decoder() {
+        let atoms = 300usize;
+        let form: String = format!("(list {})", "a ".repeat(atoms).trim_end().to_string());
+        eprintln!("AUDIT form authored chars: {}", form.chars().count());
+        let input: LispEvalToolInput = serde_json::from_value(json!({
+            "form": form,
+            "env": "{\"a\": 1}"
+        }))
+        .expect("decoder must admit the fixture");
+        eprintln!("AUDIT form len after decode: {}", input.form.len());
+        eprintln!("AUDIT env len after decode: {}", input.env.len());
+        let result = super::evaluate_lisp(input);
+        match result {
+            Ok(value) => eprintln!("AUDIT eval OK: {}", value),
+            Err(error) => eprintln!("AUDIT eval ERR: {}", error),
+        }
+    }
 }

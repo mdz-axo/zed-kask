@@ -617,6 +617,25 @@ impl ChatCompletionEventMapper {
                         }
 
                         if let Some(arguments) = function.arguments.clone() {
+                            #[cfg(not(test))]
+                            {
+                                use std::io::Write as _;
+                                if let Ok(mut f) = std::fs::OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open("/tmp/toolcall_debug.log")
+                                {
+                                    let _ = writeln!(
+                                        f,
+                                        "DELTA name={} delta_len={} accumulated_before={} accumulated_after={} delta_head={:?}",
+                                        entry.name,
+                                        arguments.len(),
+                                        entry.arguments.len(),
+                                        entry.arguments.len() + arguments.len(),
+                                        &arguments[..arguments.len().min(120)]
+                                    );
+                                }
+                            }
                             entry.arguments.push_str(&arguments);
                         }
 
@@ -679,6 +698,28 @@ impl ChatCompletionEventMapper {
                     // genuine tool_calls finish is the same cut (the
                     // 2026-09-27 storm came through this door): classify as
                     // truncation, dispatch nothing, emit no stop.
+                    #[cfg(not(test))]
+                    {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/toolcall_debug.log")
+                        {
+                            for call in &self.tool_calls.calls {
+                                let _ = writeln!(
+                                    f,
+                                    "DRAIN name={} accumulated_len={} head={:?} tail={:?}",
+                                    call.name,
+                                    call.arguments.len(),
+                                    &call.arguments[..call.arguments.len().min(200)],
+                                    call.arguments
+                                        .get(call.arguments.len().saturating_sub(200)..)
+                                        .unwrap_or("")
+                                );
+                            }
+                        }
+                    }
                     if let Some(found) = self.first_eof_truncated_tool_call() {
                         self.push_truncation(&mut events, found);
                         return events;
