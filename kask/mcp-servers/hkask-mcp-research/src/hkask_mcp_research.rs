@@ -2472,6 +2472,29 @@ mod tool_surface_tests {
         27,
         tool_surface_is_exactly_27_registered_tools,
     );
+
+    /// expect: every registered tool's live input schema is strict — no
+    /// bare boolean in any schema-valued position — so strict-schema-decoding
+    /// providers (Ollama, Gemini) never reject the whole chat completion.
+    #[test]
+    fn live_router_schemas_are_strict_for_all_registered_tools() {
+        let tools = ResearchServer::tool_router().list_all();
+        assert_eq!(
+            tools.len(),
+            27,
+            "approved surface: 27 registered tools (pinned by tool_surface_is_exactly_27_registered_tools)"
+        );
+        for tool in tools {
+            let schema =
+                serde_json::to_value(&tool.input_schema).expect("router schema serializes");
+            let violations = hkask_types::find_boolean_schema_positions(&schema);
+            assert!(
+                violations.is_empty(),
+                "{} live schema contains bare-boolean positions: {violations:?}",
+                tool.name
+            );
+        }
+    }
 }
 
 /// Source pin (the D31 register style): the response-cache write is

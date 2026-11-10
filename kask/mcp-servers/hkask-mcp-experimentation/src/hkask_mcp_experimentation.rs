@@ -87,6 +87,29 @@ mod tool_surface_tests {
         tool_surface_is_exactly_8_registered_tools,
     );
 
+    /// expect: every registered tool's live input schema is strict — no
+    /// bare boolean in any schema-valued position — so strict-schema-decoding
+    /// providers (Ollama, Gemini) never reject the whole chat completion.
+    #[test]
+    fn live_router_schemas_are_strict_for_all_registered_tools() {
+        let tools = crate::server::ExperimentationServer::experimentation_router().list_all();
+        assert_eq!(
+            tools.len(),
+            8,
+            "approved surface: 8 registered tools (pinned by tool_surface_is_exactly_8_registered_tools)"
+        );
+        for tool in tools {
+            let schema =
+                serde_json::to_value(&tool.input_schema).expect("router schema serializes");
+            let violations = hkask_types::find_boolean_schema_positions(&schema);
+            assert!(
+                violations.is_empty(),
+                "{} live schema contains bare-boolean positions: {violations:?}",
+                tool.name
+            );
+        }
+    }
+
     /// The 2026-10-19 scientific-design evolution (task `f1a90cd2`) added
     /// `design_spec`, `scientific_headroom` and `scientific_outcome`. A tool's
     /// wire schema is generated from its request struct, so those fields are

@@ -11,6 +11,7 @@ use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
+use hkask_types::agent_paths;
 use language::language_settings::{self, FormatOnSave};
 use language::{Buffer, BufferEditSource, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
@@ -20,13 +21,14 @@ use reindent::{IndentDelta, Reindenter, compute_indent_delta, compute_rest_inden
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::{SearchMatch, SearchMatches, StreamingFuzzyMatcher};
 use streaming_parser::{EditEvent, StreamingParser, WriteEvent};
 use text::ToOffset;
 use ui::SharedString;
+use util::paths;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
 
@@ -1274,6 +1276,30 @@ async fn resolve_global_skill_path_for_edit_session(
     Ok(Some(abs_path))
 }
 
+/// If `path` lives under `artifacts_dir`, name the MCP server that owns its
+/// `{server}-mcp/` folder. The file tools cannot write there, but naming the
+/// owner turns the refusal into an actionable pointer instead of a dead end.
+/// Returns `None` when the path is not under a server's folder.
+fn owning_server_hint_for(path: &Path, artifacts_dir: &Path) -> Option<String> {
+    let normalized_path = paths::normalize_path(path);
+    let normalized_artifacts = paths::normalize_path(artifacts_dir);
+    let relative = normalized_path.strip_prefix(&normalized_artifacts).ok()?;
+    let first = relative.components().next()?;
+    let first = first.as_os_str().to_string_lossy();
+    let server = first.strip_suffix("-mcp")?;
+    if server.is_empty() {
+        None
+    } else {
+        Some(server.to_string())
+    }
+}
+
+/// The owning-server hint for `path` against the process artifacts root.
+fn owning_server_hint(path: &Path) -> Option<String> {
+    let artifacts_dir = agent_paths::resolve_artifacts_dir();
+    owning_server_hint_for(path, &artifacts_dir)
+}
+
 fn resolve_path(
     mode: EditSessionMode,
     path: &PathBuf,
@@ -1334,12 +1360,21 @@ fn resolve_path(
                     )
                     .is_none()
                     {
-                        return Err(
+                        // The refusal names the owning MCP server when the path
+                        // lives under the artifacts tree, so the agent can
+                        // switch to the tool that actually owns the path
+                        // instead of retrying the sandboxed write.
+                        let mut message = String::from(
                             "Can't create file: the parent directory is outside the file-tool \
                              sandbox — write via terminal (heredoc) or the owning MCP server's \
-                             tools"
-                                .to_string(),
+                             tools",
                         );
+                        if let Some(server) = owning_server_hint(&parent_path) {
+                            message.push_str(&format!(
+                                " The `{server}` MCP server owns this path; use its tools."
+                            ));
+                        }
+                        return Err(message);
                     }
                     return Err(
                         "Can't create file: parent directory doesn't exist in the project — \
@@ -1378,4 +1413,65 @@ pub(crate) async fn test_resolve_path(
     cx: &mut gpui::TestAppContext,
 ) -> Result<ProjectPath, String> {
     cx.update(|cx| resolve_path(*mode, &PathBuf::from(path), project, cx))
+}
+
+#[cfg(test)]
+mod owning_server_hint_tests {
+    use super::*;
+
+    fn hint(path: &str, artifacts: &str) -> Option<String> {
+        owning_server_hint_for(Path::new(path), Path::new(artifacts))
+    }
+
+    #[test]
+    fn names_the_owning_server_for_an_artifacts_path() {
+        assert_eq!(
+            hint(
+                "/home/user/Documents/zk-data/corpus-mcp/cache/run.json",
+                "/home/user/Documents/zk-data"
+            ),
+            Some("corpus".to_string())
+        );
+    }
+
+    #[test]
+    fn names_the_owning_server_for_a_nested_artifacts_path() {
+        assert_eq!(
+            hint(
+                "/home/user/Documents/zk-data/media-mcp/generated/clip.mp4",
+                "/home/user/Documents/zk-data",
+            ),
+            Some("media".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_outside_the_artifacts_tree() {
+        assert_eq!(
+            hint("/outside/data/new.txt", "/home/user/Documents/zk-data"),
+            None
+        );
+    }
+
+    #[test]
+    fn returns_none_for_a_non_server_artifacts_child() {
+        assert_eq!(
+            hint(
+                "/home/user/Documents/zk-data/INDEX.md",
+                "/home/user/Documents/zk-data"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn returns_none_when_the_artifacts_root_is_a_prefix_not_a_component() {
+        assert_eq!(
+            hint(
+                "/home/user/Documents/zk-data-adjacent/corpus-mcp/x",
+                "/home/user/Documents/zk-data"
+            ),
+            None
+        );
+    }
 }

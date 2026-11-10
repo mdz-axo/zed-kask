@@ -329,6 +329,29 @@ mod tool_surface_tests {
         tool_surface_is_exactly_25_registered_tools,
     );
 
+    /// expect: every registered tool's live input schema is strict — no
+    /// bare boolean in any schema-valued position — so strict-schema-decoding
+    /// providers (Ollama, Gemini) never reject the whole chat completion.
+    #[test]
+    fn live_router_schemas_are_strict_for_all_registered_tools() {
+        let tools = CorpusServer::combined_router().list_all();
+        assert_eq!(
+            tools.len(),
+            25,
+            "approved surface: 25 registered tools (pinned by tool_surface_is_exactly_25_registered_tools)"
+        );
+        for tool in tools {
+            let schema =
+                serde_json::to_value(&tool.input_schema).expect("router schema serializes");
+            let violations = hkask_types::find_boolean_schema_positions(&schema);
+            assert!(
+                violations.is_empty(),
+                "{} live schema contains bare-boolean positions: {violations:?}",
+                tool.name
+            );
+        }
+    }
+
     /// Schema-shape pins for the calibration/grounding tools — the
     /// load-bearing required fields downstream stages depend on. Split
     /// from the count pin so each invariant fails with its own name.

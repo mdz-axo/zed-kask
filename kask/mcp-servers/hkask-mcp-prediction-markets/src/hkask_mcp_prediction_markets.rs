@@ -1316,4 +1316,27 @@ mod tool_surface_tests {
         28,
         tool_surface_is_exactly_28_registered_tools,
     );
+
+    /// expect: every registered tool's live input schema is strict — no
+    /// bare boolean in any schema-valued position — and the arbitrary-JSON
+    /// inputs render as JSON-text strings, never as open schemas.
+    #[test]
+    fn live_router_schemas_are_strict_for_all_registered_tools() {
+        let tools = PredictionMarketsServer::combined_router().list_all();
+        assert_eq!(
+            tools.len(),
+            28,
+            "approved surface: 28 registered tools (pinned by tool_surface_is_exactly_28_registered_tools)"
+        );
+        for tool in tools {
+            let schema =
+                serde_json::to_value(&tool.input_schema).expect("router schema serializes");
+            let violations = hkask_types::find_boolean_schema_positions(&schema);
+            assert!(
+                violations.is_empty(),
+                "{} live schema contains bare-boolean positions: {violations:?}",
+                tool.name
+            );
+        }
+    }
 }
