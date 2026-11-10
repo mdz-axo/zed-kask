@@ -2737,11 +2737,6 @@
         "available_models": [],
         "auto_discover": true,
       },
-      "together": {
-        "api_url": "https://api.together.ai/v1",
-        "available_models": [],
-        "auto_discover": true,
-      },
     },
     "opencode": {
       "api_url": "https://opencode.ai/zen",

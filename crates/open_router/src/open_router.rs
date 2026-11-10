@@ -974,7 +974,7 @@ mod tests {
                 }});
                 if with_metadata {
                     body["error"]["metadata"] = serde_json::json!({
-                        "provider_name": "Together", "raw": raw,
+                        "provider_name": "Fireworks", "raw": raw,
                         "unrelated_metadata": "must not be exposed"
                     });
                 }
@@ -1032,7 +1032,7 @@ mod tests {
                 assert!(message.starts_with("Provider returned error"));
                 assert!(!message.contains("must not be exposed"));
                 if with_metadata {
-                    assert!(message.contains("Together"), "{message}");
+                    assert!(message.contains("Fireworks"), "{message}");
                     assert!(message.contains(&raw), "{message}");
                     assert_eq!(
                         category,
