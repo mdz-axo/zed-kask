@@ -1123,18 +1123,24 @@ fn save_llm_provider_form(
                     let language_models = settings.language_models.get_or_insert_default();
                     match models {
                         ParsedModels::OpenAi(available_models) => {
-                            language_models
-                                .openai_compatible
-                                .get_or_insert_default()
-                                .insert(
-                                    Arc::from(provider_name.as_str()),
-                                    OpenAiCompatibleSettingsContent {
-                                        api_url: api_url.clone(),
-                                        available_models,
-                                        custom_headers: None,
-                                        auto_discover: true,
-                                    },
-                                );
+                            let openai_compatible =
+                                language_models.openai_compatible.get_or_insert_default();
+                            // Preserve an existing entry's shared-slot override —
+                            // the form does not expose `api_key_url`, so a re-save
+                            // must not silently drop it.
+                            let api_key_url = openai_compatible
+                                .get(provider_name.as_str())
+                                .and_then(|existing| existing.api_key_url.clone());
+                            openai_compatible.insert(
+                                Arc::from(provider_name.as_str()),
+                                OpenAiCompatibleSettingsContent {
+                                    api_url: api_url.clone(),
+                                    api_key_url,
+                                    available_models,
+                                    custom_headers: None,
+                                    auto_discover: true,
+                                },
+                            );
                         }
                         ParsedModels::Anthropic(available_models) => {
                             language_models

@@ -113,6 +113,21 @@ pub struct ListModelsResponse {
     pub data: Vec<DiscoveredModel>,
 }
 
+/// The two `/v1/models` root shapes. `Enveloped` is the standard OpenAI
+/// form (`{"object": "list", "data": [...]}`); `Bare` is a bare array of
+/// model objects — Together's `/v1/models` returns the bare form (observed
+/// live 2026-11-09: the envelope parse failed with `invalid type: map,
+/// expected a sequence at line 1 column 1`, because a struct deserialized
+/// from a sequence assigns fields positionally — field `data` received
+/// element #0, a model object). `Enveloped` is tried first so the documented
+/// shape stays primary for every provider that serves it.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ModelsResponse {
+    Enveloped(ListModelsResponse),
+    Bare(Vec<DiscoveredModel>),
+}
+
 /// Fetch the list of models from an OpenAI-compatible `/v1/models` endpoint.
 ///
 /// `api_url` should be the base URL the provider uses for chat completions
@@ -154,12 +169,16 @@ pub async fn list_models(
         .map_err(|e| ListModelsError::ReadResponse(e.into()))?;
 
     if response.status().is_success() {
-        let mut parsed: ListModelsResponse =
+        let parsed: ModelsResponse =
             serde_json::from_str(&body).map_err(ListModelsError::DeserializeResponse)?;
-        for model in parsed.data.iter_mut() {
+        let mut models = match parsed {
+            ModelsResponse::Enveloped(envelope) => envelope.data,
+            ModelsResponse::Bare(models) => models,
+        };
+        for model in models.iter_mut() {
             model.resolve_provider_fallbacks();
         }
-        Ok(parsed.data)
+        Ok(models)
     } else {
         Err(ListModelsError::ApiError {
             status: response.status().as_u16(),
@@ -450,5 +469,60 @@ mod tests {
             }
             other => panic!("expected ApiError, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_parses_bare_array_models_response() {
+        // Together's `/v1/models` returns a bare JSON array (observed live
+        // 2026-11-09). Against the envelope struct alone, serde's
+        // struct-from-seq deserialization hands field `data` element #0 — a
+        // model object — producing the live error
+        // `invalid type: map, expected a sequence at line 1 column 1`
+        // (observed RED against the pre-fix parse).
+        let body = json!([
+            { "id": "zai-org/GLM-5.2", "object": "model", "created": 1, "owned_by": "together" },
+            { "id": "Qwen/Qwen3.6-Plus", "object": "model", "created": 1, "owned_by": "together" }
+        ]);
+        let parsed: ModelsResponse = serde_json::from_str(&body.to_string()).unwrap();
+        let models = match parsed {
+            ModelsResponse::Enveloped(_) => panic!("a bare array must parse as the Bare variant"),
+            ModelsResponse::Bare(models) => models,
+        };
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "zai-org/GLM-5.2");
+        // No `supported_parameters` field → unknown, not unsupported (the
+        // standard-shape default): tool calling stays available.
+        assert!(models[0].supports_tools());
+        assert!(!models[0].supports_images());
+    }
+
+    #[test]
+    fn test_list_models_parses_bare_array_response() {
+        use futures::executor::block_on;
+
+        let http_client = FakeHttpClient::create(|_| async move {
+            let body = serde_json::json!([
+                { "id": "zai-org/GLM-5.2", "object": "model", "created": 1, "owned_by": "together" },
+                { "id": "Qwen/Qwen3.6-Plus", "object": "model", "created": 1, "owned_by": "together" }
+            ]);
+            Ok(http_client::Response::builder()
+                .status(200)
+                .header("content-type", "application/json")
+                .body(AsyncBody::from(body.to_string()))
+                .unwrap())
+        });
+
+        let extra_headers = CustomHeaders::default();
+        let result = block_on(list_models(
+            http_client.as_ref(),
+            "https://api.together.ai/v1",
+            "test-key",
+            &extra_headers,
+        ));
+
+        let models = result.unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "zai-org/GLM-5.2");
+        assert!(models[0].supports_tools());
     }
 }

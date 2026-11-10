@@ -121,11 +121,18 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     },
     // Together AI serves open-weight models through an OpenAI-compatible
     // API (chat completions at `/chat/completions`, model discovery at
-    // `/models`, embeddings at `/embeddings`). Operators must set
-    // `TOGETHER_API_KEY` (via Settings → AI → LLM Providers, which writes the
-    // keychain slot at the provider `api_url`, or via the env var). No MCP
-    // child declares `TOGETHER_API_KEY` yet, so `credential_urls_for_mcp`
-    // excludes it until one does.
+    // `/models` — a bare JSON array, not the OpenAI envelope). Operators
+    // must set `TOGETHER_API_KEY` (via Settings → AI → LLM Providers, which
+    // writes the keychain slot at the provider `api_url`, or via the env
+    // var). No MCP child declares `TOGETHER_API_KEY` yet, so
+    // `credential_urls_for_mcp` excludes it until one does.
+    // `serves_embeddings` is FALSE (corrected 2026-11-09): the OpenAI
+    // compatibility matrix documents the `/embeddings` route, but the
+    // serverless catalog currently offers no embedding models
+    // (docs.together.ai "Available models", read 2026-11-09) — an
+    // unservable embedding port would announce semantic recall and then
+    // fail on every call (the D69 eligibility semantics). Flip it back if
+    // the catalog gains embedding models.
     InferenceProviderDescriptor {
         id: "together",
         name: "Together AI",
@@ -133,7 +140,7 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "TOGETHER_API_KEY",
         credential_key: "together",
         dashboard_url: "https://api.together.ai/",
-        serves_embeddings: true,
+        serves_embeddings: false,
     },
 ];
 
@@ -700,6 +707,11 @@ mod tests {
         assert!(
             super::embedding_provider_descriptor("RunPod/kask-ocr").is_none(),
             "'RunPod/kask-ocr' must not resolve an embedding port (no /embeddings endpoint)"
+        );
+        assert!(
+            super::embedding_provider_descriptor("together/BAAI/bge-m3").is_none(),
+            "'together/BAAI/bge-m3' must not resolve an embedding port — the serverless \
+             catalog currently offers no embedding models (serves_embeddings: false)"
         );
     }
 

@@ -35,6 +35,9 @@ const API_KEY_PLACEHOLDER: &str = "000000000000000000000000000000000000000000000
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
+    /// The keychain URL the key lives under; `None` means the entry's own
+    /// `api_url` (the upstream default). Set by the `api_key_url` setting.
+    pub api_key_url: Option<String>,
     pub available_models: Vec<AvailableModel>,
     pub custom_headers: CustomHeaders,
     /// Whether to auto-discover models via the provider's `/v1/models` endpoint.
@@ -45,6 +48,10 @@ pub struct OpenAiCompatibleSettings {
 impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
     fn api_url(&self) -> &str {
         &self.api_url
+    }
+
+    fn credential_url(&self) -> &str {
+        self.api_key_url.as_deref().unwrap_or(&self.api_url)
     }
 }
 
@@ -85,10 +92,13 @@ impl DiscoveryState {
         let state_read = state.read(cx);
         let auto_discover = state_read.settings.auto_discover;
         let api_url = state_read.settings.api_url.clone();
+        // The key lives at the credential slot — `api_key_url` when set (a
+        // shared vendor slot), the entry's own `api_url` otherwise.
+        let credential_url = state_read.settings.credential_url().to_string();
         let extra_headers = state_read.settings.custom_headers.clone();
         let api_key = state_read
             .api_key_state
-            .key(&api_url)
+            .key(&credential_url)
             .map(|k| k.to_string());
         // Release the borrow before spawning the task.
         let _ = state_read;
@@ -953,6 +963,7 @@ mod tests {
                             Arc::from("TestDiscovery"),
                             settings::OpenAiCompatibleSettingsContent {
                                 api_url: "https://example.test/v1".to_string(),
+                                api_key_url: None,
                                 available_models: Vec::new(),
                                 custom_headers: None,
                                 auto_discover: true,
@@ -1029,6 +1040,103 @@ mod tests {
         assert_eq!(notified.load(Ordering::SeqCst), 1);
         assert_eq!(requests.load(Ordering::SeqCst), 1);
         drop(observer);
+    }
+
+    /// D104 pin: an `openai_compatible` entry with `api_key_url` set reads
+    /// AND writes its credential at the overridden slot — two provider
+    /// entries of one vendor (a dedicated-endpoint host beside the
+    /// serverless host) share ONE keychain location, so a rotation at either
+    /// provider reaches both. The entry's own `api_url` never receives a
+    /// duplicate key.
+    #[gpui::test]
+    async fn api_key_url_override_reads_and_writes_the_shared_slot(cx: &mut gpui::TestAppContext) {
+        use credentials_provider::test_support::FakeCredentialsProvider;
+        use gpui::UpdateGlobal as _;
+        use http_client::FakeHttpClient;
+        use settings::SettingsStore;
+
+        let credentials = Arc::new(FakeCredentialsProvider::default());
+        {
+            let mut state = credentials.state.lock();
+            state.keys.insert(
+                "https://api.together.ai/v1".to_string(),
+                b"shared-key".to_vec(),
+            );
+        }
+
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            crate::AllLanguageModelSettings::register(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .openai_compatible = Some(
+                        [(
+                            Arc::from("TestDedicated"),
+                            settings::OpenAiCompatibleSettingsContent {
+                                api_url: "https://api-inference.example.test/v1".to_string(),
+                                api_key_url: Some("https://api.together.ai/v1".to_string()),
+                                available_models: Vec::new(),
+                                custom_headers: None,
+                                auto_discover: false,
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
+                    );
+                });
+            });
+            OpenAiCompatibleLanguageModelProvider::new(
+                Arc::from("TestDedicated"),
+                FakeHttpClient::create(|_| async move {
+                    panic!("no HTTP request may fire: auto_discover is false")
+                }),
+                credentials.clone(),
+                cx,
+            )
+        });
+
+        // The key lives at the OVERRIDE slot; the dedicated entry
+        // authenticates from it without any key at its own api_url.
+        cx.update(|cx| provider.authenticate(cx))
+            .await
+            .expect("authenticate must resolve the shared slot");
+        cx.update(|cx| {
+            assert!(
+                provider.is_authenticated(cx),
+                "the dedicated entry must authenticate from the shared slot"
+            );
+        });
+
+        // Rotating the key at the dedicated entry writes the SAME shared
+        // slot — never a duplicate at its own api_url.
+        provider
+            .state
+            .update(cx, |state, cx| {
+                state.set_api_key(Some("rotated".to_string()), cx)
+            })
+            .await
+            .unwrap();
+        {
+            let state = credentials.state.lock();
+            assert_eq!(
+                state
+                    .keys
+                    .get("https://api.together.ai/v1")
+                    .map(|value| value.as_slice()),
+                Some(&b"rotated"[..]),
+                "a rotation must write the shared slot"
+            );
+            assert!(
+                !state
+                    .keys
+                    .contains_key("https://api-inference.example.test/v1"),
+                "the entry's own api_url slot must not receive a duplicate key"
+            );
+        }
     }
 
     /// D76 pin: the discovery-failure warn must format the error with
