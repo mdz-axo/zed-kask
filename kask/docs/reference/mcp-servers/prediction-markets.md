@@ -18,7 +18,7 @@ mds_categories: [domain, composition, lifecycle]
 > `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 16 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both
 > merged into `combined_router()` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:71`.
 > The count is pinned end-to-end by `tool_surface_is_exactly_28_registered_tools`
-> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1326`). The
+> (`kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs:1462`). The
 > operational surface is the set of market tools; the status tool is listed under
 > Independent.
 
@@ -89,16 +89,16 @@ feed the loop.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_lookup` | Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated `MarketRecord`s — every probability paired with spread/volume/calibration/volatility/reliability tier and ontology mapping; Polymarket records carry `clob_asset_ids` for `market_subscribe_resolutions`. Never a bare probability. | `query`, `category`, `limit` |
-| `market_match` | Resolve a scenario or forecasting question to candidate markets about the same underlying event; confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuses low-confidence matches rather than anchoring on a wrong-event market. | `question`, `limit` |
+| `market_lookup` | Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated `MarketRecord`s — every probability paired with spread/volume/calibration/volatility/reliability tier and ontology mapping; Polymarket records carry `clob_asset_ids` for `market_subscribe_resolutions`. Never a bare probability. Searches a bounded pool (the first 100 open Polymarket events and the first 200 open Kalshi markets), not the whole of either exchange. | `query`, `category`, `limit` |
+| `market_match` | Resolve a scenario or forecasting question to candidate markets about the same underlying event; confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuses low-confidence matches rather than anchoring on a wrong-event market. Candidates come from the same bounded pool as `market_lookup`, so no match is not evidence that no market exists. | `question`, `limit` |
 | `market_ontology_map` | Return the dual-axis (PKO process + Dublin Core state) ontology mapping document annotating every `MarketRecord`, including market lifecycle stages and field-level mappings. Fetch before interpreting market records. | — |
 
 ### Calibration (sense and evaluate)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_calibration` | Calibration reading (Brier score, sample size, staleness) for a domain or series bucket, computed from resolved observations via `hkask-forecast`. No-data buckets return `stale: true`. | `bucket` |
-| `market_record_resolution` | Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store — the manual sense arm of the feedback loop. | `bucket`, `probability`, `outcome` |
+| `market_calibration` | Calibration reading (Brier score, sample size, staleness) for a domain or series bucket, computed from resolved observations via `hkask-forecast`. The bucket name is canonicalized the same way the writers store it ("Elections" reads `politics`). No-data buckets return `stale: true`. | `bucket` |
+| `market_record_resolution` | Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store — the manual sense arm of the feedback loop. The response's `journal_saved` is `true`, `false` (recorded in memory only), or `null` (no journal configured). | `bucket`, `probability`, `outcome` |
 | `market_check_resolutions` | Two-phase scan: (1) snapshot open markets' current prices as pre-resolution probability-at-observation (earliest per market kept), (2) consume snapshots for newly resolved markets. Resolutions without a snapshot are counted (`resolved_without_snapshot`) and skipped — the post-resolution price is never scored. Idempotent. Response carries per-provider dispositions, new-snapshot identities (`snapshot_markets`: market key, calibration bucket, probability), a `series_scope` echo, and a `zero_scan_reason` whenever nothing new was recorded — never a silent zero. The optional `series` scopes the Kalshi phases only; the Polymarket leg is unscoped. | `series`, `limit` |
 | `market_subscribe_resolutions` | Subscribe to Polymarket's public market channel for resolution events on given CLOB asset IDs; events arrive as notifications and do NOT write calibration observations. | `asset_ids`, `bucket`, `max_resolutions` |
 
@@ -106,20 +106,20 @@ feed the loop.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years measured from observation time (now) — never stale quote timestamps. Kalshi series ticker or Polymarket event slug; unparsable deadlines sort last with null maturity — never fabricated. | `series` |
+| `market_ladder` | Ladder of contracts in a series ordered by deadline, each annotated with `time_to_maturity` in fractional years measured from observation time (now) — never stale quote timestamps. Kalshi series ticker or Polymarket event slug (looked up by slug, not filtered from the first page of open events); unparsable deadlines sort last with null maturity — never fabricated. An empty ladder carries a `note` saying whether a platform failed or neither knows the identifier. | `series` |
 | `market_residual` | Decompose a niche market's movement into base-event exposure (log-odds beta) plus idiosyncratic residual. Refuses with `insufficient_overlap` below 10 shared observations; output carries `r_squared` and `observations`. | `market_ticker`, `base_ticker`, `window_days` |
 
 ### History
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_history` | Fetch a market's price history with `realized_variance` populated (log-odds step variance) plus the volatility regime (smooth vs jump-like). Kalshi: candlesticks; Polymarket: CLOB prices-history. | `market`, `source`, `window_days` |
+| `market_history` | Fetch a market's price history with `realized_variance` populated (log-odds step variance) plus the volatility regime (smooth vs jump-like). Kalshi: daily closes over the window; Polymarket: hourly CLOB points over the last day — the response's `sampling` names which, and the two are not comparable. An unknown Kalshi ticker is `not_found`. | `market`, `source`, `window_days` |
 
 ### Microstructure
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_volatility` | DR-AS structural volatility forecast for a prediction-market contract (arXiv:2607.08199): conditional variance = p(1−p)/τ + K·ν(V)·s²/4, its deadline-resolution and adverse-selection decomposition, and a 95% prediction interval. All config fields optional with paper defaults — omitted `spread` contributes 0 to the adverse-selection channel, `k` defaults to 0.12 (conservative midpoint from the paper's pooled Kalshi panel), `activity_proxy` defaults to √V, `horizon_hours` to 1.0 (the paper's hourly grid). | `price`, `hours_to_resolution`, `spread`, `volume`, `horizon_hours`, `k`, `activity_proxy` |
+| `market_volatility` | DR-AS structural volatility forecast for a prediction-market contract (arXiv:2607.08199): conditional variance = p(1−p)/τ + K·ν(V)·s²/4, its deadline-resolution and adverse-selection decomposition, and a 95% prediction interval. All config fields optional — omitted `spread` contributes 0 to the adverse-selection channel, `k` defaults to 0.12 (this server's heuristic, not a paper estimate; must be >= 0), `activity_proxy` defaults to √V (the paper's), `horizon_hours` to 1.0 (the paper's hourly grid). Negative or non-finite `k`, `spread` or `volume` is `invalid_argument`. | `price`, `hours_to_resolution`, `spread`, `volume`, `horizon_hours`, `k`, `activity_proxy` |
 
 ### Economic data — FRED
 
@@ -128,14 +128,14 @@ Five tools wrapping the FRED (Federal Reserve Economic Data) API, defined in
 `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data/fred.rs`. **All five require the `HKASK_FRED_API_KEY`
 credential** — read from `ctx.credentials` at
 `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` and enforced by `require_api_key`
-(`kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data/fred.rs:77-80`), which returns `MissingApiKey` when the
+(`kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data/fred.rs:83-86`), which returns `MissingApiKey` when the
 key is absent or empty (a missing credential is an authorization failure,
 not a silent fallback).
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `fred_search_series` | Search FRED economic data series by text. Returns series IDs with title, units, frequency, and popularity. | `search_text`, `category_id`, `tag_names`, `limit`, `order_by` |
-| `fred_get_observations` | Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency, and units transformations. | `series_id`, `observation_start`, `observation_end`, `frequency`, `units` |
+| `fred_get_observations` | Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency aggregation (`d`, `w`, `bw`, `m`, `q`, `sa`, `a`; the long names are accepted) and units transformations (`lin`, `chg`, `ch1`, `pch`, `pc1`, `pca`, `cch`, `cca`, `log`); a value outside those sets is `invalid_argument` naming them. The response's `units` is the transformation applied. | `series_id`, `observation_start`, `observation_end`, `frequency`, `units`, `limit` |
 | `fred_get_series_info` | Get FRED series metadata: title, units, frequency, seasonal adjustment, date range, notes. | `series_id` |
 | `fred_list_categories` | Browse FRED category tree. Returns child categories for a given parent (default: root). Use to discover economic data by domain. | `category_id` |
 | `fred_get_release` | Get FRED release metadata (name, description, last_updated, next_release) and its series list. Use to track data release schedules. | `release_id` |
@@ -150,9 +150,9 @@ countries, the global complement to FRED's US-centric data.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `wb_search_indicators` | Search World Bank indicators by text. Returns indicator IDs with name, unit, source, and topics. Covers ~29,500 indicators (global, no API key needed). | `query`, `topic_id`, `limit` |
+| `wb_search_indicators` | Search World Bank indicators by name. The API has no text search: without `topic_id` only the first 1,000 of ~29,500 indicators are scanned and the response's `note` says so; with `topic_id` the whole topic is scanned. Returns indicator IDs with name, unit, source, and topics. | `query`, `topic_id`, `limit` |
 | `wb_get_observations` | Fetch World Bank time series observations by indicator ID and country code. Returns date-value pairs. | `indicator_id`, `country_code`, `date_start`, `date_end`, `limit` |
-| `wb_list_countries` | List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic', 'mic', 'lic'. | `income_group`, `limit` |
+| `wb_list_countries` | List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic', 'mic' (lower + upper middle), 'lmc', 'umc', 'lic'. `limit` applies after filtering; `matched` reports the total. | `income_group`, `limit` |
 | `wb_list_topics` | Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with `wb_search_indicators` topic_id filter. | — |
 | `wb_get_indicator_info` | Get World Bank indicator metadata: name, unit, source, description, source organization, and topics. | `indicator_id` |
 
@@ -166,16 +166,16 @@ Bank Indicators API.
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `dbnomics_search` | Search DBnomics economic time series by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.). 1.7B+ series, no API key needed. | `query`, `limit`, `offset` |
+| `dbnomics_search` | Search DBnomics by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.). Returns the datasets containing matching series (`provider_code`, `dataset_code`, `dataset_name`, `nb_matching_series`). No API key needed. | `query`, `limit`, `offset` |
 | `dbnomics_list_providers` | List DBnomics statistical providers (700+ institutions: IMF, OECD, ECB, INSEE, World Bank, etc.). Returns provider code, name, region, and website. | `limit`, `offset` |
 | `dbnomics_get_dataset` | Get DBnomics dataset metadata (name, description, dimensions, last update). Supports the `:latest` release alias (e.g., dataset_code='WEO:latest'). | `provider_code`, `dataset_code` |
-| `dbnomics_get_series` | Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}]. | `provider_code`, `dataset_code`, `series_code`, `observations`, `limit` |
+| `dbnomics_get_series` | Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}] — the most recent `limit`, with `total_observations` reporting the full count. An unknown series or dataset is `not_found`. | `provider_code`, `dataset_code`, `series_code`, `observations`, `limit` |
 
 ### EQM rationale scoring
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `market_score_rationale` | Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026), Forecasting Research Institute. Cost: ~$0.007 per rationale. | `rationale`, `forecast_probability`, `question` |
+| `market_score_rationale` | Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026), Forecasting Research Institute. One decision-model call per rationale; the response's `usage` block reports the tokens billed. | `rationale`, `forecast_probability`, `question` |
 
 Unlike the data wrappers, this tool forwards to the `eqm` module
 (`kask/mcp-servers/hkask-mcp-prediction-markets/src/eqm.rs`, `eqm::score_rationale` at `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs:316-338`) and

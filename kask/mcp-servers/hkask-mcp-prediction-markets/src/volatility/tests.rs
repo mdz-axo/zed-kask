@@ -95,6 +95,52 @@ fn dras_rejects_degenerate_inputs() {
     assert!(forecast(bad_delta, DrasConfig::default(), 0.0).is_none());
 }
 
+/// mcp-tool-review PM2-13 pin: a forecast is never a negative variance or
+/// a NaN volatility. Live 2026-11-10, `k = -100` returned
+/// `conditional_variance: -1.25` and `conditional_volatility: null` as a
+/// success.
+#[test]
+fn dras_rejects_negative_or_non_finite_scale_spread_and_volume() {
+    let inputs = VolatilityInputs {
+        price: 0.5,
+        hours_to_resolution: 24.0,
+        spread: Some(0.04),
+        volume: 1000.0,
+    };
+    let with_k = |k: f64| DrasConfig {
+        k,
+        ..DrasConfig::default()
+    };
+    assert!(
+        forecast(inputs, with_k(-100.0), 1.0).is_none(),
+        "negative K"
+    );
+    assert!(forecast(inputs, with_k(f64::NAN), 1.0).is_none(), "NaN K");
+    assert!(
+        forecast(inputs, with_k(0.0), 1.0).is_some(),
+        "K = 0 is valid"
+    );
+
+    let negative_spread = VolatilityInputs {
+        spread: Some(-0.04),
+        ..inputs
+    };
+    assert!(forecast(negative_spread, DrasConfig::default(), 1.0).is_none());
+    let infinite_volume = VolatilityInputs {
+        volume: f64::INFINITY,
+        ..inputs
+    };
+    assert!(forecast(infinite_volume, DrasConfig::default(), 1.0).is_none());
+    let nan_tau = VolatilityInputs {
+        hours_to_resolution: f64::NAN,
+        ..inputs
+    };
+    assert!(forecast(nan_tau, DrasConfig::default(), 1.0).is_none());
+
+    let fc = forecast(inputs, DrasConfig::default(), 1.0).expect("valid inputs");
+    assert!(fc.conditional_variance >= 0.0 && fc.conditional_volatility.is_finite());
+}
+
 #[test]
 fn dras_scales_linearly_with_horizon() {
     // The conditional variance scales linearly with Δ (the forecast horizon).

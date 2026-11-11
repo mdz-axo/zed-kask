@@ -19,11 +19,12 @@ pub struct MarketOntologyMapRequest {}
 
 /// Request for market_lookup: free-text query with optional filters.
 ///
-/// Matching is substring-based over event title/slug/description until T4c's
-/// dedicated matcher lands; T4c replaces this tool's retrieval internals.
+/// Matching is a literal substring; question-to-market resolution is
+/// `market_match`'s job.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketLookupRequest {
-    /// Free-text query (case-insensitive substring over title/slug/description).
+    /// Free-text query (case-insensitive substring over the market's
+    /// question, description, series and market id).
     pub query: String,
     /// Optional category filter (Kalshi category or Polymarket tag label).
     pub category: Option<String>,
@@ -43,16 +44,19 @@ pub struct MarketRecordResolutionRequest {
     pub outcome: bool,
 }
 
-/// Request for market_subscribe_resolutions: stream market_resolved events
-/// from Polymarket's public market channel into the calibration store.
+/// Request for market_subscribe_resolutions: wait for market_resolved
+/// events on Polymarket's public market channel. Notification only —
+/// nothing is written to the calibration store.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketSubscribeRequest {
-    /// CLOB asset (token) IDs to subscribe to (from a record's token IDs).
+    /// CLOB asset (token) IDs to subscribe to (a market record's
+    /// clob_asset_ids). At least one is required.
     pub asset_ids: Vec<String>,
-    /// Calibration bucket to record resolutions under.
+    /// Echoed in the response as a label. Nothing is recorded under it —
+    /// record the outcome with market_record_resolution.
     pub bucket: String,
-    /// Max resolutions to ingest before returning (default 1) — bounds the
-    /// tool's lifetime so it doesn't hold a tool call open indefinitely.
+    /// Max resolution events to count before returning (default 1) — bounds
+    /// the tool's lifetime so it doesn't hold a tool call open indefinitely.
     pub max_resolutions: Option<u32>,
 }
 
@@ -86,9 +90,10 @@ pub struct MarketVolatilityRequest {
     /// paper's hourly grid).
     #[serde(default = "default_one_hour")]
     pub horizon_hours: f64,
-    /// The fitted adverse-selection scale K. When omitted, uses the default
-    /// (0.12 — a conservative midpoint from the paper's pooled Kalshi panel).
-    /// Override with a locally fitted value when available.
+    /// The adverse-selection scale K (>= 0). When omitted, uses 0.12 — this
+    /// server's heuristic (sized so the two channels are of the same order
+    /// for a typical active contract), not an estimate from the paper.
+    /// Override with a fitted value when available.
     pub k: Option<f64>,
     /// The activity proxy ν(V). When omitted, uses √V (the paper's best).
     #[serde(default)]
@@ -109,7 +114,7 @@ pub struct MarketHistoryRequest {
     /// Platform hint: "kalshi" (default) or "polymarket".
     pub source: Option<String>,
     /// Lookback window in days (default 90, Kalshi only — Polymarket CLOB
-    /// history uses its own interval parameter).
+    /// history is always the last day at hourly points).
     pub window_days: Option<u32>,
 }
 

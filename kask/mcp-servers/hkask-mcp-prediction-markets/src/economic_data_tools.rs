@@ -64,7 +64,7 @@ impl PredictionMarketsServer {
     /// Returns date-value pairs, most recent first. Supports date range
     /// filtering, frequency transformation, and units transformation.
     #[tool(
-        description = "Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency, and units transformations. Example: series_id='PAYEMS' for nonfarm payrolls, series_id='FEDFUNDS' for Fed funds rate."
+        description = "Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency aggregation (d, w, bw, m, q, sa, a) and units transformations (lin, chg, ch1, pch, pc1, pca, cch, cca, log). The response's units field is the transformation applied, not the series' unit of measure (see fred_get_series_info). Example: series_id='PAYEMS' for nonfarm payrolls, series_id='FEDFUNDS' for Fed funds rate."
     )]
     pub async fn fred_get_observations(
         &self,
@@ -153,7 +153,7 @@ impl PredictionMarketsServer {
     /// The World Bank API covers ~29,500 indicators across 45+ databases
     /// for all countries — the global complement to FRED's US-centric data.
     #[tool(
-        description = "Search World Bank indicators by text. Returns indicator IDs with name, unit, source, and topics. Covers ~29,500 indicators (global, no API key needed). Example: query='employment' to find labor indicators, query='GDP per capita' for economic indicators."
+        description = "Search World Bank indicators by name (global, no API key needed). The World Bank has no text-search endpoint: without topic_id only the first 1,000 of ~29,500 indicators are scanned and the response's note says so; with topic_id (from wb_list_topics) the whole topic is scanned. Returns indicator IDs with name, unit, source, and topics. Example: query='GDP per capita' topic_id=3 (Economy & Growth)."
     )]
     pub async fn wb_search_indicators(
         &self,
@@ -188,7 +188,7 @@ impl PredictionMarketsServer {
 
     /// List all countries with ISO codes, regions, and income levels.
     #[tool(
-        description = "List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic' (high income), 'mic' (middle income), 'lic' (low income)."
+        description = "List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic' (high income), 'mic' (middle income: lower and upper), 'lmc', 'umc', 'lic' (low income). limit applies after filtering; matched reports the total."
     )]
     pub async fn wb_list_countries(
         &self,
@@ -243,7 +243,7 @@ impl PredictionMarketsServer {
     /// INSEE, World Bank, FRED mirrors, etc.) — the global superset of FRED
     /// and the World Bank Indicators API. No API key required.
     #[tool(
-        description = "Search DBnomics economic time series by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.). 1.7B+ series, no API key needed. Example: query='GDP' for gross domestic product series."
+        description = "Search DBnomics by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.; 1.7B+ series, no API key needed). Returns the DATASETS containing matching series (provider_code, dataset_code, dataset_name, nb_matching_series) — pass those codes to dbnomics_get_dataset. Example: query='GDP'."
     )]
     pub async fn dbnomics_search(
         &self,
@@ -291,7 +291,7 @@ impl PredictionMarketsServer {
 
     /// Get DBnomics series observation (period + value pairs).
     #[tool(
-        description = "Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}]. Example: provider_code='IMF' dataset_code='WEO:latest' series_code='NGDP' for nominal GDP."
+        description = "Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}] (the most recent `limit`; total_observations reports the full count). An unknown series is not_found. Example: provider_code='IMF' dataset_code='WEO:latest' series_code='ABW.BCA.us_dollars' for Aruba's current account balance."
     )]
     pub async fn dbnomics_get_series(
         &self,
@@ -314,7 +314,7 @@ impl PredictionMarketsServer {
     /// then computes a composite score. EQMs flag weak reasoning more
     /// reliably than they identify excellent reasoning (asymmetric signal).
     #[tool(
-        description = "Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026). Cost: ~$0.007 per rationale."
+        description = "Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026). One decision-model call per rationale; the response's usage block reports the tokens billed."
     )]
     pub async fn market_score_rationale(
         &self,

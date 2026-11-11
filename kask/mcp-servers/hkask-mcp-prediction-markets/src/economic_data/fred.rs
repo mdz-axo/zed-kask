@@ -25,7 +25,7 @@ pub struct FredSearchSeriesRequest {
     pub search_text: String,
     /// Optional: filter by category ID.
     pub category_id: Option<u32>,
-    /// Optional: filter by tag(s), comma-separated (e.g., "employment;monthly").
+    /// Optional: filter by tag(s), semicolon-delimited (e.g., "employment;monthly").
     pub tag_names: Option<String>,
     /// Max results to return (default 10, capped at 100).
     pub limit: Option<u32>,
@@ -42,11 +42,17 @@ pub struct FredGetObservationsRequest {
     pub observation_start: Option<String>,
     /// Optional: end date (YYYY-MM-DD). Defaults to latest.
     pub observation_end: Option<String>,
-    /// Optional: frequency transformation. One of: daily, weekly, biweekly,
-    /// monthly, quarterly, semianual, annual. Default: native frequency.
+    /// Optional: aggregate to a lower frequency. One of the FRED codes d, w,
+    /// bw, m, q, sa, a (the names daily, weekly, biweekly, monthly,
+    /// quarterly, semiannual, annual are accepted and mapped), or a
+    /// week-ending code (wef, weth, wew, wetu, wem, wesu, wesa, bwew, bwem).
+    /// Default: native frequency.
     pub frequency: Option<String>,
-    /// Optional: units transformation. One of: lin, chg, chg1d, chg1w, chg1m,
-    /// chg1q, chg1a, pct, pct1d, pct1w, pct1m, pct1q, pct1a, log, pc1, pc1ch.
+    /// Optional: units transformation. One of: lin (levels), chg (change),
+    /// ch1 (change from year ago), pch (percent change), pc1 (percent change
+    /// from year ago), pca (compounded annual rate of change), cch
+    /// (continuously compounded rate of change), cca (continuously compounded
+    /// annual rate of change), log (natural log). Default: lin.
     pub units: Option<String>,
     /// Max observations to return (default 100, capped at 1000).
     pub limit: Option<u32>,
@@ -79,13 +85,70 @@ fn require_api_key(key: Option<&str>) -> Result<&str, EconomicDataError> {
         .ok_or(EconomicDataError::MissingApiKey)
 }
 
-/// Build a FRED API URL with the API key and `file_type=json` appended.
+/// Build a FRED API URL with the API key and `file_type=json` prepended.
+/// Values are encoded by the shared builder, so a caller value cannot add
+/// or override a query parameter (mcp-tool-review PM2-03).
 fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
-    let mut url = format!("{FRED_API_BASE}/{endpoint}?api_key={api_key}&file_type=json");
-    for (k, v) in params {
-        url.push_str(&format!("&{k}={v}"));
-    }
-    url
+    let mut all: Vec<(&str, &str)> = vec![("api_key", api_key), ("file_type", "json")];
+    all.extend_from_slice(params);
+    EconomicDataClient::build_url(FRED_API_BASE, endpoint, &all)
+}
+
+/// FRED's aggregation-frequency codes with the names this tool also accepts.
+const FRED_FREQUENCIES: &[(&str, &str)] = &[
+    ("d", "daily"),
+    ("w", "weekly"),
+    ("bw", "biweekly"),
+    ("m", "monthly"),
+    ("q", "quarterly"),
+    ("sa", "semiannual"),
+    ("a", "annual"),
+];
+
+/// FRED's week-ending aggregation codes (no long names).
+const FRED_WEEK_ENDING_FREQUENCIES: &[&str] = &[
+    "wef", "weth", "wew", "wetu", "wem", "wesu", "wesa", "bwew", "bwem",
+];
+
+/// FRED's units-transformation codes.
+const FRED_UNITS: &[&str] = &[
+    "lin", "chg", "ch1", "pch", "pc1", "pca", "cch", "cca", "log",
+];
+
+/// Resolve a caller's frequency (code or name) to the FRED code.
+fn fred_frequency_code(raw: &str) -> Result<&'static str, EconomicDataError> {
+    let wanted = raw.trim().to_ascii_lowercase();
+    FRED_FREQUENCIES
+        .iter()
+        .find(|(code, name)| wanted == *code || wanted == *name)
+        .map(|(code, _)| *code)
+        .or_else(|| {
+            FRED_WEEK_ENDING_FREQUENCIES
+                .iter()
+                .find(|code| wanted == **code)
+                .copied()
+        })
+        .ok_or_else(|| {
+            EconomicDataError::InvalidParam(format!(
+                "frequency {raw:?} is not one of: d (daily), w (weekly), bw (biweekly), m (monthly), q (quarterly), sa (semiannual), a (annual), {}",
+                FRED_WEEK_ENDING_FREQUENCIES.join(", ")
+            ))
+        })
+}
+
+/// Resolve a caller's units transformation to the FRED code.
+fn fred_units_code(raw: &str) -> Result<&'static str, EconomicDataError> {
+    let wanted = raw.trim().to_ascii_lowercase();
+    FRED_UNITS
+        .iter()
+        .find(|code| wanted == **code)
+        .copied()
+        .ok_or_else(|| {
+            EconomicDataError::InvalidParam(format!(
+                "units {raw:?} is not one of: {}",
+                FRED_UNITS.join(", ")
+            ))
+        })
 }
 
 /// Extract a string field from a FRED series JSON object, defaulting to `""`
@@ -130,7 +193,8 @@ pub async fn search_series(
 
     let body = client.fetch(FRED_PROVIDER, &url).await?;
 
-    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+    // `null` when the provider omits it — never a fabricated 0.
+    let count = body.get("count").and_then(|v| v.as_u64());
     let series_list = body
         .get("seriess")
         .and_then(|v| v.as_array())
@@ -168,6 +232,12 @@ pub async fn get_observations(
 ) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let limit = req.limit.unwrap_or(100).min(1000);
+    let frequency = req
+        .frequency
+        .as_deref()
+        .map(fred_frequency_code)
+        .transpose()?;
+    let units = req.units.as_deref().map(fred_units_code).transpose()?;
 
     let mut params: Vec<(&str, String)> = vec![
         ("series_id", req.series_id.clone()),
@@ -180,18 +250,19 @@ pub async fn get_observations(
     if let Some(ref end) = req.observation_end {
         params.push(("observation_end", end.clone()));
     }
-    if let Some(ref freq) = req.frequency {
-        params.push(("frequency", freq.clone()));
+    if let Some(code) = frequency {
+        params.push(("frequency", code.to_string()));
     }
-    if let Some(ref units) = req.units {
-        params.push(("units", units.clone()));
+    if let Some(code) = units {
+        params.push(("units", code.to_string()));
     }
     let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let url = fred_url("series/observations", key, &params_ref);
 
     let body = client.fetch(FRED_PROVIDER, &url).await?;
 
-    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+    // `null` when the provider omits it — never a fabricated 0.
+    let count = body.get("count").and_then(|v| v.as_u64());
     let observations = body
         .get("observations")
         .and_then(|v| v.as_array())
@@ -215,8 +286,10 @@ pub async fn get_observations(
         })
         .collect();
 
-    let units = body.get("units").and_then(|v| v.as_str()).unwrap_or("");
-    let frequency = body.get("frequency").and_then(|v| v.as_str()).unwrap_or("");
+    // The observations response carries the units TRANSFORMATION applied
+    // (e.g. "lin"), not the series' unit of measure, and no frequency —
+    // `frequency` echoes the aggregation requested (null = native).
+    let units = body.get("units").and_then(|v| v.as_str()).unwrap_or("lin");
 
     Ok(serde_json::json!({
         "series_id": req.series_id,
@@ -249,7 +322,7 @@ fn series_info_from_body(body: &Value, series_id: &str) -> Result<Value, Economi
         .get("seriess")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .ok_or_else(|| EconomicDataError::InvalidParam(format!("series {series_id} not found")))?;
+        .ok_or_else(|| EconomicDataError::NotFound(format!("FRED series {series_id} not found")))?;
     Ok(serde_json::json!({
         "id": series_str_field(s, "id"),
         "title": series_str_field(s, "title"),
@@ -318,12 +391,15 @@ pub async fn get_release(
     let release_url = fred_url("release", key, &[("release_id", release_id_str.as_str())]);
     let release_body = client.fetch(FRED_PROVIDER, &release_url).await?;
 
-    let release = &release_body
+    // A release id FRED does not have is surfaced, never shaped into an
+    // all-empty success.
+    let release = release_body
         .get("releases")
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
-        .cloned()
-        .unwrap_or(Value::Null);
+        .ok_or_else(|| {
+            EconomicDataError::NotFound(format!("FRED release {} not found", req.release_id))
+        })?;
 
     let series_url = fred_url(
         "release/series",
@@ -422,5 +498,36 @@ mod tests {
     fn missing_seriess_key_is_surfaced_not_empty_success() {
         let body = serde_json::json!({ "some_other_shape": true });
         assert!(series_info_from_body(&body, "X").is_err());
+    }
+
+    /// mcp-tool-review PM2-03 pin: a caller value cannot add or override a
+    /// query parameter. Live 2026-11-10, an `observation_start` of
+    /// `2024-01-01&observation_end=2024-03-01` narrowed the window.
+    #[test]
+    fn caller_values_cannot_inject_query_parameters() {
+        let url = fred_url(
+            "series/observations",
+            "KEY",
+            &[("observation_start", "2024-01-01&observation_end=2024-03-01")],
+        );
+        assert_eq!(
+            url,
+            "https://api.stlouisfed.org/fred/series/observations?api_key=KEY&file_type=json&observation_start=2024-01-01%26observation_end%3D2024-03-01"
+        );
+    }
+
+    /// mcp-tool-review PM2-07 pin: the frequency and units closed sets are
+    /// FRED's. Live 2026-11-10, the previously documented `monthly` and
+    /// `pct` were both rejected by FRED with HTTP 400.
+    #[test]
+    fn frequency_and_units_resolve_to_fred_codes_or_name_the_valid_set() {
+        assert_eq!(fred_frequency_code("monthly").ok(), Some("m"));
+        assert_eq!(fred_frequency_code(" Q ").ok(), Some("q"));
+        assert_eq!(fred_frequency_code("wef").ok(), Some("wef"));
+        let error = fred_frequency_code("fortnightly").expect_err("unknown frequency");
+        assert!(error.to_string().contains("bw (biweekly)"), "{error}");
+        assert_eq!(fred_units_code("pch").ok(), Some("pch"));
+        let error = fred_units_code("pct").expect_err("pct is not a FRED code");
+        assert!(error.to_string().contains("pch"), "{error}");
     }
 }

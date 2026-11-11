@@ -57,8 +57,9 @@ pub struct DbnomicsGetSeriesRequest {
     pub series_code: String,
     /// Whether to include observations (default true).
     pub observations: Option<bool>,
-    /// Max observations to return (default 1000). Caps the observation
-    /// array length; the series metadata is always returned in full.
+    /// Max observations to return (default 1000) — the most recent ones
+    /// are kept; `total_observations` reports the full count. The series
+    /// metadata is always returned in full.
     pub limit: Option<u32>,
 }
 
@@ -133,26 +134,7 @@ pub async fn search(
         .cloned()
         .unwrap_or_default();
 
-    let results: Vec<Value> = docs
-        .iter()
-        .map(|series| {
-            dbnomics_series_json(
-                series,
-                series
-                    .get("provider_code")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(""),
-                series
-                    .get("dataset_code")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(""),
-                series
-                    .get("series_code")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(""),
-            )
-        })
-        .collect();
+    let results: Vec<Value> = docs.iter().map(dbnomics_dataset_hit).collect();
 
     Ok(serde_json::json!({
         "query": request.query,
@@ -161,6 +143,23 @@ pub async fn search(
         "returned": results.len(),
         "offset": offset,
     }))
+}
+
+/// One `/search` hit. The endpoint returns DATASETS that contain matching
+/// series (live shape 2026-11-10: `code`, `name`, `provider_code`,
+/// `nb_series`, `nb_matching_series`) — not series. The pre-fix shaping
+/// read series fields the hit does not carry, so every result came back
+/// with an empty dataset and series code (mcp-tool-review PM2-09).
+fn dbnomics_dataset_hit(dataset: &Value) -> Value {
+    let text = |key: &str| dataset.get(key).and_then(|v| v.as_str()).unwrap_or("");
+    serde_json::json!({
+        "provider_code": text("provider_code"),
+        "provider_name": text("provider_name"),
+        "dataset_code": text("code"),
+        "dataset_name": text("name"),
+        "nb_series": dataset.get("nb_series").and_then(|v| v.as_u64()),
+        "nb_matching_series": dataset.get("nb_matching_series").and_then(|v| v.as_u64()),
+    })
 }
 
 /// `dbnomics_list_providers`: List statistical providers.
@@ -215,30 +214,35 @@ pub async fn get_dataset(
     client: &EconomicDataClient<'_>,
     request: &DbnomicsGetDatasetRequest,
 ) -> Result<Value, EconomicDataError> {
-    let provider_code = request.provider_code.trim();
-    let dataset_code = request.dataset_code.trim();
-    if provider_code.is_empty() {
-        return Err(EconomicDataError::InvalidParam(
-            "provider_code must not be empty".to_string(),
-        ));
-    }
-    if dataset_code.is_empty() {
-        return Err(EconomicDataError::InvalidParam(
-            "dataset_code must not be empty".to_string(),
-        ));
-    }
+    let provider_code = super::path_segment("provider_code", &request.provider_code)?;
+    let dataset_code = super::path_segment("dataset_code", &request.dataset_code)?;
 
     let endpoint = format!("datasets/{provider_code}/{dataset_code}");
     let url = dbnomics_url(&endpoint, &[]);
     let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
+    dataset_from_body(&body, provider_code, dataset_code)
+}
 
-    let dataset = body
-        .get("dataset")
+/// Shape the `/datasets/{provider}/{dataset}` response. DBnomics answers an
+/// unknown dataset with HTTP 200 and an empty `datasets.docs` — that is
+/// the caller's reference not existing, never an all-empty success.
+fn dataset_from_body(
+    body: &Value,
+    provider_code: &str,
+    dataset_code: &str,
+) -> Result<Value, EconomicDataError> {
+    let dataset = body.pointer("/datasets/docs/0").ok_or_else(|| {
+        EconomicDataError::NotFound(format!(
+            "DBnomics dataset {provider_code}/{dataset_code} not found"
+        ))
+    })?;
+
+    // The dimension codes live in `dimensions_codes_order` (there is no
+    // `dimensions` key on the dataset document).
+    let dimensions = dataset
+        .get("dimensions_codes_order")
         .cloned()
-        .or_else(|| body.pointer("/datasets/docs/0").cloned())
         .unwrap_or(Value::Null);
-
-    let dimensions = dataset.get("dimensions").cloned().unwrap_or(Value::Null);
     let dimensions_labels = dataset
         .get("dimensions_labels")
         .cloned()
@@ -263,55 +267,54 @@ pub async fn get_series(
     client: &EconomicDataClient<'_>,
     request: &DbnomicsGetSeriesRequest,
 ) -> Result<Value, EconomicDataError> {
-    let provider_code = request.provider_code.trim();
-    let dataset_code = request.dataset_code.trim();
-    let series_code = request.series_code.trim();
-    if provider_code.is_empty() {
-        return Err(EconomicDataError::InvalidParam(
-            "provider_code must not be empty".to_string(),
-        ));
-    }
-    if dataset_code.is_empty() {
-        return Err(EconomicDataError::InvalidParam(
-            "dataset_code must not be empty".to_string(),
-        ));
-    }
-    if series_code.is_empty() {
-        return Err(EconomicDataError::InvalidParam(
-            "series_code must not be empty".to_string(),
-        ));
-    }
+    let provider_code = super::path_segment("provider_code", &request.provider_code)?;
+    let dataset_code = super::path_segment("dataset_code", &request.dataset_code)?;
+    let series_code = super::path_segment("series_code", &request.series_code)?;
 
     let include_observations = request.observations.unwrap_or(true);
-    let observation_limit = request.limit.unwrap_or(1000);
+    let observation_limit = request.limit.unwrap_or(1000) as usize;
 
     let endpoint = format!("series/{provider_code}/{dataset_code}/{series_code}");
 
-    let mut params: Vec<(&str, String)> = Vec::new();
-    if include_observations {
-        params.push(("observations", "1".to_string()));
-        let limit_str = observation_limit.to_string();
-        params.push(("limit", limit_str));
-    }
-    let params_ref: Vec<(&str, &str)> = params
-        .iter()
-        .map(|(key, value)| (*key, value.as_str()))
-        .collect();
-    let url = dbnomics_url(&endpoint, &params_ref);
+    // The API's own `limit` caps the number of SERIES, not observations, so
+    // it is not sent: the observation cap is applied in `series_from_body`.
+    let params: &[(&str, &str)] = if include_observations {
+        &[("observations", "1")]
+    } else {
+        &[]
+    };
+    let url = dbnomics_url(&endpoint, params);
     let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
+    series_from_body(
+        &body,
+        (provider_code, dataset_code, series_code),
+        include_observations,
+        observation_limit,
+    )
+}
 
-    let series = body
-        .get("series")
-        .cloned()
-        .or_else(|| body.pointer("/series/docs/0").cloned())
-        .unwrap_or(Value::Null);
+/// Shape the `/series/{provider}/{dataset}/{series}` response. The series
+/// document is `series.docs[0]` — `series` itself is the paging envelope
+/// (`docs`, `limit`, `num_found`, `offset`). The pre-fix shaping read the
+/// envelope as the document, so every fetch returned an empty name and no
+/// observations (mcp-tool-review PM2-09, live 2026-11-10).
+fn series_from_body(
+    body: &Value,
+    (provider_code, dataset_code, series_code): (&str, &str, &str),
+    include_observations: bool,
+    observation_limit: usize,
+) -> Result<Value, EconomicDataError> {
+    let series = body.pointer("/series/docs/0").ok_or_else(|| {
+        EconomicDataError::NotFound(format!(
+            "DBnomics series {provider_code}/{dataset_code}/{series_code} not found"
+        ))
+    })?;
 
     let num_found = body
         .pointer("/series/num_found")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(0);
+        .and_then(|value| value.as_u64());
 
-    let observations: Vec<Value> = if include_observations {
+    let all_observations: Vec<Value> = if include_observations {
         let period_array = series.get("period").and_then(|value| value.as_array());
         let value_array = series.get("value").and_then(|value| value.as_array());
         match (period_array, value_array) {
@@ -332,9 +335,13 @@ pub async fn get_series(
     } else {
         Vec::new()
     };
+    // Periods ascend, so the tail is the most recent `observation_limit`.
+    let total_observations = all_observations.len();
+    let skipped = total_observations.saturating_sub(observation_limit);
+    let observations: Vec<Value> = all_observations.into_iter().skip(skipped).collect();
 
     let mut info = dbnomics_series_json(
-        &series,
+        series,
         provider_code,
         series
             .get("dataset_code")
@@ -346,8 +353,9 @@ pub async fn get_series(
             .unwrap_or(series_code),
     );
     info["num_found"] = serde_json::json!(num_found);
-    info["observations"] = serde_json::json!(observations);
     info["returned"] = serde_json::json!(observations.len());
+    info["total_observations"] = serde_json::json!(total_observations);
+    info["observations"] = serde_json::json!(observations);
     Ok(info)
 }
 
@@ -368,6 +376,60 @@ mod tests {
             url.starts_with("https://api.db.nomics.world/v22/providers"),
             "the providers endpoint must be the plural path, got: {url}"
         );
+    }
+
+    /// mcp-tool-review PM2-09 pins, over the live response shapes captured
+    /// 2026-11-10: the series document is `series.docs[0]`, the observation
+    /// cap keeps the most recent, and an absent document is `not_found`.
+    #[test]
+    fn series_reads_the_document_inside_the_paging_envelope() {
+        let body = serde_json::json!({"series": {"limit": 1000, "num_found": 1, "offset": 0,
+            "docs": [{"@frequency": "annual", "dataset_code": "WEO:2025-04",
+                "series_code": "ABW.BCA.us_dollars", "series_name": "Aruba – Current account",
+                "period": ["2028", "2029", "2030"], "value": [0.1, 0.2, 0.368]}]}});
+        let codes = ("IMF", "WEO:latest", "ABW.BCA.us_dollars");
+        let out = series_from_body(&body, codes, true, 2).expect("series shapes");
+        assert_eq!(out["series_name"], "Aruba – Current account");
+        assert_eq!(out["dataset_code"], "WEO:2025-04", "the resolved release");
+        assert_eq!(out["frequency"], "annual");
+        assert_eq!(out["total_observations"], 3);
+        assert_eq!(out["returned"], 2);
+        assert_eq!(out["observations"][1]["period"], "2030", "most recent kept");
+        assert_eq!(out["observations"][1]["value"], 0.368);
+
+        let empty = serde_json::json!({"series": {"docs": [], "num_found": 0}});
+        let error = series_from_body(&empty, codes, true, 2).expect_err("no document");
+        assert!(matches!(error, EconomicDataError::NotFound(_)), "{error:?}");
+    }
+
+    /// An unknown dataset is HTTP 200 with empty `datasets.docs` (live
+    /// 2026-11-10: the tool returned an all-empty success for it).
+    #[test]
+    fn unknown_dataset_is_not_found_and_dimensions_are_read() {
+        let empty = serde_json::json!({"datasets": {"docs": [], "num_found": 0}});
+        let error = dataset_from_body(&empty, "IMF", "ZZ").expect_err("no dataset");
+        assert!(matches!(error, EconomicDataError::NotFound(_)), "{error:?}");
+        assert!(error.to_string().contains("IMF/ZZ"), "{error}");
+
+        let body = serde_json::json!({"datasets": {"docs": [{"code": "WEO:2025-04",
+            "name": "World Economic Outlook by countries",
+            "dimensions_codes_order": ["weo-country", "weo-subject", "unit"],
+            "indexed_at": "2025-05-15T11:13:27.379Z"}]}});
+        let out = dataset_from_body(&body, "IMF", "WEO:latest").expect("dataset shapes");
+        assert_eq!(out["dataset_code"], "WEO:2025-04");
+        assert_eq!(out["dimensions"][0], "weo-country");
+    }
+
+    /// A `/search` hit is a dataset: its code is `code`, its name `name`.
+    #[test]
+    fn search_hit_is_shaped_as_the_dataset_it_is() {
+        let hit = serde_json::json!({"code": "CHELEM-TRADE-INDIC", "provider_code": "CEPII",
+            "name": "CHELEM - International Trade indicators",
+            "nb_series": 797349, "nb_matching_series": 683775});
+        let out = dbnomics_dataset_hit(&hit);
+        assert_eq!(out["dataset_code"], "CHELEM-TRADE-INDIC");
+        assert_eq!(out["provider_code"], "CEPII");
+        assert_eq!(out["nb_matching_series"], 683775);
     }
 
     /// The other three endpoints match the live v22 API — the fix touched

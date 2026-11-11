@@ -164,12 +164,11 @@ pub struct KalshiMarketsResponse {
     pub markets: Vec<KalshiMarket>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct KalshiSettlementSource {
-    pub name: String,
-    pub url: String,
-}
-
+/// A Kalshi event. Only fields a record reads are declared: the event's
+/// `settlement_sources` were once parsed into a strict struct nothing
+/// read, and a source without `url` (live 2026-11-11: 2 of 1,104) failed
+/// the whole events parse, taking `market_lookup` and `market_match` down
+/// (mcp-tool-review PM2-01). Undeclared fields are ignored by serde.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct KalshiEvent {
@@ -179,7 +178,6 @@ pub struct KalshiEvent {
     pub sub_title: String,
     pub category: String,
     pub mutually_exclusive: bool,
-    pub settlement_sources: Vec<KalshiSettlementSource>,
     pub last_updated_ts: String,
 }
 
@@ -209,8 +207,15 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
     if !status.is_success() {
         return Err(classify_http_error("Kalshi", status, &body));
     }
-    serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("Kalshi parse failed: {e}")))
+    decode_json(&body)
+}
+
+/// Decode a successful Kalshi body. A body our structs cannot read is a
+/// server-side fault that repeats on every retry — `internal`, never the
+/// transient `unavailable` (mcp-tool-review PM2-01).
+fn decode_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, McpToolError> {
+    serde_json::from_str(body)
+        .map_err(|e| McpToolError::internal(format!("Kalshi response parse failed: {e}")))
 }
 
 /// Fetch markets by status, optionally scoped to a series.
@@ -235,13 +240,7 @@ pub async fn fetch_markets(
     series_ticker: Option<&str>,
     limit: u32,
 ) -> Result<Vec<KalshiMarket>, McpToolError> {
-    let mut query = vec![("limit", limit.to_string()), ("status", "open".to_string())];
-    if let Some(series) = series_ticker {
-        query.push(("series_ticker", series.to_string()));
-    }
-    let response: KalshiMarketsResponse =
-        get_json(client, &format!("{KALSHI_BASE}/markets"), &query).await?;
-    Ok(response.markets)
+    fetch_markets_by_status(client, series_ticker, "open", limit).await
 }
 
 /// One candlestick period (T0-verified shape: bid/ask OHLC as `_dollars`
@@ -271,6 +270,7 @@ pub struct KalshiCandlesticksResponse {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct KalshiCandlestickSeries {
+    pub market_ticker: String,
     pub candlesticks: Vec<KalshiCandlestick>,
 }
 
@@ -300,7 +300,23 @@ pub async fn fetch_price_history(
         &query,
     )
     .await?;
-    Ok(candlesticks_to_points(&response))
+    points_for_ticker(&response, market_ticker)
+}
+
+/// The price points for a requested ticker. Kalshi answers an unknown
+/// ticker with `{"markets": []}` and a known ticker with no candles in the
+/// window with one series holding an empty list — the first is the
+/// caller's reference not existing, the second is thin history.
+pub(crate) fn points_for_ticker(
+    response: &KalshiCandlesticksResponse,
+    market_ticker: &str,
+) -> Result<Vec<PricePoint>, McpToolError> {
+    if response.markets.is_empty() {
+        return Err(McpToolError::not_found(format!(
+            "Kalshi market {market_ticker} not found"
+        )));
+    }
+    Ok(candlesticks_to_points(response))
 }
 
 /// Convert candlesticks to price points (pure, HTTP-free decision core):
@@ -429,6 +445,50 @@ mod calibration_scan_tests {
             .take_pending("KXFEDDECISION-26OCT-H25")
             .expect("snapshotted");
         assert_eq!(pending.bucket, "policy_interest_rate");
+    }
+
+    /// mcp-tool-review PM2-01 pin: the live events payload carries
+    /// settlement sources without `url`. One of them must not fail the
+    /// whole events parse (live 2026-11-10: `market_lookup` and
+    /// `market_match` both returned "missing field `url`").
+    #[test]
+    fn events_parse_tolerates_a_settlement_source_without_url() {
+        let body = r#"{"cursor":"","events":[{"event_ticker":"KXA","series_ticker":"KX",
+            "category":"Entertainment",
+            "settlement_sources":[{"name":"performer"},{"name":"AP","url":"https://ap.org"}]}]}"#;
+        let response: KalshiEventsResponse = decode_json(body).expect("events parse");
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events[0].category, "Entertainment");
+        assert_eq!(response.events[0].series_ticker, "KX");
+    }
+
+    /// A body our structs cannot read repeats on every retry — `internal`,
+    /// not the transient `unavailable`.
+    #[test]
+    fn undecodable_body_is_internal_not_unavailable() {
+        let error = decode_json::<KalshiEventsResponse>("{\"events\": 3}")
+            .expect_err("a number is not an event list");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::Internal);
+    }
+
+    /// mcp-tool-review PM2-10 pin: an unknown ticker is `not_found` naming
+    /// it; a known ticker with no candles is an empty history. Live
+    /// 2026-11-11, an unknown ticker read as a successful
+    /// `InsufficientData` history.
+    #[test]
+    fn unknown_ticker_is_not_found_and_thin_history_is_empty() {
+        let unknown: KalshiCandlesticksResponse = decode_json(r#"{"markets":[]}"#).expect("parse");
+        let error = points_for_ticker(&unknown, "ZZ-NOPE").expect_err("unknown ticker");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(error.message.contains("ZZ-NOPE"), "{}", error.message);
+        let thin: KalshiCandlesticksResponse =
+            decode_json(r#"{"markets":[{"market_ticker":"KX-A","candlesticks":[]}]}"#)
+                .expect("parse");
+        assert!(
+            points_for_ticker(&thin, "KX-A")
+                .expect("known ticker")
+                .is_empty()
+        );
     }
 
     #[test]

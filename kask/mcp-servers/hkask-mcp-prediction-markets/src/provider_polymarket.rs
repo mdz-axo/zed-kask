@@ -277,8 +277,10 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
             &body,
         ));
     }
+    // A body our structs cannot read repeats on every retry — `internal`,
+    // never the transient `unavailable` (the Kalshi decode's rule).
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::unavailable(format!("{service} {what} parse failed: {e}")))
+        .map_err(|e| McpToolError::internal(format!("{service} {what} parse failed: {e}")))
 }
 
 /// Fetch markets directly (not via events). `closed=true` returns
@@ -330,6 +332,23 @@ pub async fn fetch_prices_history(
     )
     .await?;
     Ok(parsed.history)
+}
+
+/// Fetch the open event with this slug (empty when Gamma has none). Gamma
+/// filters by slug server-side, so the lookup does not depend on the event
+/// being in the first page of open events.
+pub async fn fetch_events_by_slug(
+    client: &reqwest::Client,
+    slug: &str,
+) -> Result<Vec<GammaEvent>, McpToolError> {
+    fetch_json(
+        client,
+        &format!("{GAMMA_BASE}/events"),
+        &[("slug", slug.to_string()), ("closed", "false".to_string())],
+        "Gamma",
+        "events",
+    )
+    .await
 }
 
 /// Fetch active, open events from Gamma.

@@ -118,7 +118,7 @@ impl PredictionMarketsServer {
 
     /// Look up markets matching a query across both platforms.
     #[tool(
-        description = "Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated MarketRecords: every probability is paired with spread/volume/calibration/volatility/reliability_tier and a dual-axis (PKO + Dublin Core) ontology mapping. Never returns a bare probability. The response carries records, gathered_count, and — whenever the result set is empty — a note distinguishing a provider state (no markets returned by either provider) from a no-match query result."
+        description = "Look up prediction markets across Polymarket and Kalshi by free-text query. Returns annotated MarketRecords: every probability is paired with spread/volume/calibration/volatility/reliability_tier and a dual-axis (PKO + Dublin Core) ontology mapping. Never returns a bare probability. Searches a bounded pool — the first 100 open Polymarket events and the first 200 open Kalshi markets, not the whole of either exchange (use market_ladder for a known Kalshi series). The response carries records, gathered_count (the pool size), and — whenever the result set is empty — a note distinguishing a provider state (no markets returned by either provider) from a no-match query result."
     )]
     pub async fn market_lookup(
         &self,
@@ -141,7 +141,7 @@ impl PredictionMarketsServer {
             let note = if gathered_count == 0 {
                 Some("no candidate markets returned by either provider — this is a provider state, not a query result; retry before treating it as 'no markets exist'".to_string())
             } else if records.is_empty() {
-                Some(format!("no records matched the query among {gathered_count} gathered candidates"))
+                Some(format!("no records matched the query among {gathered_count} gathered candidates — {POOL_SCOPE}"))
             } else {
                 None
             };
@@ -158,7 +158,7 @@ impl PredictionMarketsServer {
     /// Resolve a scenario/forecast question to candidate markets about the
     /// same underlying event.
     #[tool(
-        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Refuses low-confidence candidates rather than anchoring on a wrong-event market — the refusal is surfaced, never silent: the response carries matches (Medium confidence and above, with deterministic match basis: token overlap + deadline alignment), refused_low_confidence with a refused_sample of what was rejected, gathered_count, and a note whenever the result set is empty (provider state vs all-refused)."
+        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event, drawn from a bounded pool — the first 100 open Polymarket events and the first 200 open Kalshi markets, not the whole of either exchange, so no match is not evidence that no market exists. Refuses low-confidence candidates rather than anchoring on a wrong-event market — the refusal is surfaced, never silent: the response carries matches (Medium confidence and above, with deterministic match basis: token overlap + deadline alignment), refused_low_confidence with a refused_sample of what was rejected, gathered_count, and a note whenever the result set is empty (provider state vs all-refused)."
     )]
     pub async fn market_match(
         &self,
@@ -185,7 +185,7 @@ impl PredictionMarketsServer {
                 Some("no candidate markets returned by either provider — this is a provider state, not a query result; retry before treating it as 'no markets exist'".to_string())
             } else if matches.is_empty() {
                 Some(format!(
-                    "all {} gathered candidates refused as low-confidence — no wrong-event anchoring; refused_sample shows what was rejected",
+                    "all {} gathered candidates refused as low-confidence — no wrong-event anchoring; refused_sample shows what was rejected; {POOL_SCOPE}",
                     records.len()
                 ))
             } else {
@@ -232,7 +232,12 @@ impl PredictionMarketsServer {
                 .calibration_store
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            let reading = calibration::read_calibration(&store, &req.bucket);
+            // Read the bucket the writers write: `market_record_resolution`
+            // and the scanner both store under the canonical key, so a raw
+            // read of "Elections" missed what was recorded under it
+            // (mcp-tool-review PM2-11).
+            let bucket = types::canonical_bucket(&req.bucket);
+            let reading = calibration::read_calibration(&store, &bucket);
             serde_json::to_value(&reading).map_err(|e| {
                 McpToolError::internal(format!("calibration serialization failed: {e}"))
             })
@@ -258,7 +263,7 @@ impl PredictionMarketsServer {
                         format!("probability {} not in [0, 1]", req.probability),
                     ));
                 }
-                let reading = {
+                let (reading, journal_saved) = {
                     let mut store =
                         self.calibration_store.lock().unwrap_or_else(|e| e.into_inner());
                     let bucket = types::canonical_bucket(&req.bucket);
@@ -275,21 +280,29 @@ impl PredictionMarketsServer {
                         },
                     );
                     let reading = calibration::read_calibration(&store, &bucket);
-                    if let Some(path) = &self.calibration_path
-                        && let Err(e) = store.save(std::path::Path::new(path))
-                    {
-                        // Persistence failure must not silently drop the
-                        // in-memory observation — warn so an operator can
-                        // distinguish "recorded" from "recorded but unsaved".
-                        tracing::warn!(
-                            "calibration journal save to {path} failed: {e} —                              observation is in-memory only for this session"
-                        );
-                    }
-                    reading
+                    // `journal_saved` rides the response (true, false, or
+                    // null when no journal is configured) so the CALLER can
+                    // tell "recorded" from "recorded but unsaved" — a log
+                    // line alone left that invisible (mcp-tool-review PM2-11).
+                    let journal_saved = match &self.calibration_path {
+                        Some(path) => match store.save(std::path::Path::new(path)) {
+                            Ok(()) => Some(true),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "calibration journal save to {path} failed: {e} — observation is in-memory only for this session"
+                                );
+                                Some(false)
+                            }
+                        },
+                        None => None,
+                    };
+                    (reading, journal_saved)
                 };
-                serde_json::to_value(&reading).map_err(|e| {
+                let mut value = serde_json::to_value(&reading).map_err(|e| {
                     McpToolError::internal(format!("reading serialization failed: {e}"))
-                })
+                })?;
+                value["journal_saved"] = serde_json::json!(journal_saved);
+                Ok(value)
             },
         )
         .await
@@ -309,6 +322,11 @@ impl PredictionMarketsServer {
             "market_subscribe_resolutions",
             async {
                 self.record_call("market_subscribe_resolutions");
+                if req.asset_ids.iter().all(|id| id.trim().is_empty()) {
+                    return Err(McpToolError::invalid_argument(
+                        "asset_ids is empty — pass at least one CLOB asset id (a market record's clob_asset_ids)",
+                    ));
+                }
                 let max = req.max_resolutions.unwrap_or(1).max(1);
                 let ingested = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
@@ -449,12 +467,12 @@ impl PredictionMarketsServer {
                 Err(e) => warnings.push(format!("kalshi: {e}")),
             }
 
-            match provider_polymarket::fetch_events(&self.http, 100).await {
+            // Ask Gamma for the event by slug. Filtering the first page of
+            // open events client-side could only ever match a slug that
+            // happened to be in that page (mcp-tool-review PM2-12).
+            match provider_polymarket::fetch_events_by_slug(&self.http, &req.series).await {
                 Ok(events) => {
                     for event in &events {
-                        if event.slug != req.series && event.ticker != req.series {
-                            continue;
-                        }
                         let event_tags: Vec<String> =
                             event.tags.iter().map(|t| t.label.clone()).collect();
                         for market in &event.markets {
@@ -485,10 +503,13 @@ impl PredictionMarketsServer {
                 ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
             });
 
+            let note = Self::ladder_note(&req.series, rungs.is_empty(), warnings.is_empty());
+
             serde_json::to_value(serde_json::json!({
                 "series": req.series,
                 "rungs": rungs,
                 "warnings": warnings,
+                "note": note,
             }))
             .map_err(|e| McpToolError::internal(format!("ladder serialization failed: {e}")))
         })
@@ -537,12 +558,27 @@ impl PredictionMarketsServer {
         .await
     }
 
+    /// An empty ladder is never silent: say whether a platform failed or
+    /// neither platform knows the identifier (mcp-tool-review PM2-12).
+    fn ladder_note(series: &str, no_rungs: bool, no_warnings: bool) -> Option<String> {
+        match (no_rungs, no_warnings) {
+            (false, _) => None,
+            (true, true) => Some(format!(
+                "no contracts found for '{series}' on either platform — expected a Kalshi series ticker (e.g. KXFEDDECISION) or a Polymarket event slug"
+            )),
+            (true, false) => Some(
+                "no rungs returned and at least one platform failed — see warnings; this is a provider state, not evidence the series is empty"
+                    .to_string(),
+            ),
+        }
+    }
+
     fn scan_and_record_provider(
         &self,
         observations: Vec<(String, calibration::ResolvedObservation)>,
         recorded: &mut u32,
         already_known: &mut u32,
-    ) -> Result<(), McpToolError> {
+    ) {
         for (bucket, observation) in observations {
             let mut store = self
                 .calibration_store
@@ -555,7 +591,6 @@ impl PredictionMarketsServer {
                 *recorded += 1;
             }
         }
-        Ok(())
     }
 
     /// Scan for resolved markets and record their outcomes.
@@ -657,7 +692,7 @@ impl PredictionMarketsServer {
                         )
                     };
                     kalshi_resolved_with_snapshot = observations.len() as u32;
-                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
+                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known);
                 }
                 Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
             }
@@ -678,7 +713,7 @@ impl PredictionMarketsServer {
                         )
                     };
                     poly_resolved_with_snapshot = observations.len() as u32;
-                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known)?;
+                    self.scan_and_record_provider(observations, &mut recorded, &mut already_known);
                 }
                 Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
             }
@@ -761,7 +796,7 @@ impl PredictionMarketsServer {
 
     /// Market record enriched with realized variance from price history.
     #[tool(
-        description = "Fetch a market's price history and return its record with realized_variance populated (log-odds step variance, 2607.08199-consistent) plus the volatility regime (smooth vs jump-like). Kalshi: candlesticks over the window; Polymarket: CLOB prices-history for the token."
+        description = "Fetch a market's price history and return realized_variance (log-odds step variance, 2607.08199-consistent) plus the volatility regime (smooth vs jump-like). Kalshi: daily closes over the window; Polymarket: hourly CLOB points over the last day — the response's sampling field names which, and the two are not comparable. An unknown Kalshi ticker is not_found."
     )]
     pub async fn market_history(
         &self,
@@ -770,22 +805,38 @@ impl PredictionMarketsServer {
         execute_tool(self, "market_history", async {
             self.record_call("market_history");
             let source = req.source.as_deref().unwrap_or("kalshi");
-            let prices: Vec<f64> = match source {
+            // The two venues are sampled differently, and the variance of a
+            // log-odds step depends on the step: the response names the
+            // sampling so the two are never compared as like for like
+            // (mcp-tool-review PM2-12).
+            let (prices, sampling): (Vec<f64>, String) = match source {
                 "kalshi" => {
                     let window = i64::from(req.window_days.unwrap_or(90));
                     let now = chrono::Utc::now().timestamp();
                     let start = (now - window * 86_400).max(0) as u64;
-                    provider_kalshi::fetch_price_history(&self.http, &req.market, start, now as u64)
-                        .await?
-                        .iter()
-                        .map(|p| p.price)
-                        .collect()
-                }
-                "polymarket" => provider_polymarket::fetch_prices_history(&self.http, &req.market)
+                    let prices = provider_kalshi::fetch_price_history(
+                        &self.http,
+                        &req.market,
+                        start,
+                        now as u64,
+                    )
                     .await?
                     .iter()
                     .map(|p| p.price)
-                    .collect(),
+                    .collect();
+                    (prices, format!("daily closes over the last {window} days"))
+                }
+                "polymarket" => {
+                    let prices = provider_polymarket::fetch_prices_history(&self.http, &req.market)
+                        .await?
+                        .iter()
+                        .map(|p| p.price)
+                        .collect();
+                    (
+                        prices,
+                        "hourly points over the last day (window_days does not apply)".to_string(),
+                    )
+                }
                 other => {
                     return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                         format!("unknown source '{other}' (expected kalshi|polymarket)"),
@@ -798,6 +849,7 @@ impl PredictionMarketsServer {
                 "market": req.market,
                 "source": source,
                 "observations": prices.len(),
+                "sampling": sampling,
                 "realized_variance": variance,
                 "volatility_regime": format!("{regime:?}"),
                 "insufficient_history": variance.is_none(),
@@ -813,7 +865,7 @@ impl PredictionMarketsServer {
     /// and a 95% prediction interval. All config fields are optional with
     /// sensible defaults from the paper.
     #[tool(
-        description = "Compute the DR-AS structural volatility forecast (arXiv:2607.08199) for a prediction-market contract: conditional variance = p(1−p)/τ + K·ν(V)·s²/4, with a 95% prediction interval. All config fields optional with paper defaults."
+        description = "Compute the DR-AS structural volatility forecast (arXiv:2607.08199) for a prediction-market contract: conditional variance = p(1−p)/τ + K·ν(V)·s²/4, with a 95% prediction interval. All config fields optional: the √V activity proxy is the paper's; the default K = 0.12 is this server's heuristic, not a paper estimate — pass a fitted K when you have one."
     )]
     pub async fn market_volatility(
         &self,
@@ -844,7 +896,7 @@ impl PredictionMarketsServer {
                 };
                 let fc = volatility::forecast(inputs, config, horizon_hours).ok_or_else(|| {
                     hkask_mcp_server::server::McpToolError::invalid_argument(
-                        "degenerate inputs: price must be in [0,1], hours_to_resolution > 0, horizon > 0".to_string()
+                        "degenerate inputs: price must be in [0,1]; hours_to_resolution and horizon_hours finite and > 0; k, spread and volume finite and >= 0".to_string()
                     )
                 })?;
                 serde_json::to_value(serde_json::json!({
@@ -899,7 +951,7 @@ impl PredictionMarketsServer {
         let now = chrono::Utc::now();
         let mut records = Vec::new();
 
-        let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
+        let gamma_events = provider_polymarket::fetch_events(&self.http, GAMMA_EVENT_POOL).await?;
         for event in &gamma_events {
             let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
             for market in &event.markets {
@@ -911,8 +963,9 @@ impl PredictionMarketsServer {
             }
         }
 
-        let kalshi_markets = provider_kalshi::fetch_markets(&self.http, None, 200).await?;
-        let kalshi_events = provider_kalshi::fetch_events(&self.http, 200).await?;
+        let kalshi_markets =
+            provider_kalshi::fetch_markets(&self.http, None, KALSHI_MARKET_POOL).await?;
+        let kalshi_events = provider_kalshi::fetch_events(&self.http, KALSHI_MARKET_POOL).await?;
         for market in &kalshi_markets {
             let event = kalshi_events
                 .iter()
@@ -970,6 +1023,15 @@ impl rmcp::ServerHandler for PredictionMarketsServer {}
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const DEFAULT_CACHE_TTL_SECS: u64 = 60;
+
+// The candidate pool `market_lookup` and `market_match` search: one page
+// per provider. Live 2026-11-11 the 200 Kalshi markets were all one series
+// (KXMVECROSSCATEGORY), so an exact Fed-decision question matched nothing —
+// the bound is stated wherever an empty result is reported
+// (mcp-tool-review PM2-14).
+const GAMMA_EVENT_POOL: u32 = 100;
+const KALSHI_MARKET_POOL: u32 = 200;
+const POOL_SCOPE: &str = "the candidate pool is the first 100 open Polymarket events and the first 200 open Kalshi markets, not the whole of either exchange";
 
 // Fail fast before the 60s MCP `tools/call` cap kills and restarts the
 // server: a hung upstream (Kalshi, Polymarket, FRED) surfaces as a request
@@ -1231,6 +1293,58 @@ mod smoke {
         );
     }
 
+    /// mcp-tool-review PM2-14 pin: the pool bound the code fetches is the
+    /// bound the notes and both tool descriptions state.
+    #[test]
+    fn candidate_pool_bound_is_stated_where_it_is_enforced() {
+        let stated = format!(
+            "first {GAMMA_EVENT_POOL} open Polymarket events and the first {KALSHI_MARKET_POOL} open Kalshi markets"
+        );
+        assert!(POOL_SCOPE.contains(&stated), "{POOL_SCOPE}");
+        for tool in PredictionMarketsServer::combined_router().list_all() {
+            if tool.name == "market_lookup" || tool.name == "market_match" {
+                let description = tool.description.as_deref().unwrap_or_default();
+                assert!(
+                    description.contains(&stated),
+                    "{} must state its pool bound: {description}",
+                    tool.name
+                );
+            }
+        }
+    }
+
+    /// mcp-tool-review PM2-12 pin: an empty ladder says why. Live
+    /// 2026-11-10, an unknown series returned `rungs: [], warnings: []`.
+    #[test]
+    fn empty_ladder_names_its_cause() {
+        assert_eq!(
+            PredictionMarketsServer::ladder_note("KXFED", false, true),
+            None
+        );
+        let unknown = PredictionMarketsServer::ladder_note("ZZ", true, true)
+            .expect("an empty ladder carries a note");
+        assert!(unknown.contains("'ZZ'") && unknown.contains("either platform"));
+        let failed = PredictionMarketsServer::ladder_note("ZZ", true, false)
+            .expect("an empty ladder carries a note");
+        assert!(failed.contains("provider state"), "{failed}");
+    }
+
+    /// A subscription with no asset ids would hold the socket open for the
+    /// full time bound and report nothing — refused before any connection.
+    #[tokio::test]
+    async fn subscribe_without_asset_ids_is_refused_before_connecting() {
+        let server = make_server();
+        let error = server
+            .market_subscribe_resolutions(Parameters(MarketSubscribeRequest {
+                asset_ids: vec![],
+                bucket: "politics".to_string(),
+                max_resolutions: None,
+            }))
+            .await
+            .expect_err("empty asset_ids must error");
+        assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    }
+
     /// The manual calibration sense arm through the tool seam:
     /// `market_record_resolution` writes an observation and
     /// `market_calibration` reads it back non-stale with the right sample
@@ -1281,6 +1395,37 @@ mod smoke {
         assert_eq!(
             content["stale"], false,
             "two recorded observations must read non-stale, got: {content}"
+        );
+
+        // mcp-tool-review PM2-11 pin: the read canonicalizes like the
+        // write. "Elections" is recorded under "politics"; reading it back
+        // by the same name must find the three observations, not a stale
+        // raw-keyed bucket.
+        let written = server
+            .market_record_resolution(Parameters(MarketRecordResolutionRequest {
+                bucket: "Elections".to_string(),
+                probability: 0.5,
+                outcome: true,
+            }))
+            .await
+            .expect("record ok");
+        let written = unwrap_content(&written);
+        assert_eq!(written["bucket"], "politics");
+        assert!(
+            written["journal_saved"].is_null(),
+            "no journal configured must read null, never true: {written}"
+        );
+        let read_back = server
+            .market_calibration(Parameters(MarketCalibrationRequest {
+                bucket: "Elections".to_string(),
+            }))
+            .await
+            .expect("calibration ok");
+        let read_back = unwrap_content(&read_back);
+        assert_eq!(
+            read_back["sample_size"].as_u64(),
+            Some(3),
+            "a read by the name it was written under must find it: {read_back}"
         );
         assert_eq!(
             content["sample_size"].as_u64(),

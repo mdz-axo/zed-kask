@@ -22,6 +22,10 @@ use serde_json::Value;
 pub enum EconomicDataError {
     #[error("invalid parameter: {0}")]
     InvalidParam(String),
+    /// A caller-named resource (series, dataset, indicator, release) the
+    /// provider does not have. The message names the missing thing.
+    #[error("{0}")]
+    NotFound(String),
     #[error(
         "HKASK_FRED_API_KEY not configured. Set HKASK_FRED_API_KEY via the keychain or environment variable."
     )]
@@ -42,21 +46,36 @@ pub enum EconomicDataError {
         provider: &'static str,
         detail: String,
     },
-    #[error("{provider} API error: {detail}")]
-    ApiError {
-        provider: &'static str,
-        detail: String,
-    },
 }
 
 impl From<EconomicDataError> for McpToolError {
     fn from(error: EconomicDataError) -> Self {
         use EconomicDataError::*;
+        let message = error.to_string();
         match error {
-            InvalidParam(_) => McpToolError::invalid_argument(error.to_string()),
-            MissingApiKey => McpToolError::permission_denied(error.to_string()),
-            HttpError { .. } | RequestFailed { .. } => McpToolError::unavailable(error.to_string()),
-            ParseError { .. } | ApiError { .. } => McpToolError::internal(error.to_string()),
+            InvalidParam(_) => McpToolError::invalid_argument(message),
+            NotFound(_) => McpToolError::not_found(message),
+            MissingApiKey => McpToolError::permission_denied(message),
+            RequestFailed { .. } => McpToolError::unavailable(message),
+            // The provider's status decides the class (mcp-tool-review
+            // PM2-05): a rejected caller value is not a transient outage.
+            // FRED answers a bad or unknown id with HTTP 400 — and an
+            // unregistered key with HTTP 400 naming `api_key`, which is a
+            // credential fault, not a bad argument.
+            HttpError {
+                status: 400, body, ..
+            } if body.contains("api_key") => {
+                McpToolError::permission_denied(format!("{message} — check HKASK_FRED_API_KEY"))
+            }
+            HttpError { status, .. } => match status {
+                400 | 422 => McpToolError::invalid_argument(message),
+                401 | 403 => McpToolError::permission_denied(message),
+                404 => McpToolError::not_found(message),
+                429 => McpToolError::rate_limited(message),
+                500..=599 => McpToolError::unavailable(message),
+                _ => McpToolError::internal(message),
+            },
+            ParseError { .. } => McpToolError::internal(message),
         }
     }
 }
@@ -82,9 +101,10 @@ impl<'a> EconomicDataClient<'a> {
     ///
     /// Query param values are URL-encoded so LLM-controlled values (e.g.
     /// `series_code`, `query`) cannot inject extra params (`&limit=...`) or
-    /// truncate the URL (`#`). Path segments are NOT encoded here — callers
-    /// must validate path-segment inputs against `^[A-Za-z0-9_-]+$` before
-    /// interpolating them into `endpoint`.
+    /// truncate the URL (`#`). All three providers build their URLs here.
+    /// Path segments are NOT encoded here — callers pass caller-supplied
+    /// segments through [`path_segment`] before interpolating them into
+    /// `endpoint`.
     pub fn build_url(base: &str, endpoint: &str, params: &[(&str, &str)]) -> String {
         let mut url = if endpoint.is_empty() {
             base.trim_end_matches('/').to_string()
@@ -116,15 +136,17 @@ impl<'a> EconomicDataClient<'a> {
         provider: &'static str,
         url: &str,
     ) -> Result<Value, EconomicDataError> {
-        let response =
-            self.http
-                .get(url)
-                .send()
-                .await
-                .map_err(|e| EconomicDataError::RequestFailed {
-                    provider,
-                    detail: e.to_string(),
-                })?;
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            // `without_url`: reqwest appends the request URL to its
+            // error text, and FRED's key rides the query string.
+            .map_err(|e| EconomicDataError::RequestFailed {
+                provider,
+                detail: e.without_url().to_string(),
+            })?;
         let status = response.status().as_u16();
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -139,9 +161,26 @@ impl<'a> EconomicDataClient<'a> {
             .await
             .map_err(|e| EconomicDataError::ParseError {
                 provider,
-                detail: e.to_string(),
+                detail: e.without_url().to_string(),
             })
     }
+}
+
+/// Admit a caller-supplied value as one URL path segment. Provider codes
+/// legitimately carry `.`, `:` and `-` (`SP.POP.TOTL`, `WEO:latest`), so
+/// this rejects only what would restructure the URL: separators, query and
+/// fragment markers, escapes, whitespace and dot-segments.
+pub(crate) fn path_segment<'a>(field: &str, value: &'a str) -> Result<&'a str, EconomicDataError> {
+    let value = value.trim();
+    let structural = |c: char| {
+        matches!(c, '/' | '\\' | '?' | '#' | '&' | '%') || c.is_whitespace() || c.is_control()
+    };
+    if value.is_empty() || value == "." || value == ".." || value.chars().any(structural) {
+        return Err(EconomicDataError::InvalidParam(format!(
+            "{field} must be one non-empty path segment without '/', '\\', '?', '#', '&', '%' or whitespace, got {value:?}"
+        )));
+    }
+    Ok(value)
 }
 
 // The per-provider modules (fred, worldbank, dbnomics) live as sibling
@@ -151,3 +190,90 @@ impl<'a> EconomicDataClient<'a> {
 pub mod dbnomics;
 pub mod fred;
 pub mod worldbank;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// mcp-tool-review PM2-04 pin: a transport failure must never carry the
+    /// request URL into the tool error. FRED's key rides the query string,
+    /// and reqwest's error `Display` appends `for url (...)` — so an
+    /// un-stripped error hands the credential to the calling model.
+    #[tokio::test]
+    async fn request_failure_message_never_carries_the_url_or_api_key() {
+        let http = reqwest::Client::new();
+        let client = EconomicDataClient::new(&http);
+        // Port 1 on loopback refuses the connection — no network leaves the host.
+        let error = client
+            .fetch(
+                "FRED",
+                "http://127.0.0.1:1/fred/series?api_key=PROBESECRETKEY123&file_type=json",
+            )
+            .await
+            .expect_err("a refused connection must error");
+        assert!(
+            matches!(error, EconomicDataError::RequestFailed { .. }),
+            "a refused connection is a request failure, got: {error:?}"
+        );
+        let message = McpToolError::from(error).message;
+        assert!(
+            !message.contains("PROBESECRETKEY123") && !message.contains("api_key"),
+            "the tool error must not carry the URL or its key, got: {message}"
+        );
+    }
+
+    /// mcp-tool-review PM2-05 pin: the provider's HTTP status decides the
+    /// error class. Live 2026-11-10, FRED's HTTP 400 for a bad series id
+    /// reached the caller as `unavailable` (retry later).
+    #[test]
+    fn http_status_decides_the_error_class() {
+        use hkask_types::McpErrorKind;
+        let kind = |status: u16| {
+            McpToolError::from(EconomicDataError::HttpError {
+                provider: "FRED",
+                status,
+                body: String::new(),
+            })
+            .kind
+        };
+        assert_eq!(kind(400), McpErrorKind::InvalidArgument);
+        assert_eq!(kind(403), McpErrorKind::PermissionDenied);
+        assert_eq!(kind(404), McpErrorKind::NotFound);
+        assert_eq!(kind(429), McpErrorKind::RateLimited);
+        assert_eq!(kind(503), McpErrorKind::Unavailable);
+
+        // FRED's live body for an unregistered key (captured 2026-11-11).
+        let bad_key = McpToolError::from(EconomicDataError::HttpError {
+            provider: "FRED",
+            status: 400,
+            body: r#"{"error_code":400,"error_message":"Bad Request.  The value for variable api_key is not registered."}"#.to_string(),
+        });
+        assert_eq!(bad_key.kind, McpErrorKind::PermissionDenied);
+        assert!(
+            bad_key.message.contains("HKASK_FRED_API_KEY"),
+            "{}",
+            bad_key.message
+        );
+        assert_eq!(
+            McpToolError::from(EconomicDataError::NotFound("series X not found".into())).kind,
+            McpErrorKind::NotFound
+        );
+    }
+
+    /// mcp-tool-review PM2-03 pin: a caller value can be one path segment,
+    /// never a path, a query or a fragment.
+    #[test]
+    fn path_segment_admits_provider_codes_and_rejects_url_structure() {
+        for ok in ["SP.POP.TOTL", "WEO:latest", "ABW.BCA.us_dollars", " USA "] {
+            assert!(path_segment("code", ok).is_ok(), "{ok:?} is a valid code");
+        }
+        assert_eq!(path_segment("code", " USA ").ok(), Some("USA"));
+        for bad in ["", "..", "a/b", "a?b=1", "a#b", "a&b", "a%2Fb", "a b"] {
+            let error = path_segment("code", bad).expect_err("must reject");
+            assert!(
+                matches!(error, EconomicDataError::InvalidParam(_)),
+                "{bad:?}"
+            );
+        }
+    }
+}

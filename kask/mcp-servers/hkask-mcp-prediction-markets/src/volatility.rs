@@ -20,7 +20,9 @@
 //! h²(K) = [ p(1−p)/τ  +  K · ν(V) · s²/4 ] · Δ
 //! ```
 //!
-//! The paper's empirical findings on a large Kalshi panel:
+//! The paper's empirical findings on a large Kalshi panel (headline numbers
+//! as stated in v1 of the preprint; v3, 2026-10-13, reports the comparison
+//! on different scores and no longer carries the 34% figure):
 //! - DR-AS(√V) outperforms plain GARCH(1,1) by 34% on VW-IS.
 //! - The √V activity proxy is statistically separated from log(1+V),
 //!   constant, and linear V.
@@ -29,9 +31,10 @@
 //! - Adding residual GARCH(1,1) dynamics on top of DR-AS gives the best
 //!   overall model (GARCH+DR-AS(√V)), a 40% improvement over plain GARCH.
 //!
-//! The fitted scale `K` is globally portable per the paper's Table 7. We
-//! provide a default `K` derived from the paper's pooled estimate; callers
-//! can override with a locally fitted value.
+//! The fitted scale `K` is globally portable per the paper's Table 7. The
+//! paper publishes no single pooled `K`, so the default here is this
+//! module's own heuristic (see `DrasConfig::default`); callers can override
+//! with a fitted value.
 
 use serde::{Deserialize, Serialize};
 
@@ -85,9 +88,8 @@ pub struct VolatilityInputs {
 pub struct DrasConfig {
     /// The fitted adverse-selection scale parameter K ≥ 0. The paper
     /// estimates this via volume-weighted Gaussian quasi-likelihood on a
-    /// training panel. The default is a conservative midpoint from the
-    /// paper's pooled Kalshi panel; callers should override with a locally
-    /// fitted value when available.
+    /// training panel. The default is this module's heuristic, not a paper
+    /// estimate; callers should override with a fitted value when available.
     pub k: f64,
     /// The activity proxy ν(V). Defaults to √V (the paper's best).
     pub activity_proxy: ActivityProxy,
@@ -138,16 +140,27 @@ pub struct VolatilityForecast {
 /// the one-hour-ahead forecast). The conditional variance scales linearly
 /// with the horizon.
 ///
-/// Returns `None` when the inputs are degenerate (price outside [0,1],
-/// non-positive time to resolution). A None is never an error for the
-/// caller — it means "no forecast possible from these inputs."
+/// Returns `None` when the inputs are degenerate: price outside [0,1];
+/// time to resolution or horizon not finite and positive; `K` or the
+/// spread negative or not finite (the model's `K` is a nonnegative scale,
+/// and a negative one yields a negative variance and a NaN volatility);
+/// volume not finite. A None is never an error for the caller — it means
+/// "no forecast possible from these inputs."
 pub fn forecast(
     inputs: VolatilityInputs,
     config: DrasConfig,
     delta_hours: f64,
 ) -> Option<VolatilityForecast> {
     let p = inputs.price;
-    if !(0.0..=1.0).contains(&p) || inputs.hours_to_resolution <= 0.0 || delta_hours <= 0.0 {
+    let positive = |x: f64| x.is_finite() && x > 0.0;
+    let nonnegative = |x: f64| x.is_finite() && x >= 0.0;
+    if !(0.0..=1.0).contains(&p)
+        || !positive(inputs.hours_to_resolution)
+        || !positive(delta_hours)
+        || !nonnegative(config.k)
+        || !inputs.spread.is_none_or(nonnegative)
+        || !inputs.volume.is_finite()
+    {
         return None;
     }
 

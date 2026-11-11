@@ -1,8 +1,8 @@
 //! TTL cache for market-data responses.
 //!
 //! Plain in-process memoization with explicit expiry. A miss or expiry is a
-//! refetch; the cache never synthesizes data. Testable via injected clock —
-//! `new_with_clock` lets tests control time without sleeping.
+//! refetch; the cache never synthesizes data. The clock is a field so a
+//! test could substitute it; no such constructor exists yet.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
