@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Self-test for the pre-push hook (kask/githooks/pre-push): the
-# net-lines reporting and the four blocking gates (rustfmt + the three
-# citation gates), run against the PUSHED COMMIT via a git archive export.
+# net-lines reporting and the eight blocking gates (rustfmt, the three
+# citation gates, and the four code-hygiene gates wired 2026-11-11:
+# unsafe-forbid, version-sync, provider-profiles, structural-traps), run
+# against the PUSHED COMMIT via a git archive export.
 #
 # The reporting job's RED proof is that the reported numbers are the
 # TRUE numbers for a known range. The gate's RED proof is that a push
@@ -21,12 +23,26 @@
 #   8. Containment: the hook names the rustfmt gate script and the
 #      three wired citation gates, and names NONE of the still-unwired
 #      bookkeeping gates (the 2026-11-02 T3 re-wiring).
-#   9. A pushed commit with a green citation set ALLOWS — all four
+#   9. A pushed commit with a green citation set ALLOWS — all eight
 #      gates pass against the pushed export.
 #  10. A pushed commit with a deliberately rotted @sym citation
 #      BLOCKS, naming citation-drift — the known-positive discipline:
 #      a gate that cannot fail is not a gate.
 #  11. A re-anchored citation ALLOWS again.
+#  12. Every gate prints a progress line with its verdict and elapsed
+#      time, and a green run reports all eight as ok — so a gate that
+#      was silently skipped cannot hide behind a green exit.
+#  13. A crate root without its unsafe-gating attribute BLOCKS, naming
+#      unsafe-forbid; restoring it ALLOWS.
+#  14. An unbaselined unwrap() in production code BLOCKS, naming
+#      structural-traps; removing it ALLOWS.
+#  15. A pushed commit whose structural-traps script predates export
+#      gating is WARNED about and allowed, never blocked on a tooling
+#      error.
+#  16. A README version line that disagrees with the workspace version
+#      BLOCKS, naming version-sync.
+#  17. A retired profile for a vendor the tree still adopts BLOCKS,
+#      naming provider-profiles.
 #
 # Runs in CI via the kask/scripts/check-*-selftest.sh glob.
 # Exit codes: 0 = every case behaved as expected, 1 = the hook is wrong.
@@ -59,22 +75,34 @@ cp "$KASK_ROOT/scripts/ast-grep.sh" "$WORK/kask/scripts/"
 mkdir -p "$WORK/kask/ast-grep/rules"
 cp "$KASK_ROOT/ast-grep/rules/rust-definitions.yml" "$WORK/kask/ast-grep/rules/"
 cp "$KASK_ROOT/ast-grep/rules/rust-impls.yml" "$WORK/kask/ast-grep/rules/"
+# The four code-hygiene gates wired 2026-11-11, with the structural-traps
+# rule and an empty ratchet baseline.
+cp "$KASK_ROOT/scripts/check-unsafe-forbid.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/check-version-sync.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/check-provider-profiles.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/scripts/check-structural-traps.sh" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/ast-grep/rules/no-unwrap-in-production.yml" "$WORK/kask/ast-grep/rules/"
+: > "$WORK/kask/scripts/structural-traps-baseline.txt"
 mkdir -p "$WORK/kask/docs/fx"
 # Stub every kask/docs/**.md path the copied gate banners cite — the
 # code-docs gate sweeps non-docs surfaces for docs paths, so the banners'
 # citations must exist in the fixture as they do in the real tree.
-for p in $(cat "$KASK_ROOT/scripts/check-docs-citations.sh" \
-              "$KASK_ROOT/scripts/check-docs-citation-drift.sh" \
-              "$KASK_ROOT/scripts/check-code-docs-citations.sh" \
-              "$KASK_ROOT/scripts/ast-grep.sh" \
+for p in $(cat "$WORK"/kask/scripts/*.sh "$WORK"/kask/ast-grep/rules/*.yml \
     | grep -hoE 'kask/docs/[A-Za-z0-9_./-]+\.md' | sort -u); do
   mkdir -p "$WORK/$(dirname "$p")"
   : > "$WORK/$p"
 done
 
 # The rustfmt gate's minimal green tree: a single-crate workspace whose
-# one lib file is formatted.
+# one lib file is formatted. [workspace.package] and crates/zed carry the
+# version-sync gate's two anchors (the workspace release version, and an
+# application manifest that inherits it).
 cat > "$WORK/Cargo.toml" <<'EOF'
+[workspace]
+
+[workspace.package]
+version = "0.0.0"
+
 [package]
 name = "fixture"
 version = "0.0.0"
@@ -84,6 +112,44 @@ edition = "2021"
 path = "fixture.rs"
 EOF
 printf 'pub fn fixture() {}\n' > "$WORK/fixture.rs"
+mkdir -p "$WORK/crates/zed"
+printf '[package]\nname = "zed"\nversion.workspace = true\n' > "$WORK/crates/zed/Cargo.toml"
+
+# The provider-profiles gate derives the adopted vendor set from tree
+# anchors: one vendor (acme) named by each anchor, with one
+# contract-complete profile.
+mkdir -p "$WORK/kask/crates/kask_bridge/src" "$WORK/kask/crates/hkask-inference/src" \
+  "$WORK/kask/mcp-servers/hkask-mcp-research/src/research/providers" "$WORK/kask/registry/providers"
+cat > "$WORK/kask/crates/kask_bridge/src/inference_providers.rs" <<'EOF'
+pub struct Descriptor {
+    pub id: &'static str,
+}
+pub const INFERENCE_PROVIDERS: &[Descriptor] = &[Descriptor {
+    id: "acme",
+}];
+EOF
+printf 'pub struct AcmeMediaProvider;\n' > "$WORK/kask/crates/hkask-inference/src/media_providers.rs"
+printf 'pub fn search() {}\n' > "$WORK/kask/mcp-servers/hkask-mcp-research/src/research/providers/acme.rs"
+cat > "$WORK/kask/registry/providers/acme.yaml" <<'EOF'
+id: acme
+name: Acme
+status: active
+roles: [inference]
+keychain: acme
+consumed_capabilities: []
+deliberate_non_consumption: []
+data_terms: fixture
+status_surface: fixture
+pricing: fixture
+EOF
+
+# The unsafe-forbid and structural-traps gates' surface: one kask crate
+# whose root carries the unsafe-gating attribute and no unwrap().
+mkdir -p "$WORK/kask/crates/fxcrate/src"
+printf '[package]\nname = "fxcrate"\nversion = "0.0.0"\nedition = "2021"\n' > "$WORK/kask/crates/fxcrate/Cargo.toml"
+FXCRATE_GREEN='#![forbid(unsafe_code)]\npub fn fx() -> u32 {\n    1\n}\n'
+# shellcheck disable=SC2059
+printf "$FXCRATE_GREEN" > "$WORK/kask/crates/fxcrate/src/lib.rs"
 
 # Base: three seam rows, five code lines — committed so pushes attest
 # exactly the fixture content.
@@ -202,6 +268,10 @@ expect_contains "hook gates via the export mechanism" "git archive" "$hook_src"
 expect_contains "hook names the docs-citations gate" "check-docs-citations.sh" "$hook_src"
 expect_contains "hook names the citation-drift gate" "check-docs-citation-drift.sh" "$hook_src"
 expect_contains "hook names the code-docs-citations gate" "check-code-docs-citations.sh" "$hook_src"
+expect_contains "hook names the unsafe-forbid gate" "check-unsafe-forbid.sh" "$hook_src"
+expect_contains "hook names the version-sync gate" "check-version-sync.sh" "$hook_src"
+expect_contains "hook names the provider-profiles gate" "check-provider-profiles.sh" "$hook_src"
+expect_contains "hook names the structural-traps gate" "check-structural-traps.sh" "$hook_src"
 expect_not_contains "hook carries no docs-count gate" "check-docs-count-gate.sh" "$hook_src"
 expect_not_contains "hook carries no frontmatter gate" "check-docs-frontmatter.sh" "$hook_src"
 expect_not_contains "hook carries no diagram gate" "check-diagram-registry-parity.sh" "$hook_src"
@@ -209,7 +279,7 @@ expect_not_contains "hook carries no readme-counts gate" "check-mcp-readme-count
 expect_not_contains "hook carries no skill-crossrefs gate" "check-skill-crossrefs.sh" "$hook_src"
 expect_not_contains "hook carries no retired-record gate" "check-retired-record.sh" "$hook_src"
 
-# Case 9: a green citation in a pushed commit allows — all four gates
+# Case 9: a green citation in a pushed commit allows — all eight gates
 # pass against the pushed export.
 printf 'See fixture.rs:1@fixture for the entry point.\n' \
   > "$WORK/kask/docs/fx/doc.md"
@@ -235,9 +305,76 @@ fcommit "restore citation"
 out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
 expect_exit "hook allows again after re-anchoring the citation" 0 "$rc"
 
+# Case 12: every gate reports its verdict and elapsed time on a green
+# run. A gate the hook skipped (script missing from the export, or
+# predating export gating) prints a warning instead of an ok line, so
+# this is also the proof that all eight actually ran in the fixture.
+for g in unsafe-forbid version-sync provider-profiles structural-traps \
+         code-docs-citations docs-citations citation-drift rustfmt; do
+  expect_contains "green run reports the $g gate as ok" "[pre-push] $g … ok (" "$out"
+done
+expect_not_contains "green run skips no gate" "unchecked on this push" "$out"
+
+# Case 13: a crate root without its unsafe-gating attribute BLOCKS,
+# naming unsafe-forbid.
+printf 'pub fn fx() -> u32 {\n    1\n}\n' > "$WORK/kask/crates/fxcrate/src/lib.rs"
+fcommit "drop the unsafe gate"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a push whose crate root lost its unsafe gate" 1 "$rc"
+expect_contains "missing-attribute rejection names the unsafe-forbid gate" \
+  "invariant gate(s) red: unsafe-forbid" "$out"
+expect_contains "the red gate's progress line says RED" "[pre-push] unsafe-forbid … RED (" "$out"
+
+# Case 14: an unbaselined unwrap() in production code BLOCKS, naming
+# structural-traps (the unsafe gate is restored, so it is the only red).
+printf '#![forbid(unsafe_code)]\npub fn fx() -> u32 {\n    Some(1).unwrap()\n}\n' \
+  > "$WORK/kask/crates/fxcrate/src/lib.rs"
+fcommit "net-new unwrap"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a push with a net-new production unwrap" 1 "$rc"
+expect_contains "unwrap rejection names the structural-traps gate" \
+  "invariant gate(s) red: structural-traps" "$out"
+# shellcheck disable=SC2059
+printf "$FXCRATE_GREEN" > "$WORK/kask/crates/fxcrate/src/lib.rs"
+fcommit "remove the unwrap"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook allows again after the unwrap is removed" 0 "$rc"
+
+# Case 15: a pushed commit whose structural-traps script predates export
+# gating (it resolves its root through git only, and an export has no
+# .git) is warned about and allowed — running it would block the push on
+# a tooling error, not a finding.
+grep -v 'REPO_ROOT:-' "$KASK_ROOT/scripts/check-structural-traps.sh" \
+  > "$WORK/kask/scripts/check-structural-traps.sh"
+fcommit "pre-export structural-traps script"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook allows a push whose structural-traps script predates export gating" 0 "$rc"
+expect_contains "the skipped gate is surfaced, never silent" \
+  "structural-traps script predates export gating" "$out"
+
+# Case 16: a README version line that disagrees with the workspace
+# version BLOCKS, naming version-sync.
+printf '# fixture\n**Version:** v0.9.9\n' > "$WORK/kask/README.md"
+fcommit "version drift"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a push with a drifted README version" 1 "$rc"
+expect_contains "version-drift rejection names the version-sync gate" \
+  "invariant gate(s) red: version-sync" "$out"
+git -C "$WORK" rm -q kask/README.md
+
+# Case 17: a retired profile for a vendor the tree still adopts BLOCKS,
+# naming provider-profiles (the version drift is gone, so it is the only
+# red).
+sed -i 's/^status: active$/status: retired/' "$WORK/kask/registry/providers/acme.yaml"
+fcommit "zombie provider profile"
+out="$(run_hook "refs/heads/main $(git -C "$WORK" rev-parse HEAD) refs/remotes/origin/main $BASE")"; rc=$?
+expect_exit "hook blocks a push with a zombie provider profile" 1 "$rc"
+expect_contains "zombie-profile rejection names the provider-profiles gate" \
+  "invariant gate(s) red: provider-profiles" "$out"
+
 if [ "$FAILURES" -eq 0 ]; then
   echo ""
-  echo "SELFTEST OK: pre-push hook reports true numbers, gates rustfmt and the three citation gates over the pushed commit via export (busy tree allows; red sha blocked despite clean tree; non-HEAD green allowed; rotted citation blocked, re-anchored allowed), and carries none of the unwired bookkeeping gates (report + fmt red/green + citation red/green + export gating + containment all pinned)"
+  echo "SELFTEST OK: pre-push hook reports true numbers, gates rustfmt, the three citation gates and the four code-hygiene gates over the pushed commit via export (busy tree allows; red sha blocked despite clean tree; non-HEAD green allowed; rotted citation blocked, re-anchored allowed; missing unsafe gate blocked; net-new unwrap blocked; version drift blocked; zombie provider profile blocked; pre-export gate script skipped with a warning), prints a verdict and elapsed time per gate, and carries none of the unwired bookkeeping gates"
   exit 0
 fi
 echo "" >&2

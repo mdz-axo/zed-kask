@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Shared harness surface for MCP tool-behavior tests.
 //!
 //! Every server's `tests/tool_behavior.rs` drives its tools through the

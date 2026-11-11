@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pre-push — net-lines + DIVERGENCE.md seam reporting for the pushed
-# range, plus the one blocking code-quality gate (rustfmt), run against
-# the PUSHED COMMIT via a git archive export.
+# range, plus eight blocking gates (four code-hygiene, three citation,
+# rustfmt), run against the PUSHED COMMIT via a git archive export.
 #
 # 2026-10-31 operator mandate: the documentation/process bookkeeping
 # gate set (docs-count, docs-frontmatter, docs-citations and its
@@ -33,10 +33,21 @@
 # hook's advisory invocation and the kask-invariants selftest-loop skip
 # entry went with them.
 #
-# What blocks a push, now and deliberately, is four things: rustfmt
-# drift and the three citation gates (docs citations, citation drift,
-# code->docs citations) in the pushed commits — all four mirroring CI
-# steps, so a red push never becomes a wasted red CI run. 2026-11-04
+# What blocks a push, now and deliberately, is eight things, every one
+# mirroring a CI check-job step: rustfmt drift, the three citation gates
+# (docs citations, citation drift, code->docs citations), and — by the
+# 2026-11-11 operator decision — unsafe-forbid, version-sync,
+# provider-profiles and structural-traps. The evidence for the four
+# additions: 27 of the 30 Kask-invariants runs on main before that date
+# were red, none of them on a step this hook gated, so the hook's stated
+# purpose (a red push never becomes a wasted red CI run) was not being
+# served; structural-traps alone reddened 11 of the 30. The four cost
+# about 2s together. The other frequent CI failures (the duplication
+# ratchet, cargo test) stay CI-only: minutes-tier, or needing a network
+# fetch. Each gate prints one progress line with its elapsed time, so a
+# slow run is legible as progress rather than a hang (the 2026-11-11
+# push sat silent for 98 minutes across a suspend and a throttled CPU).
+# 2026-11-04
 # operator ratification: the citation-gates CI step (kask-invariants.yml)
 # runs the same three gates over the real checkout, blocking tier only —
 # warnings log, never redden, honoring the 2026-10-31 mandate's substance
@@ -75,20 +86,39 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 done
 [ "${#ref_lines[@]}" -eq 0 ] && exit 0 # nothing pushed: nothing to gate
 
-# ── The rustfmt gate, over the PUSHED COMMIT ───────────────────────────────
+# ── The blocking gates, over the PUSHED COMMIT ─────────────────────────────
 gate_failures=()
 
-run_gate() { # run_gate <name> <script> <gate-root> — records failures, never aborts
-  local name="$1" script="$2" gate_root="$3"
+now_us() { # microseconds; bash < 5 has no EPOCHREALTIME and falls back to whole seconds
+  local t="${EPOCHREALTIME:-$SECONDS.000000}"
+  printf '%s' "${t/[.,]/}"
+}
+
+# run_gate <name> <script> <gate-root> [<export-marker>] — records
+# failures, never aborts. <export-marker> is a string the gate script must
+# contain to be runnable inside an export: a pushed commit that predates a
+# gate's export support carries a script that cannot run without .git, and
+# running it would block the push on a tooling error rather than a finding.
+run_gate() {
+  local name="$1" script="$2" gate_root="$3" marker="${4:-}"
   if [ ! -f "$script" ]; then
     echo "[pre-push] warning: gate script not present in the gated object ($name — $script) — unchecked on this push (CI remains the backstop)" >&2
     return 0
   fi
-  local out
-  if ! out="$(cd "$gate_root" && REPO_ROOT="$gate_root" bash "$script" 2>&1)"; then
-    gate_failures+=("$name")
-    printf '%s\n' "$out" >&2
+  if [ -n "$marker" ] && ! grep -qF -- "$marker" "$script"; then
+    echo "[pre-push] warning: the gated object's $name script predates export gating — unchecked on this push (CI remains the backstop)" >&2
+    return 0
   fi
+  local out t0 ms verdict=ok
+  t0="$(now_us)"
+  printf '[pre-push] %s … ' "$name" >&2
+  if ! out="$(cd "$gate_root" && REPO_ROOT="$gate_root" bash "$script" 2>&1)"; then
+    verdict=RED
+    gate_failures+=("$name")
+  fi
+  ms=$(( ($(now_us) - t0) / 1000 ))
+  printf '%s (%d.%ds)\n' "$verdict" $((ms / 1000)) $(((ms % 1000) / 100)) >&2
+  [ "$verdict" = ok ] || printf '%s\n' "$out" >&2
   return 0
 }
 
@@ -109,10 +139,16 @@ for line in "${ref_lines[@]}"; do
     exit 1
   fi
 
-  run_gate "rustfmt" "$EXPORT_DIR/kask/scripts/check-rustfmt.sh" "$EXPORT_DIR"
+  echo "[pre-push] gating ${local_sha:0:10} ($local_ref) over an export of the pushed commit" >&2
+  # Cheapest first, so the fast verdicts arrive before the slow ones.
+  run_gate "unsafe-forbid" "$EXPORT_DIR/kask/scripts/check-unsafe-forbid.sh" "$EXPORT_DIR"
+  run_gate "version-sync" "$EXPORT_DIR/kask/scripts/check-version-sync.sh" "$EXPORT_DIR"
+  run_gate "provider-profiles" "$EXPORT_DIR/kask/scripts/check-provider-profiles.sh" "$EXPORT_DIR"
+  run_gate "structural-traps" "$EXPORT_DIR/kask/scripts/check-structural-traps.sh" "$EXPORT_DIR" 'REPO_ROOT:-'
+  run_gate "code-docs-citations" "$EXPORT_DIR/kask/scripts/check-code-docs-citations.sh" "$EXPORT_DIR"
   run_gate "docs-citations" "$EXPORT_DIR/kask/scripts/check-docs-citations.sh" "$EXPORT_DIR"
   run_gate "citation-drift" "$EXPORT_DIR/kask/scripts/check-docs-citation-drift.sh" "$EXPORT_DIR"
-  run_gate "code-docs-citations" "$EXPORT_DIR/kask/scripts/check-code-docs-citations.sh" "$EXPORT_DIR"
+  run_gate "rustfmt" "$EXPORT_DIR/kask/scripts/check-rustfmt.sh" "$EXPORT_DIR"
 
   rm -rf "$EXPORT_DIR"
   EXPORT_DIR=""

@@ -100,32 +100,41 @@ resolve() {
 : > "$TMP/citations.tsv"   # doc, docline, file, startline, sym, form
 : > "$TMP/unresolved.log"
 mapfile -t DOCS < <(find "$DOCS_ROOT" -name '*.md' | sort)
+CITE_RE='[A-Za-z0-9_./-]+\.rs:[0-9]+(-[0-9]+)?(@[A-Za-z_][A-Za-z0-9_:]*)?|[:,][0-9]+(-[0-9]+)?@[A-Za-z_][A-Za-z0-9_:]*'
+# One grep per doc (`-n -o`: a `LINE:token` record per match, in textual
+# order), not one per doc line: the per-line form forked ~32,700 greps
+# over the docs tree and was 41.9s of this gate's 50.6s (measured
+# 2026-11-11). resolve() forks too and is pure within a run, so its
+# answers are memoized per cited path (empty = unresolvable).
+# One deliberate behavior change from the per-line form: grep reads an
+# unterminated final line, which a `while read` loop drops, so a citation
+# on the last line of a doc with no trailing newline is now checked
+# (pinned by the selftest; no real doc carried one when this landed).
+declare -A RESOLVED=()
 for doc in "${DOCS[@]}"; do
-  lineno=0; last_path=""
-  while IFS= read -r line; do
-    lineno=$((lineno + 1))
-    toks=$(grep -oE '[A-Za-z0-9_./-]+\.rs:[0-9]+(-[0-9]+)?(@[A-Za-z_][A-Za-z0-9_:]*)?|[:,][0-9]+(-[0-9]+)?@[A-Za-z_][A-Za-z0-9_:]*' <<<"$line" || true)
-    if [ -n "$toks" ]; then
-      while IFS= read -r t; do
-        case "$t" in
-          *\.rs:*)
-            p=${t%%:*}; rest=${t#*:}; linespec=${rest%%@*}; sym=""
-            case "$rest" in *@*) sym=${rest#*@};; esac
-            r=$(resolve "$p") || { echo "$doc:$lineno UNRESOLVED $t" >> "$TMP/unresolved.log"; continue; }
-            printf '%s\t%s\t%s\t%s\t%s\tfull\n' "$doc" "$lineno" "$r" "${linespec%%-*}" "$sym" >> "$TMP/citations.tsv"
-            last_path="$r"
-            ;;
-          :*|,*)
-            [ -n "$last_path" ] || { echo "$doc:$lineno CONT-NO-PATH $t" >> "$TMP/unresolved.log"; continue; }
-            rest=${t#[:,]}; linespec=${rest%%@*}; sym=${rest#*@}
-            printf '%s\t%s\t%s\t%s\t%s\tcont\n' "$doc" "$lineno" "$last_path" "${linespec%%-*}" "$sym" >> "$TMP/citations.tsv"
-            ;;
-        esac
-      done <<<"$toks"
-    else
-      last_path=""
-    fi
-  done < "$doc"
+  prev_line=0; last_path=""
+  while IFS= read -r rec; do
+    lineno=${rec%%:*}; t=${rec#*:}
+    # A token-free line between two cited lines ends path inheritance.
+    [ "$lineno" -gt $((prev_line + 1)) ] && last_path=""
+    prev_line=$lineno
+    case "$t" in
+      *\.rs:*)
+        p=${t%%:*}; rest=${t#*:}; linespec=${rest%%@*}; sym=""
+        case "$rest" in *@*) sym=${rest#*@};; esac
+        [ -n "${RESOLVED[$p]+x}" ] || RESOLVED[$p]=$(resolve "$p" || true)
+        r=${RESOLVED[$p]}
+        [ -n "$r" ] || { echo "$doc:$lineno UNRESOLVED $t" >> "$TMP/unresolved.log"; continue; }
+        printf '%s\t%s\t%s\t%s\t%s\tfull\n' "$doc" "$lineno" "$r" "${linespec%%-*}" "$sym" >> "$TMP/citations.tsv"
+        last_path="$r"
+        ;;
+      :*|,*)
+        [ -n "$last_path" ] || { echo "$doc:$lineno CONT-NO-PATH $t" >> "$TMP/unresolved.log"; continue; }
+        rest=${t#[:,]}; linespec=${rest%%@*}; sym=${rest#*@}
+        printf '%s\t%s\t%s\t%s\t%s\tcont\n' "$doc" "$lineno" "$last_path" "${linespec%%-*}" "$sym" >> "$TMP/citations.tsv"
+        ;;
+    esac
+  done < <(grep -anoE "$CITE_RE" "$doc" || true)
 done
 
 # ── Phase C: bulk definition map (one ast-grep dump per rule) ─────────────

@@ -17,7 +17,7 @@ impl TempDir {
     pub fn new(tag: &str) -> Self {
         let p = std::env::temp_dir().join(format!("dme-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(&p).unwrap();
+        std::fs::create_dir_all(&p).expect("create the dme-harness test temp dir");
         Self { dir: p }
     }
 

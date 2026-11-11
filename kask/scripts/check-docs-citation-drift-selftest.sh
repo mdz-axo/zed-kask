@@ -21,6 +21,14 @@
 #      collapse false-cleaned the tier for days).
 #   8. Export mode (no .git) → the same surfaced-skip contract in the
 #      summary, which the pre-push hook prints on every push.
+#   9. Continuation inheritance across lines: a continuation on the line
+#      directly after a cited line inherits its path (and is checked —
+#      a wrong symbol there exits 1); a citation-free line in between
+#      ends inheritance, and the continuation is an orphan, not a pass
+#      against a stale path.
+#  10. A citation on an unterminated final line (a doc with no trailing
+#      newline) is checked — a per-line `read` loop drops that line, and
+#      21 of the 102 real docs end without a newline (2026-11-11).
 #
 # Exit codes: 0 = every case behaved as expected, 1 = a case misbehaved.
 set -uo pipefail
@@ -162,6 +170,29 @@ echo "$out" | grep -q 'drift-window tier SKIPPED (export mode, no .git)' \
   || { echo "FAIL: export case summary did not surface the skip"; FAILED=1; }
 echo "$out" | grep -qE '[0-9]+ shifted-region warnings' \
   && { echo "FAIL: export case printed a shifted-region count over a skipped tier"; FAILED=1; }
+
+# Case 9: continuation inheritance across lines. In the shifted fixture
+# alpha spans 3-5 and beta spans 7-9.
+mkdir -p "$WORK/docs/adjacent" "$WORK/docs/adjacent-bad" "$WORK/docs/gap"
+printf 'See `src/widget.rs:4@alpha`\n`:8@beta` on the next line\n' > "$WORK/docs/adjacent/doc.md"
+out=$(run_gate adjacent); rc=$?
+expect 0 "$rc" "continuation on the adjacent line inherits the path"
+echo "$out" | grep -q '0 orphaned continuation forms' \
+  || { echo "FAIL: adjacent-line continuation was orphaned: $out"; FAILED=1; }
+printf 'See `src/widget.rs:4@alpha`\n`:4@beta` on the next line\n' > "$WORK/docs/adjacent-bad/doc.md"
+out=$(run_gate adjacent-bad); rc=$?
+expect 1 "$rc" "adjacent-line continuation with the wrong symbol"
+printf 'See `src/widget.rs:4@alpha`\nprose with no citation\n`:8@beta` after the gap\n' > "$WORK/docs/gap/doc.md"
+out=$(run_gate gap); rc=$?
+expect 0 "$rc" "continuation after a citation-free line is an orphan, not a failure"
+echo "$out" | grep -q '1 orphaned continuation forms' \
+  || { echo "FAIL: gap case did not orphan the continuation: $out"; FAILED=1; }
+
+# Case 10: a mismatched citation on an unterminated final line still fails.
+mkdir -p "$WORK/docs/unterminated"
+printf 'intro\n`src/widget.rs:4@beta`' > "$WORK/docs/unterminated/doc.md"
+out=$(run_gate unterminated); rc=$?
+expect 1 "$rc" "mismatch on an unterminated final line"
 
 [ "$FAILED" -eq 0 ] && echo "PASS: all citation-drift self-test cases behaved as expected."
 exit "$FAILED"

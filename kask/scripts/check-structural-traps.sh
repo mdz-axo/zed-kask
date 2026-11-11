@@ -26,17 +26,30 @@
 # SCAN_DIRS and BASELINE_FILE are overridable so the self-test
 # (check-structural-traps-selftest.sh) can point the gate at a temp tree.
 #
+# WIRED into kask/githooks/pre-push (2026-11-11 operator decision): the
+# hook runs this gate inside a `git archive` export of the pushed commit,
+# which has no .git, and passes REPO_ROOT. Without REPO_ROOT the git repo
+# root is used as before.
+#
+# Canary: before the real scan the gate runs the rule over a one-line
+# known-positive file and requires exactly one match. A dead instrument
+# (npx missing, no network on first fetch, a rule that no longer parses)
+# otherwise scans nothing, reports 0 instances and exits 0 (reproduced
+# 2026-11-11 with a wrapper that exits 1: an unbaselined unwrap passed).
+#
 # Run locally: bash kask/scripts/check-structural-traps.sh
 # Refresh baseline: bash kask/scripts/check-structural-traps.sh --refresh
 # Exit codes: 0 = no net-new instances, 1 = net-new instances or
-# tooling unavailable.
+# tooling unavailable (including a failed canary).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
-  echo "FAIL: $SCRIPT_DIR is not inside a git repository." >&2
-  exit 1
-}
+if [ -z "${REPO_ROOT:-}" ]; then
+  REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "FAIL: $SCRIPT_DIR is not inside a git repository and no REPO_ROOT is set." >&2
+    exit 1
+  }
+fi
 cd "$REPO_ROOT" || exit 1
 
 BASELINE_FILE="${BASELINE_FILE:-$SCRIPT_DIR/structural-traps-baseline.txt}"
@@ -82,7 +95,18 @@ fi
 # both expected, hence the redirect and || true. Grep reads from the temp
 # file, never a pipe (a pipe under pipefail SIGPIPEs the writer).
 CURRENT="$(mktemp)"
-trap 'rm -f "$CURRENT"' EXIT
+CANARY_DIR="$(mktemp -d)"
+trap 'rm -f "$CURRENT"; rm -rf "$CANARY_DIR"' EXIT
+
+printf 'pub fn canary() -> u32 {\n    Some(1).unwrap()\n}\n' > "$CANARY_DIR/canary.rs"
+canary_hits=$("$AST_GREP" scan --rule "$RULE_FILE" --json=stream "$CANARY_DIR" 2>/dev/null \
+  | jq -r 'select(.ruleId == "no-unwrap-in-production") | .file' \
+  | grep -c . || true)
+if [ "$canary_hits" != "1" ]; then
+  echo "FAIL: the structural instrument did not find the known-positive canary (expected 1 match, got ${canary_hits:-none}) — ast-grep or the rule is not running, so a scan would report 0 instances regardless of the code. Run 'bash $AST_GREP --version' to see why." >&2
+  exit 1
+fi
+
 "$AST_GREP" scan --rule "$RULE_FILE" --json=stream "${paths[@]}" 2>/dev/null \
   | jq -r 'select(.ruleId == "no-unwrap-in-production") | "\(.file):\(.range.start.line + 1)"' \
   | sort -u > "$CURRENT" || true

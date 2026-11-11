@@ -11,6 +11,12 @@
 #      selftest pins).
 #   4. Stale baseline entry (a removal) → exit 0 with a stale note —
 #      removals never fail.
+#   5. Dead instrument (the ast-grep wrapper fails) → exit 1 naming the
+#      canary, even though an unbaselined instance is present — without
+#      the canary the scan reports 0 instances and exits 0.
+#   6. Export mode (no .git, REPO_ROOT set — the pre-push hook's form) →
+#      the gate runs and still fails on an unbaselined instance; with
+#      neither .git nor REPO_ROOT it exits 1 rather than guessing a root.
 #
 # Case 1 generates its baseline through the gate's --refresh, pinning the
 # refresh path too.
@@ -102,9 +108,43 @@ else
   echo "case 4: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
 fi
 
+# ── Cases 5-6 run a fixture-local copy of the gate: the gate resolves its
+# instrument and rule beside itself, so a dead instrument and a .git-less
+# root both need their own tree. $WORK is outside any git repository.
+mkdir -p "$WORK/kask/scripts" "$WORK/kask/ast-grep/rules"
+cp "$GATE" "$WORK/kask/scripts/"
+cp "$KASK_ROOT/ast-grep/rules/no-unwrap-in-production.yml" "$WORK/kask/ast-grep/rules/"
+LOCAL_GATE="$WORK/kask/scripts/check-structural-traps.sh"
+: > "$WORK/baseline-empty.txt"
+
+# ── Case 5: dead instrument fails closed ──────────────────────────────────
+printf '#!/usr/bin/env bash\necho "FAIL: npx not found" >&2\nexit 1\n' > "$WORK/kask/scripts/ast-grep.sh"
+chmod +x "$WORK/kask/scripts/ast-grep.sh"
+out=$(REPO_ROOT="$WORK" SCAN_DIRS="$WORK/crates/*/src" BASELINE_FILE="$WORK/baseline-empty.txt" bash "$LOCAL_GATE" 2>&1); rc=$?
+if [ $rc -eq 1 ] && grep -q 'known-positive canary' <<<"$out"; then
+  echo "case 5 (dead instrument exits 1 naming the canary): OK"
+else
+  echo "case 5: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
+fi
+
+# ── Case 6: export mode ───────────────────────────────────────────────────
+cp "$KASK_ROOT/scripts/ast-grep.sh" "$WORK/kask/scripts/ast-grep.sh"
+out=$(REPO_ROOT="$WORK" SCAN_DIRS="$WORK/crates/*/src" BASELINE_FILE="$WORK/baseline-empty.txt" bash "$LOCAL_GATE" 2>&1); rc=$?
+if [ $rc -eq 1 ] && grep -q '2 current instance(s), 2 net-new' <<<"$out"; then
+  echo "case 6a (no .git + REPO_ROOT: the gate runs and fails on unbaselined instances): OK"
+else
+  echo "case 6a: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
+fi
+out=$(cd "$WORK" && env -u REPO_ROOT SCAN_DIRS="$WORK/crates/*/src" BASELINE_FILE="$WORK/baseline-empty.txt" bash "$LOCAL_GATE" 2>&1); rc=$?
+if [ $rc -eq 1 ] && grep -q 'no REPO_ROOT is set' <<<"$out"; then
+  echo "case 6b (no .git and no REPO_ROOT exits 1, never guesses a root): OK"
+else
+  echo "case 6b: FAIL (rc=$rc)"; printf '%s\n' "$out"; FAILURES=$((FAILURES + 1))
+fi
+
 echo "----"
 if [ "$FAILURES" -eq 0 ]; then
-  echo "structural-traps selftest: all 5 cases behaved as expected"
+  echo "structural-traps selftest: all 8 cases behaved as expected"
 else
   echo "structural-traps selftest: $FAILURES case(s) misbehaved"
 fi
