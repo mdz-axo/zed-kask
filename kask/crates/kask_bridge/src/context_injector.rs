@@ -476,7 +476,7 @@ impl ContextInjector for BridgeContextInjector {
                 .chain(thread_filtered.iter())
                 .map(|s| s.entity.clone())
                 .collect();
-            memory_port.record_co_occurrence(&entities);
+            memory_port.record_co_occurrence(entities).await;
 
             vec![LanguageModelRequestMessage {
                 role: Role::System,

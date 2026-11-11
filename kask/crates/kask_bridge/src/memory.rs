@@ -1000,18 +1000,43 @@ impl RealMemoryPort {
     /// context injector after a successful recall to populate the
     /// `memory_links` table — the `connectedness` signal for recall ranking.
     ///
-    /// Returns `Ok(())` when the curator store is unavailable (graceful
-    /// degradation — co-occurrence tracking is a bonus, not a requirement).
-    pub fn record_co_occurrence(&self, entities: &[String]) {
-        if let Some(ref store) = self.curator_store.get() {
-            if let Err(e) = store.record_co_occurrence(entities) {
-                tracing::warn!(
-                    target: "reg.memory",
-                    error = %e,
-                    "Failed to record co-occurrence links"
-                );
-            }
+    /// Does nothing when the curator store is unavailable (graceful
+    /// degradation — co-occurrence tracking is a bonus, not a requirement);
+    /// a failed write is warned, never returned.
+    pub async fn record_co_occurrence(&self, entities: Vec<String>) {
+        let Some(store) = self.curator_store.get() else {
+            return;
+        };
+        let recorded = self
+            .store_work(move || {
+                store
+                    .record_co_occurrence(&entities)
+                    .map_err(|error| MemoryError::Recall(error.to_string()))
+            })
+            .await;
+        if let Err(e) = recorded {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                "Failed to record co-occurrence links"
+            );
         }
+    }
+
+    /// Run synchronous store work on the runtime's blocking pool.
+    ///
+    /// Recall is awaited from the editor's foreground turn task, so a
+    /// statement issued on the calling thread freezes the window for as
+    /// long as it takes — including the seconds-scale key derivation a
+    /// fresh pooled connection pays.
+    async fn store_work<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> Result<T, MemoryError> + Send + 'static,
+    ) -> Result<T, MemoryError> {
+        self.tokio_handle
+            .spawn_blocking(work)
+            .await
+            .map_err(|error| MemoryError::Recall(format!("memory store task failed: {error}")))?
     }
 
     /// Get the connectedness score for an entity — the total co-occurrence
@@ -1105,20 +1130,6 @@ impl RealMemoryPort {
         private_context: bool,
         dimensions: u32,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
-        // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
-        // touch only the survivors. Both the embedding-KNN and keyword paths
-        // read from the same `store`, so no per-candidate source tag is
-        // needed — the touch target is always `store`.
-        struct Candidate {
-            snippet: MemorySnippet,
-            h_mem_id: hkask_storage::HMemId,
-        }
-        let mut candidates: Vec<Candidate> = Vec::new();
-        // FR-4 (D-2): rows excluded by the privacy filter this call —
-        // surfaced after the legs, never silently dropped (an empty result
-        // must not read as "no memory found").
-        let mut excluded_private: usize = 0;
-
         // ── 1. Embedding search (KNN) ─────────────────────────────────
         //
         // Embed the query and search for similar stored embeddings.
@@ -1162,6 +1173,38 @@ impl RealMemoryPort {
             )
             .await
         };
+        let store = Arc::clone(store);
+        let query = query.to_string();
+        self.store_work(move || {
+            Self::recall_from_blocking(&store, embedded, &query, limit, log_label, private_context)
+        })
+        .await
+    }
+
+    /// The store half of `recall_from`: the KNN and keyword legs, ranking,
+    /// and the decay-clock touch. Synchronous — run it through `store_work`.
+    fn recall_from_blocking(
+        store: &MemoryStore,
+        embedded: Option<(Vec<Vec<f32>>, String, Option<String>)>,
+        query: &str,
+        limit: usize,
+        log_label: &'static str,
+        private_context: bool,
+    ) -> Result<Vec<MemorySnippet>, MemoryError> {
+        // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
+        // touch only the survivors. Both the embedding-KNN and keyword paths
+        // read from the same `store`, so no per-candidate source tag is
+        // needed — the touch target is always `store`.
+        struct Candidate {
+            snippet: MemorySnippet,
+            h_mem_id: hkask_storage::HMemId,
+        }
+        let mut candidates: Vec<Candidate> = Vec::new();
+        // FR-4 (D-2): rows excluded by the privacy filter this call —
+        // surfaced after the legs, never silently dropped (an empty result
+        // must not read as "no memory found").
+        let mut excluded_private: usize = 0;
+
         if let Some((vectors, requested_model, actual_model)) = embedded
             && let Some(query_vector) = vectors.into_iter().next()
         {
@@ -1458,6 +1501,23 @@ impl RealMemoryPort {
         &'a self,
         store: &'a Arc<MemoryStore>,
         thread_id: &'a str,
+        limit: usize,
+        log_label: &'static str,
+        private_context: bool,
+    ) -> Result<Vec<MemorySnippet>, MemoryError> {
+        let store = Arc::clone(store);
+        let thread_id = thread_id.to_string();
+        self.store_work(move || {
+            Self::recall_thread_from_blocking(&store, &thread_id, limit, log_label, private_context)
+        })
+        .await
+    }
+
+    /// The store half of `recall_thread_from`. Synchronous — run it through
+    /// `store_work`.
+    fn recall_thread_from_blocking(
+        store: &MemoryStore,
+        thread_id: &str,
         limit: usize,
         log_label: &'static str,
         private_context: bool,
@@ -3663,18 +3723,25 @@ pub(crate) mod tests {
     /// A `DatabaseDriver` wrapper that counts queries against a substring —
     /// the regression seam for the connectedness-in-the-sort-comparator
     /// defect (`recall_context_ranks_by_confidence_weighted_relevance`
-    /// exercises ranking, but nothing bounded the query count).
+    /// exercises ranking, but nothing bounded the query count) — and records
+    /// the thread every statement ran on, the seam for keeping recall's
+    /// database work off the thread that sends a prompt.
     struct QueryCountingDriver {
         inner: Arc<dyn hkask_storage::DatabaseDriver>,
         needle: &'static str,
         count: std::sync::atomic::AtomicUsize,
+        statement_threads: std::sync::Mutex<std::collections::HashSet<std::thread::ThreadId>>,
     }
 
     impl QueryCountingDriver {
-        fn count_queries_matching(&self, sql: &str) {
+        fn observe_statement(&self, sql: &str) {
             if sql.contains(self.needle) {
                 self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
+            self.statement_threads
+                .lock()
+                .expect("statement thread set")
+                .insert(std::thread::current().id());
         }
     }
 
@@ -3684,11 +3751,11 @@ pub(crate) mod tests {
             sql: &str,
             params: &[hkask_storage::database::value::DbValue],
         ) -> Result<usize, hkask_types::DbError> {
-            self.count_queries_matching(sql);
+            self.observe_statement(sql);
             self.inner.execute(sql, params)
         }
         fn execute_batch(&self, sql: &str) -> Result<(), hkask_types::DbError> {
-            self.count_queries_matching(sql);
+            self.observe_statement(sql);
             self.inner.execute_batch(sql)
         }
         fn query(
@@ -3696,7 +3763,7 @@ pub(crate) mod tests {
             sql: &str,
             params: &[hkask_storage::database::value::DbValue],
         ) -> Result<Vec<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
-            self.count_queries_matching(sql);
+            self.observe_statement(sql);
             self.inner.query(sql, params)
         }
         fn query_optional(
@@ -3704,7 +3771,7 @@ pub(crate) mod tests {
             sql: &str,
             params: &[hkask_storage::database::value::DbValue],
         ) -> Result<Option<hkask_storage::database::value::DbRow>, hkask_types::DbError> {
-            self.count_queries_matching(sql);
+            self.observe_statement(sql);
             self.inner.query_optional(sql, params)
         }
         fn as_any(&self) -> &dyn std::any::Any {
@@ -3736,6 +3803,7 @@ pub(crate) mod tests {
             inner,
             needle: "FROM memory_links",
             count: std::sync::atomic::AtomicUsize::new(0),
+            statement_threads: Default::default(),
         });
         let h_mem_store =
             HMemStore::from_driver(Arc::clone(&counting) as Arc<dyn hkask_storage::DatabaseDriver>)
@@ -3784,6 +3852,97 @@ pub(crate) mod tests {
             connectedness_queries, 20,
             "connectedness must run once per unique entity (20), not per sort \
              comparison (~170 with the comparator-query defect)"
+        );
+    }
+
+    /// expect: "Sending a curator prompt never runs memory-database work on
+    /// the thread that sends it."
+    ///
+    /// Context injection is awaited from the editor's foreground turn task,
+    /// so a statement it issues on the calling thread freezes the window for
+    /// as long as the statement takes (the hang record's 0.2–0.6 s send-time
+    /// stalls at normal CPU speed, 7–17 s under the 2026-11-10 frequency
+    /// clamp). Falsifier: any store statement observed on the calling thread.
+    #[tokio::test]
+    async fn context_injection_keeps_store_statements_off_the_calling_thread() {
+        use agent::ContextInjector as _;
+
+        let observing = Arc::new(QueryCountingDriver {
+            inner: SqliteDriver::in_memory_driver(),
+            needle: "FROM memory_links",
+            count: std::sync::atomic::AtomicUsize::new(0),
+            statement_threads: Default::default(),
+        });
+        let driver: Arc<dyn hkask_storage::DatabaseDriver> = observing.clone();
+        let store = Arc::new(MemoryStore::new(
+            HMemStore::from_driver(Arc::clone(&driver)).expect("curator hmem store init"),
+            EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
+        ));
+        let port = port_with(
+            Arc::clone(&store),
+            LanguageModelEmbeddingPort::for_tests(),
+            None,
+            0,
+            0.3,
+        );
+
+        // Turns on two threads that match the prompt, so prompt recall,
+        // thread recall and the co-occurrence write (two distinct entities)
+        // all issue statements.
+        let curator_webid = port.curator_webid;
+        for thread in ["alpha", "beta"] {
+            store
+                .store(
+                    hkask_storage::HMem::new(
+                        &format!("curator:thread:{thread}"),
+                        "chunk:0",
+                        serde_json::json!(format!("{thread} turn about xvantium")),
+                        curator_webid,
+                    )
+                    .with_perspective(curator_webid),
+                )
+                .expect("seed turn");
+        }
+
+        let injector = crate::BridgeContextInjector::new_curator(Arc::new(port), 10, 0.0, true);
+        // Seeding ran on this thread; only the injection is under test.
+        observing
+            .statement_threads
+            .lock()
+            .expect("statement thread set")
+            .clear();
+
+        let messages = injector
+            .inject_context(
+                "alpha",
+                "please explain the xvantium reconnection strategy",
+                false,
+            )
+            .await;
+
+        let injected: String = messages
+            .iter()
+            .flat_map(|message| message.content.iter())
+            .filter_map(|content| match content {
+                language_model_core::MessageContent::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            injected.contains("xvantium"),
+            "the injection must recall the seeded turns: {injected}"
+        );
+        let threads = observing
+            .statement_threads
+            .lock()
+            .expect("statement thread set");
+        assert!(
+            !threads.is_empty(),
+            "the injection issued no observed store statements"
+        );
+        assert!(
+            !threads.contains(&std::thread::current().id()),
+            "memory-database statements ran on the thread that sent the prompt"
         );
     }
 

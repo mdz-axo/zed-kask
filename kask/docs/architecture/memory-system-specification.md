@@ -606,7 +606,14 @@ status: VERIFIED
 **Source:** `kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::recall_from`,
 `RealMemoryPort::recall_thread_from`, and
 `kask/crates/kask_bridge/src/context_injector.rs:262-460`
-(`inject_context`).
+(`inject_context`). Each recall function embeds on the async side and hands
+its store half (`RealMemoryPort::recall_from_blocking`,
+`RealMemoryPort::recall_thread_from_blocking` — the legs, ranking and touch
+cited below) to the runtime's blocking pool through
+`RealMemoryPort::store_work`, as does the co-occurrence write: injection is
+awaited from the editor's foreground turn task, so no store statement may run
+on the calling thread (pinned by
+`context_injection_keeps_store_statements_off_the_calling_thread`).
 
 ### When recall fires
 

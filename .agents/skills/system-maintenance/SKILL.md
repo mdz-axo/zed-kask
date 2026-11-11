@@ -24,7 +24,7 @@ The skill manages the script fleet at `~/system-maintenance/` (this machine's co
 
 | Script | Role | Runs | sudo? |
 |---|---|---|---|
-| `system-health-check.sh` | read-only health check; warns on disk, services, staleness | daily 08:30 timer + on demand | no |
+| `system-health-check.sh` | read-only health check; warns on disk, services, staleness; fails on a clamped CPU | daily 08:30 timer + on demand | no |
 | `maintenance-clean.sh` | cache cleanup; `--dry-run` default, `--run` deletes reviewed disposables only | weekly on demand | no |
 | `maintenance-review.sh` | manual-review surface — every held-back item as an exact command | weekly on demand | no |
 | `maintenance-update.sh` | package update (apt, snap, flatpak, SMART, rustup, uv) | weekly, the operator's terminal | yes |
@@ -98,6 +98,8 @@ After step 8, check in `lisp_eval`:
 - **The scripts stay the executables; this skill is their manager** — the inventory above, verification, execution, and the step-10 update path. It duplicates no script logic. Script changes commit in the scripts repo and update this skill in the same pass — a stale skill or stale fleet doc is active misinformation.
 - **Timers are reminders, not executors** — the weekly timer reminds; the update runs in your terminal.
 - **The exec bit is load-bearing under systemd** — `ExecStart` invokes scripts directly; `bash script.sh` works without `+x`, so a fleet script can pass manual runs while its timer unit fails daily with `203/EXEC Permission denied`. `setup-maintenance-timers.sh` sets the bits on install (added 2026-10-17 after the healthcheck timer had failed daily since Oct 13).
+
+- **Settings can read normal while the CPU is clamped** — from 2026-11-10 14:43 to 2026-11-11 10:33 every core ran at about 607 MHz under load (policy maximum 5158 MHz) with governor, power profile and temperature all normal, and the health check said "healthy". The check now loads one core for a second and fails below 25% of the allowed frequency (added 2026-11-11). Restarts did not clear the clamp; a full power-off did.
 
 ## Regression case
 
