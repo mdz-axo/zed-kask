@@ -2300,8 +2300,7 @@ mod tests {
         let mut settings = crate::KaskSettings::default();
         settings.research = crate::KaskResearchSettings {
             research_db: "/research.db".to_string(),
-        }
-        .into();
+        };
         let provider = FakeCredentialsProvider::default();
         // Hygiene: the scenarios server's credentials allowlist is empty,
         // so no keychain read should occur — but an installed empty mock

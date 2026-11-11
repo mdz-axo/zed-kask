@@ -589,7 +589,7 @@ fn main() {
         // The runtime is owned by GlobalTokio (registered below) for the
         // lifetime of the app. Dropping GlobalTokio on app shutdown will
         // shutdown_background the runtime.
-        gpui_tokio::init_from_handle(cx, kask_runtime_handle.clone());
+        gpui_tokio::init_from_handle(cx, kask_runtime_handle);
         std::mem::forget(kask_tokio_runtime);
 
         // D1: The skill tool follows upstream Zed — it reads the SKILL.md body
@@ -1589,7 +1589,17 @@ fn main() {
                         // on embedding availability. The regulation loop is a
                         // safety-critical feedback path — dropping spans because the
                         // embedding endpoint is down is a broken feedback loop.
-                        match kask_bridge::open_curator_regulation_archive(&passphrase) {
+                        //
+                        // Every database open in this task runs on the background
+                        // executor: the task itself is on the foreground, where an
+                        // open freezes the window for as long as it takes.
+                        let archive_passphrase = passphrase.clone();
+                        let regulation_archive = cx
+                            .background_spawn(async move {
+                                kask_bridge::open_curator_regulation_archive(&archive_passphrase)
+                            })
+                            .await;
+                        match regulation_archive {
                             Some(archive) => {
                                 let sink: std::sync::Arc<dyn hkask_types::RegulationSink> = archive.clone();
                                 mcp_runtime_for_deferred.set_event_sink(sink.clone());
@@ -1605,10 +1615,19 @@ fn main() {
                                 // commits its row; the live ledger update may follow
                                 // asynchronously because restart recovery reads the archive.
                                 {
-                                    let ledger = regulation_ledger_for_deferred.read().await;
-                                    match kask_bridge::hydrate_operator_feedback(&archive, &ledger)
-                                        .await
-                                    {
+                                    let ledger = regulation_ledger_for_deferred.clone();
+                                    let archive_for_hydration = archive.clone();
+                                    let hydrated = cx
+                                        .background_spawn(async move {
+                                            let ledger = ledger.read().await;
+                                            kask_bridge::hydrate_operator_feedback(
+                                                &archive_for_hydration,
+                                                &ledger,
+                                            )
+                                            .await
+                                        })
+                                        .await;
+                                    match hydrated {
                                         Ok(restored) => tracing::info!(
                                             target: "reg.storage",
                                             restored,
@@ -1898,22 +1917,30 @@ fn main() {
                         let (embedding_port_for_affordance, embedding_model_for_affordance) =
                             (embedding_port.clone(), embedding_model.clone());
 
-                        match kask_bridge::RealMemoryPort::new(
-                            &passphrase,
-                            embedding_model,
-                            embedding_dim,
-                            embedding_port,
-                            private_embedding_port,
-                            private_embedding_model,
-                            classifier_model,
-                            private_classifier_model,
-                            template_root,
-                            kask_settings.memory.consolidation_cadence_secs,
-                            kask_settings.memory.confidence_floor,
-                            kask_settings.memory.forgetting_days,
-                            kask_settings.memory.memory_life_days,
-                            gpui_tokio::Tokio::handle_async(&*cx),
-                        ) {
+                        let memory_passphrase = passphrase.clone();
+                        let memory_settings = kask_settings.memory.clone();
+                        let memory_tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
+                        let real_memory_port = cx
+                            .background_spawn(async move {
+                                kask_bridge::RealMemoryPort::new(
+                                    &memory_passphrase,
+                                    embedding_model,
+                                    embedding_dim,
+                                    embedding_port,
+                                    private_embedding_port,
+                                    private_embedding_model,
+                                    classifier_model,
+                                    private_classifier_model,
+                                    template_root,
+                                    memory_settings.consolidation_cadence_secs,
+                                    memory_settings.confidence_floor,
+                                    memory_settings.forgetting_days,
+                                    memory_settings.memory_life_days,
+                                    memory_tokio_handle,
+                                )
+                            })
+                            .await;
+                        match real_memory_port {
                             Ok(real) => {
                                 // Start the background consolidation timer before
                                 // moving the port into the Arc<dyn MemoryPort>.
@@ -2103,7 +2130,15 @@ fn main() {
                                 // stale set point (D-3: 7 days) or at its
                                 // declared budget ceiling with no verdict
                                 // produces no signal.
-                                match kask_bridge::BridgeExperimentationHealthSource::open(&passphrase) {
+                                let experimentation_passphrase = passphrase.clone();
+                                let experimentation_health_source = cx
+                                    .background_spawn(async move {
+                                        kask_bridge::BridgeExperimentationHealthSource::open(
+                                            &experimentation_passphrase,
+                                        )
+                                    })
+                                    .await;
+                                match experimentation_health_source {
                                     Ok(source) => {
                                         let experimentation_source: std::sync::Arc<
                                             dyn hkask_regulation::ExperimentationHealthSource,
@@ -2198,33 +2233,46 @@ fn main() {
                         }
                         // zed-kask: trusted native goal ingress is independent of turn
                         // ingestion, model readiness, and semantic-store availability.
-                        let projection_store = memory_for_status.as_ref().and_then(|memory| {
-                            match memory.goal_projection_store() {
-                                Ok(store) => Some(store),
-                                Err(error) => { log::warn!("Goal projection unavailable: {error}"); None }
-                            }
-                        });
+                        let memory_for_goals = memory_for_status.clone();
                         let goal_embedding = embedding_port_for_ipc.clone();
+                        let goal_passphrase = passphrase.clone();
+                        let goal_assessor_model =
+                            kask_settings.models.classifier_model_for_host().unwrap_or_default();
+                        let goal_embedding_model = kask_settings.effective_embedding_model();
                         // Managed kata-kanban excludes HKASK_WEBID from its child
                         // env, so bootstrap uses this canonical process default.
                         // Pinned by mcp_created_goal_closes_from_distinct_native_session.
-                        match kask_bridge::GoalHost::open(
-                            hkask_types::WebID::anonymous(),
-                            &passphrase, projection_store,
-                            |messages, model| Box::pin(async move {
-                                let port = kask_bridge::global_inference_port().ok_or_else(|| hkask_types::InferenceError::Generation("Goal assessor inference unavailable".into()))?;
-                                port.generate_with_messages(&messages, &hkask_types::template::LLMParameters::default(), Some(&model), None).await
-                            }),
-                            move |model, passage, dimensions| {
-                                let port = goal_embedding.clone();
-                                Box::pin(async move {
-                                    let port = port.ok_or_else(|| hkask_types::EmbeddingGenerationError::NotConfigured("goal recall embedding unavailable".into()))?;
-                                    port.embed_with_dimensions(&model, &[passage], Some(dimensions)).await
-                                })
-                            },
-                            kask_settings.models.classifier_model_for_host().unwrap_or_default(),
-                            kask_settings.effective_embedding_model(), embedding_dim as u32,
-                        ) {
+                        // The projection-store read rides the same background
+                        // closure: a store that is down re-attempts its open there.
+                        let goal_host = cx
+                            .background_spawn(async move {
+                                kask_bridge::GoalHost::open(
+                                    hkask_types::WebID::anonymous(),
+                                    &goal_passphrase,
+                                    memory_for_goals.as_ref().and_then(|memory| {
+                                        match memory.goal_projection_store() {
+                                            Ok(store) => Some(store),
+                                            Err(error) => { log::warn!("Goal projection unavailable: {error}"); None }
+                                        }
+                                    }),
+                                    |messages, model| Box::pin(async move {
+                                        let port = kask_bridge::global_inference_port().ok_or_else(|| hkask_types::InferenceError::Generation("Goal assessor inference unavailable".into()))?;
+                                        port.generate_with_messages(&messages, &hkask_types::template::LLMParameters::default(), Some(&model), None).await
+                                    }),
+                                    move |model, passage, dimensions| {
+                                        let port = goal_embedding.clone();
+                                        Box::pin(async move {
+                                            let port = port.ok_or_else(|| hkask_types::EmbeddingGenerationError::NotConfigured("goal recall embedding unavailable".into()))?;
+                                            port.embed_with_dimensions(&model, &[passage], Some(dimensions)).await
+                                        })
+                                    },
+                                    goal_assessor_model,
+                                    goal_embedding_model,
+                                    embedding_dim as u32,
+                                )
+                            })
+                            .await;
+                        match goal_host {
                             Ok(host) => {
                                 let host = std::sync::Arc::new(host);
                                 agent::set_native_goal_host(Some(host.clone()));
@@ -5350,6 +5398,44 @@ mod tests {
         assert!(
             insert < push,
             "the baseline must be recorded before the restart is queued"
+        );
+    }
+
+    // zed-kask: the deferred kask wiring task runs on the foreground
+    // executor, so a database open inside it freezes the window for as long
+    // as the open takes — 0.2–1.5 s per start at normal CPU speed, 61 s
+    // under the 2026-11-10 frequency clamp (hang record, the task spawned
+    // after `app_state_for_deferred`). Each open is handed to the background
+    // executor instead. No harness reaches the composition root, so this is
+    // a source pin; needles are split via `concat!` so this test's own
+    // source cannot satisfy them.
+    #[test]
+    fn kask_startup_database_opens_run_off_the_foreground() {
+        let (_, tail) = include_str!("main.rs")
+            .split_once("let provision_result = cx")
+            .expect("the deferred kask wiring task");
+        let (wiring, _) = tail
+            .split_once("// D1/D3: Model-dependent kask wiring.")
+            .expect("the end of the storage wiring");
+        let on_foreground: Vec<&str> = [
+            concat!("kask_bridge::open_curator_", "regulation_archive("),
+            concat!("kask_bridge::hydrate_", "operator_feedback("),
+            concat!("kask_bridge::RealMemory", "Port::new("),
+            concat!("kask_bridge::BridgeExperimentation", "HealthSource::open("),
+            concat!("kask_bridge::Goal", "Host::open("),
+        ]
+        .into_iter()
+        .filter(|needle| {
+            let call = wiring.find(needle).expect(needle);
+            let lead_in_start = (call.saturating_sub(400)..=call)
+                .find(|index| wiring.is_char_boundary(*index))
+                .unwrap_or(call);
+            !wiring[lead_in_start..call].contains(".background_spawn(")
+        })
+        .collect();
+        assert!(
+            on_foreground.is_empty(),
+            "these database opens run on the foreground executor: {on_foreground:?}"
         );
     }
 
