@@ -1004,7 +1004,7 @@ hkask-mcp-experimentation = { path = "kask/mcp-servers/hkask-mcp-experimentation
 k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
 bech32 = "=0.12.0"
 scrypt = { version = "=0.12.0", default-features = false }
-chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["getrandom", "zeroize"] }
 unicode-normalization = "=0.1.25"
 ed25519-dalek = "2"
 # `zeroize` feature: without it the GHASH subkey inside a long-lived `Aes256Gcm`
@@ -1224,6 +1224,10 @@ wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
 minidumper = { opt-level = 3 }
 serde_json = { opt-level = 3 }
+# NIP-49 key derivation (hkask-nostr-signer) is scrypt at 256 MiB. Measured
+# 2026-11-12: the signer's unit tests took 35 s unoptimized and under 2 s here.
+scrypt = { opt-level = 3 }
+salsa20 = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
