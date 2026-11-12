@@ -134,7 +134,7 @@ Before routing, reconcile the unchanged semantic output with ED-0R. Pass the ent
 (begin (define unique-strings (lambda (xs seen) (if (= 0 (length xs)) true (if (member (car xs) seen) false (unique-strings (cdr xs) (cons (car xs) seen)))))) (define unique-owner-fields (lambda (rows seen) (if (= 0 (length rows)) true (let ((field (assoc "field" (car rows)))) (if (or (is_null field) (member field seen)) false (unique-owner-fields (cdr rows) (cons field seen))))))) (define fields-covered (lambda (xs fields) (if (= 0 (length xs)) true (and (member (car xs) fields) (fields-covered (cdr xs) fields))))) (define owners-covered (lambda (rows fields) (if (= 0 (length rows)) true (and (member (assoc "field" (car rows)) fields) (owners-covered (cdr rows) fields))))) (let ((partition_fields (append framer_missing (append falsifiability_missing (append provenance_missing constraints_missing))))) (and (unique-strings missing_fields (list)) (unique-strings partition_fields (list)) (unique-owner-fields owner_returns (list)) (fields-covered partition_fields missing_fields) (owners-covered owner_returns missing_fields) (= (length missing_fields) (length owner_returns)) (= (length missing_fields) (length partition_fields)) (if (= (length missing_fields) 0) (not (is_null hypothesis_spec)) (is_null hypothesis_spec)))))
 ```
 
-A false ED-0R result returns to normalization; no owner or missing field may disappear at the seam. Then run ED-0. The arrays are observations from the normalization result; do not reconstruct field completeness from memory.
+A false ED-0R result returns to normalization, at most twice; a third false result stops and reports the unreconciled fields and owners; no owner or missing field may disappear at the seam. Then run ED-0. The arrays are observations from the normalization result; do not reconstruct field completeness from memory.
 
 ```lisp
 (cond ((> (length framer_missing) 0) "return_to_framer") ((> (length falsifiability_missing) 0) "return_to_falsifiability") ((> (length provenance_missing) 0) "blocked: provenance") ((> (length constraints_missing) 0) "blocked: constraints") ((is_null hypothesis_spec) "blocked: malformed_normalization") (t "ready"))
@@ -162,7 +162,7 @@ Generate 2–5 materially different candidates when possible. If only one credib
 (begin (define unique-candidate-ids (lambda (drafts seen) (if (= 0 (length drafts)) true (let ((id (assoc "candidate_id" (car drafts)))) (if (or (is_null id) (string= "" id) (member id seen)) false (unique-candidate-ids (cdr drafts) (cons id seen))))))) (let ((candidate_count (length candidate_drafts))) (and (unique-candidate-ids candidate_drafts (list)) (cond ((and (>= candidate_count 2) (<= candidate_count 5)) true) ((and (= candidate_count 1) (not (is_null only_credible_explanation)) (not (string= "" only_credible_explanation))) true) (t false)))))
 ```
 
-A false ED-C result returns to synthesis; it never proceeds by quietly dropping alternatives.
+A false ED-C result returns to synthesis, at most twice; it never proceeds by quietly dropping alternatives. A third false result stops and reports the candidate-set defect.
 
 Deliberately vary the source of discrimination where justified: randomized intervention; blocked/factorial or fractional-factorial; matching/counterbalancing; calibration/orthogonal measurement; positive/negative controls; natural experiment/IV/RD/DID with a named causal model; sequential/adaptive with valid error control; measurement-first pilot for uncertain instruments or transportability; computational benchmark.
 
@@ -223,7 +223,7 @@ The template proposes evidence classifications with cited bases; it does not est
 (and (not (and prediction_contradicted equivalence_met)) (if equivalence_met equivalence_prespecified true) (if (= (length run_reports) 0) (not measurement_valid) true))
 ```
 
-A false result returns to findings reconciliation. `run_reports` is the exact array supplied to the template, so report presence is computed rather than model-typed. A missing report must set `measurement_valid=false`; an invalidating protocol breach or failed measurement does the same. A valid observation with no decisive result is `scientific_non_result`, not a measurement failure.
+A false result returns to findings reconciliation, at most twice; a third false result stops before ED-2 and reports the inconsistency, with no label attached. `run_reports` is the exact array supplied to the template, so report presence is computed rather than model-typed. A missing report must set `measurement_valid=false`; an invalidating protocol breach or failed measurement does the same. A valid observation with no decisive result is `scientific_non_result`, not a measurement failure.
 
 Then call ED-2:
 
@@ -250,7 +250,7 @@ The suite exercises the authored ED-0R/ED-0 ownership reconciliation and routing
 
 These tests check decision logic over classified inputs, not scientific validity or study execution. JSON null and empty objects/arrays are null-like in Lisp; ED-0R tests use a nonempty versioned spec for the nonnull case.
 
-Revise a design when new evidence or an identified repair warrants it, preserving the reason and lineage. If no useful next step is available, report the limitation rather than looping or weakening the scientific question.
+Revise a design when new evidence or an identified repair warrants it, preserving the reason and lineage. Each revision names the evidence or repair that triggers it and re-enters synthesis (step 2); make at most two revisions in one run, and treat any further revision as a new run with its own initial condition. If no useful next step is available, report the limitation rather than looping or weakening the scientific question.
 
 ## Registry Templates
 

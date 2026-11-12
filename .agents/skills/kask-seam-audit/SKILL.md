@@ -162,7 +162,10 @@ Patterns checked: `min_w_0()` on flexible text columns; `flex_shrink_0()` on fix
 
 Gate-defect repair is handled inline: if Gate A/B/C finds defects, re-run the
 parent template (`seam-map.j2`, the audit template, or `remediate.j2`) with
-`gate_defects` in context; there are no separate repair templates.
+`gate_defects` in context; there are no separate repair templates. Each gate
+allows at most two repair re-runs; defects that remain after the second stop
+that phase and are recorded in the ledger with an owner, and the batch is
+reported as incomplete.
 
 To render a template, call the `render_template` tool with the template ref (e.g., `kask-seam-audit/seam-map`) and a context object with the required variables.
 

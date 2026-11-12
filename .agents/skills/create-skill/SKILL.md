@@ -166,7 +166,7 @@ and follow the ruling path; never invent a missing definition.
 | 5 Converge | D | the `lisp_eval` gate over the Phase 4 counts; at most 2 re-entries |
 | 3 Scaffold — pre-check scripts | D | `skill-corpus-prescreen.sh` and `skill-corpus-contract-audit.sh` exit counts; bound: two fix-and-rerun cycles |
 | Translation — classify | P | Phase 4 checks; the operator |
-| Translation — reconcile | D | the `lisp_eval` step-count form in the translation entry |
+| Translation — reconcile | D | the `lisp_eval` step-count form in the translation entry; bound: two re-renders |
 
 This skill's own provenance: the Phase 0–5 loop copies Deming's PDCA; the
 artifact contract adapts `skill-maintenance`'s S1–S15/T1–T5 criteria;
@@ -313,7 +313,9 @@ source concept with no kask equivalent `[unresolved: no kask equivalent for
 <source_ref>]` instead of inventing one. Reconcile the returned
 `translation_summary` with `lisp_eval`: form
 `(= source_steps (+ steps_mapped (length unresolved_concepts)))`; a false
-result means a source step was silently dropped — re-render before Phase 4.
+result means a source step was silently dropped — re-render before Phase 4,
+at most twice; a third false result stops the translation and reports the
+counts and the unmapped source steps.
 The artifact contract and pre-check above apply unchanged; then continue at
 Phase 4.
 
