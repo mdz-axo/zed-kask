@@ -267,7 +267,7 @@ fn decision_questions() -> Vec<hkask_types::inference_ipc::DecisionQuestion> {
 
 /// Map a decision answer to the integer EQM score: the most probable level
 /// (argmax over the calibrated per-level probabilities) — the same 0-2
-/// integer scale the composite, the flags and the skill's EQM-2 gate
+/// integer scale the composite, the flags and the skill's EQM-2 screens
 /// consume. Never a fabricated value: a levelless answer reads `None` and
 /// the caller records the marker as missing.
 fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u8> {
@@ -291,7 +291,7 @@ fn answer_level(answer: &hkask_types::inference_ipc::DecisionAnswer) -> Option<u
 /// per marker (the Decisions API: the model returns a calibrated probability
 /// distribution over each marker's 0/1/2 levels, never text); the composite,
 /// the red/green screens and the interpretation stay deterministic in this
-/// code (the EQM-2 lisp gate verifies the screens at the skill layer). An
+/// code (the skill's `eqm/eqm-aggregate` render computes the EQM-2 screens). An
 /// unset decision model is a typed refusal naming the setting — never a
 /// chat-model fallback; a private-provenance call refuses at the boundary
 /// (the decision model is cloud-served; private content never crosses).

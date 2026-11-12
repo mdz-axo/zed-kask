@@ -185,7 +185,7 @@ Fagan, "Design and code inspections to reduce errors in program development," IB
      oracles unless a skill routes them through the setting. Mechanical enforcement
      point: none as a standalone script — read-triage under this check
      (the prescreen's D/P labelling is the floor). In-corpus precedents:
-     SF-3 (superforecasting), EQM-2 (eqm), TB-2 (task-breakdown),
+     SF-3 (superforecasting), TB-2 (task-breakdown),
      KSA-1/KSA-2 (kask-seam-audit), CR-1 (code-review).
       - **T1**: Each `.j2` template referenced in SKILL.md instructions exists
      in the skill's registry template crate

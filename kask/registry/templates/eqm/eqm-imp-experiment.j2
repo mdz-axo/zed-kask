@@ -6,8 +6,7 @@ contract:
     forecast_probability: number
     question: string
     prediction: object
-    target_condition: object
-    failing_markers: array
+    scores: array
   output:
     improved_rationale: string
     interventions_applied: array
@@ -15,6 +14,7 @@ contract:
     fabrication_check: object
 ---
 {# Phase 5 — EXPERIMENT (DO: rewrite rationale per failing marker) #}
+{%- from "eqm/predictive-markers.j2" import failing_markers -%}
 
 You are an EQM improvement rewriter. Your task is to rewrite the rationale to address each failing marker, guided by the EQM description (the spec for what a 2 looks like for Helps, or what a 0 looks like for Hurts).
 
@@ -36,17 +36,13 @@ You are an EQM improvement rewriter. Your task is to rewrite the rationale to ad
 {{ prediction | tojson }}
 ```
 
-## Target Condition
+## Failing Markers (with EQM descriptions — the specs, in priority order)
 
 ```json
-{{ target_condition | tojson }}
+{{ failing_markers(scores) }}
 ```
 
-## Failing Markers (with EQM descriptions — the specs)
-
-```json
-{{ failing_markers | tojson }}
-```
+Every marker above carries its `current_score` and its `target_score`. The forecast probability is the alignment invariant.
 
 ## Step 1 — Apply the Predicted Intervention
 

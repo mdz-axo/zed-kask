@@ -281,13 +281,13 @@ The superforecasting process accepts an optional `overconfidence_bias` number
 input. **Not yet wired:** `scenario_calibrate` derives its bias only from its own resolved-forecast store (`hkask_mcp_scenarios.rs` calibration block) and has no caller input for an EQM-derived bias. Until it does, apply the EQM signal as an explicit, justified departure at stage 6 step 2 and record it; do not claim the server applied it. Before re-invoking superforecasting on a prior
 iteration's forecast, the invoking agent should:
 
-1. Score the prior iteration's rationale (stage_7_record output) against the
-   Explanation Quality Markers (Karvetski et al. 2026): check for red flags
-   (`extreme_confidence`, `forecast_rationale_misalign`) and grounding failures
-   (excessive `speculative_terms` without evidence).
-2. Derive the `overconfidence_bias` value from that scoring. The signal is
-   signed: positive = overconfident (red flags dominate), negative =
-   underconfident (speculation without grounding).
+1. Score the prior iteration's rationale (stage_7_record output) with the
+   `eqm` skill's measure phases (Karvetski et al. 2026): `market_score_rationale`,
+   then the `eqm/eqm-aggregate` render.
+2. Read `overconfidence_bias` from that render's output; it is computed there,
+   never estimated by hand. The signal is signed: positive = overconfident,
+   negative = underconfident. A render whose `status` is not `complete` has no
+   bias value.
 3. Pass the `overconfidence_bias` value when re-invoking superforecasting.
 
 The process does not score the rationale itself — the invoking agent does,

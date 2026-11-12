@@ -1,180 +1,93 @@
-{# goal: Aggregate per-rationale scores to forecast-level and forecaster-level composites. Apply the asymmetric decision rule: red_flag_screen (high confidence) vs green_flag_endorsement (weak). #}
+{# goal: Compute status, forecast_level_composite, forecaster_level_composite, red_flag_screen, green_flag_endorsement, failing_marker_summary and overconfidence_bias from per_rationale_scores. #}
 [inference]
 contract:
   input:
     per_rationale_scores: array
-    forecaster_groups: object
   output:
-    forecast_level_composite: object
-    forecaster_level_composite: object
+    status: string
+    incomplete_rationales: array
+    forecast_level_composite: array
+    forecaster_level_composite: array
     red_flag_screen: array
     green_flag_endorsement: array
     failing_marker_summary: array
+    overconfidence_bias: number|null
 ---
-{# Phase 3 — AGGREGATE (DO: aggregate scores, apply asymmetric decision rule) #}
-{#
-  The asymmetric decision rule encodes the paper's central finding: EQMs
-  flag bad forecasts more reliably than they identify excellent ones.
-  Red-flag screening is the strong signal; green-flag endorsement is weak.
-#}
+{#- Computed render: the output is the aggregate itself, a JSON document. No
+    model fills anything in. Each record of per_rationale_scores is one
+    market_score_rationale result plus its corpus metadata:
+    {rationale_index, question, forecaster_id?, composite_score,
+     scores: [{id, score}], missing_eqms?}.
 
-You are an EQM aggregation analyst. Run only after the invoking agent reconciles one successful tool result per requested rationale and the complete predictive-12 ID set for each. A failed call or nonempty `missing_eqms` is an incomplete batch, not a numeric input to this template. Group the complete scores, apply the asymmetric decision rule, and prepare the failing-marker summary.
+    Completeness: a record is incomplete when the tool reported missing_eqms,
+    when its score ids are not exactly the predictive twelve, when a score is
+    outside 0-2, or when composite_score is not sum(helps) - sum(hurts). One
+    incomplete record makes the batch incomplete and no numeric aggregate is
+    emitted: a zero-filled marker is not an observed low score.
 
-## Per-Rationale Scores
-
-```json
-{{ per_rationale_scores | tojson }}
-```
-
-## Forecaster Groups
-
-```json
-{{ forecaster_groups | tojson }}
-```
-
-**Arithmetic is not done here.** Group the rationales and list the per-rationale values each group needs; the means, frequencies and `overconfidence_bias` are computed by `lisp_eval` in the SKILL.md `eqm-aggregate` step from the values you list. The definitions below say what each computed field means.
-
-## Step 1 — Forecast-Level Composite
-
-For each question (grouping rationales by question), list the values for:
-
-- `mean_composite`: mean of composite_score across rationales for that question.
-- `red_flag_count`: total red flags across rationales for that question.
-- `green_flag_count`: total green flags across rationales for that question.
-- `rationale_count`: number of rationales scored for that question.
-
-## Step 2 — Forecaster-Level Composite
-
-For each forecaster (grouping by forecaster_id), list the values for:
-
-- `mean_composite`: mean of composite_score across the forecaster's rationales. This is the paper's r=0.51 signal.
-- `red_flag_frequency`: mean red flags per rationale for this forecaster.
-- `green_flag_frequency`: mean green flags per rationale for this forecaster.
-- `rationale_count`: number of rationales scored for this forecaster.
-
-## Step 3 — Asymmetric Decision Rule
-
-Apply the paper's central finding (EQMs flag bad forecasts more reliably than they identify excellent ones):
-
-### Red-Flag Screen (HIGH confidence — the strong signal)
-
-For each rationale, if ≥2 red flags at score 2 → add to `red_flag_screen` with:
-- `forecaster_id`, `question`, `rationale_index`
-- `red_flags`: the list of red flag names
-- `severity`: "high" (the paper's strong-signal threshold)
-
-### Green-Flag Endorsement (WEAK — the weak signal)
-
-For each rationale, if composite ≥ 4 AND no red flags → add to `green_flag_endorsement` with:
-- `forecaster_id`, `question`, `rationale_index`
-- `green_flags`: the list of green flag names
-- `confidence`: "weak" (per the paper, green flags are a weak endorsement)
-- `note`: "High composite with no red flags. This is a weak positive endorsement, not a 'strong rationale' claim. Reserve 'strong' for outcome-validated forecasters."
-
-**Critical:** Do NOT label any rationale "strong" based on EQM scores alone. The paper's asymmetry means high EQM scores are a weak positive signal. Reserve "strong" for forecasters whose EQM composite correlates with accuracy on realized outcomes (validated in Phase 4).
-
-## Step 4 — Overconfidence Bias
-
-`overconfidence_bias` is a signed signal (list the four marker scores per rationale; `lisp_eval` computes it):
-
-- positive = overconfident (red flags dominate, especially `extreme_confidence` and `forecast_rationale_misalign`)
-- negative = underconfident (excessive `speculative_terms` without grounding)
-- 0.0 = balanced
-
-Formula: `overconfidence_bias = (extreme_confidence_score + forecast_rationale_misalign_score) - (statistical_reasoning_score + best_practices_score)`, divided by the number of rationales × 2; the range is [-2, 2] (each side of the difference caps at 2 × 2 per rationale).
-
-This signal is passed to superforecasting as `overconfidence_bias` (see that skill's EQM Feedback Integration; the scenarios server does not yet accept it as an input).
-
-## Step 5 — Failing-Marker Summary (operator-facing)
-
-For each rationale, summarize the failing markers with their EQM descriptions (the operator's view; the Improve phase consumes a FRESH `market_score_rationale` result via eqm-imp-current, not this profile):
-
-```json
-{
-  "forecaster_id": "...",
-  "question": "...",
-  "rationale_index": 0,
-  "current_composite": 4.0,
-  "failing_markers": [
-    {
-      "id": "statistical_reasoning",
-      "name": "Statistical Reasoning",
-      "direction": "helps",
-      "current_score": 0,
-      "target_score": 2,
-      "gap": 2,
-      "description": "<the EQM description — what a 2 looks like>"
-    }
-  ],
-  "red_flag_screen": ["Gut Based", "Extreme Confidence"],
-  "green_flag_endorsement": ["Statistical Reasoning"]
-}
-```
-
-For `failing_markers`:
-- Helps markers where `current_score < 2` → gap = `target_score - current_score`
-- Hurts markers where `current_score > 0` → gap = `current_score` (reducing a hurts marker to 0 is the target)
-
-## Output
-
-Respond with a JSON object:
-
-```json
-{
-  "forecast_level_composite": {
-    "<question>": {
-      "mean_composite": 3.5,
-      "red_flag_count": 4,
-      "green_flag_count": 2,
-      "rationale_count": 3
-    }
-  },
-  "forecaster_level_composite": {
-    "<forecaster_id>": {
-      "mean_composite": 4.0,
-      "red_flag_frequency": 1.5,
-      "green_flag_frequency": 0.5,
-      "rationale_count": 2
-    }
-  },
-  "red_flag_screen": [
-    {
-      "forecaster_id": "...",
-      "question": "...",
-      "rationale_index": 0,
-      "red_flags": ["Gut Based", "Extreme Confidence"],
-      "severity": "high"
-    }
-  ],
-  "green_flag_endorsement": [
-    {
-      "forecaster_id": "...",
-      "question": "...",
-      "rationale_index": 1,
-      "green_flags": ["Statistical Reasoning"],
-      "confidence": "weak",
-      "note": "..."
-    }
-  ],
-  "failing_marker_summary": [
-    {
-      "forecaster_id": "...",
-      "question": "...",
-      "rationale_index": 0,
-      "current_composite": 4.0,
-      "failing_markers": [...],
-      "red_flag_screen": [...],
-      "green_flag_endorsement": [...]
-    }
-  ]
-}
-```
-
-## Constraints
-
-- The asymmetric decision rule is mandatory: red flags weighted as "high" confidence, green flags as "weak". Do not reverse or equalize.
-- Never label a rationale "strong" based on EQM scores alone.
-- The overconfidence_bias must be signed, range [-2, 2].
-- The failing_marker_summary must include the EQM description for each failing marker (the operator's reference for what a 2 looks like; the Improve phase re-derives its targets from a fresh score).
-- Do not fabricate scores — only aggregate what was measured.
-- If any rationale had `missing_eqms` (non-empty), exclude it from the forecaster-level composite and note it in the output — an incomplete assessment should not pull the forecaster-level signal toward 0.
+    EQM-2, the asymmetric decision rule: red_flag_screen is two or more hurts
+    markers at score 2 (the strong signal); green_flag_endorsement is
+    composite >= 4 with no hurts marker above 0 (the weak signal).
+    failing_markers are listed in priority order: hurts at 2, hurts at 1,
+    helps at 0, helps at 1. overconfidence_bias is
+    (extreme_confidence + forecast_rationale_misalign - statistical_reasoning
+     - best_practices) summed over rationales, divided by 2n; range [-2, 2]. -#}
+{%- from "eqm/predictive-markers.j2" import marker_specs -%}
+{%- set specs = marker_specs -%}
+{%- set expected = specs | map(attribute="id") | list -%}
+{%- set ns = namespace(rows=[], incomplete=[], red=[], green=[], summary=[]) -%}
+{%- for r in per_rationale_scores -%}
+  {%- set ids = r.scores | map(attribute="id") | list -%}
+  {%- set absent_ids = expected | reject("in", ids) | list -%}
+  {%- set unknown_ids = ids | reject("in", expected) | list -%}
+  {%- set duplicated = (ids | unique(case_sensitive=true) | list | length) != (ids | length) -%}
+  {%- set out_of_range = r.scores | rejectattr("score", "in", [0, 1, 2]) | map(attribute="id") | list -%}
+  {%- set tool_missing = r.missing_eqms | default([]) -%}
+  {%- if absent_ids or unknown_ids or duplicated or out_of_range or tool_missing -%}
+    {%- set ns.incomplete = ns.incomplete + [{"rationale_index": r.rationale_index, "missing_eqms": tool_missing, "absent_ids": absent_ids, "unknown_ids": unknown_ids, "duplicate_ids": duplicated, "out_of_range_ids": out_of_range, "composite_mismatch": false}] -%}
+  {%- else -%}
+    {%- set mk = namespace(rows=[]) -%}
+    {%- for s in specs -%}
+      {%- set score = r.scores | selectattr("id", "eq", s.id) | map(attribute="score") | first -%}
+      {%- set goal_score = 2 if s.direction == "helps" else 0 -%}
+      {%- set mk.rows = mk.rows + [{"id": s.id, "name": s.name, "direction": s.direction, "current_score": score, "target_score": goal_score, "gap": (goal_score - score) | abs, "description": s.description}] -%}
+    {%- endfor -%}
+    {%- set hurts = mk.rows | selectattr("direction", "eq", "hurts") | list -%}
+    {%- set helps = mk.rows | selectattr("direction", "eq", "helps") | list -%}
+    {%- set composite = (helps | map(attribute="current_score") | sum) - (hurts | map(attribute="current_score") | sum) -%}
+    {%- if composite != r.composite_score -%}
+      {%- set ns.incomplete = ns.incomplete + [{"rationale_index": r.rationale_index, "missing_eqms": [], "absent_ids": [], "unknown_ids": [], "duplicate_ids": false, "out_of_range_ids": [], "composite_mismatch": true}] -%}
+    {%- else -%}
+      {%- set red_flags = hurts | selectattr("current_score", "eq", 2) | map(attribute="name") | list -%}
+      {%- set green_flags = helps | selectattr("current_score", "eq", 2) | map(attribute="name") | list -%}
+      {%- set hurts_above_0 = hurts | selectattr("current_score", "gt", 0) | list | length -%}
+      {%- set failing = (hurts | selectattr("current_score", "eq", 2) | list) + (hurts | selectattr("current_score", "eq", 1) | list) + (helps | selectattr("current_score", "eq", 0) | list) + (helps | selectattr("current_score", "eq", 1) | list) -%}
+      {%- set bias = (mk.rows | selectattr("id", "eq", "extreme_confidence") | map(attribute="current_score") | first) + (mk.rows | selectattr("id", "eq", "forecast_rationale_misalign") | map(attribute="current_score") | first) - (mk.rows | selectattr("id", "eq", "statistical_reasoning") | map(attribute="current_score") | first) - (mk.rows | selectattr("id", "eq", "best_practices") | map(attribute="current_score") | first) -%}
+      {%- set who = r.forecaster_id | default(none) -%}
+      {%- set ns.rows = ns.rows + [{"rationale_index": r.rationale_index, "question": r.question, "forecaster_id": who, "composite_score": composite, "red_flag_count": red_flags | length, "green_flag_count": green_flags | length, "bias_numerator": bias}] -%}
+      {%- set ns.summary = ns.summary + [{"rationale_index": r.rationale_index, "question": r.question, "forecaster_id": who, "current_composite": composite, "failing_markers": failing}] -%}
+      {%- if (red_flags | length) >= 2 -%}
+        {%- set ns.red = ns.red + [{"rationale_index": r.rationale_index, "question": r.question, "forecaster_id": who, "red_flags": red_flags, "severity": "high"}] -%}
+      {%- endif -%}
+      {%- if composite >= 4 and hurts_above_0 == 0 -%}
+        {%- set ns.green = ns.green + [{"rationale_index": r.rationale_index, "question": r.question, "forecaster_id": who, "green_flags": green_flags, "confidence": "weak", "note": "High composite with no red flags is a weak positive endorsement, not a strong-rationale claim."}] -%}
+      {%- endif -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set rows = ns.rows -%}
+{%- set n = rows | length -%}
+{%- if ns.incomplete or n == 0 -%}
+{{ {"status": "incomplete" if ns.incomplete else "unassessed", "incomplete_rationales": ns.incomplete, "forecast_level_composite": [], "forecaster_level_composite": [], "red_flag_screen": [], "green_flag_endorsement": [], "failing_marker_summary": [], "overconfidence_bias": none} | tojson(indent=2) }}
+{%- else -%}
+  {%- set out = namespace(by_question=[], by_forecaster=[]) -%}
+  {%- for g in rows | groupby("question", case_sensitive=true) -%}
+    {%- set k = g.list | length -%}
+    {%- set out.by_question = out.by_question + [{"question": g.grouper, "mean_composite": ((g.list | map(attribute="composite_score") | sum) / k) | round(4), "red_flag_count": g.list | map(attribute="red_flag_count") | sum, "green_flag_count": g.list | map(attribute="green_flag_count") | sum, "rationale_count": k}] -%}
+  {%- endfor -%}
+  {%- for g in rows | selectattr("forecaster_id") | groupby("forecaster_id", case_sensitive=true) -%}
+    {%- set k = g.list | length -%}
+    {%- set out.by_forecaster = out.by_forecaster + [{"forecaster_id": g.grouper, "mean_composite": ((g.list | map(attribute="composite_score") | sum) / k) | round(4), "red_flag_frequency": ((g.list | map(attribute="red_flag_count") | sum) / k) | round(4), "green_flag_frequency": ((g.list | map(attribute="green_flag_count") | sum) / k) | round(4), "rationale_count": k}] -%}
+  {%- endfor -%}
+{{ {"status": "complete", "incomplete_rationales": [], "forecast_level_composite": out.by_question, "forecaster_level_composite": out.by_forecaster, "red_flag_screen": ns.red, "green_flag_endorsement": ns.green, "failing_marker_summary": ns.summary, "overconfidence_bias": ((rows | map(attribute="bias_numerator") | sum) / (2 * n)) | round(4)} | tojson(indent=2) }}
+{%- endif -%}

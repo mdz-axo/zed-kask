@@ -114,4 +114,38 @@ if [[ "$output" != *'unused-input: phantom_input'* ]]; then
   exit 1
 fi
 
-echo 'OK: normal and commented contracts pass; unused inputs, absent outputs and undeclared condition operands fail the gate.'
+# A name bound by {% from ... import %} is a template local, including an
+# `as` alias; it is not an undeclared context input.
+printf '%s\n' \
+  '{# goal: fixture. #}' '[inference]' 'contract:' '  input:' '    topic: string' \
+  '  output:' '    summary: string' '---' \
+  '{%- from "example/shared.j2" import helper, other as renamed -%}' \
+  'Summarize {{ topic }}. {{ helper(topic) }} {{ renamed(topic) }}' \
+  'Return JSON: {"summary": "..."}' > "$good"
+if ! output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "Imported names were reported as undeclared inputs: $output" >&2
+  exit 1
+fi
+
+# The import exemption covers only the imported names: another consumed
+# variable in the same template is still undeclared.
+printf '%s\n' \
+  '{# goal: fixture. #}' '[inference]' 'contract:' '  input:' '    topic: string' \
+  '  output:' '    summary: string' '---' \
+  '{%- from "example/shared.j2" import helper -%}' \
+  'Summarize {{ topic }}. {{ helper(topic) }} {{ stray }}' \
+  'Return JSON: {"summary": "..."}' > "$good"
+if output="$(REPO_ROOT="$fixture" bash "$fixture/kask/scripts/check-template-contracts.sh" 2>&1)"; then
+  echo "An undeclared variable beside an import was not rejected: $output" >&2
+  exit 1
+fi
+if [[ "$output" != *'undeclared: stray'* ]]; then
+  echo "An undeclared variable beside an import was not identified: $output" >&2
+  exit 1
+fi
+if [[ "$output" == *'undeclared: helper'* ]]; then
+  echo "An imported name was reported as undeclared: $output" >&2
+  exit 1
+fi
+
+echo 'OK: normal and commented contracts pass; imported names are locals; unused inputs, absent outputs and undeclared condition operands fail the gate.'

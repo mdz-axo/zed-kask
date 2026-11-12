@@ -2069,4 +2069,408 @@ mod finalizer_handoff_tests {
             assert!(error.contains(missing), "{error}");
         }
     }
+
+    const EQM_HELPS: [&str; 6] = [
+        "statistical_reasoning",
+        "fact_based",
+        "concrete_reasoning",
+        "forecast_rationale_align",
+        "best_practices",
+        "statistical_causal_blend",
+    ];
+    const EQM_HURTS: [&str; 6] = [
+        "gut_based",
+        "simplification_bias",
+        "confirmation_bias",
+        "extreme_confidence",
+        "forecast_rationale_misalign",
+        "speculative_terms",
+    ];
+
+    /// One `per_rationale_scores` record: every helps marker at `helps`,
+    /// every hurts marker at 0, then the named overrides. The composite is
+    /// derived, so a fixture cannot disagree with its own scores.
+    fn eqm_record(
+        index: usize,
+        question: &str,
+        forecaster: Option<&str>,
+        helps: u8,
+        overrides: &[(&str, u8)],
+    ) -> serde_json::Value {
+        let score = |id: &str, base: u8| {
+            overrides
+                .iter()
+                .find(|(name, _)| *name == id)
+                .map_or(base, |(_, value)| *value)
+        };
+        let mut composite = 0i64;
+        let mut scores = Vec::new();
+        for id in EQM_HELPS {
+            let value = score(id, helps);
+            composite += i64::from(value);
+            scores.push(json!({"id": id, "score": value}));
+        }
+        for id in EQM_HURTS {
+            let value = score(id, 0);
+            composite -= i64::from(value);
+            scores.push(json!({"id": id, "score": value}));
+        }
+        let mut record = json!({
+            "rationale_index": index, "question": question,
+            "composite_score": composite, "scores": scores
+        });
+        if let Some(forecaster) = forecaster {
+            record["forecaster_id"] = json!(forecaster);
+        }
+        record
+    }
+
+    fn eqm_aggregate(records: Vec<serde_json::Value>) -> serde_json::Value {
+        let rendered = render_template_for_test(
+            "eqm/eqm-aggregate",
+            json!({"per_rationale_scores": records}),
+        )
+        .expect("the aggregate renders");
+        serde_json::from_str(&rendered).expect("the aggregate render is a JSON document")
+    }
+
+    fn eqm_ids(markers: &serde_json::Value) -> Vec<&str> {
+        markers
+            .as_array()
+            .expect("marker list")
+            .iter()
+            .map(|marker| marker["id"].as_str().expect("marker id"))
+            .collect()
+    }
+
+    #[test]
+    fn eqm_aggregate_computes_composites_screens_and_bias() {
+        // r0: helps 9, hurts 4, composite 5; two hurts at 2.
+        // r1: all on target, composite 12. r2: helps 6, one hurts at 1.
+        let out = eqm_aggregate(vec![
+            eqm_record(
+                0,
+                "Q1",
+                Some("f1"),
+                2,
+                &[
+                    ("statistical_reasoning", 0),
+                    ("best_practices", 1),
+                    ("gut_based", 2),
+                    ("extreme_confidence", 2),
+                ],
+            ),
+            eqm_record(1, "Q1", Some("f2"), 2, &[]),
+            eqm_record(2, "Q2", Some("f1"), 1, &[("speculative_terms", 1)]),
+        ]);
+
+        assert_eq!(out["status"], "complete");
+        assert_eq!(out["incomplete_rationales"], json!([]));
+        assert_eq!(
+            out["forecast_level_composite"],
+            json!([
+                {"question": "Q1", "mean_composite": 8.5, "red_flag_count": 2, "green_flag_count": 10, "rationale_count": 2},
+                {"question": "Q2", "mean_composite": 5.0, "red_flag_count": 0, "green_flag_count": 0, "rationale_count": 1}
+            ])
+        );
+        assert_eq!(
+            out["forecaster_level_composite"],
+            json!([
+                {"forecaster_id": "f1", "mean_composite": 5.0, "red_flag_frequency": 1.0, "green_flag_frequency": 2.0, "rationale_count": 2},
+                {"forecaster_id": "f2", "mean_composite": 12.0, "red_flag_frequency": 0.0, "green_flag_frequency": 6.0, "rationale_count": 1}
+            ])
+        );
+        // (1 - 4 - 2) / (2 * 3)
+        assert_eq!(out["overconfidence_bias"], json!(-0.8333));
+
+        // EQM-2: two hurts at 2 screens red; composite >= 4 endorses only
+        // with no hurts above 0 (r0 and r2 both have composite 5).
+        let red = out["red_flag_screen"].as_array().expect("red screen");
+        assert_eq!(red.len(), 1);
+        assert_eq!(red[0]["rationale_index"], 0);
+        assert_eq!(
+            red[0]["red_flags"],
+            json!(["Extreme Confidence", "Gut Based"])
+        );
+        let green = out["green_flag_endorsement"]
+            .as_array()
+            .expect("green endorsement");
+        assert_eq!(green.len(), 1);
+        assert_eq!(green[0]["rationale_index"], 1);
+        assert_eq!(green[0]["confidence"], "weak");
+
+        // Priority order: hurts at 2, hurts at 1, helps at 0, helps at 1.
+        let summary = &out["failing_marker_summary"];
+        assert_eq!(
+            eqm_ids(&summary[0]["failing_markers"]),
+            [
+                "extreme_confidence",
+                "gut_based",
+                "statistical_reasoning",
+                "best_practices"
+            ]
+        );
+        assert_eq!(summary[1]["failing_markers"], json!([]));
+        assert_eq!(
+            eqm_ids(&summary[2]["failing_markers"])[0],
+            "speculative_terms"
+        );
+        let first = &summary[0]["failing_markers"][0];
+        assert_eq!(first["target_score"], 0);
+        assert_eq!(first["gap"], 2);
+        assert!(
+            first["description"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("The forecaster expresses a high degree"))
+        );
+    }
+
+    #[test]
+    fn eqm_aggregate_keeps_case_distinct_groups_apart() {
+        let out = eqm_aggregate(vec![
+            eqm_record(0, "q", Some("F1"), 2, &[]),
+            eqm_record(1, "Q", Some("f1"), 2, &[]),
+            eqm_record(2, "Q", None, 2, &[]),
+        ]);
+        let counts = |field: &str, key: &str| -> Vec<(String, u64)> {
+            out[field]
+                .as_array()
+                .expect("group list")
+                .iter()
+                .map(|group| {
+                    (
+                        group[key].as_str().expect("group key").to_string(),
+                        group["rationale_count"].as_u64().expect("count"),
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            counts("forecast_level_composite", "question"),
+            [("Q".to_string(), 2), ("q".to_string(), 1)]
+        );
+        // The rationale with no forecaster_id is in no forecaster group.
+        assert_eq!(
+            counts("forecaster_level_composite", "forecaster_id"),
+            [("F1".to_string(), 1), ("f1".to_string(), 1)]
+        );
+        assert_eq!(out["overconfidence_bias"], json!(-2.0));
+    }
+
+    #[test]
+    fn eqm_aggregate_refuses_incomplete_batches() {
+        let good = || eqm_record(0, "Q1", Some("f1"), 2, &[]);
+        let empty_aggregates = |out: &serde_json::Value| {
+            for field in [
+                "forecast_level_composite",
+                "forecaster_level_composite",
+                "red_flag_screen",
+                "green_flag_endorsement",
+                "failing_marker_summary",
+            ] {
+                assert_eq!(out[field], json!([]), "{field}");
+            }
+            assert!(out["overconfidence_bias"].is_null());
+        };
+
+        let mut absent = eqm_record(1, "Q1", Some("f2"), 2, &[]);
+        absent["scores"]
+            .as_array_mut()
+            .expect("scores")
+            .retain(|score| score["id"] != "fact_based");
+        let mut tool_missing = eqm_record(2, "Q2", Some("f1"), 2, &[]);
+        tool_missing["missing_eqms"] = json!(["gut_based"]);
+        let mut duplicated = eqm_record(3, "Q2", Some("f1"), 2, &[]);
+        let repeat = duplicated["scores"][0].clone();
+        duplicated["scores"]
+            .as_array_mut()
+            .expect("scores")
+            .push(repeat);
+        let mut out_of_range = eqm_record(4, "Q2", Some("f1"), 2, &[]);
+        out_of_range["scores"][6]["score"] = json!(3);
+        let mut wrong_composite = eqm_record(5, "Q2", Some("f1"), 2, &[]);
+        wrong_composite["composite_score"] = json!(9);
+
+        let out = eqm_aggregate(vec![
+            good(),
+            absent,
+            tool_missing,
+            duplicated,
+            out_of_range,
+            wrong_composite,
+        ]);
+        assert_eq!(out["status"], "incomplete");
+        empty_aggregates(&out);
+        let reasons = out["incomplete_rationales"]
+            .as_array()
+            .expect("incomplete list");
+        assert_eq!(
+            reasons
+                .iter()
+                .map(|reason| reason["rationale_index"].as_u64().expect("index"))
+                .collect::<Vec<_>>(),
+            [1, 2, 3, 4, 5],
+            "the complete rationale is not listed"
+        );
+        assert_eq!(reasons[0]["absent_ids"], json!(["fact_based"]));
+        assert_eq!(reasons[1]["missing_eqms"], json!(["gut_based"]));
+        assert_eq!(reasons[2]["duplicate_ids"], true);
+        assert_eq!(reasons[3]["out_of_range_ids"], json!(["gut_based"]));
+        assert_eq!(reasons[4]["composite_mismatch"], true);
+
+        let out = eqm_aggregate(Vec::new());
+        assert_eq!(out["status"], "unassessed");
+        assert_eq!(out["incomplete_rationales"], json!([]));
+        empty_aggregates(&out);
+    }
+
+    #[test]
+    fn eqm_improve_templates_compute_the_failing_markers() {
+        let record = eqm_record(
+            0,
+            "Q1",
+            None,
+            2,
+            &[
+                ("statistical_reasoning", 0),
+                ("best_practices", 1),
+                ("gut_based", 2),
+                ("extreme_confidence", 2),
+            ],
+        );
+        let scores = record["scores"].clone();
+
+        let predict = render_template_for_test(
+            "eqm/eqm-imp-predict",
+            json!({"scores": scores, "current_composite": 5}),
+        )
+        .expect("predict renders");
+        let selected = section_json(&predict, "## The Marker This Iteration Addresses");
+        assert_eq!(eqm_ids(&selected), ["extreme_confidence"]);
+        assert_eq!(selected[0]["current_score"], 2);
+        assert_eq!(selected[0]["target_score"], 0);
+
+        let on_target = eqm_record(0, "Q1", None, 2, &[]);
+        let predict = render_template_for_test(
+            "eqm/eqm-imp-predict",
+            json!({"scores": on_target["scores"], "current_composite": 12}),
+        )
+        .expect("predict renders with nothing off target");
+        assert_eq!(
+            section_json(&predict, "## The Marker This Iteration Addresses"),
+            json!([])
+        );
+
+        let experiment = render_template_for_test(
+            "eqm/eqm-imp-experiment",
+            json!({
+                "rationale": "RATIONALE-TEXT", "forecast_probability": 0.35,
+                "question": "Q1", "prediction": {"hypothesis": "H"}, "scores": scores
+            }),
+        )
+        .expect("experiment renders");
+        let failing = section_json(&experiment, "## Failing Markers");
+        assert_eq!(
+            eqm_ids(&failing),
+            [
+                "extreme_confidence",
+                "gut_based",
+                "statistical_reasoning",
+                "best_practices"
+            ]
+        );
+        assert!(experiment.contains("RATIONALE-TEXT"));
+        assert!(experiment.contains("0.35"));
+    }
+
+    #[test]
+    fn eqm_validate_returns_the_constant_result_without_outcomes() {
+        let rendered = render_template_for_test(
+            "eqm/eqm-validate",
+            json!({"forecaster_level_composite": [], "realized_outcomes": [], "outcome_statistics": {}}),
+        )
+        .expect("validate renders without outcomes");
+        let out: serde_json::Value =
+            serde_json::from_str(&rendered).expect("the no-outcomes render is a JSON document");
+        assert_eq!(out["validation_verdict"], "undetermined");
+        assert!(out["gaming_suspected"].is_null());
+        assert_eq!(out["validation_findings"][0]["status"], "skipped");
+
+        let rendered = render_template_for_test(
+            "eqm/eqm-validate",
+            json!({
+                "forecaster_level_composite": [{"forecaster_id": "f1", "mean_composite": 5.0}],
+                "realized_outcomes": [{"question": "Q1", "forecast_probability": 0.35, "outcome": false, "forecaster_id": "f1"}],
+                "outcome_statistics": {"forecasters_resolved": 1, "brier_by_forecaster": {"f1": 0.1225}, "composite_accuracy_r": "Undetermined"}
+            }),
+        )
+        .expect("validate renders with outcomes");
+        assert!(rendered.contains("You are an EQM validation analyst"));
+        assert!(rendered.contains("0.1225"));
+        assert!(rendered.contains("\"composite_accuracy_r\":\"Undetermined\""));
+
+        // A forecaster with resolved outcomes and no Brier score: the fixed
+        // result names them, and no prompt is rendered.
+        let rendered = render_template_for_test(
+            "eqm/eqm-validate",
+            json!({
+                "forecaster_level_composite": [],
+                "realized_outcomes": [
+                    {"question": "Q1", "forecast_probability": 0.35, "outcome": false, "forecaster_id": "f1"},
+                    {"question": "Q1", "forecast_probability": 0.6, "outcome": true, "forecaster_id": "f2"}
+                ],
+                "outcome_statistics": {"forecasters_resolved": 1, "brier_by_forecaster": {"f1": 0.1225}, "composite_accuracy_r": "Undetermined"}
+            }),
+        )
+        .expect("validate renders with an uncovered forecaster");
+        let out: serde_json::Value =
+            serde_json::from_str(&rendered).expect("the uncovered render is a JSON document");
+        assert_eq!(out["validation_verdict"], "undetermined");
+        assert_eq!(out["validation_findings"][0]["forecasters"], json!(["f2"]));
+    }
+
+    /// `predictive-markers.j2` is generated from `eqm-catalog.yaml`. A catalog
+    /// edit that is not regenerated into the fragment fails here: ids, names
+    /// and directions must be equal, and each description must be the
+    /// catalog's folded text.
+    #[test]
+    fn eqm_marker_specs_match_the_catalog() {
+        let base = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../kask/registry/templates");
+        let catalog: serde_yaml::Value = serde_yaml::from_str(
+            &std::fs::read_to_string(base.join("eqm/eqm-catalog.yaml")).expect("catalog"),
+        )
+        .expect("catalog parses as YAML");
+        let text = |value: &serde_yaml::Value, key: &str| {
+            value[key]
+                .as_str()
+                .unwrap_or_else(|| panic!("catalog marker lacks {key}"))
+                .trim()
+                .to_string()
+        };
+        let mut expected = Vec::new();
+        for family in catalog["categories"].as_sequence().expect("families") {
+            for marker in family["markers"].as_sequence().expect("markers") {
+                if marker["predictive"].as_bool() == Some(true) {
+                    expected.push(json!({
+                        "id": text(marker, "id"), "name": text(marker, "name"),
+                        "direction": text(marker, "direction"),
+                        "description": text(marker, "description")
+                    }));
+                }
+            }
+        }
+        assert_eq!(expected.len(), 12, "the catalog marks twelve predictive");
+
+        let mut environment = minijinja::Environment::new();
+        super::bind_registry_loader(&mut environment, &base);
+        let rendered = environment
+            .render_str(
+                "{% from \"eqm/predictive-markers.j2\" import marker_specs %}{{ marker_specs | tojson }}",
+                json!({}),
+            )
+            .expect("the fragment exports marker_specs");
+        let specs: serde_json::Value = serde_json::from_str(&rendered).expect("marker_specs JSON");
+        assert_eq!(specs, serde_json::Value::Array(expected));
+    }
 }

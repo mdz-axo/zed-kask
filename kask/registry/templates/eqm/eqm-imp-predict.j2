@@ -1,54 +1,38 @@
-{# goal: Kata Step 4 (Make a Prediction): predict which intervention will close the gap and by how much. Specific: "intervention X will raise marker Y from A to B." Routine work has no probability; optional forecasts require prospective admission. #}
+{# goal: Kata Step 4 (Make a Prediction): for the marker the caller's scores put first in priority order, predict which intervention will move it to target. Specific: "intervention X will raise marker Y from A to B." Routine work has no probability; optional forecasts require prospective admission. #}
 [inference]
 contract:
   input:
-    target_condition: object
-    prioritized_markers: array
+    scores: array
     current_composite: number
-    target_composite_score: number
   output:
     prediction: object
-    predicted_intervention: string
-    predicted_marker: string
-    predicted_current_score: number
-    predicted_target_score: number
     confidence: number|null
 ---
-{# Phase 4 — PREDICT (PLAN: predict which intervention raises which marker) #}
+{# Phase 4 — PREDICT (PLAN: predict which intervention moves the marker) #}
 {#
-  The prediction is specific: "intervention X will raise marker Y from A to B."
-  Specificity makes the expectation testable. A marker change is not a human outcome or proof of forecast calibration.
+  The marker, its current score and its target are computed here from the
+  scorer's scores (priority: hurts at 2, hurts at 1, helps at 0, helps at 1).
+  The model supplies the intervention only.
 #}
+{%- from "eqm/predictive-markers.j2" import failing_markers -%}
 
-You are an EQM improvement predictor. Your task is to predict which intervention will close the gap and by how much, with a falsifiable expected marker change.
+You are an EQM improvement predictor. Your task is to predict which intervention will move the marker below to its target score, with a falsifiable expected marker change.
 
-## Target Condition
-
-```json
-{{ target_condition | tojson }}
-```
-
-## Prioritized Markers
+## The Marker This Iteration Addresses
 
 ```json
-{{ prioritized_markers | tojson }}
+{{ failing_markers(scores, first_only=true) }}
 ```
+
+An empty list means every marker is on target: return `prediction: null` and `confidence: null`.
 
 ## Current Composite
 
 {{ current_composite }}
 
-## Target Composite
+## Step 1 — Identify the Intervention
 
-{{ target_composite_score }}
-
-## Step 1 — Select the Highest-Priority Marker
-
-From the prioritized markers, select the highest-priority failing marker to address in this iteration. This is the marker the prediction targets.
-
-## Step 2 — Identify the Intervention
-
-For the selected marker, identify the specific intervention that will raise (Helps) or lower (Hurts) its score. The intervention is guided by the EQM description — what a 2 looks like (for Helps) or what a 0 looks like (for Hurts).
+For the marker above, identify the specific intervention that will raise (Helps) or lower (Hurts) its score. The intervention is guided by the EQM description — what a 2 looks like (for Helps) or what a 0 looks like (for Hurts).
 
 **Intervention catalog (examples):**
 
@@ -64,13 +48,13 @@ For the selected marker, identify the specific intervention that will raise (Hel
 
 **CRITICAL:** The intervention must not fabricate evidence. If the intervention requires data (base rate, reference class, evidence), it must be sourced via delegation. If no real evidence can be found, the prediction notes the gap.
 
-## Step 3 — State the Prediction
+## Step 2 — State the Prediction
 
 State the prediction as a specific, testable hypothesis:
 
 > "Intervention X (e.g., 'cite the historical base rate for this reference class, sourced via superforecasting/stage_2_outside_view') will raise marker Y (e.g., `statistical_reasoning`) from A (e.g., 0) to B (e.g., 2)."
 
-## Step 4 — Assign Confidence
+## Step 3 — Assign Confidence
 
 Return confidence null for routine work. Only supply a probability when a separate complete prospective declaration freezes this event, timing and resolver; a confidence number alone is not score eligibility.
 
@@ -94,18 +78,14 @@ Respond with a JSON object:
     "delegation_target": "superforecasting/stage_2_outside_view",
     "evidence_fabrication_risk": "none — delegation sources real data"
   },
-  "predicted_intervention": "cite_historical_base_rate",
-  "predicted_marker": "statistical_reasoning",
-  "predicted_current_score": 0,
-  "predicted_target_score": 2,
-  "confidence": 0.7
+  "confidence": null
 }
 ```
 
 ## Constraints
 
-- The prediction must be specific: named intervention + named marker + predicted score.
-- The confidence must be in [0, 1].
+- The prediction must be specific: a named intervention for the marker above, stating its current and target scores as given.
+- `confidence` is null for routine work; a supplied probability must be in [0, 1].
 - If the intervention requires evidence, the delegation target must be named (no fabrication).
 - The prediction must not change the forecast probability (alignment invariant).
-- One prediction per iteration (address the highest-priority marker first).
+- One prediction per iteration, for the marker above only.

@@ -154,7 +154,8 @@ for file in "$REG"/*/*.j2; do
     )"
 
     # Locals: for-loop variables, set-captured names, macro names and
-    # arguments — defined inside the template, never context inputs.
+    # arguments, and names bound by {% from "x" import a, b as c %} —
+    # defined inside the template, never context inputs.
     locals="$(
         {
             printf '%s\n' "$stripped" | grep -oE '\{%-?[[:space:]]*for[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*' | awk '{print $3}' || true
@@ -162,6 +163,10 @@ for file in "$REG"/*/*.j2; do
             printf '%s\n' "$stripped" | grep -oE '\{%-?[[:space:]]*macro[[:space:]]+[a-zA-Z_][a-zA-Z0-9_]*\([^)]*\)' \
                 | sed -E 's/.*macro[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*)\(([^)]*)\).*/\1 \2/' \
                 | tr ',' ' ' | tr -s ' ' '\n' || true
+            printf '%s\n' "$stripped" | grep -oE '\{%-?[[:space:]]*from[[:space:]][^%]*[[:space:]]import[[:space:]][^%]*%\}' \
+                | sed -E 's/^.*[[:space:]]import[[:space:]]+//; s/[[:space:]]*-?%\}$//' \
+                | tr ',' '\n' \
+                | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//; s/^.*[[:space:]]as[[:space:]]+//' || true
         } | sort -u | tr '\n' ' '
     )"
 
