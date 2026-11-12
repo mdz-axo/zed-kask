@@ -538,10 +538,11 @@ fn resolve_ingest_concurrency() -> usize {
     }
 }
 
-/// Open a `RegulationArchive` on an arbitrary SQLCipher DB. Used by both the
-/// user store (`RealMemoryPort::new`, on the user's `curator.db`) and the curator
-/// store (`open_curator_store`, on the curator's `curator.db`) to wire
-/// `reg.memory.encode` span persistence via `MemoryStore::with_ledger`.
+/// Open a `RegulationArchive` on an arbitrary SQLCipher DB. Used by
+/// `open_curator_regulation_archive` (the deferred wiring in `main.rs`) for
+/// the durable regulation event sinks; the store-side ledger archive no
+/// longer opens its own driver — `open_curator_store` shares its driver via
+/// `RegulationArchive::from_driver` (the hang-audit open dedup, 2026-11-11).
 ///
 /// Returns `None` on any failure with a `tracing::warn!` naming the DB and the
 /// role, so an operator can distinguish "not configured" from "configured

@@ -374,6 +374,26 @@ fn open_curator_store(
             return None;
         }
     };
+    // zed-kask hang audit Pr1 (open dedup, 2026-11-11): the store's ledger
+    // archive reuses the driver this function already opened on the DB
+    // instead of paying a second `open_or_repair` — another SQLCipher key
+    // derivation, pool build and schema pass on the same file — for every
+    // `CuratorStore::new` (the curator and private twins). The clone must
+    // happen before the embedding store moves the driver below. `from_driver`
+    // runs the same idempotent `init_schema` the dedicated open ran, and
+    // failure keeps the prior degraded semantics (no ledger, warn, store
+    // continues).
+    let ledger = match hkask_storage::RegulationArchive::from_driver(Arc::clone(&driver)) {
+        Ok(archive) => Some(Arc::new(archive)),
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.storage",
+                error = %e,
+                "Failed to init the ledger RegulationArchive on the shared curator driver"
+            );
+            None
+        }
+    };
     let embedding_store = match EmbeddingStore::from_driver(driver, embedding_dim) {
         Ok(s) => s,
         Err(e) => {
@@ -402,7 +422,7 @@ fn open_curator_store(
         // mirrors the user-store wiring in `RealMemoryPort::new`. The
         // curator's regulation archive is the same DB the curator MCP
         // server's `reg_query` and `curator_algedonic_log` tools read.
-        match open_regulation_archive(&curator_db_path, passphrase, "curator") {
+        match ledger {
             Some(archive) => base.with_ledger(archive),
             None => base,
         }
@@ -441,6 +461,44 @@ mod tests {
             30.0,
             "the configured decay constant must reach the store that actually decays"
         );
+    }
+
+    /// expect: "The store wired by `open_curator_store` journals
+    /// `reg.memory.encode` spans through a ledger archive sharing the store's
+    /// own driver — the open dedup must not silently drop the ledger."
+    /// [P1, hang audit Pr1]
+    /// pre: an encrypted curator DB at a fresh path; `open_curator_store`
+    /// builds the h_mem, embedding and ledger stores over ONE driver (the
+    /// `RegulationArchive::from_driver` dedup, 2026-11-11) instead of paying
+    /// a second `open_or_repair` on the same file.
+    /// post: one `store()` write emits a `reg.memory.encode` span that a
+    /// SEPARATE archive opened over the same file reads back — the ledger is
+    /// wired, and it writes to the shared DB, not a private in-memory one.
+    #[test]
+    fn store_ledger_shares_the_store_driver() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let db_path = directory.path().join("curator.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        hkask_storage::open_or_repair(&db_path, "test-passphrase").expect("create db");
+
+        let store = open_curator_store(&db_path, "test-passphrase", 1024, 30.0).expect("store");
+        let row = hkask_storage::HMem::new(
+            "hang-audit:open-dedup",
+            "finding",
+            serde_json::json!("ledger pin"),
+            hkask_types::WebID::from_persona(b"curator"),
+        );
+        store.store(row)?;
+
+        let reader = open_regulation_archive(&db_path, "test-passphrase", "pin")
+            .expect("a separate archive over the same DB");
+        let since = chrono::Utc::now() - chrono::Duration::hours(1);
+        let records = reader.query_records(since, Some("reg.memory.encode"), 10)?;
+        assert!(
+            !records.is_empty(),
+            "the store's shared-driver ledger must journal reg.memory.encode spans"
+        );
+        Ok(())
     }
 
     /// expect: the production self-heal branch — `get()` re-opens the store
