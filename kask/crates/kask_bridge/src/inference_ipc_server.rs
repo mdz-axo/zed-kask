@@ -2060,7 +2060,9 @@ mod tests {
         // global slot is empty: the swap must report false (the caller falls
         // back to a fresh start) and must not touch the socket-path global —
         // the re-wire never changes `HKASK_INFERENCE_SOCKET` (P7h).
-        crate::set_inference_socket_path("/tmp/kask-test-swap-socket-path.sock");
+        crate::inference_socket::remember_inference_socket_path(
+            "/tmp/kask-test-swap-socket-path.sock",
+        );
         let swapped = swap_inference_ipc_ports(Arc::new(crate::NoModelInferencePort), None);
         assert!(!swapped, "no server is running in this test process");
         assert_eq!(

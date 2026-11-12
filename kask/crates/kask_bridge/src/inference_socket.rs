@@ -20,8 +20,17 @@ static INFERENCE_SOCKET_PATH: Mutex<String> = Mutex::new(String::new());
 ///
 /// Called from the deferred task in `main.rs` after `InferenceIpcServer::start`
 /// succeeds. Unlike `OnceLock::set`, this can be called multiple times — the
-/// latest value wins.
+/// latest value wins. Also publishes the path to the discovery file MCP
+/// servers fall back to.
 pub fn set_inference_socket_path(path: &str) {
+    remember_inference_socket_path(path);
+    publish_inference_socket_path(path);
+}
+
+/// Record the socket path for this process only. Tests use this: publishing
+/// from a test would replace the running editor's discovery file with a
+/// path that does not exist (mcp-tool-review KK-23).
+pub(crate) fn remember_inference_socket_path(path: &str) {
     let mut guard = match INFERENCE_SOCKET_PATH.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -41,8 +50,11 @@ pub fn set_inference_socket_path(path: &str) {
         );
     }
     *guard = path.to_string();
+}
 
-    // Also write the socket path to a well-known file so MCP server child
+/// Write the socket path to the discovery file in the runtime directory.
+fn publish_inference_socket_path(path: &str) {
+    // Write the socket path to a well-known file so MCP server child
     // processes that were relaunched with a stale LaunchSpec (missing
     // HKASK_INFERENCE_SOCKET in their env) can discover the socket via the
     // file fallback in `InferenceIpcClient::from_env`. Publication and
