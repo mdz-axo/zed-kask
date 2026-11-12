@@ -406,6 +406,77 @@ async fn sync_stores_only_what_the_admission_rule_accepts() {
     source.shutdown();
 }
 
+/// A relay that never connects must not hold the sync up. Observed live
+/// 2026-11-12: one of three relays answered at once, and the sync still took
+/// 40 seconds, because the fetch waited its full limit on the two that had
+/// not connected.
+///
+/// The dead relay here accepts the TCP connection and never answers the
+/// websocket handshake, so it is still "connecting" when the fetch starts.
+#[tokio::test]
+async fn sync_does_not_wait_the_fetch_limit_on_a_relay_that_never_connected() {
+    let author = Keys::generate();
+    let source = LocalRelay::builder().build();
+    source.run().await.expect("source relay runs");
+    source
+        .add_event(note(&author, Kind::TextNote, "keep me"))
+        .await
+        .expect("source stores");
+    let live = source.url().await;
+
+    let silent = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("silent listener binds");
+    let dead = RelayUrl::parse(&format!(
+        "ws://127.0.0.1:{}",
+        silent.local_addr().expect("silent address").port()
+    ))
+    .expect("dead relay url");
+    // Hold accepted sockets open and say nothing.
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = silent.accept().await {
+            held.push(socket);
+        }
+    });
+
+    let fx = fixture(&[&author]).await;
+    let timeouts = sync::Timeouts {
+        connect: Duration::from_secs(1),
+        fetch: Duration::from_secs(8),
+    };
+    let started = std::time::Instant::now();
+    let report = sync::run_with(
+        &fx.state.relay,
+        &fx.state.gate,
+        &[live.clone(), dead.clone()],
+        timeouts,
+    )
+    .await
+    .expect("sync runs with one relay down");
+    let elapsed = started.elapsed();
+
+    assert_eq!(report.stored, 1, "{report:?}");
+    assert_eq!(
+        report.relays.get(&live.to_string()).map(String::as_str),
+        Some("connected")
+    );
+    assert!(
+        report
+            .relays
+            .get(&dead.to_string())
+            .is_some_and(|state| state.starts_with("unreachable")),
+        "{report:?}"
+    );
+    // Connect limit 1s plus a prompt fetch from the live relay. Before the
+    // fix this took connect + the whole 8s fetch limit.
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "sync waited on the unreachable relay: {elapsed:?}"
+    );
+    source.shutdown();
+}
+
 #[tokio::test]
 async fn sync_admits_nothing_a_relay_returns_outside_the_allowlist() {
     // The gate, not the fetch filter, is the control: call it directly with

@@ -177,8 +177,35 @@ tool seam against a real engine, a real LMDB store and the real listener),
 the three fleet registration gates at nine servers, and one run of the built
 binary over stdio (four tools listed, listener up, NIP-11 answered `200`
 without `Origin` and `403` with it, restart on the same port and store).
-Not run: a real browser against the listener, a sync against a public relay,
-and the server under the editor's own runtime.
+Live run under the editor's runtime (2026-11-12, after a rebuild at
+`bf8663d025`):
+
+- The relay ran as one of nine server children, with its four tools
+  callable. The listener answered as in the tests: `101` without `Origin`;
+  `403` with any `Origin`; `421` for a foreign `Host`; refused on the LAN
+  address.
+- Adding `kask.nostr.relay` to settings restarted the relay server only. The
+  editor log named the two changed variables. The port changed, since none
+  is set.
+- First sync: 11 events fetched, 11 admitted, 11 stored, all by the
+  operator's key, all from `nostr.bitcoiner.social`. `nos.lol` and
+  `nostr.mom` timed out; both resolve to one address, which did not accept a
+  connection from this machine at the time.
+- Defect found and fixed: that sync took 40 seconds. The fetch was addressed
+  to the whole pool, so it waited its full 30-second limit on the two relays
+  that never connected. Sync now asks only the relays that connected. A test
+  with one live relay and one that never answers took 9.0 seconds before the
+  fix (1-second connect limit plus the whole 8-second fetch limit) and
+  passes under 5 after. The fixed binary, run by hand against the same three
+  relays with a temporary store, took 10.4 seconds for the same 11 events.
+  That remainder is the 10-second connect limit, spent on the relays that
+  are down.
+- The archive now holds events whose content is ciphertext the operator's
+  client produced (kinds 10005, 10012, 10086). They are public events and
+  the admission rule accepts them.
+
+Still not run: a real browser against the listener, the Settings page on
+screen, and refusal of the tools on a private thread.
 
 Consequences of these rulings:
 

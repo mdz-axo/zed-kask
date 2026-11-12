@@ -59,12 +59,40 @@ pub struct SyncReport {
     pub truncated: bool,
 }
 
+/// How long one sync waits on the network.
+#[derive(Debug, Clone, Copy)]
+pub struct Timeouts {
+    /// For the relays to connect.
+    pub connect: Duration,
+    /// For the connected relays to return their stored events.
+    pub fetch: Duration,
+}
+
+impl Default for Timeouts {
+    fn default() -> Self {
+        Self {
+            connect: CONNECT_TIMEOUT,
+            fetch: FETCH_TIMEOUT,
+        }
+    }
+}
+
 /// Fetch the allowlisted authors' events from `relays` and store the
 /// admitted ones through `relay`.
 pub async fn run(
     relay: &LocalRelay,
     gate: &Gate,
     relays: &[RelayUrl],
+) -> Result<SyncReport, SyncError> {
+    run_with(relay, gate, relays, Timeouts::default()).await
+}
+
+/// [`run`] with explicit timeouts.
+pub async fn run_with(
+    relay: &LocalRelay,
+    gate: &Gate,
+    relays: &[RelayUrl],
+    timeouts: Timeouts,
 ) -> Result<SyncReport, SyncError> {
     if gate.authors().is_empty() {
         return Err(SyncError::NoAuthors);
@@ -84,7 +112,7 @@ pub async fn run(
                 .insert(url.to_string(), format!("not added: {error}"));
         }
     }
-    let connected = client.try_connect().timeout(CONNECT_TIMEOUT).await;
+    let connected = client.try_connect().timeout(timeouts.connect).await;
     for url in connected.success.keys() {
         report
             .relays
@@ -111,7 +139,16 @@ pub async fn run(
     let filter = Filter::new()
         .authors(gate.authors().iter().copied())
         .limit(MAX_EVENTS_PER_SYNC);
-    let fetched = client.fetch_events(filter).timeout(FETCH_TIMEOUT).await;
+    // Ask only the relays that connected. A fetch addressed to the whole
+    // pool also waits on the ones that did not, for the full fetch limit
+    // (observed live: one relay of three answered at once and the sync
+    // still took 40 seconds).
+    let targets: Vec<(RelayUrl, Vec<Filter>)> = connected
+        .success
+        .keys()
+        .map(|url| (url.clone(), vec![filter.clone()]))
+        .collect();
+    let fetched = client.fetch_events(targets).timeout(timeouts.fetch).await;
     client.shutdown().await;
     let events = fetched.map_err(|error| SyncError::Fetch(error.to_string()))?;
 
