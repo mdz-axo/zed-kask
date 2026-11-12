@@ -259,6 +259,13 @@ pub enum GoalVerdictValue {
     Blocked,
 }
 impl GoalVerdictValue {
+    /// Every verdict a worker may report.
+    pub const ALL: [GoalVerdictValue; 3] = [
+        GoalVerdictValue::Done,
+        GoalVerdictValue::Continue,
+        GoalVerdictValue::Blocked,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Done => "done",

@@ -523,3 +523,71 @@ async fn goal_judge_returns_the_canonical_verdict() {
     );
     assert_eq!(judged["verdict"], "done", "{judged}");
 }
+
+/// mcp-tool-review KK-21 pin: the board listing says which boards gate Done
+/// behind `kanban_task_verify`. The flag was stored and enforced but not
+/// readable, so a caller learned it from a refused move. Ordinary boards
+/// omit the key; the reserved Algedonic review name carries it by convention.
+#[tokio::test]
+async fn board_list_shows_which_boards_gate_done_behind_verification() {
+    let server = make_server();
+    create_board(&server, "ordinary", false).await;
+    for (name, gate) in [
+        ("gated", Some(true)),
+        (hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME, None),
+    ] {
+        server
+            .kanban_board_create(Parameters(BoardCreateRequest {
+                name: name.to_string(),
+                columns: None,
+                idempotency_key: None,
+                done_requires_verification: gate,
+            }))
+            .await
+            .expect("board create ok");
+    }
+    let listed = parse(
+        &server
+            .kanban_board_list(Parameters(BoardListRequest {}))
+            .await
+            .expect("board list ok"),
+    );
+    let gate_of = |name: &str| {
+        listed["boards"]
+            .as_array()
+            .expect("boards")
+            .iter()
+            .find(|board| board["name"] == name)
+            .unwrap_or_else(|| panic!("{name} is listed"))
+            .get("done_requires_verification")
+            .cloned()
+    };
+    assert_eq!(gate_of("ordinary"), None, "{listed}");
+    assert_eq!(gate_of("gated"), Some(serde_json::Value::Bool(true)));
+    assert_eq!(
+        gate_of(hkask_types::kanban_wire::ALGEDONIC_BOARD_NAME),
+        Some(serde_json::Value::Bool(true))
+    );
+}
+
+/// mcp-tool-review KK-21 pin: the view refusal names its set in the same
+/// form the status and priority refusals do.
+#[tokio::test]
+async fn a_refused_view_names_the_accepted_views() {
+    let server = make_server();
+    let board_id = create_board(&server, "refusals", false).await;
+    let refused = server
+        .kanban_task_list(Parameters(TaskListRequest {
+            board_id,
+            status: None,
+            view: Some("tiny".into()),
+        }))
+        .await
+        .expect_err("tiny is not a view");
+    assert_eq!(refused.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(
+        refused.message.contains("expected full or compact"),
+        "{}",
+        refused.message
+    );
+}

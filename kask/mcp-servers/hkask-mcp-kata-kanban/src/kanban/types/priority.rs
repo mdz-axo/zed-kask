@@ -14,6 +14,14 @@ pub enum Priority {
 }
 
 impl Priority {
+    /// Every priority, lowest first.
+    pub const ALL: [Priority; 4] = [
+        Priority::Low,
+        Priority::Medium,
+        Priority::High,
+        Priority::Critical,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Priority::Low => "low",

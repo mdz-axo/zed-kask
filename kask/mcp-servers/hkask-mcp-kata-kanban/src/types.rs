@@ -3,8 +3,61 @@
 //! Each tool has a request struct and response struct serializable
 //! for MCP JSON-RPC transport.
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
+
+// ── Closed vocabularies ────────────────────────────────────────────────────
+//
+// These fields stay strings on the wire: padding, wrapping quotes and case
+// are tolerated when the value is parsed, and a miss is refused naming the
+// set. The schema names the accepted values so a caller sees them before the
+// call instead of learning them from a refusal (mcp-tool-review KK-21).
+
+/// The kata stages `kanban_task_kata_prompt` accepts.
+pub(crate) const KATA_STAGES: [&str; 3] = ["coaching", "improvement", "practice"];
+/// The listing views `kanban_task_list` accepts.
+pub(crate) const TASK_VIEWS: [&str; 2] = ["full", "compact"];
+
+fn task_status_names() -> Vec<&'static str> {
+    crate::TaskStatus::STANDARD_ORDER
+        .iter()
+        .map(crate::TaskStatus::as_str)
+        .collect()
+}
+
+fn task_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": task_status_names()})
+}
+
+fn optional_task_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": task_status_names()}, {"type": "null"}]})
+}
+
+fn task_view_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": TASK_VIEWS}, {"type": "null"}]})
+}
+
+/// The priorities, plus the empty string that clears one.
+fn priority_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut names: Vec<&str> = crate::Priority::ALL
+        .iter()
+        .map(crate::Priority::as_str)
+        .collect();
+    names.push("");
+    json_schema!({"anyOf": [{"type": "string", "enum": names}, {"type": "null"}]})
+}
+
+fn kata_stage_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": KATA_STAGES})
+}
+
+fn goal_verdict_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let names: Vec<&str> = crate::GoalVerdictValue::ALL
+        .iter()
+        .map(crate::GoalVerdictValue::as_str)
+        .collect();
+    json_schema!({"type": "string", "enum": names})
+}
 
 // ── Board tools ────────────────────────────────────────────────────────────
 
@@ -29,6 +82,7 @@ pub struct BoardCreateRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ColumnDefInput {
     pub name: String,
+    #[schemars(schema_with = "task_status_schema")]
     pub status: String,
     pub wip_limit: Option<u32>,
 }
@@ -89,6 +143,10 @@ pub struct BoardInfo {
     /// limits without a separate fetch.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub columns: Vec<ColumnInfo>,
+    /// True when Done is reachable only through `kanban_task_verify` on
+    /// this board; an ordinary move to Done is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub done_requires_verification: bool,
     /// Ontology concept: <https://w3id.org/pko#Procedure>
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
@@ -137,6 +195,7 @@ pub struct CriterionJudgmentInput {
 pub struct GoalJudgeRequest {
     pub goal_id: String,
     /// The verdict: "done" | "continue" | "blocked".
+    #[schemars(schema_with = "goal_verdict_schema")]
     pub verdict: String,
     /// Confidence in the verdict (0.0–1.0).
     pub confidence: f64,
@@ -203,12 +262,14 @@ pub(crate) struct TaskCreateResponse {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskListRequest {
     pub board_id: String,
+    #[schemars(schema_with = "optional_task_status_schema")]
     pub status: Option<String>,
     /// Response view (P2): omit (or "full") for the complete `TaskInfo`
     /// objects — the panel's shape; "compact" returns token-frugal
     /// one-struct summaries with Done capped and operator-reserved tasks
     /// skipped, both disclosed by count (the kanzo agent-channel pattern).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "task_view_schema")]
     pub view: Option<String>,
 }
 
@@ -297,7 +358,6 @@ pub struct TaskInfo {
     /// The task's acceptance criteria text in index order — a reader sees
     /// what "done" means, not just how many criteria exist.
     pub criteria: Vec<String>,
-    pub criteria_count: usize,
     /// Number of goal-criterion citations on the task.
     pub advances_count: usize,
     pub activity: Option<TaskActivity>,
@@ -323,6 +383,7 @@ pub struct TaskInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TaskMoveRequest {
     pub task_id: String,
+    #[schemars(schema_with = "task_status_schema")]
     pub target_status: String,
 }
 
@@ -494,6 +555,7 @@ pub(crate) struct TaskKataPromptRequest {
     /// Which kata to generate: "coaching" (5-question Coaching Kata
     /// dialogue), "improvement" (Improvement Kata PDCA cycle), or
     /// "practice" (Starter Kata observation drill — requires sub_problem).
+    #[schemars(schema_with = "kata_stage_schema")]
     pub stage: String,
     /// The sub-problem to focus a practice-stage observation drill on.
     pub sub_problem: Option<String>,
@@ -593,6 +655,7 @@ pub struct TaskUpdateRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub criteria: Option<Vec<String>>,
+    #[schemars(schema_with = "priority_schema")]
     pub priority: Option<String>,
     pub labels: Option<Vec<String>>,
     pub advances: Option<Vec<CriterionCitationInput>>,

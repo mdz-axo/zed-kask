@@ -236,7 +236,6 @@ fn task_info(t: &Task) -> TaskInfo {
         status: t.status.to_string(),
         assignee: t.assignee.map(|a| a.to_string()),
         criteria: t.criteria.iter().map(|c| c.description.clone()).collect(),
-        criteria_count: t.criteria.len(),
         advances_count: t.advances.len(),
         activity,
         reserved: t.reserved,
@@ -352,6 +351,7 @@ impl KanbanServer {
                             name: b.name,
                             column_count: b.columns.len(),
                             columns: column_infos(&b.columns),
+                            done_requires_verification: b.done_requires_verification,
                             ontology: Some(PROCEDURE.to_string()),
                         })
                         .collect(),
@@ -737,7 +737,8 @@ impl KanbanServer {
                 Some("compact") => true,
                 Some(other) => {
                     return Err(McpToolError::invalid_argument(format!(
-                        "invalid view: {other} (expected full or compact)"
+                        "invalid view: {other} (expected {})",
+                        TASK_VIEWS.join(" or ")
                     )));
                 }
             };
@@ -1147,7 +1148,8 @@ impl KanbanServer {
                 }
                 other => {
                     return Err(McpToolError::invalid_argument(format!(
-                        "stage must be 'coaching', 'improvement', or 'practice', got '{other}'"
+                        "invalid stage: {other} (expected one of {})",
+                        KATA_STAGES.join(", ")
                     )));
                 }
             };
@@ -1673,6 +1675,164 @@ fn live_router_schemas_are_strict_for_all_registered_tools() {
             tool.name
         );
     }
+}
+
+/// mcp-tool-review KK-21 pin: every closed-vocabulary input names its
+/// accepted values in the live schema, so a caller sees them before the
+/// call. The fields stay strings (padding, quotes and case are tolerated at
+/// parse time); the enumeration is what the schema adds. Each list is read
+/// from the same source the parser uses, so the two cannot drift.
+#[test]
+fn closed_vocabulary_inputs_enumerate_their_values_in_the_live_schema() {
+    let tools = KanbanServer::tool_router().list_all();
+    // The enum a property carries, directly or inside an `anyOf` arm, with
+    // `$ref`s into the tool's own `$defs` followed for nested items.
+    let enum_of = |tool: &str, path: &[&str]| -> Vec<String> {
+        let schema = tools
+            .iter()
+            .find(|candidate| candidate.name == tool)
+            .map(|candidate| serde_json::to_value(&candidate.input_schema).expect("schema"))
+            .unwrap_or_else(|| panic!("{tool} is registered"));
+        let mut node = &schema;
+        for key in path {
+            node = &node[*key];
+            if let Some(reference) = node.get("$ref").and_then(|value| value.as_str()) {
+                let name = reference
+                    .rsplit('/')
+                    .next()
+                    .expect("$ref names a definition");
+                node = &schema["$defs"][name];
+            }
+        }
+        let direct = node.get("enum");
+        let nested = node
+            .get("anyOf")
+            .and_then(|arms| arms.as_array())
+            .and_then(|arms| arms.iter().find_map(|arm| arm.get("enum")));
+        direct
+            .or(nested)
+            .and_then(|values| values.as_array())
+            .unwrap_or_else(|| panic!("{tool} {path:?} carries no enum: {node}"))
+            .iter()
+            .map(|value| value.as_str().expect("enum value is a string").to_string())
+            .collect()
+    };
+    let statuses = ["backlog", "ready", "in_progress", "review", "done"];
+    assert_eq!(
+        enum_of("kanban_task_move", &["properties", "target_status"]),
+        statuses
+    );
+    assert_eq!(
+        enum_of("kanban_task_list", &["properties", "status"]),
+        statuses
+    );
+    assert_eq!(
+        enum_of(
+            "kanban_board_create",
+            &["properties", "columns", "items", "properties", "status"]
+        ),
+        statuses
+    );
+    assert_eq!(
+        enum_of("kanban_task_list", &["properties", "view"]),
+        ["full", "compact"]
+    );
+    assert_eq!(
+        enum_of("kanban_task_update", &["properties", "priority"]),
+        ["low", "medium", "high", "critical", ""]
+    );
+    assert_eq!(
+        enum_of("kanban_task_kata_prompt", &["properties", "stage"]),
+        ["coaching", "improvement", "practice"]
+    );
+    assert_eq!(
+        enum_of("kanban_goal_judge", &["properties", "verdict"]),
+        ["done", "continue", "blocked"]
+    );
+    // Every enumerated value is one the parser accepts.
+    for status in statuses {
+        assert!(crate::TaskStatus::parse_str(status).is_some(), "{status}");
+    }
+    for priority in ["low", "medium", "high", "critical"] {
+        assert!(Priority::parse_str(priority).is_some(), "{priority}");
+    }
+    for verdict in ["done", "continue", "blocked"] {
+        assert!(parse_goal_verdict(verdict).is_ok(), "{verdict}");
+    }
+}
+
+/// mcp-tool-review KK-21 pin: a task summary carries each fact once. The
+/// criteria list is the count (`criteria_count` duplicated its length), so
+/// the key set is pinned and a re-added duplicate fails here.
+#[test]
+fn task_info_carries_each_fact_once() {
+    let task = Task::new(
+        hkask_types::BoardId::new(),
+        TaskSpec::new("pinned".into()),
+        hkask_types::WebID::new(),
+    );
+    let value = serde_json::to_value(task_info(&task)).expect("task info serializes");
+    let mut keys: Vec<&str> = value
+        .as_object()
+        .expect("task info is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "activity",
+            "advances_count",
+            "assignee",
+            "board_id",
+            "criteria",
+            "description",
+            "ontology",
+            "reserved",
+            "status",
+            "task_id",
+            "title",
+        ]
+    );
+}
+
+/// mcp-tool-review KK-21 pin: a refused kata stage is `invalid_argument`
+/// naming the stages, in the same form the other closed sets use.
+#[tokio::test]
+async fn a_refused_kata_stage_names_the_accepted_stages() {
+    use crate::test_support::UnavailableWorktreeSpawn;
+    use hkask_storage::database::sqlite::SqliteDriver;
+
+    let driver = SqliteDriver::in_memory_driver();
+    let service =
+        KanbanService::new(HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store"));
+    let idempotency = Arc::new(
+        crate::idempotency::IdempotencyStore::with_driver(driver).expect("idempotency schema"),
+    );
+    let server = KanbanServer::new(
+        hkask_types::WebID::new(),
+        service,
+        Arc::new(UnavailableWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    );
+    let refused = server
+        .kanban_task_kata_prompt(Parameters(TaskKataPromptRequest {
+            task_id: hkask_types::TaskId::new().to_string(),
+            stage: "warmup".into(),
+            sub_problem: None,
+        }))
+        .await
+        .expect_err("warmup is not a stage");
+    assert_eq!(refused.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(
+        refused
+            .message
+            .contains("expected one of coaching, improvement, practice"),
+        "{}",
+        refused.message
+    );
 }
 
 /// expect: "Kanban refuses startup rather than accepting mutations without durable encrypted state."

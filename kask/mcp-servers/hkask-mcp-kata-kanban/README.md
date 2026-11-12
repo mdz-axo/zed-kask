@@ -8,7 +8,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | Tool | Description |
 |------|-------------|
 | `kanban_board_create` | Create a new kanban board with optional custom columns; `done_requires_verification` gates Done behind `kanban_task_verify` (stamped by convention for the reserved "Algedonic review" name) |
-| `kanban_board_list` | List all kanban boards owned by the caller, with the change counter; a board row that fails to decode is reported in `undecodable_boards` |
+| `kanban_board_list` | List all kanban boards owned by the caller, with the change counter; a board row that fails to decode is reported in `undecodable_boards`; a board whose Done column is reachable only through `kanban_task_verify` carries `done_requires_verification: true` |
 | `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
 | `kanban_board_delete` | Delete a kanban board and all its tasks |
 | `kanban_board_export` | Export a kanban board as mermaid kanban markdown |
@@ -107,6 +107,15 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 | Tool | Description |
 |------|-------------|
 | `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge and the `host/create_worktree_thread` grant for this server under `kask.mcp.delegated_tools`, refused `permission_denied` without it). `delegated_skills` are named in the child's prompt. The task gets a comment only once the thread is queued |
+
+## Closed vocabularies
+
+Status (`backlog`, `ready`, `in_progress`, `review`, `done`), listing view
+(`full`, `compact`), priority (`low`, `medium`, `high`, `critical`, or an empty
+string to clear), kata stage (`coaching`, `improvement`, `practice`) and goal
+verdict (`done`, `continue`, `blocked`) are strings whose accepted values each
+tool's input schema enumerates. Padding, wrapping quotes and case are
+tolerated; any other value is refused as `invalid_argument` naming the set.
 
 ## Who may read and write
 

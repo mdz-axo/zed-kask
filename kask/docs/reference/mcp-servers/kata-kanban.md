@@ -53,9 +53,15 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
 
 ## Surfaces
 
+- **Closed vocabularies:** status, listing view, priority, kata stage and
+  goal verdict are strings whose accepted values each tool's input schema
+  enumerates; padding, wrapping quotes and case are tolerated, and any
+  other value is `invalid_argument` naming the set.
 - **Boards:** create (idempotent), list (carries the per-database
   monotonic change counter — poll it to skip re-fetching unchanged
-  state, the kanzo P1 pattern), delete (owner-gated,
+  state, the kanzo P1 pattern; a row that fails to decode is reported in
+  `undecodable_boards`, and a board that gates Done behind verification
+  carries `done_requires_verification: true`), delete (owner-gated,
   `permission_denied`), rename (owner-gated), mermaid export/import
   (round-trip pair; import is replay-safe and atomic, and is refused with
   nothing created when a column lists more tasks than the WIP limit it
