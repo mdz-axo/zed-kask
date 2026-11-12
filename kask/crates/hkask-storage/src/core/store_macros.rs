@@ -19,6 +19,13 @@
 /// their error type so the macro-generated `from_driver` returns it directly
 /// instead of forcing an `InfrastructureError` boundary.
 ///
+/// The optional third argument declares extra struct fields with their
+/// per-construction initializers — for state a store owns beside its driver
+/// (e.g. `RegulationArchive`'s rolling write-stats window). Each field must be
+/// `Clone` (the struct derives `Clone`); wrap interior mutability in
+/// `Arc<Mutex<..>>`. Initializers run on every `from_driver` call, so each
+/// store instance gets fresh state.
+///
 /// # Example
 /// ```ignore
 /// // Default error type (InfrastructureError):
@@ -61,6 +68,34 @@ macro_rules! define_driver_store {
             ) -> Result<Self, $error> {
                 $name::init_schema(&driver)?;
                 Ok(Self { driver })
+            }
+            /// Access the underlying driver for direct queries.
+            pub fn driver(&self) -> &std::sync::Arc<dyn $crate::DatabaseDriverTrait> {
+                &self.driver
+            }
+        }
+    };
+    ($name:ident, $error:ty, { $($field:ident : $ty:ty = $init:expr),+ $(,)? }) => {
+        /// Store backed by a provider-agnostic DatabaseDriver, with
+        /// store-owned state beside the driver.
+        #[derive(Clone)]
+        pub struct $name {
+            driver: std::sync::Arc<dyn $crate::DatabaseDriverTrait>,
+            $($field: $ty,)+
+        }
+        impl $name {
+            /// Create a new store backed by the given driver.
+            /// Calls `Self::init_schema(driver)` for idempotent schema setup
+            /// and propagates any schema-init failure rather than proceeding
+            /// with a missing table.
+            pub fn from_driver(
+                driver: std::sync::Arc<dyn $crate::DatabaseDriverTrait>,
+            ) -> Result<Self, $error> {
+                $name::init_schema(&driver)?;
+                Ok(Self {
+                    driver,
+                    $($field: $init,)+
+                })
             }
             /// Access the underlying driver for direct queries.
             pub fn driver(&self) -> &std::sync::Arc<dyn $crate::DatabaseDriverTrait> {

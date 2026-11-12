@@ -27,7 +27,48 @@ const ALGEDONIC_SPAN_CATEGORIES: &[&str] = &[
     "contract.violated",
 ];
 
-define_driver_store!(RegulationArchive);
+/// Rolling per-archive window of reg-record write durations — the measured
+/// basis for F8's unmeasured per-write cost (hang-audit Pr5b). Per-instance
+/// by construction (the macro initializer runs on every `from_driver`), so
+/// parallel tests and sibling archives keep independent windows.
+struct WriteStatsWindow {
+    count: u64,
+    total_ms: u64,
+    max_ms: u64,
+    window_started_at: std::time::Instant,
+}
+
+impl WriteStatsWindow {
+    fn fresh() -> Self {
+        Self {
+            count: 0,
+            total_ms: 0,
+            max_ms: 0,
+            window_started_at: std::time::Instant::now(),
+        }
+    }
+}
+
+/// Flush cadence for the write-stats summary: one `reg.storage.write_stats`
+/// record per 5 minutes of writes (mirrors the maintenance tick's
+/// checkpoint cadence).
+const WRITE_STATS_FLUSH_SECS: u64 = 300;
+
+define_driver_store!(
+    RegulationArchive,
+    InfrastructureError,
+    {
+        write_stats: std::sync::Arc<std::sync::Mutex<WriteStatsWindow>> =
+            std::sync::Arc::new(std::sync::Mutex::new(WriteStatsWindow::fresh()))
+    }
+);
+
+/// Plain insert used by `RegulationArchive::insert` (and, unmeasured, by the
+/// write-stats summary).
+const REG_RECORDS_INSERT_SQL: &str = "INSERT INTO reg_records (id, timestamp, observer_webid, span_category, span_path, phase, observation, regulation, outcome, recursion_depth, parent_event, visibility) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
+
+/// Idempotent insert used by `persist_if_absent`.
+const REG_RECORDS_INSERT_IF_ABSENT_SQL: &str = "INSERT OR IGNORE INTO reg_records (id, timestamp, observer_webid, span_category, span_path, phase, observation, regulation, outcome, recursion_depth, parent_event, visibility) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
 
 impl RegulationArchive {
     /// Initialize the reg_records and reg_cursors tables (idempotent).
@@ -66,24 +107,49 @@ impl RegulationArchive {
     }
 
     pub(crate) fn insert(&self, event: &RegulationRecord) -> Result<(), InfrastructureError> {
-        self.insert_with_sql(
-            "INSERT INTO reg_records (id, timestamp, observer_webid, span_category, span_path, phase, observation, regulation, outcome, recursion_depth, parent_event, visibility)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            event,
-        )
-        .map(|_| ())
+        self.insert_with_sql(REG_RECORDS_INSERT_SQL, event)
+            .map(|_| ())
+    }
+
+    /// Insert one record without touching the write-stats window — the path
+    /// the write-stats summary itself takes, so telemetry about writes never
+    /// seeds the window it summarizes (no summary-of-summary amplification;
+    /// a quiet window journals nothing).
+    fn insert_unmeasured(&self, event: &RegulationRecord) -> Result<(), InfrastructureError> {
+        self.raw_insert(REG_RECORDS_INSERT_SQL, event).map(|_| ())
     }
 
     fn insert_if_absent(&self, event: &RegulationRecord) -> Result<bool, InfrastructureError> {
-        self.insert_with_sql(
-            "INSERT OR IGNORE INTO reg_records (id, timestamp, observer_webid, span_category, span_path, phase, observation, regulation, outcome, recursion_depth, parent_event, visibility)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            event,
-        )
-        .map(|rows| rows == 1)
+        self.insert_with_sql(REG_RECORDS_INSERT_IF_ABSENT_SQL, event)
+            .map(|rows| rows == 1)
     }
 
     fn insert_with_sql(
+        &self,
+        sql: &str,
+        event: &RegulationRecord,
+    ) -> Result<usize, InfrastructureError> {
+        // Hang-audit Pr5b: measure every reg-record write so the per-write
+        // cost into the archive is observable (F8's unmeasured leg).
+        let started = std::time::Instant::now();
+        let rows = self.raw_insert(sql, event)?;
+        if self.note_write_duration(started.elapsed().as_millis() as u64) {
+            // The window is due: journal one summary record through this
+            // archive and reset. The summary is unmeasured telemetry — it
+            // never seeds the window, so this cannot recurse.
+            if let Err(e) = self.journal_write_stats() {
+                tracing::warn!(
+                    target: "hkask.storage",
+                    error = %e,
+                    "Failed to journal the reg.storage.write_stats summary"
+                );
+            }
+        }
+        Ok(rows)
+    }
+
+    /// The raw insert beneath the measured path — no write-stats window.
+    fn raw_insert(
         &self,
         sql: &str,
         event: &RegulationRecord,
@@ -365,6 +431,60 @@ impl RegulationArchive {
         )
         .map_err(|e| InfrastructureError::database(e.to_string()))
     }
+
+    /// Record one write's duration into this archive's rolling window.
+    /// Returns `true` when the window is due for a flush; the lock is
+    /// released before returning so the caller's flush (which writes
+    /// through this same archive and re-enters `note_write_duration`)
+    /// cannot deadlock on the window it just reset.
+    fn note_write_duration(&self, took_ms: u64) -> bool {
+        let mut window = self
+            .write_stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        window.count += 1;
+        window.total_ms += took_ms;
+        window.max_ms = window.max_ms.max(took_ms);
+        window.window_started_at.elapsed().as_secs() >= WRITE_STATS_FLUSH_SECS
+    }
+
+    /// Journal one `reg.storage.write_stats` summary record covering this
+    /// archive's writes since the last flush, then reset the window
+    /// (hang-audit Pr5b — F8's per-write cost becomes measurable via
+    /// `reg_query`). An empty window journals nothing. The summary is
+    /// written UNMEASURED — it never seeds the window it summarizes, so a
+    /// quiet window stays quiet and the flush cannot amplify itself.
+    /// Per-archive window: sibling archives over one DB journal
+    /// independent summaries.
+    pub fn journal_write_stats(&self) -> Result<(), InfrastructureError> {
+        let (count, total_ms, max_ms) = {
+            let mut window = self
+                .write_stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let taken = std::mem::replace(&mut *window, WriteStatsWindow::fresh());
+            (taken.count, taken.total_ms, taken.max_ms)
+        };
+        if count == 0 {
+            return Ok(());
+        }
+        let Some(namespace) = SpanNamespace::new("reg.storage") else {
+            tracing::warn!(
+                target: "hkask.storage",
+                "reg.storage namespace is not registered — write-stats summary not journaled"
+            );
+            return Ok(());
+        };
+        let mean_ms = total_ms / count;
+        let event = RegulationRecord::new(
+            WebID::from_persona(b"curator"),
+            Span::new(namespace, "write_stats"),
+            CyclePhase::Sense,
+            serde_json::json!({ "writes": count, "max_ms": max_ms, "mean_ms": mean_ms }),
+            0,
+        );
+        self.insert_unmeasured(&event)
+    }
 }
 
 /// Small helper to map string errors to DbError.
@@ -522,6 +642,56 @@ mod retention_tests {
             parent_event: None,
             visibility: "internal".to_string(),
         }
+    }
+
+    /// Per-write telemetry (hang-audit Pr5b): journal_write_stats summarizes
+    /// the archive's write window in one `reg.storage.write_stats` record and
+    /// resets it. The summary is written UNMEASURED — it never seeds the
+    /// window it summarizes — so a quiet window journals nothing and the
+    /// flush cannot amplify itself into summary-of-summary noise.
+    #[test]
+    fn write_stats_journal_summarizes_and_resets_the_window() -> Result<(), InfrastructureError> {
+        let archive = RegulationArchive::from_driver(SqliteDriver::in_memory_driver())?;
+        archive.insert(&record("tool", "completed", 0))?;
+        archive.insert(&record("tool", "completed", 0))?;
+
+        archive.journal_write_stats()?;
+        let since = chrono::Utc::now() - chrono::Duration::hours(1);
+        let summaries = archive.query_records(since, Some("reg.storage.write_stats"), 10)?;
+        assert_eq!(summaries.len(), 1, "one summary per flush");
+        let observation = &summaries[0].observation;
+        assert_eq!(
+            observation["writes"].as_u64(),
+            Some(2),
+            "the window's two inserts are summarized, not the summary itself"
+        );
+        assert!(
+            observation["max_ms"].as_u64().is_some() && observation["mean_ms"].as_u64().is_some(),
+            "the summary carries the measured cost fields"
+        );
+
+        // Unmeasured telemetry: the first summary seeds nothing, so a quiet
+        // window journals nothing.
+        archive.journal_write_stats()?;
+        let summaries = archive.query_records(since, Some("reg.storage.write_stats"), 10)?;
+        assert_eq!(
+            summaries.len(),
+            1,
+            "an empty window must not journal a summary"
+        );
+
+        // A fresh write re-arms the window; the next flush summarizes it.
+        archive.insert(&record("skill", "program-manager.outcome", 0))?;
+        archive.journal_write_stats()?;
+        let summaries = archive.query_records(since, Some("reg.storage.write_stats"), 10)?;
+        assert_eq!(
+            summaries.len(),
+            2,
+            "the re-armed window's single write is summarized"
+        );
+        assert_eq!(summaries[1].observation["writes"].as_u64(), Some(1));
+
+        Ok(())
     }
 
     /// Per-span retention: the `reg.tool.completed` telemetry cutoff deletes

@@ -235,9 +235,11 @@ embedding and forgetting-spec migrations do
 
 Use `define_driver_store!(MyStore)` to generate the driver-backed struct,
 `from_driver`, and `driver()` accessor. Use the two-argument form for a domain
-error and `impl_from_db_error!` for error conversion
-(`kask/crates/hkask-storage/src/core/store_macros.rs:44-86`). Construction runs
-`init_schema` and propagates failure.
+error, and the three-argument form for store-owned state beside the driver
+(extra fields with per-construction initializers — `RegulationArchive`'s rolling
+write-stats window is the reference user). `impl_from_db_error!` handles error
+conversion (`kask/crates/hkask-storage/src/core/store_macros.rs:44-112`).
+Construction runs `init_schema` and propagates failure.
 
 #### 3. Add operations through `DatabaseDriver`
 

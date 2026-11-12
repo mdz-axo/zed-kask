@@ -96,6 +96,39 @@ pub fn persist_skill_tool_failure(
     persist_skill_span(archive, skill_id, "tool_failure", payload)
 }
 
+/// Journal one `reg.storage.open.<role>` record — the wall-clock cost of a
+/// store or archive open (hang-audit Pr5: the per-open telemetry that gives
+/// Pr2's launch verification its measured basis). Best-effort by design: a
+/// failure warns and never fails the open it is describing.
+pub(crate) fn journal_storage_open(
+    archive: &hkask_storage::RegulationArchive,
+    role: &str,
+    duration_ms: u64,
+) {
+    let Some(namespace) = SpanNamespace::new("reg.storage") else {
+        tracing::warn!(
+            target: "reg.storage",
+            "reg.storage namespace is not registered — open timing not journaled"
+        );
+        return;
+    };
+    let event = RegulationRecord::new(
+        WebID::from_persona(b"curator"),
+        Span::new(namespace, &format!("open.{role}")),
+        CyclePhase::Sense,
+        serde_json::json!({ "duration_ms": duration_ms }),
+        0,
+    );
+    if let Err(e) = archive.persist(&event) {
+        tracing::warn!(
+            target: "reg.storage",
+            error = %e,
+            role,
+            "Failed to journal the reg.storage.open record"
+        );
+    }
+}
+
 fn persist_skill_span(
     archive: &hkask_storage::RegulationArchive,
     skill_id: &str,
@@ -335,6 +368,11 @@ fn open_curator_store(
     embedding_dim: usize,
     memory_life_days: f64,
 ) -> Option<Arc<MemoryStore>> {
+    let opened_at = std::time::Instant::now();
+    let open_role = std::path::Path::new(db_path)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     let curator_db_path = db_path.to_string();
 
     let db = match open_or_repair(&curator_db_path, passphrase) {
@@ -405,6 +443,14 @@ fn open_curator_store(
             return None;
         }
     };
+
+    // Hang-audit Pr5: journal the open's wall-clock cost through the ledger
+    // the store is about to own — measured to the store build, before this
+    // record's own write. Best-effort (see journal_storage_open).
+    let open_duration_ms = opened_at.elapsed().as_millis() as u64;
+    if let Some(archive) = &ledger {
+        journal_storage_open(archive, &open_role, open_duration_ms);
+    }
     let store = Arc::new({
         // Budgets are gone entirely (operator ruling 2026-09-04, completed
         // 2026-09-08): forgetting is time-based
@@ -430,6 +476,7 @@ fn open_curator_store(
     tracing::info!(
         target: "reg.memory",
         db_path = %curator_db_path,
+        duration_ms = open_duration_ms,
         "Curator memory store opened —          curator turns will be ingested into curator memory (perspective = curator)"
     );
     Some(store)
@@ -497,6 +544,15 @@ mod tests {
         assert!(
             !records.is_empty(),
             "the store's shared-driver ledger must journal reg.memory.encode spans"
+        );
+
+        // Hang-audit Pr5: the open itself must journal its wall-clock cost.
+        let opens = reader.query_records(since, Some("reg.storage.open"), 10)?;
+        assert!(
+            opens
+                .iter()
+                .any(|record| record.span.path == "reg.storage.open.curator"),
+            "the curator store's open cost must be journaled under reg.storage.open"
         );
         Ok(())
     }

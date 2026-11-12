@@ -553,6 +553,7 @@ fn open_regulation_archive(
     passphrase: &str,
     role: &str,
 ) -> Option<Arc<hkask_storage::RegulationArchive>> {
+    let opened_at = std::time::Instant::now();
     let db = match open_or_repair(db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
@@ -577,7 +578,13 @@ fn open_regulation_archive(
         hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path),
     );
     match hkask_storage::RegulationArchive::from_driver(driver) {
-        Ok(archive) => Some(Arc::new(archive)),
+        Ok(archive) => {
+            // Hang-audit Pr5: the archive self-reports its open cost under
+            // reg.storage.open.<role> — best-effort, never fails the open.
+            let duration_ms = opened_at.elapsed().as_millis() as u64;
+            curator_stores::journal_storage_open(&archive, role, duration_ms);
+            Some(Arc::new(archive))
+        }
         Err(e) => {
             tracing::warn!(target: "reg.storage", error = %e, role, "Failed to init RegulationArchive schema");
             None

@@ -98,7 +98,7 @@ are created by their stores, including the Regulation tables
 moved with it to the media server (2026-10-13, commit `c85b1e4896`) — see
 [Media MCP Server Reference](../../reference/mcp-servers/media.md). The
 `define_driver_store!` macro makes construction fail if a store's schema
-initialization fails (`kask/crates/hkask-storage/src/core/store_macros.rs:44-71`).
+initialization fails (`kask/crates/hkask-storage/src/core/store_macros.rs:44-112`).
 
 ## See also
 
