@@ -57,7 +57,9 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
   monotonic change counter — poll it to skip re-fetching unchanged
   state, the kanzo P1 pattern), delete (owner-gated,
   `permission_denied`), rename (owner-gated), mermaid export/import
-  (round-trip pair; import is replay-safe and atomic).
+  (round-trip pair; import is replay-safe and atomic, and is refused with
+  nothing created when a column lists more tasks than the WIP limit it
+  declares or a task title is blank).
 - **Goals:** MCP create/judge/get/list only. Create requires real specification
   `source: { interaction_id, session_id, source }`, immutable criteria, optional
   `supersedes`, and an optional typed `forecast`, not routine `prediction`.
@@ -91,6 +93,15 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
   name in the child's prompt and refuses any other field; a missing grant
   or uncertain reply never starts a fallback, and a spawn that did not go
   through leaves no comment on the task).
+- **Who may read and write:** mutations check the caller (task owner or
+  assignee; owner alone for delete, verify, reopen, unassign, update and
+  spawn; board owner for rename, delete and export). Task reads and task
+  creation on a board do not: list, comments-since, kata-prompt and create
+  answer any caller holding the id. Deliberate (operator ruling
+  2026-11-11), pinned by
+  `task_reads_and_task_creation_are_open_to_any_caller`, and moot while
+  the server runs as one fixed identity (the bridge passes `HKASK_WEBID`
+  only to the curator server). Revisit if callers get distinct identities.
 - **Idempotency:** `with_idempotency` — three-outcome replay semantics
   (fresh / replay-verbatim / refused-pending), fail-closed reservation,
   the post-effect rule (bookkeeping failures fold into the response;

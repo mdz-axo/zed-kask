@@ -12,7 +12,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
 | `kanban_board_delete` | Delete a kanban board and all its tasks |
 | `kanban_board_export` | Export a kanban board as mermaid kanban markdown |
-| `kanban_board_import` | Import current-format mermaid kanban markdown as one atomic board aggregate; every section requires explicit `%% kanban column status: <wire-status>` metadata |
+| `kanban_board_import` | Import current-format mermaid kanban markdown as one atomic board aggregate; every section requires explicit `%% kanban column status: <wire-status>` metadata. Refused, with nothing created, when a column lists more tasks than the WIP limit it declares or a task title is blank |
 
 ### Task CRUD
 | Tool | Description |
@@ -107,6 +107,26 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 | Tool | Description |
 |------|-------------|
 | `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). `delegated_skills` are named in the child's prompt. The task gets a comment only once the thread is queued |
+
+## Who may read and write
+
+Mutations check the caller. Task changes need the task's owner or assignee;
+delete, verify, reopen, unassign, update and spawn need the owner. Board
+rename, delete and export need the board's owner. Goals are owner-scoped
+throughout.
+
+Task reads do **not** check the caller, and neither does creating a task on a
+board: `kanban_task_list`, `kanban_task_comments_since`,
+`kanban_task_kata_prompt` and `kanban_task_create` answer any caller who holds
+the id. This is deliberate (operator ruling 2026-11-11) and pinned by
+`task_reads_and_task_creation_are_open_to_any_caller`.
+
+In production the distinction is moot: the bridge passes `HKASK_WEBID` only to
+the curator server, so this server runs as one fixed identity and every caller
+is the owner of everything. What separates the operator's tasks from an
+agent's is the operator-reserved marker, not ownership. If callers are ever
+given distinct identities, the four tools above are where one caller could
+read or add to another's board, and this section is the place to revisit.
 
 ## Configuration
 

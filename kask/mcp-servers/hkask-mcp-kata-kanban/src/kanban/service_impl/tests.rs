@@ -2809,3 +2809,81 @@ fn task_info_reads_back_priority_labels_and_deliverables() -> anyhow::Result<()>
     assert_eq!(info.deliverables, vec!["out/report.md".to_string()]);
     Ok(())
 }
+
+/// mcp-tool-review KK-16 pin: an import is checked against the WIP limits
+/// its own document declares. Probed 2026-11-11: three tasks imported into
+/// a column declaring a limit of one, the only path left that could put a
+/// column over its limit. Refused before anything is written; a column at
+/// its limit, and a column with no limit, import as before.
+#[test]
+fn import_refuses_a_column_over_its_own_wip_limit() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let document = |tasks: &str| {
+        format!(
+            "kanban\n%% kanban column status: backlog\n  section Backlog\n    queued a\n    queued b\n    queued c\n\
+             %% kanban column status: in_progress\n%% kanban column wip: 2\n  section In Progress\n{tasks}"
+        )
+    };
+
+    let over = parse_mermaid_kanban(&document("    one\n    two\n    three\n"))?;
+    let refused = svc.board_import(owner, "Over", &over);
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidInput(message))
+            if message.contains("In Progress") && message.contains("3 tasks") && message.contains("limit of 2")),
+        "{refused:?}"
+    );
+    assert!(
+        svc.board_list(&owner)?.boards.is_empty(),
+        "a refused import publishes no board"
+    );
+
+    let at_limit = parse_mermaid_kanban(&document("    one\n    two\n"))?;
+    let (board, task_count) = svc.board_import(owner, "At limit", &at_limit)?;
+    assert_eq!(task_count, 5, "the unlimited Backlog column is not capped");
+    assert_eq!(
+        svc.task_list(board.id, Some(TaskStatus::InProgress))?
+            .tasks
+            .len(),
+        2
+    );
+    Ok(())
+}
+
+/// mcp-tool-review KK-15 pin (operator ruling 2026-11-11: leave as is, with
+/// a note). Task reads, and creating a task on a board, do not check the
+/// caller; every task mutation and every board-level operation does. The
+/// module docs in `service.rs` say why. This test exists so that changing
+/// the rule is a decision someone makes, not a side effect.
+#[test]
+fn task_reads_and_task_creation_are_open_to_any_caller() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Owned".into()), owner)?;
+    svc.task_comment(task.id, owner, "owner's note")?;
+    let stranger = WebID::new();
+
+    // Open: reads by id, and adding a task to the board.
+    assert_eq!(svc.task_list(board.id, None)?.tasks.len(), 1);
+    assert_eq!(svc.task_comments_since(task.id, 0)?.0.len(), 1);
+    assert!(svc.task_coaching_prompt(task.id)?.contains("Owned"));
+    svc.task_create(
+        board.id,
+        TaskSpec::new("Added by a stranger".into()),
+        stranger,
+    )?;
+
+    // Closed: the stranger's own listing, and any change to the owner's task.
+    assert!(svc.board_list(&stranger)?.boards.is_empty());
+    for refused in [
+        svc.task_comment(task.id, stranger, "intruder").map(|_| ()),
+        svc.task_move(task.id, TaskStatus::Ready, stranger)
+            .map(|_| ()),
+        svc.task_delete(task.id, stranger),
+    ] {
+        assert!(
+            matches!(refused, Err(KanbanError::PermissionDenied(_))),
+            "{refused:?}"
+        );
+    }
+    Ok(())
+}

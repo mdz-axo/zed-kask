@@ -715,7 +715,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "List tasks on a kanban board, optionally filtered by status. Set view=compact for token-frugal one-struct summaries: Done capped at 20 and operator-reserved tasks skipped, both disclosed by count."
+        description = "List tasks on a kanban board, optionally filtered by status. Set view=compact for token-frugal one-struct summaries: Done capped at 20 and operator-reserved tasks skipped, both disclosed by count. Any caller holding the board id may read; task changes are owner- or assignee-gated."
     )]
     pub async fn kanban_task_list(
         &self,
@@ -1416,7 +1416,7 @@ impl KanbanServer {
     /// pre:  markdown contains a `kanban` directive and at least one `section`
     /// post: returns the new board id and a structural summary
     #[tool(
-        description = "Import mermaid kanban markdown as a new board with tasks in parsed columns (column WIP limits round-trip via the `%% kanban column wip: N` line)."
+        description = "Import mermaid kanban markdown as a new board with tasks in parsed columns (column WIP limits round-trip via the `%% kanban column wip: N` line). Refused, with nothing created, when a column lists more tasks than the limit it declares or a task title is blank."
     )]
     pub async fn kanban_board_import(
         &self,

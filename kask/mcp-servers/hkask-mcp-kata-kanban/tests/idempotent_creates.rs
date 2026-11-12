@@ -1524,3 +1524,28 @@ async fn a_queued_spawn_leaves_one_comment_naming_the_skills() {
     let body = comments["comments"][0]["body"].as_str().expect("body");
     assert!(body.contains("Delegated skills: tdd, bug-hunt"), "{body}");
 }
+
+/// mcp-tool-review KK-16 pin at the wire: an import over a declared WIP
+/// limit is the caller's document at fault — `invalid_argument` naming the
+/// column and both numbers — and it leaves no board behind.
+#[tokio::test]
+async fn import_over_a_declared_wip_limit_is_invalid_argument() {
+    let server = make_server();
+    let markdown = "kanban\n%% kanban column status: backlog\n  section Backlog\n\
+                    %% kanban column status: in_progress\n%% kanban column wip: 1\n  section Doing\n    one\n    two\n";
+    let error = server
+        .kanban_board_import(Parameters(BoardImportRequest {
+            markdown: markdown.to_string(),
+            board_name: Some("Over limit".to_string()),
+            idempotency_key: None,
+        }))
+        .await
+        .expect_err("an import over its own limit is refused");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("Doing") && error.message.contains("limit of 1"),
+        "{}",
+        error.message
+    );
+    assert_eq!(board_count(&server).await, 0);
+}

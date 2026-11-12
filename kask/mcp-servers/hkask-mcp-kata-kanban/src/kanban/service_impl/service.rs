@@ -4,6 +4,24 @@
 //! Every operation carries ownership tracking (P12) and enforces agent consent
 //! on assignment (P1). State transitions are column-ordered.
 //!
+//! ## Who may read and write
+//!
+//! Mutations check the caller: task changes need the task's owner or
+//! assignee (delete, verify, reopen, unassign, update and spawn need the
+//! owner); board rename, delete and export need the board's owner; goals are
+//! owner-scoped throughout.
+//!
+//! Task reads do NOT check the caller, and neither does creating a task on a
+//! board: `task_list`, `task_get`, `task_comments_since`, the kata prompts
+//! and `task_create` answer any caller who holds the id. This is deliberate
+//! (operator ruling 2026-11-11, mcp-tool-review KK-15), and is pinned by
+//! `task_reads_and_task_creation_are_open_to_any_caller`. In production the
+//! server runs as one fixed identity — the bridge passes `HKASK_WEBID` only
+//! to the curator server — so an ownership check here would tell nobody from
+//! anybody. If identities are ever distinguished per caller, revisit this
+//! paragraph first: these five paths are where one caller could read or add
+//! to another's board.
+//!
 //! Persistence: boards and tasks stored as RDF h_mems via HMemStore (MDS §2).
 //! HMem scheme:
 //!   kanban:board → {board_id} → JSON Board
@@ -358,7 +376,9 @@ impl KanbanService {
     /// expect: "An imported board appears complete in the parsed workflow or does not appear."
     /// [P3] Motivating: Generative Space — imported work is immediately usable.
     /// [P2] Constraining: Transparent Imperfection — publication failure leaves no partial board.
-    /// pre: parsed contains a representable one-to-one column/status mapping
+    /// pre: parsed contains a representable one-to-one column/status mapping;
+    ///      no column holds more tasks than the WIP limit it declares; every
+    ///      task title carries text
     /// post: board, task payloads, and board indexes commit together; tasks keep their parsed columns
     pub(crate) fn board_import(
         &self,
@@ -368,6 +388,25 @@ impl KanbanService {
     ) -> Result<(Board, usize), KanbanError> {
         let columns = columns_from_parsed(parsed)
             .map_err(|error| KanbanError::InvalidInput(error.to_string()))?;
+        // The document is checked against its own declarations before
+        // anything is built: a board must not be born over a limit it
+        // states (mcp-tool-review KK-16 — three tasks imported into a WIP-1
+        // column), and an imported title meets the rule a created one does.
+        // Both are faults of the input, so both are `InvalidInput`.
+        for column in &parsed.columns {
+            if let Some(limit) = column.wip_limit
+                && column.tasks.len() > limit as usize
+            {
+                return Err(KanbanError::InvalidInput(format!(
+                    "column '{}' lists {} tasks but declares a WIP limit of {limit}",
+                    column.name,
+                    column.tasks.len()
+                )));
+            }
+            for title in &column.tasks {
+                Self::validate_task_title(title)?;
+            }
+        }
         let board = Self::build_board(owner, name, &columns, None)?;
         let mut records = vec![Self::board_h_mem(&board)?];
         let mut task_count = 0usize;
