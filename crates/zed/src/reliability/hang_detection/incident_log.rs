@@ -10,11 +10,34 @@
 //! append-only, surviving restarts. The `.jsonl` extension sits outside the
 //! task-trace cleanup's `json`/`miniprof` filter, so the 3-file cap never
 //! sweeps it.
+//!
+//! zed-kask: hang-audit Pr5 (2026-11-12) — session markers. Every record
+//! carries a `kind` discriminant (`session_start` / `incidents` /
+//! `session_end`); pre-marker lines have no `kind` and read as incident
+//! batches. `start_hang_detection` writes `session_start` (with the build
+//! identity) at monitor start and `session_end` at app quit, so stall
+//! batches attribute to builds through their enclosing markers, and a
+//! `session_start` with no `session_end` before the next start is the
+//! durable quit-flush failure signal (an unclean end whose final batch
+//! may be lost).
 
 use std::io::Write;
 use std::path::Path;
 
 use gpui::profiler::hang::SerializedHangIncident;
+
+/// Append one JSON line to `hang-incidents.jsonl` under `dir` — the shared
+/// body beneath every record kind. The `.jsonl` extension keeps the file
+/// outside the task-trace cleanup's `json`/`miniprof` filter.
+fn append_line(dir: &Path, line: serde_json::Value) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("hang-incidents.jsonl"))?;
+    file.write_all(line.to_string().as_bytes())?;
+    file.write_all(b"\n")
+}
 
 /// Append one batch record to `hang-incidents.jsonl` under `dir`.
 ///
@@ -27,19 +50,14 @@ fn append_batch(
     budget_incidents: u64,
 ) -> std::io::Result<()> {
     let line = serde_json::json!({
+        "kind": "incidents",
         "recorded_at": chrono::Local::now().to_rfc3339(),
         "total_incidents": threshold_incidents + budget_incidents,
         "threshold_incidents": threshold_incidents,
         "budget_incidents": budget_incidents,
         "incidents": incidents,
     });
-    std::fs::create_dir_all(dir)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("hang-incidents.jsonl"))?;
-    file.write_all(line.to_string().as_bytes())?;
-    file.write_all(b"\n")
+    append_line(dir, line)
 }
 
 /// Record a non-empty incident batch to the durable hang-incident log.
@@ -58,6 +76,60 @@ pub(crate) fn record(
         budget_incidents,
     ) {
         log::warn!("failed to append the durable hang-incident record: {error}");
+    }
+}
+
+/// Append the session's `session_start` marker, carrying the build identity
+/// so stall batches attribute to builds through their enclosing markers.
+/// Split from [`record_session_start`] for temp-dir testing.
+fn append_session_start(
+    dir: &Path,
+    version: &str,
+    commit_sha: &str,
+    build_id: &str,
+) -> std::io::Result<()> {
+    let line = serde_json::json!({
+        "kind": "session_start",
+        "recorded_at": chrono::Local::now().to_rfc3339(),
+        "build": {
+            "version": version,
+            "commit_sha": commit_sha,
+            "build_id": build_id,
+        },
+    });
+    append_line(dir, line)
+}
+
+/// Append the session's `session_end` marker. Split from
+/// [`record_session_end`] for temp-dir testing.
+fn append_session_end(dir: &Path) -> std::io::Result<()> {
+    let line = serde_json::json!({
+        "kind": "session_end",
+        "recorded_at": chrono::Local::now().to_rfc3339(),
+    });
+    append_line(dir, line)
+}
+
+/// zed-kask: hang-audit Pr5 — mark the session's start in the durable
+/// journal, carrying the build identity (the same compile-time sources the
+/// startup log line prints). Best-effort like [`record`]: a failure warns
+/// and never blocks startup.
+pub(crate) fn record_session_start(version: &str, commit_sha: &str, build_id: &str) {
+    if let Err(error) =
+        append_session_start(paths::hang_traces_dir(), version, commit_sha, build_id)
+    {
+        log::warn!("failed to append the session-start marker: {error}");
+    }
+}
+
+/// zed-kask: hang-audit Pr5 — mark the session's clean end. The durable
+/// quit-flush failure signal is this marker's ABSENCE: a session_start
+/// with no session_end before the next session_start is an unclean end
+/// (crash or kill), and its final Flush-poll batch may be lost. Best-effort,
+/// never blocks quit.
+pub(crate) fn record_session_end() {
+    if let Err(error) = append_session_end(paths::hang_traces_dir()) {
+        log::warn!("failed to append the session-end marker: {error}");
     }
 }
 
@@ -102,5 +174,43 @@ fn batches_append_without_truncating() {
             "wall-clock recorded_at is the timestamp the truncated telemetry log lacks"
         );
     }
+    std::fs::remove_dir_all(&dir).expect("test cleanup");
+}
+
+/// zed-kask: hang-audit Pr5 — session markers delimit the durable journal.
+/// The `session_start` marker carries the build identity (so stall batches
+/// attribute to builds through their enclosing markers), the batch records
+/// carry their `incidents` discriminant, and the `session_end` marker closes
+/// a clean quit — its absence before the next session_start is the durable
+/// quit-flush failure signal.
+#[test]
+fn session_markers_delimit_and_batches_carry_kind() {
+    let dir = std::env::temp_dir().join(format!(
+        "zed-hang-session-marker-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    append_session_start(&dir, "0.40.2-test", "abc123", "test-build-id").expect("session start");
+    append_batch(&dir, &[], 0, 0).expect("batch");
+    append_session_end(&dir).expect("session end");
+
+    let file =
+        std::fs::read_to_string(dir.join("hang-incidents.jsonl")).expect("incident log readable");
+    let lines: Vec<&str> = file.lines().collect();
+    assert_eq!(lines.len(), 3, "markers and batch append in order");
+    let start: serde_json::Value = serde_json::from_str(lines[0]).expect("start line is JSON");
+    assert_eq!(start["kind"], "session_start");
+    assert_eq!(start["build"]["version"], "0.40.2-test");
+    assert_eq!(start["build"]["commit_sha"], "abc123");
+    assert_eq!(start["build"]["build_id"], "test-build-id");
+    let batch: serde_json::Value = serde_json::from_str(lines[1]).expect("batch line is JSON");
+    assert_eq!(
+        batch["kind"], "incidents",
+        "batches carry their discriminant"
+    );
+    let end: serde_json::Value = serde_json::from_str(lines[2]).expect("end line is JSON");
+    assert_eq!(end["kind"], "session_end");
+
     std::fs::remove_dir_all(&dir).expect("test cleanup");
 }

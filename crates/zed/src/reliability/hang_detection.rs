@@ -73,6 +73,19 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     let monitor_interval = Duration::from_secs(1);
     let started = Instant::now();
     let startup = *STARTUP_TIME.get().unwrap_or(&started);
+    // zed-kask: hang-audit Pr5 — delimit the session in the durable journal
+    // before the monitor starts. The session_start marker carries the build
+    // identity (the same compile-time sources the startup log line prints),
+    // so stall batches attribute to builds through their enclosing markers;
+    // the session_end marker written at quit is the durable quit-flush
+    // failure signal — its absence before the next session_start is an
+    // unclean end whose final Flush-poll batch may be lost (the shutdown
+    // race noted above).
+    incident_log::record_session_start(
+        env!("CARGO_PKG_VERSION"),
+        option_env!("ZED_COMMIT_SHA").unwrap_or("unknown"),
+        option_env!("ZED_BUILD_ID").unwrap_or("unknown"),
+    );
     // GPUI's final `Flush` poll runs during shutdown, concurrently with this
     // handler and within `SHUTDOWN_TIMEOUT`, so the last batch may miss this
     // flush.
@@ -86,7 +99,16 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
         .start(cx)
     {
         Ok(()) => cx
-            .on_app_quit(move |_| client.telemetry().flush_events())
+            .on_app_quit(move |_| {
+                let client = client.clone();
+                async move {
+                    client.telemetry().flush_events().await;
+                    // zed-kask: hang-audit Pr5 — the session-end marker is the
+                    // durable quit-flush failure signal (best-effort; a failure
+                    // warns and never blocks quit).
+                    incident_log::record_session_end();
+                }
+            })
             .detach(),
         Err(error) => log::error!("failed to start hang reporting: {error}"),
     }
