@@ -1293,8 +1293,9 @@ share one passphrase architecture:
   `hkask_keystore::provision_db_passphrase_string`,
   `kask/crates/hkask-keystore/src/keychain.rs:383`). The username-independent
   half (`provision_db_passphrase`, `identity.rs:132`) is spawned by
-  `build_mcp_server_env` at MCP launch time so servers get a passphrase
-  (`kask/crates/kask_bridge/src/mcp_servers.rs:536@build_mcp_server_env`).
+  `build_mcp_server_env_with_sweep` at MCP launch time so servers get a
+  passphrase
+  (`kask/crates/kask_bridge/src/mcp_servers.rs:504@build_mcp_server_env_with_sweep`).
 - **Keychain namespace:** unified `kask://credentials/<key>` with label
   `zed-github-account` — the same schema zed's `CredentialsProvider` uses.
   One passphrase

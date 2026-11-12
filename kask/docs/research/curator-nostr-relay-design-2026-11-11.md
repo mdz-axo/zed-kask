@@ -71,14 +71,14 @@ SDK's own listener did not exist. It added `hyper`, `hyper-util`, `sha1` and
 
 Read from the SDK source (`nostr-sdk-0.45.6/src/local_relay/`):
 
-- The default bind address is loopback (`local/inner.rs:87`). With no port
+- The default bind address is loopback (`local/inner.rs`, line 87). With no port
   set, the relay picks a free one.
 - NIP-42 gates on "this connection authenticated", with any key. It does not
   admit a named set of keys. Two narrower rules exist: a protected event
   (NIP-70) must be authored by the authenticated key, and with `auth_dm` a
   gift-wrap query must name the authenticated key.
 - The default kind blacklist is Seal, ZapRequest, Authentication,
-  BlossomAuth and HttpAuth (`builder.rs:326-368`). Gift wraps (kind 1059) are
+  BlossomAuth and HttpAuth (`builder.rs`, lines 326-368). Gift wraps (kind 1059) are
   accepted by default.
 - `NostrLmdb` reports: persistent, full-text search and request-to-vanish
   supported; event expiration not handled by the store.
@@ -269,11 +269,11 @@ configures at startup.
 Three facts from the spike (§1a) and the SDK source:
 
 - `LocalRelay::sync_with` does not fill the store. It builds a fresh client
-  with no handle on the relay's database (`local/inner.rs:229`) and only
+  with no handle on the relay's database (`local/inner.rs`, line 229) and only
   notifies live subscribers. Observed: 2 received, 0 stored.
 - A `Client` given the relay's database handle does store what it syncs.
 - The write policy is not applied on that path. It runs only where a
-  websocket client publishes (`local/inner.rs:743`). Observed: with an open
+  websocket client publishes (`local/inner.rs`, line 743). Observed: with an open
   filter, an event by a non-allowlisted author was stored.
 
 So the allowlist has to be enforced by the sync code itself. Design:
