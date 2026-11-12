@@ -2111,6 +2111,27 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-11-07 (audit remediation of the direct-model-edit skill; research run 8353bc04dabb5e6b); Yao, Wang, Tian, Cheng, Li, Deng, Chen & Zhang, 'Editing Large Language Models: Problems, Methods, and Opportunities', EMNLP 2023, arXiv:2305.13172; Meng, Bau, Andonian & Belinkov, 'Locating and Editing Factual Associations in GPT' (ROME), NeurIPS 2022, arXiv:2202.05262; Ilharco, Ribeiro, Wortsman, Gururangan, Schmidt, Hajishirzi & Farhadi, 'Editing Models with Task Arithmetic', ICLR 2023, arXiv:2212.04089; Arditi, Obeso, Syed, Paleka, Panickssery, Gurnee & Nanda, 'Refusal in Language Models Is Mediated by a Single Direction', arXiv:2406.11717",
     },
+    DerivedConcept {
+        term: "latency",
+        aliases: &["response time", "end-to-end latency"],
+        identity: "the response-time dimension of a system's behaviour — the time between an input event and its observable effect — measured against requirements as ISO/IEC 25010's time behaviour characteristic under performance efficiency",
+        definition: "ISO/IEC 25010:2011 (SQuaRE, the software quality model) carries response time under the performance efficiency characteristic as time behaviour — 'the degree to which the response and processing time of a product or system, when performing its functions, meet requirements' — beside resource utilization and capacity; the ruling maps the working term 'latency' onto that characteristic, so every latency figure is a time-behaviour observation and every latency budget a time-behaviour requirement. In zed-kask this grounds the hang audit's measurement discipline: a stall batch in the durable hang journal is time-behaviour evidence for the editor's responsiveness requirement, the per-open duration_ms (reg.storage.open) and per-write summaries (reg.storage.write_stats) exist so storage latency answers to a stated comparison point instead of floating free, and the frame_budget entry is the render-side requirement of the same characteristic. The nameable violation: a latency number with no requirement or baseline it is evidence against — a measurement that answers to nothing.",
+        constituents: &["time behaviour", "performance efficiency", "frame budget"],
+        authority: "operator ruling 2026-11-12 (accepted; the hang audit's item 7 — 'the software development ontology'); ISO/IEC 25010:2011, Systems and software engineering — SQuaRE — System and software quality models, performance efficiency / time behaviour",
+    },
+    DerivedConcept {
+        term: "performance_regression",
+        aliases: &["perf regression"],
+        identity: "a measured deterioration of performance efficiency relative to a named baseline — a DELTA between two time-behaviour observations of the same operation under comparable conditions, never a property of either observation alone",
+        definition: "ISO/IEC 25010:2011 (SQuaRE) defines performance efficiency through its sub-characteristics — time behaviour, resource utilization, capacity — as the degree to which the system's performance meets stated requirements; a performance regression is a change measurement over that characteristic: the same operation or workload, measured against a named prior state or requirement, shows degradation, so the claim carries both a baseline and a comparison method — and before it is believed, a noise band (Georges, Buytaert & Eeckhout, OOPSLA 2007, on statistically rigorous performance evaluation: run-to-run variance that swamps the claimed delta is the classic false regression). In zed-kask this grounds the hang audit's attribution design: stall batches attribute to builds through their session markers (session_start carries the build identity), and the per-launch reg.storage.open and reg.storage.write_stats records exist so a launch-to-launch delta is answerable — the audit's own premise finding ('recent changes introduced it') was adjudicated exactly this way, build against build. The nameable violation: calling something a regression with no named baseline or comparison method — 'slower' without 'slower than what, measured how, against what noise band'.",
+        constituents: &[
+            "performance efficiency",
+            "time behaviour",
+            "latency",
+            "baseline",
+        ],
+        authority: "operator ruling 2026-11-12 (accepted; the hang audit's item 7 — 'the software development ontology'); ISO/IEC 25010:2011, Systems and software engineering — SQuaRE — System and software quality models, performance efficiency (time behaviour, resource utilization, capacity); Georges, Buytaert & Eeckhout, 'Statistically Rigorous Java Performance Evaluation', OOPSLA 2007, doi:10.1145/1297027.1297033",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -3523,6 +3544,48 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-11-07"),
                 "{term} cites the 2026-11-07 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The hang-audit anchor rulings (accepted 2026-11-12)
+    /// resolve to the ISO/IEC 25010 published authority — never the coarse
+    /// 5W1H core anchor both terms carried before the ruling.
+    #[test]
+    fn hang_audit_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("latency", "latency", "ISO/IEC 25010:2011"),
+            ("response time", "latency", "time behaviour"),
+            (
+                "end-to-end latency",
+                "latency",
+                "operator ruling 2026-11-12",
+            ),
+            (
+                "performance regression",
+                "performance_regression",
+                "ISO/IEC 25010:2011",
+            ),
+            (
+                "perf regression",
+                "performance_regression",
+                "Georges, Buytaert & Eeckhout",
+            ),
+        ] {
+            let concept =
+                resolve_derived(term).expect("the hang-audit ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-11-12"),
+                "{term} cites the accepted ruling"
             );
         }
     }
