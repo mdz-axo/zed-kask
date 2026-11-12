@@ -503,9 +503,9 @@ impl KanbanServer {
     /// `done` (all criteria
     /// satisfied), `continue` (work continues), `blocked` (unachievable or
     /// needs user input). The verdict is validated against the frozen
-    /// criteria and advances the goal's revision; it is not stored.
+    /// criteria and nothing is stored: the goal is left as it was.
     #[tool(
-        description = "Check a worker verdict (done/continue/blocked) against a goal's frozen criteria: confidence in [0,1], exactly one result per criterion, done only when every criterion passed. The verdict is validated, not stored: the call advances the goal's revision and its text is not retained. Never a human acceptance."
+        description = "Check a worker verdict (done/continue/blocked) against a goal's frozen criteria: confidence in [0,1], exactly one result per criterion, done only when every criterion passed. The verdict is validated, not stored: the goal, its revision and its recall record are unchanged. Read-only. Never a human acceptance."
     )]
     pub async fn kanban_goal_judge(
         &self,
@@ -532,10 +532,9 @@ impl KanbanServer {
                     })
                     .collect(),
                 reasoning,
-                judged_at: chrono::Utc::now(),
             };
             respond(
-                self.service.goal_judge(gid, goal_verdict, self.webid),
+                self.service.goal_judge(gid, &goal_verdict, self.webid),
                 |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
                     verdict: verdict_value.as_str().to_string(),

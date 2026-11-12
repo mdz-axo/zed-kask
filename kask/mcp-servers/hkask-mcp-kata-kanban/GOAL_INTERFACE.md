@@ -66,7 +66,9 @@ no separate dirty flag, snapshot backlog, or per-event delivery receipt.
 
 ## Service operations
 
-Ordinary MCP routes are create, judge, get, and list. The service also accepts
+Ordinary MCP routes are create, judge, get, and list. Judge is a read: it
+checks a worker verdict against the frozen criteria and stores nothing, so it
+moves neither `revision` nor the recall record. The service also accepts
 trusted native closure/correction. `goal_scan_for_host()` is a native scheduling
 read, not an MCP route: it returns `HashMap<WebID, Vec<Goal>>` from one full-store
 query with per-owner schema, ownership, key and duplicate-identity checks. Ordinary

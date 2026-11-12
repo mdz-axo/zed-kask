@@ -65,9 +65,9 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
   `supersedes`, and an optional typed `forecast`, not routine `prediction`.
   Create/get return full aggregates with `id`, `criterion_ids`, `spec_digest`;
   list returns an array of those aggregates (`Vec<Goal>`), including closed goals.
-  Judge validates a reported verdict against the frozen criteria and advances
-  the goal's revision; no verdict is stored, and human acceptance is never
-  implied. Native host `kanban_goal_close` takes `goal_id` and evidence only
+  Judge validates a reported verdict against the frozen criteria and is
+  read-only: no verdict is stored, the goal's revision does not move, and
+  human acceptance is never implied. Native host `kanban_goal_close` takes `goal_id` and evidence only
   and obtains the six-way
   accomplished/stop × achieved/not-achieved/unknown decision via human
   `ActionChoice`. Native `kanban_goal_correct_outcome` is a separate

@@ -57,7 +57,7 @@ are distinct from worker progress and independent criterion assessment.
 | Tool | Description |
 |------|-------------|
 | `kanban_goal_create` | Declare 1–4 explicit criteria and their source; optionally freeze a prospective forecast |
-| `kanban_goal_judge` | Check a worker verdict against the frozen criteria (exact criterion coverage; done requires every criterion passed). The verdict is validated, not stored: the call advances the goal's revision |
+| `kanban_goal_judge` | Check a worker verdict against the frozen criteria (exact criterion coverage; done requires every criterion passed). The verdict is validated, not stored: the goal, its revision and its recall record are unchanged (read-only) |
 | `kanban_goal_get` | Get the complete caller-owned specification and lifecycle history |
 | `kanban_goal_list` | Return an array of complete caller-owned current-schema goals, including closed records; invalid current records fail visibly |
 

@@ -441,39 +441,45 @@ impl KanbanService {
             .ok_or_else(|| Self::goal_not_found(id))
     }
 
+    /// Check a worker verdict against the goal's frozen criteria. A read:
+    /// nothing of the verdict is stored, so the goal, its revision and its
+    /// recall record are left as they were (mcp-tool-review KK-17 — each
+    /// call used to advance the revision, which sent an unchanged goal
+    /// back through recall publication).
     pub fn goal_judge(
         &self,
         id: GoalID,
-        verdict: GoalVerdict,
+        verdict: &GoalVerdict,
         owner: WebID,
     ) -> Result<Goal, KanbanError> {
-        self.transition_goal(id, owner, true, |goal| {
-            if goal.closure.is_some() {
-                return Err(invalid(
-                    "work is closed; declare a successor for changed requirements",
-                ));
-            }
-            if !(0.0..=1.0).contains(&verdict.confidence) {
-                return Err(invalid("confidence must be finite and in [0,1]"));
-            }
-            let indices: HashSet<_> = verdict.criterion_results.iter().map(|c| c.index).collect();
-            if indices.len() != goal.criteria.len()
-                || indices.len() != verdict.criterion_results.len()
-                || indices.iter().any(|i| *i >= goal.criteria.len())
-            {
-                return Err(invalid("verdict must cover every criterion exactly once"));
-            }
-            if verdict.verdict == GoalVerdictValue::Done
-                && verdict.criterion_results.iter().any(|c| !c.passed)
-            {
-                return Err(invalid("done contradicts failed criteria"));
-            }
-            nonempty(&verdict.reasoning, "reasoning")?;
-            for result in &verdict.criterion_results {
-                nonempty(&result.note, "criterion evidence note")?;
-            }
-            Ok(true)
-        })
+        let goal = self
+            .goal_get(id, owner)?
+            .ok_or_else(|| Self::goal_not_found(id))?;
+        if goal.closure.is_some() {
+            return Err(invalid(
+                "work is closed; declare a successor for changed requirements",
+            ));
+        }
+        if !(0.0..=1.0).contains(&verdict.confidence) {
+            return Err(invalid("confidence must be finite and in [0,1]"));
+        }
+        let indices: HashSet<_> = verdict.criterion_results.iter().map(|c| c.index).collect();
+        if indices.len() != goal.criteria.len()
+            || indices.len() != verdict.criterion_results.len()
+            || indices.iter().any(|i| *i >= goal.criteria.len())
+        {
+            return Err(invalid("verdict must cover every criterion exactly once"));
+        }
+        if verdict.verdict == GoalVerdictValue::Done
+            && verdict.criterion_results.iter().any(|c| !c.passed)
+        {
+            return Err(invalid("done contradicts failed criteria"));
+        }
+        nonempty(&verdict.reasoning, "reasoning")?;
+        for result in &verdict.criterion_results {
+            nonempty(&result.note, "criterion evidence note")?;
+        }
+        Ok(goal)
     }
     pub fn goal_close_native(
         &self,

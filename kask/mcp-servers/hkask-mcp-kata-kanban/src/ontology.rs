@@ -111,14 +111,15 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         // reading of stored records (mcp-tool-review KK-12 — both were
         // stamped as datasets under "writes").
         | "kanban_board_export"
-        | "kanban_task_kata_prompt" => Some(REPORT),
+        | "kanban_task_kata_prompt"
+        // A judge call validates a verdict and stores nothing (KK-17).
+        | "kanban_goal_judge" => Some(REPORT),
         // Writes: everything that stores or modifies a record.
         "kanban_board_create"
         | "kanban_board_delete"
         | "kanban_board_import"
         | "kanban_board_update"
         | "kanban_goal_create"
-        | "kanban_goal_judge"
         | "kanban_task_create"
         | "kanban_task_move"
         | "kanban_task_reopen"

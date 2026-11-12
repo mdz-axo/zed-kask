@@ -689,22 +689,79 @@ fn declaration_and_worker_progress_preserve_exact_criterion_obligations() {
             note: "Not working".into(),
         }],
         reasoning: "Observed failure".into(),
-        judged_at: f.now(),
     };
     assert!(
-        f.service
-            .goal_judge(goal.id, report.clone(), f.owner)
-            .is_err(),
+        f.service.goal_judge(goal.id, &report, f.owner).is_err(),
         "done cannot contradict failed criteria"
     );
     report.verdict = GoalVerdictValue::Continue;
     f.service
-        .goal_judge(goal.id, report.clone(), f.owner)
+        .goal_judge(goal.id, &report, f.owner)
         .expect("honest progress");
     report.criterion_results.clear();
     assert!(
-        f.service.goal_judge(goal.id, report, f.owner).is_err(),
+        f.service.goal_judge(goal.id, &report, f.owner).is_err(),
         "every criterion must be covered"
+    );
+}
+
+/// mcp-tool-review KK-17 pin: a judge call stores nothing, so it leaves the
+/// stored row byte-for-byte as it was. Probed 2026-11-12 on the installed
+/// server: three accepted judge calls took a goal from revision 1 to 4 with
+/// no stored change, and each bump sent the goal back through recall
+/// publication (the host re-indexes any goal whose revision is ahead).
+#[test]
+fn an_accepted_judge_call_leaves_the_stored_goal_unchanged() {
+    let f = Fixture::new();
+    let goal = f.service.goal_create(declaration(), f.owner).expect("goal");
+    let stored = |f: &Fixture| {
+        f.store()
+            .query_by_entity("kanban:goal")
+            .expect("goal rows")
+            .into_iter()
+            .map(|row| row.value)
+            .collect::<Vec<_>>()
+    };
+    let before = stored(&f);
+    let report = GoalVerdict {
+        verdict: GoalVerdictValue::Continue,
+        confidence: 0.5,
+        criterion_results: vec![CriterionJudgment {
+            index: 0,
+            passed: false,
+            note: "Work remains".into(),
+        }],
+        reasoning: "Observed progress".into(),
+    };
+    f.advance(60);
+    for _ in 0..3 {
+        let judged = f
+            .service
+            .goal_judge(goal.id, &report, f.owner)
+            .expect("accepted verdict");
+        assert_eq!(judged.revision, goal.revision);
+    }
+    assert_eq!(stored(&f), before, "a judge call writes nothing");
+    assert_eq!(f.goal(goal.id).updated_at, goal.updated_at);
+
+    // The checks that need the stored goal still run: a foreign caller and
+    // a closed goal are refused.
+    assert!(
+        f.service
+            .goal_judge(goal.id, &report, WebID::new())
+            .is_err(),
+        "a judge call is owner-gated"
+    );
+    f.service
+        .goal_close_native(
+            goal.id,
+            f.owner,
+            close(&goal, f.now(), HumanClosureChoice::StopUnknown),
+        )
+        .expect("closure");
+    assert!(
+        f.service.goal_judge(goal.id, &report, f.owner).is_err(),
+        "a closed goal takes no further verdicts"
     );
 }
 

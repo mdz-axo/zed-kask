@@ -209,27 +209,22 @@ async fn newer_revision_or_producer_wins_over_older_inflight_preparation() {
         let second = open_with_provider(dir.path(), active.clone(), "alias/current")
             .expect("second process-equivalent connection");
         if advance_revision {
+            // A native closure is a stored change, so it advances the
+            // revision. (A judge call no longer does: it stores nothing.)
             second
                 .service
-                .goal_judge(
+                .goal_close_native(
                     goal.id,
-                    GoalVerdict {
-                        verdict: GoalVerdictValue::Continue,
-                        confidence: 0.5,
-                        criterion_results: goal
-                            .criteria
-                            .iter()
-                            .enumerate()
-                            .map(|(index, _)| CriterionJudgment {
-                                index,
-                                passed: false,
-                                note: "Work remains".into(),
-                            })
-                            .collect(),
-                        reasoning: "Newer worker observation".into(),
-                        judged_at: Utc::now(),
-                    },
                     owner,
+                    NativeGoalClosure {
+                        event_id: "newer-native-choice".into(),
+                        expected_spec_digest: goal.spec_digest.clone(),
+                        source: goal.source.clone(),
+                        occurred_at: Utc::now(),
+                        choice: HumanClosureChoice::StopUnknown,
+                        evidence_manifest: vec![],
+                        artifact_access: None,
+                    },
                 )
                 .expect("new revision");
         }

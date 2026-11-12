@@ -293,7 +293,6 @@ pub struct GoalVerdict {
     pub confidence: f64,
     pub criterion_results: Vec<CriterionJudgment>,
     pub reasoning: String,
-    pub judged_at: DateTime<Utc>,
 }
 
 /// The artifact-locator rejection is a display message, not a dispatch
