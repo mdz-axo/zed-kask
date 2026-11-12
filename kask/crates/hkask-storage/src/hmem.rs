@@ -320,6 +320,29 @@ impl HMemStore {
     pub fn driver(&self) -> &Arc<dyn crate::database::driver::DatabaseDriver> {
         &self.driver
     }
+
+    /// The hmems high-water rowid — `SELECT COALESCE(MAX(rowid), 0)`, the
+    /// O(log n) rightmost seek of the table's b-tree. Every insert moves
+    /// it, and every update is delete-plus-reinsert, so it moves there too;
+    /// the consolidation gate reads this to skip no-op passes (hang-audit
+    /// Pr4 over F5: 0-row sweeps on every observed tick, ~2s each). A pure
+    /// delete can lower it, which only re-arms the gate — never skips one.
+    pub fn max_rowid(&self) -> Result<i64, HMemError> {
+        crate::database::driver::query_row(
+            &*self.driver,
+            "SELECT COALESCE(MAX(rowid), 0) FROM hmems",
+            &[],
+            |row| row.get_int(0),
+        )
+        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?
+        // COALESCE guarantees one row; a missing row is a contract break
+        // worth naming rather than silently treating as 0.
+        .ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "the hmems MAX(rowid) query returned no row".to_string(),
+            ))
+        })
+    }
 }
 
 const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, recalled_at, confidence, perspective, visibility, owner_webid, ontology, provenance, inference_provenance";

@@ -374,6 +374,13 @@ impl MemoryStore {
         Ok(Self::new(h_mem_store, embedding_store))
     }
 
+    /// The hmems high-water rowid — the consolidation gate's change signal
+    /// (hang-audit Pr4). Every insert moves it and every update is
+    /// delete-plus-reinsert; see `HMemStore::max_rowid`.
+    pub fn max_h_mem_rowid(&self) -> Result<i64, hkask_storage::HMemError> {
+        self.h_mem_store.max_rowid()
+    }
+
     pub fn with_ledger(mut self, sink: Arc<dyn RegulationSink>) -> Self {
         self.event_sink = Some(sink);
         self

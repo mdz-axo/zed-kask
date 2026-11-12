@@ -609,6 +609,7 @@ fn fire_curator_consolidation_pass(
                 label = log_label,
                 deleted = outcome.deleted_count,
                 failed = outcome.failed_count,
+                skipped = outcome.skipped,
                 "Curator consolidation pass complete"
             );
         }
