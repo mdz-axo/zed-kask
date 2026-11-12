@@ -250,7 +250,10 @@ approved shape (local-leg plan §12 item 2 + the P2 parity plan):
   production manifest never renders a moe-stream spelling — re-run green.
   **The shipped fleet is untouched:** the fleet is a compile-time
   `include_str!` set over the four model briefs
-  (`local_leg/fleet.rs:48-72`); the experiment toml is referenced only from
+  (the now-deleted local_leg/fleet.rs, lines 48-72 at the reviewed commit;
+  ADDENDUM at close: the whole private-inference stack was removed later at
+  `a97751ca6a`, when private threads moved to Zed's Ollama and llama.cpp
+  providers); the experiment toml is referenced only from
   `manifest.rs`'s test module (`:465`). No `*_enabled` toggle, no
   dispatch-path change, no silent substitution. The supervisor's
   verified-launch contract (CommitMismatch, flag probe, digest/health)
