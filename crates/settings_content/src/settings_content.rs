@@ -1736,6 +1736,39 @@ pub struct KaskSettingsContent {
     /// [`PRIVATE_THREAD_LOCAL_PROVIDERS`].
     #[serde(default)]
     pub private_inference: Option<KaskPrivateInferenceSettingsContent>,
+
+    /// Nostr configuration (the `"kask.nostr"` section in settings.json).
+    /// Public data only: no key is ever stored in settings.
+    #[serde(default)]
+    pub nostr: Option<KaskNostrSettingsContent>,
+}
+
+/// Nostr configuration (the `"kask.nostr"` section in settings.json).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskNostrSettingsContent {
+    /// The local relay server's policy (`"kask.nostr.relay"`).
+    #[serde(default)]
+    pub relay: Option<KaskNostrRelaySettingsContent>,
+}
+
+/// Policy for the local Nostr relay MCP server (`"kask.nostr.relay"`).
+///
+/// The operator sets this; no agent tool can change it. The relay server
+/// validates each value at startup and reports any it could not use in
+/// `nostr_relay_status`.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskNostrRelaySettingsContent {
+    /// Loopback port the relay listens on. Absent or 0 picks a free port at
+    /// each start; set a port to give other Nostr apps a stable address.
+    pub port: Option<u16>,
+    /// Authors whose events the relay archives, as npubs or 64-character
+    /// hex public keys. Empty or absent: the relay admits nothing.
+    #[serde(default)]
+    pub allowed_authors: Option<Vec<String>>,
+    /// Public relays the relay's sync reads from. Each must be `wss://`
+    /// with a public host. Empty or absent: sync has nothing to ask.
+    #[serde(default)]
+    pub sync_relays: Option<Vec<String>>,
 }
 
 /// Per-turn instrument-affordance injection (D94, spec B). Surfaces the

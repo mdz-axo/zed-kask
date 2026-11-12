@@ -13,7 +13,8 @@
 
 use crate::settings::{
     KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskPredictionMarketsSettings, KaskResearchSettings,
+    KaskModelsSettings, KaskNostrRelaySettings, KaskPredictionMarketsSettings,
+    KaskResearchSettings,
 };
 
 // Defaults are read from each subsection's `Default` impl so there's a
@@ -215,6 +216,28 @@ pub(crate) fn emit_prediction_markets_env(
     }
 }
 
+/// The local Nostr relay's policy, from `kask.nostr.relay`.
+///
+/// All three keys are emitted for every settings state, empty or zero
+/// included. That makes settings the only source: a value left in the
+/// editor's own environment cannot fill in for one the operator cleared,
+/// because `emit_operator_override_env` skips settings-backed keys. The
+/// relay server reads an empty value as "not set".
+pub(crate) fn emit_nostr_relay_env(
+    relay: &KaskNostrRelaySettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    env.insert("HKASK_NOSTR_RELAY_PORT".to_string(), relay.port.to_string());
+    env.insert(
+        "HKASK_NOSTR_RELAY_AUTHORS".to_string(),
+        relay.allowed_authors.join(","),
+    );
+    env.insert(
+        "HKASK_NOSTR_RELAY_SYNC_RELAYS".to_string(),
+        relay.sync_relays.join(","),
+    );
+}
+
 pub(crate) fn emit_media_env(
     media: &KaskMediaSettings,
     env: &mut std::collections::HashMap<String, String>,
@@ -272,6 +295,9 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_SCENARIOS_DATA",
     "HKASK_PREDICTION_MARKETS_DATA",
     "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+    "HKASK_NOSTR_RELAY_PORT",
+    "HKASK_NOSTR_RELAY_AUTHORS",
+    "HKASK_NOSTR_RELAY_SYNC_RELAYS",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
     "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
@@ -730,6 +756,134 @@ mod tests {
         assert_eq!(
             env.get("HKASK_PRIVATE_EMBEDDING_MODEL").map(String::as_str),
             Some("")
+        );
+    }
+
+    const NOSTR_RELAY_KEYS: [&str; 3] = [
+        "HKASK_NOSTR_RELAY_PORT",
+        "HKASK_NOSTR_RELAY_AUTHORS",
+        "HKASK_NOSTR_RELAY_SYNC_RELAYS",
+    ];
+
+    /// `kask.nostr.relay` is the relay's policy, and settings are its only
+    /// source. Default settings therefore still emit all three keys (port 0,
+    /// two empty lists): a key left out here would be filled from the
+    /// editor's own environment by `emit_operator_override_env`, and the
+    /// operator clearing the allowlist in settings would not clear it.
+    #[test]
+    fn mcp_env_emits_the_nostr_relay_policy_even_when_unset() {
+        let env = KaskSettings::default().mcp_env();
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_PORT").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_AUTHORS").map(String::as_str),
+            Some("")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_SYNC_RELAYS").map(String::as_str),
+            Some("")
+        );
+        for key in NOSTR_RELAY_KEYS {
+            assert!(
+                super::SETTINGS_BACKED_CONFIG_ENV_VARS.contains(&key),
+                "{key} must be settings-backed, so the editor's environment cannot supply it"
+            );
+        }
+    }
+
+    /// What the operator writes in `kask.nostr.relay` is what the relay
+    /// server receives, joined with commas (the server splits on commas and
+    /// whitespace), and only the relay server receives it.
+    #[test]
+    fn mcp_env_delivers_the_nostr_relay_policy_only_to_the_relay_server() {
+        let mut settings = KaskSettings::default();
+        settings.nostr.relay.port = 7447;
+        settings.nostr.relay.allowed_authors = vec!["npub1aaa".to_string(), "abcd".to_string()];
+        settings.nostr.relay.sync_relays = vec![
+            "wss://nos.lol".to_string(),
+            "wss://relay.example".to_string(),
+        ];
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_PORT").map(String::as_str),
+            Some("7447")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_AUTHORS").map(String::as_str),
+            Some("npub1aaa,abcd")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_SYNC_RELAYS").map(String::as_str),
+            Some("wss://nos.lol,wss://relay.example")
+        );
+
+        for server in crate::BUILT_IN_MCP_SERVERS {
+            let filtered = crate::mcp_servers::filter_config_env_for_server(server.id, &env);
+            for key in NOSTR_RELAY_KEYS {
+                assert_eq!(
+                    filtered.contains_key(key),
+                    server.id == "nostr-relay",
+                    "{key} for server {}",
+                    server.id
+                );
+            }
+        }
+    }
+
+    /// Settings content becomes policy with entries trimmed and empties and
+    /// repeats dropped. Nothing is validated here: the relay server decides
+    /// what is usable and reports what it refused.
+    #[test]
+    fn nostr_relay_settings_content_is_cleaned_not_validated() {
+        use settings_content::{KaskNostrRelaySettingsContent, KaskNostrSettingsContent};
+        let content = KaskNostrSettingsContent {
+            relay: Some(KaskNostrRelaySettingsContent {
+                port: Some(7447),
+                allowed_authors: Some(vec![
+                    " npub1aaa ".to_string(),
+                    String::new(),
+                    "npub1aaa".to_string(),
+                    "not-a-key".to_string(),
+                ]),
+                sync_relays: None,
+            }),
+        };
+        let nostr: crate::settings::KaskNostrSettings = content.into();
+        assert_eq!(nostr.relay.port, 7447);
+        assert_eq!(nostr.relay.allowed_authors, ["npub1aaa", "not-a-key"]);
+        assert!(nostr.relay.sync_relays.is_empty());
+
+        let absent: crate::settings::KaskNostrSettings = KaskNostrSettingsContent::default().into();
+        assert_eq!(absent, crate::settings::KaskNostrSettings::default());
+    }
+
+    /// The key names an operator writes under `"kask"` in settings.json are
+    /// the contract. This pins them end to end: JSON to the three variables.
+    #[test]
+    fn nostr_relay_settings_json_reaches_the_relay_env() {
+        let content: settings_content::KaskSettingsContent = serde_json::from_str(
+            r#"{ "nostr": { "relay": {
+                "port": 7447,
+                "allowed_authors": ["npub1aaa"],
+                "sync_relays": ["wss://nos.lol"]
+            } } }"#,
+        )
+        .expect("kask.nostr.relay parses");
+        let settings: KaskSettings = content.into();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_PORT").map(String::as_str),
+            Some("7447")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_AUTHORS").map(String::as_str),
+            Some("npub1aaa")
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_RELAY_SYNC_RELAYS").map(String::as_str),
+            Some("wss://nos.lol")
         );
     }
 }

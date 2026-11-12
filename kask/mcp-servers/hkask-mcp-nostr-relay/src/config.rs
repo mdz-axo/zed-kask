@@ -154,6 +154,18 @@ mod tests {
         assert!(config.warnings.is_empty());
     }
 
+    /// The editor emits all three variables for every settings state. With
+    /// nothing configured that is port "0" and two empty strings, which must
+    /// read as "not set" and raise no warning.
+    #[test]
+    fn the_form_unset_settings_arrive_in_reads_as_nothing_configured() {
+        let config = Config::from_values(Some("0"), Some(""), Some(""));
+        assert_eq!(config.port, 0);
+        assert!(config.authors.is_empty());
+        assert!(config.sync_relays.is_empty());
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    }
+
     #[test]
     fn an_npub_and_its_hex_form_are_one_author() {
         let config = Config::from_values(None, Some(&format!("{NPUB}, {HEX}")), None);

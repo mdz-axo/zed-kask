@@ -13,7 +13,8 @@ pub use settings_content::CuratorInteractionMode;
 use settings_content::{
     KaskCondenserSettingsContent, KaskCorpusSettingsContent, KaskCuratorSettingsContent,
     KaskGeneralSettingsContent, KaskMcpSettingsContent, KaskMediaSettingsContent,
-    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskPredictionMarketsSettingsContent,
+    KaskMemorySettingsContent, KaskModelsSettingsContent, KaskNostrRelaySettingsContent,
+    KaskNostrSettingsContent, KaskPredictionMarketsSettingsContent,
     KaskPrivateInferenceSettingsContent, KaskResearchSettingsContent, KaskScenariosSettingsContent,
     KaskSettingsContent,
 };
@@ -87,6 +88,9 @@ pub struct KaskSettings {
     /// Private-thread policy: the MCP servers disabled on privacy-marked
     /// threads and the local models that serve private memory.
     pub private_inference: KaskPrivateInferenceSettings,
+
+    /// Nostr configuration. Public data only: no key is stored in settings.
+    pub nostr: KaskNostrSettings,
 }
 
 /// Kask-wide general configuration: global inference concurrency + batching.
@@ -341,6 +345,43 @@ fn default_embedding_model() -> String {
 pub struct KaskPredictionMarketsSettings {
     /// Cache TTL in seconds for market-data responses (0 = server default).
     pub cache_ttl_secs: u64,
+}
+
+/// Nostr configuration (`kask.nostr`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct KaskNostrSettings {
+    /// The local relay server's policy.
+    pub relay: KaskNostrRelaySettings,
+}
+
+/// Policy for the local Nostr relay MCP server (`kask.nostr.relay`).
+///
+/// Delivered to the server as `HKASK_NOSTR_RELAY_PORT`,
+/// `HKASK_NOSTR_RELAY_AUTHORS` and `HKASK_NOSTR_RELAY_SYNC_RELAYS` by
+/// `mcp_env()`. The values are passed as the operator wrote them, trimmed
+/// and de-duplicated: the relay server is the one place that decides
+/// whether an author or a relay address is usable, and it reports what it
+/// refused in `nostr_relay_status`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct KaskNostrRelaySettings {
+    /// Loopback port (0 = a free port picked at each start).
+    pub port: u16,
+    /// Authors whose events the relay archives. Empty admits nothing.
+    pub allowed_authors: Vec<String>,
+    /// Public relays the relay's sync reads from.
+    pub sync_relays: Vec<String>,
+}
+
+/// Trim each entry and drop empties and repeats, keeping first-seen order.
+fn clean_list(entries: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for raw in entries {
+        let entry = raw.trim();
+        if !entry.is_empty() && !out.iter().any(|seen| seen == entry) {
+            out.push(entry.to_string());
+        }
+    }
+    out
 }
 
 /// Scenarios MCP server configuration.
@@ -752,6 +793,7 @@ impl KaskSettings {
         crate::mcp_env::emit_scenarios_env(&data_dir, &mut env);
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
+        crate::mcp_env::emit_nostr_relay_env(&self.nostr.relay, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
         crate::mcp_env::emit_operator_override_env(&mut env);
@@ -946,6 +988,24 @@ impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSetting
     }
 }
 
+impl From<KaskNostrRelaySettingsContent> for KaskNostrRelaySettings {
+    fn from(c: KaskNostrRelaySettingsContent) -> Self {
+        Self {
+            port: c.port.unwrap_or_default(),
+            allowed_authors: clean_list(c.allowed_authors.unwrap_or_default()),
+            sync_relays: clean_list(c.sync_relays.unwrap_or_default()),
+        }
+    }
+}
+
+impl From<KaskNostrSettingsContent> for KaskNostrSettings {
+    fn from(c: KaskNostrSettingsContent) -> Self {
+        Self {
+            relay: c.relay.map(Into::into).unwrap_or_default(),
+        }
+    }
+}
+
 impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
     fn from(_c: KaskScenariosSettingsContent) -> Self {
         Self::default()
@@ -1001,6 +1061,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
             private_inference: c.private_inference.map(Into::into).unwrap_or_default(),
+            nostr: c.nostr.map(Into::into).unwrap_or_default(),
         }
     }
 }

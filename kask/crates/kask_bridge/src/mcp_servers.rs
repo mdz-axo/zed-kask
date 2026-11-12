@@ -382,9 +382,9 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // it (`default_store_path` in the server).
             "HKASK_DATA_DIR",
             // Operator policy, read once at startup by `Config::from_env`.
-            // No settings field yet: these are forwarded from the editor's
-            // own environment by `emit_operator_override_env`. No tool can
-            // change them.
+            // Source: `kask.nostr.relay` settings only (`emit_nostr_relay_env`
+            // emits all three for every settings state, so the editor's own
+            // environment never supplies them). No tool can change them.
             "HKASK_NOSTR_RELAY_PORT",
             "HKASK_NOSTR_RELAY_AUTHORS",
             "HKASK_NOSTR_RELAY_SYNC_RELAYS",

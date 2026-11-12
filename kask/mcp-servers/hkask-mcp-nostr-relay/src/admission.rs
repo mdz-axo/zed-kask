@@ -20,8 +20,8 @@ use serde::Serialize;
 /// Kinds that are never stored, whoever signed them.
 ///
 /// The store is unencrypted on disk and readable by any local process, so it
-/// holds public material only: gift wraps (operator ruling 2026-11-12), and
-/// the other direct-message kinds with them.
+/// holds public material only: gift wraps and the other direct-message kinds
+/// (operator rulings 2026-11-12).
 pub const REJECTED_KINDS: [Kind; 4] = [
     Kind::EncryptedDirectMessage,
     Kind::Seal,

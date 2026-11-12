@@ -101,8 +101,8 @@ pub use passphrase_rotation::{
 pub use settings::{
     KaskCondenserSettings, KaskCorpusSettings, KaskCuratorSettings, KaskGeneralSettings,
     KaskMcpSettings, KaskMediaSettings, KaskMemorySettings, KaskModelsSettings,
-    KaskPredictionMarketsSettings, KaskPrivateInferenceSettings, KaskResearchSettings,
-    KaskScenariosSettings, KaskSettings,
+    KaskNostrRelaySettings, KaskNostrSettings, KaskPredictionMarketsSettings,
+    KaskPrivateInferenceSettings, KaskResearchSettings, KaskScenariosSettings, KaskSettings,
 };
 
 mod metacognition_bridge;

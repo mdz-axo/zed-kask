@@ -25,7 +25,8 @@ pub(crate) use {
     condenser::render_condenser_page, corpus::render_corpus_page, curator::render_curator_page,
     data_services::render_data_services_page, general::render_general_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page, prediction_markets::render_prediction_markets_page,
+    models::render_models_page, nostr::render_nostr_page,
+    prediction_markets::render_prediction_markets_page,
     private_inference::render_private_inference_page, research::render_research_page,
     scenarios::render_scenarios_page, security::render_security_page,
 };
@@ -34,6 +35,7 @@ mod mcp_servers;
 mod media;
 mod memory;
 mod models;
+mod nostr;
 mod prediction_markets;
 mod private_inference;
 mod research;
@@ -741,6 +743,21 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_private_inference_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Nostr".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.nostr"),
+            description: Some(
+                "Set the local Nostr relay's policy: whose public events it \
+                 archives, which public relays it syncs from, and its port. \
+                 No key is stored here."
+                    .into(),
+            ),
+            search_aliases: &["nostr", "relay", "npub", "archive", "allowlist"],
+            in_json: true,
+            files: USER,
+            render: render_nostr_page,
         }),
     ];
 

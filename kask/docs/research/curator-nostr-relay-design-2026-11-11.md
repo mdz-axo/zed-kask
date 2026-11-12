@@ -1,7 +1,7 @@
 # Curator Nostr relay — design proposal (2026-11-11)
 
 **Status: v1 built 2026-11-12 as `kask/mcp-servers/hkask-mcp-nostr-relay`
-(seam D105), to the nine operator rulings in §2. Where the build differs from
+(seam D105), to the eleven operator rulings in §2. Where the build differs from
 this note, §2a governs. The relay has a known access-control deficiency,
 documented with a plan in §5a. Open items are in §7.**
 
@@ -112,7 +112,7 @@ the server running under the MCP runtime, and a build inside the workspace.
 5. **Private threads** (2026-11-12): both servers are blocked. Verbatim:
    "the nostr relay and client would be blocked from the private thread
    mode." `nostr-relay` joins the default disabled-server set
-   (`crates/settings_content/src/settings_content.rs:2047`, D100).
+   (`crates/settings_content/src/settings_content.rs:2080`, D100).
 6. **Client and local relay** (2026-11-12): the client is unchanged in v1
    and the relay stands alone (§3a). Verbatim: "yes - confirmed".
 7. **Own accept layer that refuses `Origin`, in v1** (2026-11-12). Verbatim:
@@ -122,15 +122,26 @@ the server running under the MCP runtime, and a build inside the workspace.
 9. **Start and stop** (2026-11-12). Verbatim: "relay should be started and
    shut down with the built in mcp server fleet for now in v1." The
    mechanism is in §6.
+10. **Settings section** (2026-11-12): the relay's policy is the
+    `kask.nostr.relay` settings section. Asked "Add a `kask.nostr.relay`
+    settings section next, so the policy is not environment variables?";
+    answered "yes."
+11. **The other direct-message kinds** (2026-11-12): kinds 4, 13 and 14 stay
+    refused along with gift wraps. The builder recommended keeping all four
+    refused; the operator answered "proceed as recommended". §2a says what
+    each kind is and what refusing it costs.
 
 ## 2a. v1 as built (2026-11-12)
 
 What the server does that this note did not say, or says differently:
 
-- **Policy arrives as three environment variables of the editor process**,
-  not as a `kask.nostr.relay` settings section: `HKASK_NOSTR_RELAY_PORT`,
-  `HKASK_NOSTR_RELAY_AUTHORS`, `HKASK_NOSTR_RELAY_SYNC_RELAYS`. There is no
-  settings field or settings page yet.
+- **Policy is the `kask.nostr.relay` settings section** (`port`,
+  `allowed_authors`, `sync_relays`), with a Settings > Kask > Nostr page. The
+  first build (`2b581111b0`) took it from the editor's environment; that is
+  replaced. Settings are the only source: the three variables are emitted
+  for every settings state, so clearing the allowlist in settings clears it.
+  A settings change restarts the relay server. There is no `allowed_kinds`
+  setting (§3 proposed one): the refused kinds are fixed in the server.
 - **The allowlist has no default.** §3 says it defaults to the operator's
   npub; no setting holds that npub yet. With nothing configured the relay
   starts, admits nothing, and `nostr_relay_status` shows an empty allowlist.
@@ -138,8 +149,20 @@ What the server does that this note did not say, or says differently:
   author's published relay list. `nostr_relay_sync` asks only the configured
   relays, each of which must be `wss://` with a public literal host.
 - **Refused kinds are 4, 13, 14 and 1059.** The ruling names gift wraps
-  (1059); the other three are the remaining direct-message kinds, refused
-  for the same reason.
+  (1059). Kinds 4, 13 and 14 were added by the builder and then ruled in
+  (ruling 11). The kind rule only matters for
+  an event an allowlisted author signed, which sorts the four like this:
+  - 1059 (gift wrap) is signed by a one-time random key (NIP-17), so the
+    author allowlist refuses it anyway. The kind rule is a second check.
+  - 13 (seal) is signed by the sender but belongs inside a gift wrap. The
+    SDK already refuses it on the websocket path.
+  - 14 (chat message) is unsigned by design, so it cannot be stored unless
+    someone signs and publishes one by mistake.
+  - 4 (the older direct message, NIP-04, deprecated in favour of NIP-17) is
+    signed by its sender. It is the only one with a practical effect: with
+    the operator allowlisted, a sync would otherwise copy the operator's
+    sent kind-4 messages into the archive. Their text is encrypted; the
+    recipient and time are readable, on the public relays as well.
 - **`nostr_relay_delete` is not built.** It has no human gate (§3).
 - **A value that cannot be parsed is left out and reported**, never guessed:
   `nostr_relay_status` lists it under `configuration_warnings`.
@@ -501,7 +524,7 @@ restart; and two server processes opening one store.
    allowlist on the websocket path, whether NIP-42 can name keys (it
    cannot), how sync must store (§4), the accept layer's behaviour (§1a),
    survival of a kill (§6), and one server child per editor (§6).
-8. Closed by ruling: §2, rulings 4 to 9.
+8. Closed by ruling: §2, rulings 4 to 11.
 9. Ontology anchor for "relay": `onto_anchor` returns `sumo:Relay`, an
    electro-mechanical switch, which is the wrong sense. The term is used
    here in the NIP-01 protocol-role sense and needs a ruling.

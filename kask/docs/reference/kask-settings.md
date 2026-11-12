@@ -38,6 +38,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `media` | `KaskMediaSettings` | `Default` |
 | `models` | `KaskModelsSettings` | `Default` |
 | `private_inference` | `KaskPrivateInferenceSettings` | `Default` |
+| `nostr` | `KaskNostrSettings` | derived `Default` |
 
 ## Inference admission and resilience (`KaskGeneralSettings`)
 
@@ -298,6 +299,24 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
 | `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
+
+## Nostr (`KaskNostrSettings`)
+
+Public data only; no key is stored in settings. One subsection, `relay`
+(`KaskNostrRelaySettings`): the local relay server's policy. The operator sets
+it here or on the Settings > Kask > Nostr page; no agent tool can change it,
+and a change restarts the relay server.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `relay.port` | `u16` | `0` | `HKASK_NOSTR_RELAY_PORT` | Loopback port; 0 picks a free port at each start |
+| `relay.allowed_authors` | `Vec<String>` | `[]` | `HKASK_NOSTR_RELAY_AUTHORS` | npubs or 64-character hex keys whose public events the relay archives; empty admits nothing |
+| `relay.sync_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_RELAY_SYNC_RELAYS` | Public `wss://` relays that `nostr_relay_sync` reads from |
+
+All three variables are emitted for every settings state, so the editor's own
+environment never supplies them. Entries are trimmed and de-duplicated here and
+validated by the relay server, which leaves out anything it cannot use and
+names it under `configuration_warnings` in `nostr_relay_status`.
 
 ## Media (`KaskMediaSettings`)
 
@@ -565,9 +584,9 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
-| `HKASK_NOSTR_RELAY_PORT` | nostr-relay | none yet — forwarded from the editor's environment; loopback port, unset or 0 picks a free port at each start |
-| `HKASK_NOSTR_RELAY_AUTHORS` | nostr-relay | none yet — forwarded from the editor's environment; npubs or hex keys whose events the relay archives (empty admits nothing) |
-| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | nostr-relay | none yet — forwarded from the editor's environment; public `wss://` relays `nostr_relay_sync` reads from |
+| `HKASK_NOSTR_RELAY_PORT` | nostr-relay | `nostr.relay.port` (always emitted; 0 = a free port at each start) |
+| `HKASK_NOSTR_RELAY_AUTHORS` | nostr-relay | `nostr.relay.allowed_authors`, comma-joined (always emitted; empty admits nothing) |
+| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | nostr-relay | `nostr.relay.sync_relays`, comma-joined (always emitted) |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
