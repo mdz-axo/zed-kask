@@ -2040,8 +2040,11 @@ pub fn is_ollama_cloud_model_name(model_name: &str) -> bool {
 /// assisting-inference legs (`corpus_embed`, `corpus_tag_chunks`, the OCR
 /// vision leg) cannot run locally either, so the same posture applies —
 /// private threads refuse the corpus tool surface (the PI can still
-/// override the set via `private_thread_disabled_servers`).
-pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media", "corpus"];
+/// override the set via `private_thread_disabled_servers`). **The Nostr
+/// relay server joins the set (operator ruling 2026-11-12):** its sync tool
+/// contacts public relays, and a private thread shares nothing with a
+/// public network.
+pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media", "corpus", "nostr-relay"];
 
 impl KaskPrivateInferenceSettingsContent {
     /// zed-kask: D100 — resolve the MCP server set disabled on privacy-

@@ -315,6 +315,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-corpus",
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-experimentation",
+    "kask/mcp-servers/hkask-mcp-nostr-relay",
 ]
 default-members = ["crates/zed"]
 
@@ -1006,6 +1007,18 @@ bech32 = "=0.12.0"
 scrypt = { version = "=0.12.0", default-features = false }
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["getrandom", "zeroize"] }
 unicode-normalization = "=0.1.25"
+# Nostr relay engine and its LMDB store, used only by hkask-mcp-nostr-relay.
+# Pinned exactly: the SDK states its API is unstable, 0.45.6 is the only
+# un-yanked 0.45 release, and nostr-lmdb 0.45.0/0.45.1 were yanked. Default
+# features are off so the server picks the TLS provider (aws-lc-rs, as the
+# rest of the workspace) instead of the SDK's default (ring).
+nostr-sdk = { version = "=0.45.6", default-features = false }
+nostr-lmdb = "=0.45.3"
+# The relay's HTTP accept layer (hkask-mcp-nostr-relay). All three were
+# already in Cargo.lock as transitive dependencies.
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false }
+sha1 = "0.10"
 ed25519-dalek = "2"
 # `zeroize` feature: without it the GHASH subkey inside a long-lived `Aes256Gcm`
 # is not wiped on drop (upstream gates `ghash_key.zeroize()` behind it), leaving

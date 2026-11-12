@@ -60,11 +60,11 @@ queued or running work and releases capacity.
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 8 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+The 9 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
-`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`,
+`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-relay`,
 `prediction-markets`, `research`, `scenarios`. The crates live under `kask/mcp-servers/`
-(8 `hkask-mcp-*` crates).
+(9 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
@@ -402,7 +402,7 @@ machine.
 
 | Field | Type | Default | Resolution |
 |-------|------|---------|------------|
-| `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100: MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes; the corpus server's embed/tag/OCR legs), so the tool is refused rather than route private content to cloud models |
+| `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus", "nostr-relay"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100: MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes; the corpus server's embed/tag/OCR legs), so the tool is refused rather than route private content to cloud models. The Nostr relay server is in the set for a different reason (operator ruling 2026-11-12): its sync tool contacts public relays |
 | `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` (const home: `DEFAULT_PRIVATE_EMBEDDING_MODEL`) | D100: the LOCAL embedding model for private memory — private-store chunks and private-context recall queries embed through it only; an explicitly empty string is the opt-out (the surfaced keyword-only degrade) |
 | `classifier_model` | `String` | `"ollama/qwen3.5:4b"` (const home: `DEFAULT_PRIVATE_CLASSIFIER_MODEL`) | D100: the LOCAL classifier model — private-turn chunk tagging runs through it only; an explicitly empty string is the opt-out (the surfaced structural-only degrade) |
 | `rerank_model` | `String` | `"ollama/qwen3-reranker-4b:latest"` (const home: `DEFAULT_PRIVATE_RERANK_MODEL`) | D100: private-provenance deep-search rerank runs through this local model only (the ollama judge protocol — ollama has no rerank endpoint, so one deterministic chat call per document, the first sampled token the binary verdict); the configured cloud reranker never sees private content; an explicitly empty string is the opt-out (the surfaced heuristic skip); emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL` (research allowlist) |
@@ -469,7 +469,7 @@ keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 
-`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:504@build_mcp_server_env_with_sweep`). 
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:525@build_mcp_server_env_with_sweep`). 
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
 passphrase for every SQLCipher database (curator, corpus,
@@ -565,6 +565,9 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
 | `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
 | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
+| `HKASK_NOSTR_RELAY_PORT` | nostr-relay | none yet — forwarded from the editor's environment; loopback port, unset or 0 picks a free port at each start |
+| `HKASK_NOSTR_RELAY_AUTHORS` | nostr-relay | none yet — forwarded from the editor's environment; npubs or hex keys whose events the relay archives (empty admits nothing) |
+| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | nostr-relay | none yet — forwarded from the editor's environment; public `wss://` relays `nostr_relay_sync` reads from |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |

@@ -369,6 +369,27 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_EXPERIMENTATION_DB",
         ],
     },
+    BuiltinMcpServer {
+        id: "nostr-relay",
+        binary: "hkask-mcp-nostr-relay",
+        description: "Nostr relay — a loopback archive of allowlisted authors' public events",
+        // No credentials, by design: the relay verifies signatures and never
+        // signs. It holds no Nostr key and no database passphrase (its LMDB
+        // archive is unencrypted and holds public events only).
+        credentials: &[],
+        config_env: &[
+            // Data dir — the archive lives at `mcp/nostr-relay/events` under
+            // it (`default_store_path` in the server).
+            "HKASK_DATA_DIR",
+            // Operator policy, read once at startup by `Config::from_env`.
+            // No settings field yet: these are forwarded from the editor's
+            // own environment by `emit_operator_override_env`. No tool can
+            // change them.
+            "HKASK_NOSTR_RELAY_PORT",
+            "HKASK_NOSTR_RELAY_AUTHORS",
+            "HKASK_NOSTR_RELAY_SYNC_RELAYS",
+        ],
+    },
 ];
 
 /// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].
@@ -1073,6 +1094,45 @@ mod tests {
         let expected_config: &[&str] = &["HKASK_DATA_DIR", "HKASK_EXPERIMENTATION_DB"];
         assert_eq!(server.credentials, expected_credentials);
         assert_eq!(server.config_env, expected_config);
+    }
+
+    /// The relay holds no secret: a credential added to its entry is a
+    /// design change (the relay would then hold a key or a passphrase) and
+    /// must fail here first. Its config allowlist is pinned to the three
+    /// policy variables `Config::from_env` reads plus the data dir.
+    #[test]
+    fn nostr_relay_registration_entry_is_pinned() {
+        let server = BUILT_IN_MCP_SERVERS
+            .iter()
+            .find(|s| s.id == "nostr-relay")
+            .expect("nostr-relay server registered");
+        assert_eq!(server.binary, "hkask-mcp-nostr-relay");
+        assert!(
+            server.credentials.is_empty(),
+            "the relay verifies signatures and never signs; it receives no credential"
+        );
+        let expected_config: &[&str] = &[
+            "HKASK_DATA_DIR",
+            "HKASK_NOSTR_RELAY_PORT",
+            "HKASK_NOSTR_RELAY_AUTHORS",
+            "HKASK_NOSTR_RELAY_SYNC_RELAYS",
+        ];
+        assert_eq!(server.config_env, expected_config);
+    }
+
+    /// Operator ruling 2026-11-12: the relay is blocked on private threads.
+    /// Its sync tool contacts public relays, so its tools are refused there
+    /// by default, like the media and corpus servers.
+    #[test]
+    fn nostr_relay_is_disabled_on_private_threads_by_default() {
+        assert!(
+            settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS.contains(&"nostr-relay"),
+            "nostr-relay must be in the default private-thread disabled set"
+        );
+        assert!(
+            BUILT_IN_MCP_SERVERS.iter().any(|s| s.id == "nostr-relay"),
+            "the disabled-set entry must name a registered server"
+        );
     }
 
     #[test]
