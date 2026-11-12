@@ -45,10 +45,7 @@ use collections::HashSet;
 use credentials_provider::CredentialsProvider;
 use gpui::{AppContext, ElementId, ReadGlobal as _, ScrollHandle, Task, prelude::*};
 use settings::SettingsStore;
-use ui::{
-    Button, ButtonLink, ButtonStyle, ConfiguredApiCard, Divider, SwitchField, ToggleState,
-    prelude::*,
-};
+use ui::{Button, ButtonLink, ConfiguredApiCard, Divider, SwitchField, ToggleState, prelude::*};
 use zed_credentials_provider as zed_credentials;
 
 use crate::SettingsWindow;
@@ -423,12 +420,7 @@ pub(crate) fn kask_string_input(
                 ("models", "decision_model") => {
                     kask.models.get_or_insert_default().decision_model = Some(parsed);
                 }
-                ("private_inference", "provider_id") => {
-                    kask.private_inference.get_or_insert_default().provider_id = Some(parsed);
-                }
-                ("private_inference", "host") => {
-                    kask.private_inference.get_or_insert_default().host = Some(parsed);
-                }
+
                 ("corpus", "embedding_dim") => {
                     if let Ok(v) = parsed.parse::<u32>() {
                         kask.corpus.get_or_insert_default().embedding_dim = Some(v);
@@ -733,19 +725,18 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.private_inference"),
             description: Some(
-                "The private local leg (llama.cpp) — the PI-owned policy: the \
-                 provider id the leg registers under, the loopback endpoint, \
-                 and the endpoint token. Register writes the \
-                 openai_compatible settings entry so the private models appear \
-                 in the agent panel model selector.".into(),
+                "Private threads run only local models served by Zed's \
+                 Ollama or llama.cpp provider. Configure the MCP servers \
+                 disabled on private threads and the local models that \
+                 embed, tag and rerank private memory."
+                    .into(),
             ),
             search_aliases: &[
                 "private inference",
+                "private thread",
+                "ollama",
                 "llama",
                 "local model",
-                "private leg",
-                "model brief",
-                "vram",
             ],
             in_json: true,
             files: USER,

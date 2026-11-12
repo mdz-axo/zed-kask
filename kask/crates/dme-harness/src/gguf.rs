@@ -1,13 +1,13 @@
-//! The shared GGUF reader — the placement compiler's model input (L3)
-//! and the DME edit leg's directory source. The one home of the header
-//! parse: KV pairs + tensor infos (names, dims, types, offsets), the
-//! data-section anchor (alignment + data_start), and the parameter
-//! count. Byte sizes are derived from data-section offsets — approximate
-//! by construction, since inter-tensor alignment padding is included —
-//! which avoids depending on the ggml quant-type size table for PLACEMENT
-//! decisions. The byte-exact writer lives in `gguf_writer` (the one
-//! consumer of this parse's exact fields). Fail-closed: unknown GGUF
-//! value types are errors, not skips.
+//! The GGUF reader — the edit leg's directory source and the probe's
+//! artifact receipt. The header parse: KV pairs + tensor infos (names,
+//! dims, types, offsets), the data-section anchor (alignment +
+//! data_start), and the parameter count. Each tensor's span is derived
+//! from data-section offsets (inter-tensor alignment padding included)
+//! and is used only to refuse a directory that claims more bytes than
+//! its span; exact sizes come from `exact_nbytes`. The byte-exact writer
+//! lives in `gguf_writer`. Single-file GGUFs only: weight patching
+//! copies one file and patches tensor regions in place. Fail-closed:
+//! unknown GGUF value types are errors, not skips.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -34,8 +34,7 @@ pub enum GgufValue {
 /// A tensor in the parsed directory. `dims` is the GGUF dimension list
 /// (row-major, `dims[0]` = the row length ggml calls `ne0`);
 /// `approx_bytes` is offset-derived and includes inter-tensor padding —
-/// exact byte sizes are the writer's job (`gguf_writer::nbytes`), never
-/// the placement reader's.
+/// exact byte sizes are `GgufTensor::nbytes` (in `gguf_writer`).
 #[derive(Debug, Clone)]
 pub struct GgufTensor {
     pub name: String,
@@ -43,10 +42,6 @@ pub struct GgufTensor {
     pub dims: Vec<u64>,
     pub offset: u64,
     pub approx_bytes: u64,
-    /// llama.cpp's own routed-expert naming convention
-    /// (`ffn_(up|gate|down)_exps`), the same class `--cpu-moe` and the
-    /// streaming PR #25294 target.
-    pub is_expert: bool,
 }
 
 impl GgufTensor {
@@ -66,8 +61,6 @@ pub struct GgufMeta {
     pub gguf_version: u32,
     pub kv: BTreeMap<String, GgufValue>,
     pub tensors: Vec<GgufTensor>,
-    pub expert_bytes: u64,
-    pub dense_bytes: u64,
     /// The file's declared data-section alignment (`general.alignment`,
     /// default 32). The writer anchors tensor offsets with it.
     pub alignment: u64,
@@ -309,8 +302,9 @@ fn read_value<R: Read>(
     })
 }
 
-/// Parse one shard's header; sizes the last tensor against the file length.
-fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
+/// Parse one (single-file) GGUF's header; sizes the last tensor against
+/// the file length.
+pub fn parse_file(path: &Path) -> Result<GgufMeta, GgufError> {
     let file = File::open(path)?;
     let file_len = file.metadata()?.len();
     let mut reader = GgufReader::new(BufReader::new(file));
@@ -359,7 +353,6 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         let ggml_type = reader.read_u32()?;
         let offset = reader.read_u64()?;
         tensors.push(GgufTensor {
-            is_expert: name.contains("_exps."),
             name,
             ggml_type,
             dims,
@@ -381,9 +374,8 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         });
     }
     let data_start = reader.consumed.div_ceil(alignment) * alignment;
-    // A split shard may legitimately carry only metadata (zero tensors) —
-    // the unsloth UD-Q2_K_XL header shard is exactly that. Sizing runs
-    // only when tensors exist.
+    // A file may carry only metadata (zero tensors); sizing runs only
+    // when tensors exist.
     if !tensors.is_empty() {
         tensors.sort_by_key(|t| t.offset);
         for i in 0..tensors.len() - 1 {
@@ -417,19 +409,19 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         // the exact table skip this check — the loader still validates
         // every tensor at load; a wrong table entry could only over-refuse.
         for t in &tensors {
-            if let Some(exact) = exact_nbytes(t.ggml_type, t.nelements()) {
-                if exact > t.approx_bytes {
-                    return Err(GgufError::Tensor {
-                        name: t.name.clone(),
-                        reason: format!(
-                            "claimed {exact} bytes ({} elements of {}) exceed its {}-byte span at offset {} — corrupt or incomplete file",
-                            t.nelements(),
-                            type_name(t.ggml_type),
-                            t.approx_bytes,
-                            t.offset
-                        ),
-                    });
-                }
+            if let Some(exact) = exact_nbytes(t.ggml_type, t.nelements())
+                && exact > t.approx_bytes
+            {
+                return Err(GgufError::Tensor {
+                    name: t.name.clone(),
+                    reason: format!(
+                        "claimed {exact} bytes ({} elements of {}) exceed its {}-byte span at offset {} — corrupt or incomplete file",
+                        t.nelements(),
+                        type_name(t.ggml_type),
+                        t.approx_bytes,
+                        t.offset
+                    ),
+                });
             }
         }
     }
@@ -438,8 +430,6 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         gguf_version: version,
         kv,
         tensors,
-        expert_bytes: 0,
-        dense_bytes: 0,
         alignment,
         data_start,
         param_count: 0,
@@ -449,52 +439,12 @@ fn parse_shard(path: &Path) -> Result<GgufMeta, GgufError> {
         .iter()
         .map(GgufTensor::nelements)
         .fold(0u64, |acc, n| acc.saturating_add(n));
-    for t in &meta.tensors {
-        if t.is_expert {
-            meta.expert_bytes = meta.expert_bytes.saturating_add(t.approx_bytes);
-        } else {
-            meta.dense_bytes = meta.dense_bytes.saturating_add(t.approx_bytes);
-        }
-    }
     Ok(meta)
 }
 
-/// Parse every shard of a split GGUF (or the single file) and merge the
-/// byte accounting. KV metadata comes from the first shard; tensor bytes
-/// sum across shards.
-pub fn parse(paths: &[std::path::PathBuf]) -> Result<GgufMeta, GgufError> {
-    if paths.is_empty() {
-        return Err(GgufError::Malformed {
-            reason: "no shard paths given".into(),
-        });
-    }
-    let mut merged = GgufMeta::default();
-    for path in paths {
-        let shard = parse_shard(path)?;
-        if merged.kv.is_empty() {
-            merged.kv = shard.kv;
-            merged.gguf_version = shard.gguf_version;
-            merged.alignment = shard.alignment;
-            merged.data_start = shard.data_start;
-        }
-        merged.expert_bytes = merged.expert_bytes.saturating_add(shard.expert_bytes);
-        merged.dense_bytes = merged.dense_bytes.saturating_add(shard.dense_bytes);
-        merged.param_count = merged.param_count.saturating_add(shard.param_count);
-        merged.tensors.extend(shard.tensors);
-    }
-    Ok(merged)
-}
-
-/// Parse one (single-file) GGUF — the writer's and the harness's entry.
-/// Weight patching is a single-file operation by construction (the edit
-/// leg copies the file and patches tensor regions in place).
-pub fn parse_file(path: &Path) -> Result<GgufMeta, GgufError> {
-    parse(&[path.to_path_buf()])
-}
-
 impl GgufMeta {
-    /// Look up a KV by architecture-agnostic suffix (`expert_count` finds
-    /// `qwen4.expert_count`) — robust to arch-prefix drift across model
+    /// Look up a KV by architecture-agnostic suffix (`block_count` finds
+    /// `qwen35.block_count`) — robust to arch-prefix drift across model
     /// families. The match must sit at a dot boundary.
     pub fn kv_by_suffix(&self, suffix: &str) -> Option<&GgufValue> {
         self.kv
@@ -543,26 +493,15 @@ impl GgufMeta {
         }
     }
 
-    pub fn expert_count(&self) -> Option<u32> {
-        self.u32_by_suffix("expert_count")
-    }
-
-    pub fn expert_used_count(&self) -> Option<u32> {
-        self.u32_by_suffix("expert_used_count")
-    }
-
     pub fn block_count(&self) -> Option<u32> {
         self.u32_by_suffix("block_count")
-    }
-
-    pub fn context_length(&self) -> Option<u32> {
-        self.u32_by_suffix("context_length")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::TempDir;
 
     fn put_u32(b: &mut Vec<u8>, v: u32) {
         b.extend_from_slice(&v.to_le_bytes());
@@ -594,11 +533,11 @@ mod tests {
         put_str(&mut b, "general.architecture");
         put_u32(&mut b, 8); // string
         put_str(&mut b, "qwen4test");
-        put_str(&mut b, "qwen4test.expert_count");
+        put_str(&mut b, "qwen4test.block_count");
         put_u32(&mut b, 4); // u32
-        put_u32(&mut b, 512);
+        put_u32(&mut b, 24);
         put_tensor(&mut b, "blk.0.attn_q.weight", 0);
-        put_tensor(&mut b, "blk.0.ffn_up_exps.weight", 32);
+        put_tensor(&mut b, "blk.0.ffn_down.weight", 32);
         while b.len() % 32 != 0 {
             b.push(0);
         }
@@ -609,20 +548,18 @@ mod tests {
     #[test]
     fn parses_synthetic_gguf_header_and_sizes_tensors() {
         let bytes = build_test_gguf();
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = TempDir::new("gguf-synthetic");
         let path = dir.path().join("test.gguf");
         std::fs::write(&path, &bytes).expect("write synthetic gguf");
-        let meta = parse(&[path]).expect("synthetic gguf parses");
+        let meta = parse_file(&path).expect("synthetic gguf parses");
         assert_eq!(meta.gguf_version, 3);
-        assert_eq!(meta.expert_count(), Some(512));
+        assert_eq!(meta.architecture(), "qwen4test");
+        assert_eq!(meta.block_count(), Some(24));
         assert_eq!(meta.tensors.len(), 2);
         // First tensor runs to the second's offset (32 bytes); the last
         // runs to the end of the data section.
         assert_eq!(meta.tensors[0].approx_bytes, 32);
         assert_eq!(meta.tensors[1].approx_bytes, 32);
-        assert!(meta.tensors.iter().any(|t| t.is_expert));
-        assert_eq!(meta.expert_bytes, 32);
-        assert_eq!(meta.dense_bytes, 32);
         // The reader's exact fields (the writer's inputs): dims, the
         // parameter count, the alignment anchor.
         assert_eq!(meta.tensors[0].dims, vec![8]);
@@ -639,10 +576,10 @@ mod tests {
     fn rejects_bad_magic() {
         let mut b = Vec::new();
         put_u32(&mut b, 0xdeadbeef);
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = TempDir::new("gguf-bad-magic");
         let path = dir.path().join("bad.gguf");
         std::fs::write(&path, &b).expect("write");
-        assert!(parse(&[path]).is_err());
+        assert!(matches!(parse_file(&path), Err(GgufError::BadMagic(_))));
     }
 
     #[test]
@@ -670,10 +607,10 @@ mod tests {
             b.push(0);
         }
         b.extend_from_slice(&[0u8; 64]);
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = TempDir::new("gguf-corrupt");
         let path = dir.path().join("corrupt.gguf");
         std::fs::write(&path, &b).expect("write");
-        let err = parse(&[path]).expect_err("the corrupt directory must refuse");
+        let err = parse_file(&path).expect_err("the corrupt directory must refuse");
         match err {
             GgufError::Tensor { name, .. } => assert_eq!(name, "blk.0.attn_q.weight"),
             other => panic!("corrupt directory is a Tensor refusal, got {other:?}"),

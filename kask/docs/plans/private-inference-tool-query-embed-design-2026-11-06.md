@@ -1,5 +1,7 @@
 # Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)
 
+> **Context note, 2026-11-11.** The provenance-routed embed and rerank legs designed here are in force. Where this text says "the private leg" it now means the local Ollama models configured under `kask.private_inference`; the kask-launched llama.cpp server was removed by operator ruling. The live record is `DIVERGENCE.md` row D100.
+
 STATUS: **approved by the operator 2026-11-06; implemented the same day** —
 the query side (Phase 1) AND the write side (Phase 2, under the operator's
 "proceed with the proposed follow-ups" direction): the passage embeds of

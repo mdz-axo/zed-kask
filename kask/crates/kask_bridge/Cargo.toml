@@ -26,7 +26,6 @@ hkask-mcp-server.workspace = true
 r2d2.workspace = true
 
 hkask-inference.workspace = true
-hkask-private-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-condenser.workspace = true
@@ -40,7 +39,6 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 agent.workspace = true
 settings.workspace = true
-fs.workspace = true
 zed_credentials_provider.workspace = true
 settings_content.workspace = true
 credentials_provider.workspace = true

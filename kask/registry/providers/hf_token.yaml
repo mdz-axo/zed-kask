@@ -1,51 +1,40 @@
-# Provider profile — HuggingFace (the hf_token adoption). Structural
-# contract pinned by kask/scripts/check-provider-profiles.sh; semantic
-# reading owned by the provider-audit skill.
+# Provider profile — HuggingFace (the hf_token adoption). RETIRED 2026-11-11:
+# archived in place per the provider-audit retirement pass (Step 9).
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh.
 #
-# Reinstated 2026-11-04 under the credential key `hf_token` — the profile
-# layer's id is the data-services credential key, per the gate's tree
-# derivation. The 2026-10-17 retirement of the training-era adoption is
-# archived at huggingface.yaml; this profile is the new, narrower live
-# contract: the private-inference core service's acquisition module
-# fetches model weights from the Hub (HTTP Range resume + LFS sha256
-# verification) on the zed side. No MCP child ever receives the token.
+# This adoption ran 2026-11-04..2026-11-11 under the credential key
+# `hf_token`: kask fetched model weights from the Hub for a llama.cpp
+# server it launched itself. That stack was removed 2026-11-11 — local
+# models are now installed and served by Ollama or llama.cpp outside kask —
+# so the token has no reader. The dated readings below are preserved as the
+# audit record, not as a live contract. The earlier training-era adoption is
+# archived at huggingface.yaml.
 id: hf_token
 name: HuggingFace
-status: active
+status: retired
+retired:
+  date: "2026-11-11"
+  reason: >-
+    the one consumer (the kask model-weights fetcher) was removed with the
+    kask-side private inference stack; private threads now run on models
+    served by a local Ollama or llama.cpp install through the editor's
+    built-in providers, which fetch their own weights.
+  purged:
+    - Data Services row HF_TOKEN
+      (kask/crates/kask_bridge/src/inference_providers.rs, DATA_SERVICES)
+    - the fetcher itself (the removed hkask-private-inference crate)
+  retained_user_data:
+    - Any existing kask://credentials/hf_token keychain entry is left in
+      place, dormant and unread; nothing in the tree reads or writes it.
 roles:
-  # Revived 2026-11-04 with a live consumer (the acquisition module). The
-  # archived huggingface.yaml lists this role as retired without a consumer.
-  - model-weights-host
+  - model-weights-host   # retired role — no in-tree consumer
 keychain:
-  slot: kask://credentials/hf_token
-  env_var: HF_TOKEN
-consumed_capabilities:
-  - capability: model-weights fetches over huggingface.co with HTTP Range
-      resume and LFS sha256 verification — public repos anonymously; the
-      token unlocks gated repos, and a gated repo requested without it is
-      a typed authorization error naming HF_TOKEN (fail-closed, never a
-      silent empty result)
-    source: kask/crates/hkask-private-inference/src/acquisition.rs
-  - capability: Data Services settings row ("HuggingFace (model-weights
-      host)") with zed-side resolution through the data-services keychain
-      chain — the acquisition module never reads credentials itself
-    source: kask/crates/kask_bridge/src/inference_providers.rs (DATA_SERVICES)
-deliberate_non_consumption:
-  - capability: MCP child injection
-    reason: >-
-      no MCP child receives HF_TOKEN — pinned by RETIRED_TRAINING_CREDENTIALS
-      in kask/crates/kask_bridge/src/mcp_servers.rs, which asserts
-      child-grant absence (not credential retirement; the token is live
-      zed-side).
-  - capability: training-artifact publish and the HKASK_HF_* dataset/model repos
-    reason: >-
-      retired with the training server 2026-10-17 — model training is
-      outside the co-researcher mandate; the reinstatement is read-only
-      weights acquisition and the retired role stays retired.
-  - capability: hosted inference against the Hub (Inference Endpoints/Providers)
-    reason: >-
-      the private-inference leg runs GGUF inference locally; the Hub is
-      consumed only as a weights source.
+  slot: none
+  env_var: ""
+  note: retired-era record — over 2026-11-04..2026-11-11 the slot was
+    kask://credentials/hf_token with env_var HF_TOKEN.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+deliberate_non_consumption: []
 data_terms:
   # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at
   # kask/crates/hkask-bridge-ontology/sources/dpv/)
@@ -77,7 +66,6 @@ pricing:
     Spaces/Jobs GPU and Inference Endpoints hourly tables; no
     machine-readable pricing source found this run.
 first_audit_pending: false
-# B3/B4/B5 fields read and dated this pass (2026-11-05). The full inbound
-# B1-B6 / outbound O1-O4 provider-audit pass for this adoption is owed at
-# the next scheduled audit run — this profile is the structural-contract
-# make-good for the 2026-11-04 reinstatement, not a completed audit.
+# B3/B4/B5 fields were read and dated 2026-11-05. The full inbound B1-B6 /
+# outbound O1-O4 provider-audit pass for this adoption was never run; the
+# adoption was retired first.

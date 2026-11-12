@@ -616,7 +616,7 @@ mod tests {
         });
 
         let local_model = AgentModelInfo {
-            id: AgentModelId::new("private-local/local-model"),
+            id: AgentModelId::new("ollama/local-model"),
             name: "Local".into(),
             description: None,
             icon: None,
@@ -631,8 +631,8 @@ mod tests {
             icon: None,
             is_latest: false,
             disabled: Some(language_model::DisabledReason(
-                "private thread — only the local private inference leg serves \
-                 this thread (kask.private_inference)"
+                "private thread — only local models served by Zed's Ollama or \
+                 llama.cpp provider run on this thread"
                     .into(),
             )),
             cost: None,
@@ -643,7 +643,7 @@ mod tests {
             selected_models: RefCell::new(Vec::new()),
             favorites: [
                 AgentModelId::new("public-provider/public-model"),
-                AgentModelId::new("private-local/local-model"),
+                AgentModelId::new("ollama/local-model"),
             ]
             .into_iter()
             .collect(),
@@ -667,7 +667,7 @@ mod tests {
 
         assert_eq!(
             model_selector.selected_models.borrow().as_slice(),
-            &[AgentModelId::new("private-local/local-model")],
+            &[AgentModelId::new("ollama/local-model")],
             "the cycle skips the disabled public favorite and re-lands on the \
              enabled local one — a disabled entry is never cycled into"
         );

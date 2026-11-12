@@ -6,7 +6,7 @@ review arc (the 2026-11-06 template/private-mode/decision-model review) is
 closed — this prompt carries the state, the pickup actions, and the traps.
 
 **Parallel prompt:** the private-inference thread's
-`private-inference-continuation-prompt-2026-11-06-rebuild-tail.md` (commit
+`private-inference-continuation-prompt-2026-11-06-rebuild-tail.md` (removed 2026-11-11; commit
 `b34e3ec4fa`) covers the same seam family from its side — the GUI
 private-model turn verification and the same design-doc §8 rulings. The
 §8 checkpoint below is THE one checkpoint (not two); this prompt adds the

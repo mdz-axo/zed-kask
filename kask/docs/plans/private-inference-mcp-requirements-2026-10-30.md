@@ -10,6 +10,8 @@ mds_categories: [domain, trust, lifecycle]
 
 # Private-Inference MCP Server — functional requirements (D-2)
 
+> **Superseded in part, 2026-11-11.** The kask-side serving stack this document specifies (FR-1 provisioning, FR-2 the connection profile, FR-5 model selection, and the private-cloud leg) was removed by operator ruling. Private inference is now served by the local Ollama or llama.cpp install through the editor's built-in providers. FR-3 (private-thread routing) and FR-4 (memory privacy) remain in force and are cited by the code under these labels; the routing set is now fixed to those two providers. The live record is `DIVERGENCE.md` rows D9 and D100.
+
 - **Status:** revised after PI review — 2026-10-30; the three rulings (all three
   platforms in V1, single-user V1 with group access deferred, privacy boundary sounded
   out during the build) are folded in below. Companion deliverables: research

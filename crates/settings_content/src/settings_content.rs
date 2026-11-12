@@ -1730,11 +1730,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub models: Option<KaskModelsSettingsContent>,
 
-    /// Private-inference local-leg policy (M7/Seam B): the
-    /// `openai_compatible` provider id the leg registers under and the
-    /// loopback endpoint it serves on. The served-model fleet comes from
-    /// the shipped model briefs (registry data), and the endpoint token
-    /// lives at the provider `api_url` keychain slot — never here.
+    /// Private-thread policy: the MCP servers disabled on privacy-marked
+    /// threads and the local models that serve private memory. Which
+    /// models a private thread may run is not configurable — see
+    /// [`PRIVATE_THREAD_LOCAL_PROVIDERS`].
     #[serde(default)]
     pub private_inference: Option<KaskPrivateInferenceSettingsContent>,
 }
@@ -1931,38 +1930,19 @@ pub struct KaskModelsSettingsContent {
     pub decision_model: Option<String>,
 }
 
-/// Private-inference local-leg policy (the `"kask.private_inference"`
-/// section in settings.json) — M7/Seam B.
+/// Private-thread policy (the `"kask.private_inference"` section in
+/// settings.json).
 ///
-/// The PI-owned surface for the private local leg: the
-/// `openai_compatible` provider id the leg registers under and the
-/// loopback endpoint a launched llama-server serves on. The served-model
-/// fleet is registry data (the shipped model briefs in
-/// `kask/registry/model-briefs/`), never a settings list; the endpoint
-/// token lives at the provider `api_url` keychain slot (D5/D9b), so
-/// there are no `*_enabled` toggles — the token's presence is the
-/// toggle.
+/// Private inference is served by the local Ollama or llama.cpp install
+/// through Zed's built-in providers; this section carries only what a
+/// privacy-marked thread still needs from kask: the tool perimeter and
+/// the local models that embed, tag and rerank private memory. The set of
+/// providers a private thread may run is fixed
+/// ([`PRIVATE_THREAD_LOCAL_PROVIDERS`]) and has no key here — the
+/// retired `provider_id`, `host`, `port` and `local_provider_ids` keys
+/// are ignored if an older settings file still carries them.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskPrivateInferenceSettingsContent {
-    /// The `openai_compatible` provider id (the settings HashMap key and
-    /// the qualified-name prefix, e.g.
-    /// `"private-local/qwen3-8-flash-next"`). Absent uses the
-    /// settings-layer default.
-    pub provider_id: Option<String>,
-    /// The loopback host the private leg serves on. Absent uses the
-    /// settings-layer default (matching the placement policy's host).
-    pub host: Option<String>,
-    /// The loopback port the private leg serves on. Absent uses the
-    /// settings-layer default (matching the placement policy's port).
-    pub port: Option<u16>,
-    /// zed-kask: D100 (operator ruling 2026-11-05) — additional local-leg
-    /// provider ids a privacy-marked thread may use, on top of the
-    /// configured `provider_id`. Local by construction (they only serve
-    /// models that run on this machine). Absent uses the
-    /// settings-layer default (`["ollama"]`): local ollama models serve
-    /// private threads.
-    #[serde(default)]
-    pub local_provider_ids: Option<Vec<String>>,
     /// zed-kask: D100 (operator ruling 2026-11-05) — MCP servers whose
     /// tool surface is DISABLED on privacy-marked threads: their
     /// assisting inference cannot run locally, so the tool itself is
@@ -2003,13 +1983,30 @@ pub struct KaskPrivateInferenceSettingsContent {
     pub rerank_model: Option<String>,
 }
 
-/// zed-kask: D100 — the default local-leg provider set for privacy-marked
-/// threads: local ollama (operator ruling 2026-11-05 — "any of the local
-/// private inference models or local ollama models"). The single home
-/// every reader resolves through ([`KaskPrivateInferenceSettingsContent::
-/// resolved_local_providers`]); the kask-side settings row defaults from the
-/// same list.
-pub const DEFAULT_LOCAL_PROVIDERS: &[&str] = &["ollama"];
+/// zed-kask: D100 (operator ruling 2026-11-11) — the providers whose
+/// models a privacy-marked thread may run: Zed's built-in Ollama and
+/// llama.cpp providers, by their registered provider ids. Fixed: no
+/// setting adds to it, so a thread cannot be widened to a cloud provider
+/// by configuration. Both providers' server URLs are user-editable in
+/// Zed's own provider settings; "local" holds only while those point at
+/// this machine.
+pub const PRIVATE_THREAD_LOCAL_PROVIDERS: &[&str] = &["ollama", "llama.cpp"];
+
+/// The Ollama provider id — the one member of
+/// [`PRIVATE_THREAD_LOCAL_PROVIDERS`] that can also list cloud-proxied
+/// models.
+const OLLAMA_PROVIDER_ID: &str = "ollama";
+
+/// zed-kask: D100 — may a privacy-marked thread run this model? True iff
+/// the provider is in [`PRIVATE_THREAD_LOCAL_PROVIDERS`] and, for Ollama,
+/// the model is not a cloud-proxied entry
+/// ([`is_ollama_cloud_model_name`]). The one admission home: the
+/// thread's storage and request gates and the agent panel's model list
+/// all resolve through it.
+pub fn is_private_thread_local_model(provider_id: &str, model_name: &str) -> bool {
+    PRIVATE_THREAD_LOCAL_PROVIDERS.contains(&provider_id)
+        && !(provider_id == OLLAMA_PROVIDER_ID && is_ollama_cloud_model_name(model_name))
+}
 
 /// zed-kask: D100/F1 (2026-11-08) — true when a provider model name
 /// carries ollama's cloud namespace token as its final `:`/`-`
@@ -2025,9 +2022,7 @@ pub const DEFAULT_LOCAL_PROVIDERS: &[&str] = &["ollama"];
 /// route to them bypasses the check. Fail-closed in the cloud
 /// direction: the token matches case-insensitively, and a name
 /// carrying it refuses the model; a name without it keeps the
-/// provider-level admission unchanged. Shared by the agent-side
-/// private-leg predicate and the bridge's local-model projections
-/// (one home, never duplicated).
+/// provider-level admission unchanged.
 pub fn is_ollama_cloud_model_name(model_name: &str) -> bool {
     model_name
         .rsplit([':', '-'])
@@ -2049,29 +2044,6 @@ pub fn is_ollama_cloud_model_name(model_name: &str) -> bool {
 pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &["media", "corpus"];
 
 impl KaskPrivateInferenceSettingsContent {
-    /// zed-kask: D100 — resolve the local-leg provider set a privacy-marked
-    /// thread may run: the configured private-inference `provider_id` (when
-    /// set — an unconfigured leg has no registered models) plus
-    /// `local_provider_ids` (defaulting to [`DEFAULT_LOCAL_PROVIDERS`]).
-    /// The one resolution home the routing predicate and the settings row
-    /// share; entries are trimmed, empties and duplicates dropped.
-    pub fn resolved_local_providers(&self) -> Vec<String> {
-        let locals = self.local_provider_ids.clone().unwrap_or_else(|| {
-            DEFAULT_LOCAL_PROVIDERS
-                .iter()
-                .map(|id| id.to_string())
-                .collect()
-        });
-        let mut providers: Vec<String> = Vec::new();
-        for raw in self.provider_id.iter().chain(locals.iter()) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() && !providers.iter().any(|p| p == trimmed) {
-                providers.push(trimmed.to_string());
-            }
-        }
-        providers
-    }
-
     /// zed-kask: D100 — resolve the MCP server set disabled on privacy-
     /// marked threads (default:
     /// [`DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`]). Trimmed, empties
@@ -2101,53 +2073,74 @@ impl KaskPrivateInferenceSettingsContent {
 mod private_inference_local_set_tests {
     use super::*;
 
-    /// zed-kask: D100 — the local-leg set resolution (the one home the
-    /// routing predicate and the settings row share): absent locals use the
-    /// ollama default (operator ruling 2026-11-05 — local by construction);
-    /// the configured private provider joins the set; entries trim, empties
-    /// and duplicates drop.
+    /// The admission decision table: Zed's built-in Ollama and llama.cpp
+    /// providers serve a private thread; every other provider is refused,
+    /// including the retired kask `private-local` provider and other
+    /// OpenAI-compatible entries; an Ollama cloud-proxied model is
+    /// refused while a local Ollama model is admitted. The cloud-name
+    /// convention is Ollama's, so it does not refuse a llama.cpp model.
     #[test]
-    fn resolved_local_providers_defaults_to_ollama_and_merges() {
-        let absent = KaskPrivateInferenceSettingsContent::default();
-        assert_eq!(
-            absent.resolved_local_providers(),
-            vec!["ollama".to_string()],
-            "no configuration: local ollama serves private threads by default"
-        );
+    fn only_local_ollama_and_llama_cpp_models_serve_a_private_thread() {
+        assert!(is_private_thread_local_model("ollama", "qwen3.5:4b"));
+        assert!(is_private_thread_local_model("llama.cpp", "qwen36-35b-a3b"));
+        assert!(is_private_thread_local_model("llama.cpp", "notes-cloud"));
 
-        let configured = KaskPrivateInferenceSettingsContent {
-            provider_id: Some("private-local".to_string()),
-            local_provider_ids: Some(vec![
-                "  ollama  ".to_string(),
-                String::new(),
-                "private-local".to_string(),
-            ]),
-            ..Default::default()
-        };
-        assert_eq!(
-            configured.resolved_local_providers(),
-            vec!["private-local".to_string(), "ollama".to_string()],
-            "the configured provider leads; locals follow; trimmed and deduped"
-        );
+        assert!(!is_private_thread_local_model("ollama", "glm-5.3:cloud"));
+        assert!(!is_private_thread_local_model(
+            "ollama",
+            "qwen3.5:397b-cloud"
+        ));
 
-        let no_provider = KaskPrivateInferenceSettingsContent {
-            local_provider_ids: Some(vec!["lm-studio-local".to_string()]),
-            ..Default::default()
-        };
+        for provider in [
+            "private-local",
+            "openrouter",
+            "anthropic",
+            "openai",
+            "lmstudio",
+            "DeepInfra",
+            "Ollama",
+            "llama_cpp",
+            "",
+        ] {
+            assert!(
+                !is_private_thread_local_model(provider, "some-model"),
+                "{provider:?} is not a private-thread provider"
+            );
+        }
+    }
+
+    /// No setting widens the set: an older settings file's retired keys
+    /// (`provider_id`, `host`, `port`, `local_provider_ids`) still parse —
+    /// the file is not rejected — and are dropped, so a provider named
+    /// there gains nothing.
+    #[test]
+    fn retired_keys_parse_and_cannot_widen_the_set() {
+        let parsed: KaskPrivateInferenceSettingsContent = serde_json::from_str(
+            r#"{
+                "provider_id": "private-local",
+                "host": "127.0.0.1",
+                "port": 8010,
+                "local_provider_ids": ["openrouter"],
+                "embedding_model": "ollama/qwen3-embedding:0.6b"
+            }"#,
+        )
+        .expect("an older settings section still parses");
         assert_eq!(
-            no_provider.resolved_local_providers(),
-            vec!["lm-studio-local".to_string()],
-            "an unset provider contributes nothing (no leg registered)"
+            parsed,
+            KaskPrivateInferenceSettingsContent {
+                embedding_model: Some("ollama/qwen3-embedding:0.6b".to_string()),
+                ..Default::default()
+            },
+            "the retired keys are dropped; the surviving key is kept"
         );
+        assert!(!is_private_thread_local_model("openrouter", "some-model"));
+        assert!(!is_private_thread_local_model("private-local", "flint"));
     }
 
     /// F1 (2026-11-08): the cloud-name classifier's decision table — the
     /// live-observed ollama 0.40.12 cloud forms (colon and hyphen tags,
-    /// case-insensitive) classify as cloud; local ollama names and every
-    /// shipped fleet id classify as local. No local or fleet id ends in
-    /// a `cloud` token (the manifest + the live tag list are the
-    /// evidence). The one home shared by the agent-side private-leg
-    /// predicate and the bridge's local-model projections.
+    /// case-insensitive) classify as cloud; local model names classify as
+    /// local.
     #[test]
     fn is_ollama_cloud_model_name_classifies_the_live_forms() {
         for name in [

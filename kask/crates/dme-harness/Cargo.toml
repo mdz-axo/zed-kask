@@ -10,43 +10,18 @@ publish = false
 anyhow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# The canonical serving route (P4): the L4 supervisor's launch/health
-# loop rides tokio; the completions ride the M3 openai_compatible
-# request shape against LaunchPlan::endpoint() via blocking reqwest.
-tokio = { workspace = true }
+# The probe leg's client: blocking requests against a llama.cpp server
+# the operator runs. The harness links no inference engine and launches
+# no server.
 reqwest = { workspace = true, features = ["blocking", "json"] }
-# The private-inference stack — the ONE home of the shared GGUF
-# reader/writer (local_leg::{gguf, gguf_writer}) AND the L4 supervisor
-# the probe leg consumes. The harness links no parallel transport,
-# launcher or parser (installed-infrastructure-first).
-hkask-private-inference = { workspace = true }
-# The canonical two-root path chain (the models root + the harness's
-# machine-state subtree) — the same `agent_paths` regulator the stack
-# uses, never literal home-dir strings.
-hkask-types = { workspace = true }
-
-# The capture path's in-process engine: llama-cpp-4 linked against the
-# PINNED CANONICAL SOURCE via the in-repo llama-cpp-sys-4 fork (P5:
-# LLAMA_CPP_SRC_DIR = the llama-cpp-mainline checkout, commit 9e2a04a, at
-# build time; the fork copies + patches the pin into its own OUT_DIR and
-# cmakes THAT — pin-exact, no second engine tree, and the published
-# crate's prebuilt route is dead: it fails closed on any prebuilt lib dir
-# while its decode-hooks patch is staged, so LLAMA_PREBUILT_DIR can never
-# verify).
-llama-cpp-4 = { version = "0.11.0", default-features = false, features = [
-    "openmp",
-    "mtmd",
-    "ggml",
-    "rpc",
-], optional = true }
-
-[features]
-default = []
-engine = ["dep:llama-cpp-4"]
-# The canonical fleet's own GPU backend (the same route build-hip serves)
-# — the in-repo fork builds the pin's source with GGML_HIP=ON.
-hip = ["engine", "llama-cpp-4/hip"]
+# The GGUF reader/writer (src/gguf.rs, src/gguf_writer.rs): typed parse
+# errors and the artifact sha256.
+sha2 = { workspace = true }
+thiserror = { workspace = true }
 
 [[bin]]
 name = "dme-harness"
 path = "src/main.rs"
+
+[lints]
+workspace = true

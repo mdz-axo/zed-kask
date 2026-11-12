@@ -10,6 +10,8 @@ mds_categories: [domain, composition, trust, lifecycle]
 
 # Private-inference M5 — the recall/export filters (design)
 
+> **Context note, 2026-11-11.** The recall/export filters designed here are in force. The kask-side serving stack named around them (the "D-3 plan", the local llama.cpp leg) was removed by operator ruling; private inference is now served by the local Ollama or llama.cpp install through the editor's built-in providers. The live record is `DIVERGENCE.md` row D100.
+
 **Scope.** FR-4's read side: private-marked content stays inside private
 recall and export paths. The D-3 plan's M5 row names four surface groups
 (curator memory recall; corpus; media; kata-kanban). This document

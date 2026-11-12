@@ -6,12 +6,12 @@
 # injection were removed at retirement. The dated readings below are
 # preserved as the audit record, not as a live contract.
 #
-# SUCCESSOR 2026-11-04: the credential was REINSTATED zed-side under the
-# same key with a new, narrower role — the private-inference acquisition
-# module's model-weights fetches. The live contract is hf_token.yaml (the
-# profile id is the data-services credential key, per the gate's tree
-# derivation); this archive stays retired, and its "dormant and unread"
-# claims below describe the 2026-10-17..2026-11-04 window only.
+# SUCCESSOR 2026-11-04..2026-11-11: the credential was reinstated zed-side
+# under the same key with a narrower role (model-weights fetches for a
+# kask-launched llama.cpp server) and retired again when that stack was
+# removed. That adoption is archived at hf_token.yaml; this archive's
+# "dormant and unread" claims below describe the 2026-10-17..2026-11-04
+# window.
 # Structural contract pinned by kask/scripts/check-provider-profiles.sh.
 id: huggingface
 name: HuggingFace
@@ -30,19 +30,17 @@ retired:
   retained_user_data:
     - Any pre-existing kask://credentials/hf_token keychain entry was dormant
       over the 2026-10-17..2026-11-04 retirement window; reinstated
-      2026-11-04 with a live read site — the successor hf_token.yaml profile
-      carries the live contract.
+      2026-11-04 and retired again 2026-11-11 (hf_token.yaml).
 roles:
   - training-artifacts   # retired role — no in-tree consumer
   - model-weights-host   # retired with the training server; revived
-    # 2026-11-04 under the successor hf_token.yaml profile
+    # 2026-11-04..2026-11-11 under hf_token.yaml, now also retired
 keychain:
   slot: none
   env_var: ""
   note: retired-era record — the slot had no reader or settings row over the
-    2026-10-17..2026-11-04 window; the reinstated live contract (slot
-    kask://credentials/hf_token, env_var HF_TOKEN) is carried by
-    hf_token.yaml.
+    2026-10-17..2026-11-04 window; the later, also retired, adoption is
+    recorded in hf_token.yaml.
 consumed_capabilities: []  # retired — no in-tree consumer remains
 deliberate_non_consumption: []
 data_terms:

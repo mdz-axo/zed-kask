@@ -1,5 +1,7 @@
 # Private-inference review findings — the privacy panel, the M5 `_meta` write, the P2 surface, the private store's lifecycle
 
+> **Context note, 2026-11-11.** A dated review record. Its findings on private-thread routing, the tool perimeter and private memory (the F-numbers the code cites) still describe the tree. Its findings on the kask-launched llama.cpp server, the supervisor and the settings page's endpoint rows describe code removed by operator ruling on this date. The live record is `DIVERGENCE.md` rows D9 and D100.
+
 **Engagement:** the review continuation prompt (composed `73ada7a3fc`,
 `kask/docs/plans/private-inference-review-continuation-prompt-2026-11-06.md`).
 Review-only: findings and proposals filed, behavior changes reserved to the

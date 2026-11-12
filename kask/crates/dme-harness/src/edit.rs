@@ -32,12 +32,12 @@
 //! is the instrument's own hard stop).
 //!
 //! The GGUF parse, the byte-exact patch primitive, the minimal-collateral
-//! Q8_0 codec and the weighted-column kernel all live in the shared
-//! component (hkask-private-inference local_leg::{gguf, gguf_writer}) —
+//! Q8_0 codec and the weighted-column kernel live in `gguf` and
+//! `gguf_writer` —
 //! this leg keeps only the DME orchestration: the spec (the trigger — the
 //! ONE required spelling), the patched copy and the receipt.
 
-use crate::{gguf_writer, pi_gguf};
+use crate::{gguf, gguf_writer};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -278,7 +278,7 @@ pub fn run(spec: &EditSpec) -> Result<()> {
     let harness = concat!("dme-harness-rust/", env!("CARGO_PKG_VERSION"));
     let input = Path::new(&spec.input);
     let output = Path::new(&spec.output);
-    let meta = pi_gguf::parse_file(input)?;
+    let meta = gguf::parse_file(input)?;
     anyhow::ensure!(
         meta.gguf_version >= 2,
         "unexpected gguf version {}",
@@ -453,7 +453,7 @@ pub fn run(spec: &EditSpec) -> Result<()> {
         weights_touched += stats.weights_touched;
         per_layer.push(LayerFidelity {
             layer,
-            tensor_type: pi_gguf::type_name(t.ggml_type).into(),
+            tensor_type: gguf::type_name(t.ggml_type).into(),
             blocks_touched: stats.blocks_touched,
             blocks_rescaled: stats.blocks_rescaled,
             unedited_elements_changed: stats.unedited_elements_changed,

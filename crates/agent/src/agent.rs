@@ -3320,26 +3320,23 @@ fn strip_slash_command_prefix(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// zed-kask: D100 (operator ruling 2026-11-05) — mark every model outside
-/// the local private leg as disabled in the panel list, with the boundary
-/// as the reason. The agent-model id is `{provider}/{model}`
-/// (`LanguageModels::model_id`), so the check is MODEL-level: the provider
-/// must be in the local-leg set AND the model must not carry ollama's
-/// cloud token — ollama >= 0.40 serves cloud-proxied models
-/// (`glm-5.3:cloud` and friends) under the local ollama provider, and a
-/// marked thread refuses them like any public provider (F1, 2026-11-08).
-/// Pinned by `private_thread_model_list_disables_non_local_models` and
+/// zed-kask: D100 — mark every model a privacy-marked thread may not run
+/// as disabled in the panel list, with the boundary as the reason. The
+/// agent-model id is `{provider}/{model}` (`LanguageModels::model_id`), so
+/// the check is MODEL-level: the provider must be Zed's Ollama or
+/// llama.cpp provider AND, for Ollama, the model must not carry the cloud
+/// token — ollama >= 0.40 serves cloud-proxied models (`glm-5.3:cloud` and
+/// friends) under the local ollama provider, and a marked thread refuses
+/// them like any public provider (F1, 2026-11-08). Pinned by
+/// `private_thread_model_list_disables_non_local_models` and
 /// `private_thread_model_list_disables_ollama_cloud_models`.
-fn disable_non_local_models(
-    list: acp_thread::AgentModelList,
-    cx: &App,
-) -> acp_thread::AgentModelList {
+fn disable_non_local_models(list: acp_thread::AgentModelList) -> acp_thread::AgentModelList {
     let scope = |mut info: acp_thread::AgentModelInfo| {
         let (provider, model) = info.id.as_str().split_once('/').unwrap_or(("", ""));
-        if !crate::thread::is_private_leg_model_id(provider, model, cx) {
+        if !crate::thread::is_private_leg_model_id(provider, model) {
             info.disabled = Some(language_model::DisabledReason(
-                "private thread — only the local private inference leg serves \
-                 this thread (kask.private_inference)"
+                "private thread — only local models served by Zed's Ollama or \
+                 llama.cpp provider run on this thread"
                     .into(),
             ));
         }
@@ -3368,7 +3365,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         log::debug!("NativeAgentConnection::list_models called");
         let mut list = self.connection.0.read(cx).models.model_list.clone();
         // zed-kask: D100 (operator ruling 2026-11-05) — the panel scoping:
-        // on a privacy-marked thread, models outside the local private leg
+        // on a privacy-marked thread, models that are not served locally
         // are disabled as options in the agent panel — listed but not
         // selectable, each with the reason naming the boundary (the
         // visible refusal, never a vanishing list). The storage gate
@@ -3379,7 +3376,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         if let Some(session) = self.connection.0.read(cx).sessions.get(&self.session_id)
             && session.thread.read(cx).is_private_inference()
         {
-            list = disable_non_local_models(list, cx);
+            list = disable_non_local_models(list);
         }
         Task::ready(if list.is_empty() {
             Err(anyhow::anyhow!("No models available"))
@@ -3418,9 +3415,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         // the settings write below; the typed refusal here precedes every
         // write. The picker's `confirm` and cycle-favorites paths skip
         // disabled entries, so this is the belt for any direct-set path.
-        if thread.read(cx).is_private_inference()
-            && !crate::thread::is_private_leg_model(&model, cx)
-        {
+        if thread.read(cx).is_private_inference() && !crate::thread::is_private_leg_model(&model) {
             return Task::ready(Err(anyhow::anyhow!(crate::thread::PrivateRoutingError {
                 provider_id: model.provider_id.0.clone().into(),
                 model_id: model.id.0.clone().into(),
@@ -13458,28 +13453,13 @@ mod internal_tests {
     /// refusal.
     #[gpui::test]
     async fn private_thread_model_list_disables_non_local_models(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-
         init_test(cx);
         let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
 
-        // The fake provider ("fake") is NOT in the local-leg set: the
-        // default policy names ollama and the configured private leg.
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .private_inference
-                        .get_or_insert_default()
-                        .provider_id = Some("private-local".to_string());
-                });
-            });
-        });
-
+        // The fake provider ("fake") is NOT in the fixed local set
+        // (Zed's Ollama and llama.cpp providers).
         let selector = NativeAgentModelSelector {
             session_id: session_id.clone(),
             connection: (*connection).clone(),
@@ -13524,27 +13504,8 @@ mod internal_tests {
     /// thread would dispatch private content to ollama's cloud. The panel
     /// scoping is model-level: a `cloud` token in the model name disables
     /// the entry with the boundary reason, exactly like a public provider.
-    #[gpui::test]
-    fn private_thread_model_list_disables_ollama_cloud_models(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .private_inference
-                        .get_or_insert_default()
-                        .provider_id = Some("private-local".to_string());
-                });
-            });
-        });
-
+    #[test]
+    fn private_thread_model_list_disables_ollama_cloud_models() {
         let info = |id: &str| acp_thread::AgentModelInfo {
             id: AgentModelId::new(id),
             name: id.into(),
@@ -13554,17 +13515,13 @@ mod internal_tests {
             cost: None,
             disabled: None,
         };
-        let list = cx.update(|cx| {
-            disable_non_local_models(
-                acp_thread::AgentModelList::Flat(vec![
-                    info("ollama/glm-5.3:cloud"),
-                    info("ollama/qwen3.5:4b"),
-                    info("private-local/flint"),
-                    info("fake/fake-model"),
-                ]),
-                cx,
-            )
-        });
+        let list = disable_non_local_models(acp_thread::AgentModelList::Flat(vec![
+            info("ollama/glm-5.3:cloud"),
+            info("ollama/qwen3.5:4b"),
+            info("llama.cpp/qwen36-35b-a3b"),
+            info("private-local/flint"),
+            info("fake/fake-model"),
+        ]));
         let acp_thread::AgentModelList::Flat(entries) = list else {
             panic!("a flat list stays flat");
         };
@@ -13586,8 +13543,12 @@ mod internal_tests {
             "a local ollama model stays selectable"
         );
         assert!(
-            by_id("private-local/flint").disabled.is_none(),
-            "the configured private leg stays selectable"
+            by_id("llama.cpp/qwen36-35b-a3b").disabled.is_none(),
+            "a llama.cpp model stays selectable"
+        );
+        assert!(
+            by_id("private-local/flint").disabled.is_some(),
+            "the retired kask provider is disabled like any other non-local provider"
         );
         assert!(
             by_id("fake/fake-model").disabled.is_some(),
@@ -13606,28 +13567,13 @@ mod internal_tests {
     /// slot is untouched, and the settings default stays un-set.
     #[gpui::test]
     async fn private_thread_select_model_refuses_before_any_write(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-
         init_test(cx);
         let (connection, agent, _project, acp_thread, _fs) = setup_native_agent_session(cx).await;
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
         let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
 
-        // The fake provider ("fake") is NOT in the local-leg set — the
-        // same policy shape as the list-scoping pin above.
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .private_inference
-                        .get_or_insert_default()
-                        .provider_id = Some("private-local".to_string());
-                });
-            });
-        });
-
+        // The fake provider ("fake") is NOT in the fixed local set — the
+        // same shape as the list-scoping pin above.
         let selector = NativeAgentModelSelector {
             session_id: session_id.clone(),
             connection: (*connection).clone(),
@@ -13637,7 +13583,7 @@ mod internal_tests {
             thread.update(cx, |thread, cx| thread.set_private_inference(true, cx));
         });
 
-        // Any listed model is non-local under this policy; take the first.
+        // Every listed model is the fake provider's, so non-local; take the first.
         let entries = resolved_model_entries(&selector, cx, true).await;
         let public_id = entries
             .first()
@@ -13654,8 +13600,8 @@ mod internal_tests {
             "the refusal names the boundary: {refusal}"
         );
         assert!(
-            refusal.to_string().contains("kask.private_inference"),
-            "the refusal names the PI-owned policy home: {refusal}"
+            refusal.to_string().contains("Ollama or llama.cpp"),
+            "the refusal names what a marked thread may run: {refusal}"
         );
 
         // No write happened: the thread's model stays unset, the effort

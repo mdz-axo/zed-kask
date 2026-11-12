@@ -57,8 +57,8 @@ pub struct RunRow {
     /// transformers-side processor).
     pub penalty_last_n: i32,
     pub n_ctx: u32,
-    /// The serving engine's `--version` line — the canonical pin
-    /// receipt on every row.
+    /// The serving engine's `build_info` (from the server's `/props`) —
+    /// the engine receipt on every row.
     pub engine_version: String,
     /// The server's `generation_settings` echo for this row — the
     /// sampling-parity receipt: every knob was verified against it
@@ -80,13 +80,10 @@ pub struct StageSummary {
     pub dtype: String,
     pub elapsed_secs: f64,
     pub harness: String,
-    // --- the additive route receipts (P4) ---
+    // --- the additive route receipts ---
     pub model_id: String,
     pub engine_version: String,
     pub endpoint: String,
-    /// The rendered LaunchPlan — the exact argv the L4 supervisor
-    /// spawned for this leg.
-    pub launch_plan: String,
     pub budget_secs: u64,
     pub first_problem_ids: Vec<String>,
 }

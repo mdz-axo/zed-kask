@@ -20,7 +20,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` has 15 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-104`):
+`KaskSettings` has 15 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:35-90`):
 
 | Field | Type | Default source |
 |-------|------|---------------|
@@ -37,7 +37,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `media` | `KaskMediaSettings` | `Default` |
 | `models` | `KaskModelsSettings` | `Default` |
-| `private_inference` | `KaskPrivateInferenceSettings` | `Default` (host/port delegate to `PlacementPolicy::default()`) |
+| `private_inference` | `KaskPrivateInferenceSettings` | `Default` |
 
 ## Inference admission and resilience (`KaskGeneralSettings`)
 
@@ -382,90 +382,44 @@ children). The general/chat, embedding, classifier, QA-generation, and OCR defau
 
 ## Private Inference (`KaskPrivateInferenceSettings`)
 
-The private local leg's PI-owned policy — M7/Seam B (extends D9): the
-`openai_compatible` provider id the leg registers under and the loopback
-endpoint a launched llama-server serves on
-(`kask/crates/kask_bridge/src/settings.rs:598-632`). The served-model fleet is
-registry data (the shipped model briefs in `kask/registry/model-briefs/`,
-embedded through `hkask_private_inference::local_leg::fleet`), never a
-settings list; the endpoint token lives at the provider `api_url` keychain
-slot (D5 one-key-one-location), so there are no `*_enabled` toggles — the
-token's presence is the toggle.
+The private-thread policy (D9, D100)
+(`kask/crates/kask_bridge/src/settings.rs:562-632`). Private inference is
+served by the local Ollama or llama.cpp install through the editor's
+built-in providers: kask launches no model server, registers no provider and
+fetches no weights. Install and serve models with Ollama or llama.cpp, and
+set their server addresses under **Settings → AI → LLM Providers**.
+
+A privacy-marked thread (the lock in the thread header) runs only models
+from the providers `ollama` and `llama.cpp`
+(`settings_content::PRIVATE_THREAD_LOCAL_PROVIDERS`; the admission decision
+is `settings_content::is_private_thread_local_model`). The set is fixed —
+no setting adds a provider to it — and Ollama's cloud-proxied models (names
+ending in a `cloud` token) are refused. An `openai_compatible` or
+`anthropic_compatible` entry named `ollama` or `llama.cpp` is ignored, so it
+cannot replace the built-in provider. Both providers' server URLs are
+user-editable; the models are local only while those URLs point at this
+machine.
 
 | Field | Type | Default | Resolution |
 |-------|------|---------|------------|
-| `provider_id` | `String` | `"private-local"` | The `language_models.openai_compatible` settings key and the qualified-name prefix of the private models (e.g. `private-local/qwen3-8-flash-next`) |
-| `host` | `String` | `"127.0.0.1"` (from `PlacementPolicy::default()`) | The loopback host; the `Default` impl delegates to the placement policy so the settings row and the placement compiler can never disagree on the endpoint |
-| `port` | `u16` | `8010` (from `PlacementPolicy::default()`) | The loopback port; same delegation |
-| `local_provider_ids` | `Vec<String>` | `["ollama"]` (const home: `settings_content::DEFAULT_LOCAL_PROVIDERS`) | D100 (operator ruling 2026-11-05): additional local-leg provider ids a privacy-marked thread may run — local by construction, so a private thread accepts these providers' models (default: local ollama) and never a cloud provider's |
-| `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100 (ruling 2026-11-05; extended 2026-11-06 — the tool-query-embed design §8.2's ruling, shape 2): MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes; the corpus server's embed/tag/OCR legs), so the tool is refused rather than route private content to cloud models. The corpus server joined the default set by the operator's 2026-11-06 ruling — the corpus server is not available on private-mode threads |
-| `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` (const home: `DEFAULT_PRIVATE_EMBEDDING_MODEL`) | D100 item 3: the private leg's LOCAL embedding model — private-store chunks and private-context recall queries embed through it only; an explicitly empty string is the opt-out (the surfaced keyword-only degrade) |
-| `classifier_model` | `String` | `"ollama/qwen3.5:4b"` (const home: `DEFAULT_PRIVATE_CLASSIFIER_MODEL`) | D100 classifier lift (2026-11-06): the private leg's LOCAL classifier model — private-turn chunk tagging runs through it only; an explicitly empty string is the opt-out (the surfaced structural-only degrade) |
-| `rerank_model` | `String` | `"ollama/qwen3-reranker-4b:latest"` (const home: `DEFAULT_PRIVATE_RERANK_MODEL`) | D100 §8.1 routed shape (operator ruling 2026-11-06 — private mode uses the ollama qwen reranker): private-provenance deep-search rerank runs through this local model only (the ollama judge protocol — ollama has no rerank endpoint, so one deterministic chat call per document, the first sampled token the binary verdict); the configured cloud reranker never sees private content; an explicitly empty string is the opt-out (the surfaced heuristic skip); emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL` (research allowlist) |
+| `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100: MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes; the corpus server's embed/tag/OCR legs), so the tool is refused rather than route private content to cloud models |
+| `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` (const home: `DEFAULT_PRIVATE_EMBEDDING_MODEL`) | D100: the LOCAL embedding model for private memory — private-store chunks and private-context recall queries embed through it only; an explicitly empty string is the opt-out (the surfaced keyword-only degrade) |
+| `classifier_model` | `String` | `"ollama/qwen3.5:4b"` (const home: `DEFAULT_PRIVATE_CLASSIFIER_MODEL`) | D100: the LOCAL classifier model — private-turn chunk tagging runs through it only; an explicitly empty string is the opt-out (the surfaced structural-only degrade) |
+| `rerank_model` | `String` | `"ollama/qwen3-reranker-4b:latest"` (const home: `DEFAULT_PRIVATE_RERANK_MODEL`) | D100: private-provenance deep-search rerank runs through this local model only (the ollama judge protocol — ollama has no rerank endpoint, so one deterministic chat call per document, the first sampled token the binary verdict); the configured cloud reranker never sees private content; an explicitly empty string is the opt-out (the surfaced heuristic skip); emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL` (research allowlist) |
 
-The Register action on **Settings → Kask → Private Inference** runs the
-connect step: `kask_bridge::private_inference::apply_provider_entry`
-composes the policy with the shipped briefs into the
-`language_models.openai_compatible.<provider_id>` entry (`api_url` from the
-endpoint construction home `hkask_private_inference::local_leg::launch::endpoint_url`,
-one model card per brief — `name` = model_id, `display_name`, `max_tokens`
-= the recommended context length) and writes it through the existing
-settings store; the registry re-reads settings on write and registers the
-provider, so the model cards appear in the agent panel model selector
-(Curator and Z-K alike) with no restart. Idempotent; a refusal (empty
-provider id, a broken shipped brief) writes nothing and logs the reason.
+The three private-memory models are served by Ollama: the bridge wires them
+to its `ollama` descriptor only, and **Settings → Kask → Private Inference**
+accepts `ollama/<model>` or an empty value for each. The page also lists the
+local models a private thread can run right now, read from the registered
+providers.
 
-The endpoint token is written by the page's token row through the existing
-`write_credential` path at the SAME slot the registered provider's
-`ApiKeyState` reads (the entry's `api_url`) plus the provider's live
-`set_api_key` refresh — the D29 RunPod-row precedent. No MCP child consumes
-the token (the leg is a core service, not an MCP server), so there is no
-MCP restart nudge on its writes. Changing host or port moves the token's
-keychain slot — re-enter the token at the new endpoint.
-
-The zero-manual-entry half (operator ruling 2026-11-05, the
-"downloaded = available" UX): at startup, when the provider entry is
-absent, it is registered once (mint-if-absent token + the emission —
-the settings-store notification registers the provider live, so the
-private model cards appear in the agent panel with zero manual steps);
-when the entry exists it is never touched (an operator's hand-edited
-row wins — a deliberate deletion returns at the next restart, the row
-is system-owned like the seeded templates) and only the token is
-provisioned if the slot is empty. The token is minted automatically —
-the `provision_db_passphrase_string` precedent (first-run secret
-provisioning); an explicit token set on the page always wins. The
-fleet carries every downloaded fleet model (qwen3-8-flash-next, flint,
-gemma-4-31b, muse-glimmer-30b, ornith-1.5-9b, qwen35-0.8b,
-qwen35-0.8b-edited — the DME arc's 2026-11-06 additions included, each
-brief parse-verified against its weights by `tests/fleet_parse.rs`
-under `HKASK_P1_LIVE=1`; the accounting manifest
-`kask/registry/private-inference/models.toml` is the one record —
-ornith-1.5-9b's launch entry fails closed until its repaired BF16
-lands), so a download + a brief means the card exists.
-
-The Serving section is the launch surface: one Launch button per
-shipped fleet model and Stop when serving. Launch runs the full
-production path — fleet resolve → real shard parse → live hardware
-probe → guard-verified compile → startup probe against the installed
-binary (`--version`/`--help` vs the manifest pin: exact-commit refusal,
-D-S2) → spawn (plan args + `--alias model_id` + `--api-key-file`) →
-health-poll to the measured 20-minute bound. An occupied policy port
-adopts only a VERIFIED launch record (live pid + digest + endpoint +
-health; D-S3); anything less is a typed refusal naming the holder.
-One model holds the RAM at a time (a physics constraint — the
-flagship's ~72 GB of weights exclude every other model on the 96 GB
-machine); launching a different model while one serves is an explicit
-SWAP — stop, drain, then load the new one (the click is the intent,
-never a silent substitution), and a fresh editor session swaps a
-previous session's live server by pid only after verifying the
-recorded process identity (argv[0] == the recorded binary — a
-recycled pid is never killed). Death surfaces as a typed Failed
-within one poll interval, never a silent Serving, and the supervisor
-never restarts on its own (the restart policy is operator-owned).
-The measured live launch (2026-11-04, HIP backend, warm cache):
-serving in 8s, `/v1/models` listing exactly the card name, a 28-token
-completion, clean stop in 13s wall (`tests/live_supervisor.rs`,
-`HKASK_P1_LIVE=1`).
+Retired keys (2026-11-11): `provider_id`, `host`, `port` and
+`local_provider_ids` configured a llama.cpp server that kask launched and a
+`private-local` provider entry it wrote into
+`language_models.openai_compatible`. That stack was removed. The keys are
+ignored if a settings file still carries them, and a leftover
+`private-local` provider entry is an ordinary OpenAI-compatible provider
+that a private thread refuses.
 
 ## Keychain Architecture
 

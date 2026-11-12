@@ -1,5 +1,5 @@
 //! The converter (the embedding-to-edit bridge): pure math from an
-//! embedder-vectors file plus the capture leg's manifest to the edit leg's
+//! embedder-vectors file plus a capture manifest to the edit leg's
 //! inputs — engine-free, GGUF-parse-free, like `edit` (dimensions come from
 //! the config, sourced via `gguf-info`, and are cross-checked against the
 //! captures; the edit leg re-checks them against the tensor).
@@ -125,8 +125,8 @@ pub struct ControlCfg {
     pub seed: u64,
 }
 
-/// One capture-manifest row (the capture leg's schema, mirrored for
-/// reading — the P5-frozen capture writer stays untouched).
+/// One capture-manifest row — the schema of the capture sets this leg
+/// reads (produced outside this crate).
 #[derive(Debug, Deserialize)]
 struct CaptureRow {
     problem_id: String,
@@ -817,9 +817,6 @@ mod tests {
     fn write_f32(path: &Path, vals: &[f32]) {
         std::fs::write(path, f32_bytes(vals)).unwrap();
     }
-
-    /// A std-only temp-dir guard: a unique dir under the system temp,
-    /// removed on drop — the fixtures carry no external dev-dep.
 
     fn fixture_captures(dir: &Path, anchors: &[(&str, Vec<f32>)]) -> (String, PathBuf) {
         let dir = dir.join("captures");

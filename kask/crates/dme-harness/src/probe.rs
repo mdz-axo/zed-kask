@@ -1,8 +1,7 @@
-//! The measurement leg (P4): run N problems under a config through the
-//! CANONICAL serving route — the L4 supervisor launches the fleet model
-//! per the L1 manifest, the completions ride the M3 endpoint semantics
-//! with per-row sampling-parity verification, and the rows follow the
-//! archived JSONL schema (comparability by contract).
+//! The measurement leg: run N problems under a config against a
+//! llama.cpp server the operator runs (`serving`), with per-row
+//! sampling-parity verification; the rows follow the archived JSONL
+//! schema (comparability by contract).
 //!
 //! The DME gates (DME-0 config gate, DME-1 route, DME-2 budget, DME-3
 //! attribution, DME-4 convergence) stay OUTSIDE this crate: they run in
@@ -13,12 +12,8 @@ use crate::config::RunConfig;
 use crate::problems::ProblemSet;
 use crate::receipt::{self, Counts, RunRow, StageSummary};
 use crate::serving::{CompletionRequest, Serving};
-use anyhow::{Context, Result};
-use hkask_private_inference::local_leg::fleet;
-use hkask_private_inference::local_leg::gguf as pi_gguf;
-use hkask_private_inference::local_leg::gguf_writer;
-use hkask_private_inference::local_leg::placement::PlacementPolicy;
-use hkask_types::agent_paths::resolve_under_artifacts_dir;
+use crate::{gguf, gguf_writer};
+use anyhow::{Context, Result, bail};
 use std::io::{BufRead as _, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -30,9 +25,18 @@ pub const HARNESS: &str = concat!("dme-harness-rust/", env!("CARGO_PKG_VERSION")
 pub const PROMPT_SUFFIX: &str =
     "\n\nPlease reason step by step, and put your final answer within \\boxed{}.";
 
+/// Prompt headroom above the generation cap: the server's slot context
+/// must hold the cap plus this many prompt tokens, so a row that stops
+/// early stopped on its own and `hit_limit` means the cap was reached.
+pub const PROMPT_HEADROOM_TOKENS: u32 = 4096;
+
 pub struct ProbeArgs {
-    /// The fleet model to serve (the supervisor resolves + launches it).
-    pub model_id: String,
+    /// The GGUF the server loaded — parsed for dtype/params and hashed
+    /// for the rows; the connect step refuses a server serving another
+    /// file.
+    pub gguf: PathBuf,
+    /// The running llama.cpp server's base URL.
+    pub endpoint: String,
     pub config: PathBuf,
     pub problems: PathBuf,
     pub out_jsonl: PathBuf,
@@ -40,15 +44,8 @@ pub struct ProbeArgs {
     pub start: usize,
     pub count: usize,
     pub cap: u32,
-    pub threads: u32,
-    pub n_gpu_layers: u32,
-    pub partial_gpu_offload: bool,
-    /// Load the served model without mmap (`PlacementPolicy::no_mmap`).
-    pub no_mmap: bool,
-    pub kv_cache_type: String,
     pub seed_base: u64,
     pub budget_secs: u64,
-    pub port: u16,
 }
 
 pub fn run(args: ProbeArgs) -> Result<()> {
@@ -57,53 +54,40 @@ pub fn run(args: ProbeArgs) -> Result<()> {
         serde_json::from_str(&std::fs::read_to_string(&args.config)?)?;
     let set = ProblemSet::load(&args.problems, args.seed_base)?;
 
-    // The artifact receipts, resolved the fleet's own way (the same
-    // path the supervisor launches) — parse for dtype/params, hash for
+    // The artifact receipts — parse for dtype/params, hash for
     // provenance.
-    let models_root = resolve_under_artifacts_dir(Path::new("private-inference/models"));
-    let briefs_dir = resolve_under_artifacts_dir(Path::new("private-inference/model-briefs"));
-    let model = fleet::discover_model(&briefs_dir, &models_root, &args.model_id)
-        .with_context(|| format!("discover the fleet model `{}`", args.model_id))?;
-    let files = fleet::resolve_model_files(&models_root, &model.brief)
-        .with_context(|| format!("resolve the fleet artifact for `{}`", args.model_id))?;
-    let artifact = files
-        .first()
-        .context("the fleet artifact list is non-empty")?;
-    let meta = pi_gguf::parse_file(artifact)?;
+    let artifact = args.gguf.as_path();
+    let meta = gguf::parse_file(artifact)
+        .with_context(|| format!("parse the GGUF {}", artifact.display()))?;
     let gguf_sha256 = gguf_writer::sha256_file(artifact)?;
     let model_name = artifact
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| artifact.display().to_string());
-    let dtype = pi_gguf::type_name(meta.dominant_type()).to_string();
+    let dtype = gguf::type_name(meta.dominant_type()).to_string();
 
-    // The route: one supervisor launch per leg, one policy from the CLI.
-    let n_ctx = args.cap + 4096;
-    let policy = PlacementPolicy {
-        context_length: n_ctx,
-        threads: args.threads,
-        n_gpu_layers: args.n_gpu_layers,
-        partial_gpu_offload: args.partial_gpu_offload,
-        no_mmap: args.no_mmap,
-        kv_cache_type: args.kv_cache_type.clone(),
-        flash_attn: true,
-        cpu_moe: true,
-        draft: false,
-        host: "127.0.0.1".into(),
-        port: args.port,
-        ..PlacementPolicy::default()
-    };
-    let serving =
-        Serving::launch(&args.model_id, policy).with_context(|| "the canonical serving route")?;
+    // The route: the operator's running server, bound to the artifact.
+    let serving = Serving::connect(&args.endpoint, artifact)
+        .with_context(|| "connect to the llama.cpp server")?;
+    let n_ctx = serving.n_ctx;
+    let required = args.cap + PROMPT_HEADROOM_TOKENS;
+    if n_ctx < required {
+        bail!(
+            "the server's slot context is {n_ctx} tokens; the probe needs at \
+             least {required} (cap {} + {PROMPT_HEADROOM_TOKENS} prompt \
+             headroom) — restart it with `-c {required}` (and `-np 1`, since \
+             the context is divided across slots)",
+            args.cap
+        );
+    }
     eprintln!(
-        "probe: cfg={} model={} ({} params, {}) engine=[{}] endpoint={} plan=[{}]",
+        "probe: cfg={} model={} ({} params, {}) engine=[{}] endpoint={} n_ctx={n_ctx}",
         cfg.name,
         serving.model_id,
         meta.param_count,
         dtype,
         serving.engine_version,
-        serving.endpoint,
-        serving.launch_plan
+        serving.endpoint
     );
 
     let t_start = Instant::now();
@@ -146,8 +130,6 @@ pub fn run(args: ProbeArgs) -> Result<()> {
                 cap: args.cap,
                 seed,
                 n_ctx,
-                threads: args.threads,
-                n_gpu_layers: args.n_gpu_layers,
                 model: model_name.clone(),
                 dtype: dtype.clone(),
                 gguf_sha256: gguf_sha256.clone(),
@@ -200,21 +182,20 @@ pub fn run(args: ProbeArgs) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0),
-        config: cfg.name.clone(),
+        config: cfg.name,
         n,
         counts,
         cap: args.cap,
         mean_wall_secs: receipt::r1(mean_wall),
         mean_tok_per_sec: receipt::r2(mean_tps),
-        gguf: model_name.clone(),
-        gguf_sha256: gguf_sha256.clone(),
-        dtype: dtype.clone(),
+        gguf: model_name,
+        gguf_sha256,
+        dtype,
         elapsed_secs: receipt::r1(t_start.elapsed().as_secs_f64()),
         harness: HARNESS.into(),
         model_id: serving.model_id.clone(),
         engine_version: serving.engine_version.clone(),
-        endpoint: serving.endpoint.clone(),
-        launch_plan: serving.launch_plan.clone(),
+        endpoint: serving.endpoint,
         budget_secs: args.budget_secs,
         first_problem_ids: first_ids,
     };
@@ -229,17 +210,14 @@ pub fn run(args: ProbeArgs) -> Result<()> {
             args.count
         );
     }
-    serving.stop()?;
     Ok(())
 }
 
-/// Everything a row needs from the launch + artifact, computed once.
+/// Everything a row needs from the server + artifact, computed once.
 struct RunFacts {
     cap: u32,
     seed: u64,
     n_ctx: u32,
-    threads: u32,
-    n_gpu_layers: u32,
     model: String,
     dtype: String,
     gguf_sha256: String,
@@ -313,7 +291,7 @@ fn probe_row(
             0.0
         },
         hit_limit,
-        extracted: extracted.clone(),
+        extracted,
         extraction_via: via,
         correct,
         label: label.into(),
@@ -324,8 +302,11 @@ fn probe_row(
         presence_penalty_applied: f64::from(cfg.presence_penalty),
         model: facts.model.clone(),
         dtype: facts.dtype.clone(),
-        device: if facts.n_gpu_layers > 0 { "gpu" } else { "cpu" }.into(),
-        threads: facts.threads,
+        // Placement and threading belong to the server the operator
+        // started; the harness cannot observe them, so the archived keys
+        // say so rather than carry a guess.
+        device: "server".into(),
+        threads: 0,
         kernelize: false,
         param_count: facts.param_count,
         config_file: facts.config_file.clone(),
@@ -341,8 +322,8 @@ fn probe_row(
 
 /// Summarize an existing JSONL (the `summary` subcommand) — recompute
 /// counts/means from rows; the route receipts carry what the rows
-/// carry (engine_version; the launch-level fields re-derive from the
-/// first row where present and stay empty otherwise).
+/// carry (engine_version; the endpoint is not a row key and stays
+/// empty).
 pub fn summarize(rows: &Path, out: Option<&Path>) -> Result<()> {
     let mut counts = Counts::default();
     let mut n = 0u32;
@@ -382,7 +363,7 @@ pub fn summarize(rows: &Path, out: Option<&Path>) -> Result<()> {
         mean_wall /= f64::from(n);
         mean_tps /= f64::from(n);
     }
-    let f = first.clone().unwrap_or_default();
+    let f = first.unwrap_or_default();
     let summary = StageSummary {
         ts: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -406,7 +387,6 @@ pub fn summarize(rows: &Path, out: Option<&Path>) -> Result<()> {
             .to_string(),
         engine_version: f["engine_version"].as_str().unwrap_or("").to_string(),
         endpoint: String::new(),
-        launch_plan: String::new(),
         budget_secs: 0,
         first_problem_ids: first_ids,
     };

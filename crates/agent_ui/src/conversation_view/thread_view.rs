@@ -6665,12 +6665,11 @@ impl ThreadView {
     }
 
     /// zed-kask: D100 (Seam A) — the thread-header privacy toggle: the PI's
-    /// mark/unmark surface for private-inference routing (FR-3). Both
-    /// directions live here — a PI-owned surface — never on an
-    /// agent-callable tool (the rejected-module register, D-3 §4:
-    /// unmarking widens exposure, so it cannot be agent-callable). The
-    /// tooltip text IS the routing-decision surfacing FR-3(c) requires at
-    /// the thread surface, and the marked direction surfaces the
+    /// mark/unmark surface for private-thread routing. Both directions
+    /// live here — a PI-owned surface — never on an agent-callable tool
+    /// (unmarking widens exposure, so it cannot be agent-callable). The
+    /// tooltip text IS the routing decision shown at the thread surface,
+    /// and the marked direction surfaces the
     /// tool-perimeter's disabled-server set (the review's F5 — the
     /// perimeter is a PI-owned policy, and its decision text belongs next
     /// to the lock; the set reads through the one resolution home,
@@ -6704,8 +6703,8 @@ impl ThreadView {
     }
 
     /// D100 — the toggle's icon/color/tooltip pair. Pure so the routing-
-    /// decision text (FR-3(c)'s unit pin) is asserted without a window:
-    /// both directions name the PI-owned policy home and the boundary. The
+    /// decision text is asserted without a window: both directions name
+    /// what a marked thread may run and the boundary. The
     /// marked direction also surfaces the tool-perimeter's disabled-server
     /// set (the review's F5 — the perimeter is a PI-owned policy, and its
     /// decision text belongs next to the lock); the unmarked direction does
@@ -6728,10 +6727,10 @@ impl ThreadView {
                 IconName::Lock,
                 Color::Accent,
                 SharedString::from(format!(
-                    "Private inference: on — this thread routes only to the private \
-                     inference leg (kask.private_inference); no request dispatches to \
-                     a public provider while the mark is on.{perimeter} Click to route \
-                     on public providers."
+                    "Private inference: on — this thread runs only local models \
+                     served by Zed's Ollama or llama.cpp provider; no request \
+                     dispatches to a public provider while the mark is on.{perimeter} \
+                     Click to allow public providers."
                 )),
             )
         } else {
@@ -6739,8 +6738,8 @@ impl ThreadView {
                 IconName::LockOff,
                 Color::Muted,
                 SharedString::from(
-                    "Private inference: off — click to route this thread only to \
-                     the private inference leg (kask.private_inference).",
+                    "Private inference: off — click to restrict this thread to local \
+                     models served by Zed's Ollama or llama.cpp provider.",
                 ),
             )
         }
@@ -16183,10 +16182,10 @@ pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
 mod private_inference_toggle_tests {
     use super::*;
 
-    /// zed-kask: D100 (Seam A) — FR-3(c): the routing-decision text renders
-    /// at the thread surface. Both toggle directions name the PI-owned
-    /// policy home (`kask.private_inference`) and the boundary, so the
-    /// operator sees the routing decision — never a mystery lock. F5: the
+    /// zed-kask: D100 (Seam A) — the routing-decision text renders at the
+    /// thread surface. Both toggle directions name what a marked thread
+    /// may run (Zed's Ollama or llama.cpp provider) and the boundary, so
+    /// the operator sees the routing decision — never a mystery lock. F5: the
     /// marked direction surfaces the tool-perimeter's disabled-server set
     /// (the PI-owned policy visible at the lock) — and ONLY the marked
     /// direction carries it.
@@ -16199,12 +16198,12 @@ mod private_inference_toggle_tests {
         assert!(matches!(marked_color, Color::Accent));
         let marked_text = marked_label.as_ref();
         assert!(
-            marked_text.contains("routes only to the private inference leg"),
+            marked_text.contains("runs only local models"),
             "the marked tooltip names the routing decision: {marked_text}"
         );
         assert!(
-            marked_text.contains("kask.private_inference"),
-            "the marked tooltip names the PI-owned policy home: {marked_text}"
+            marked_text.contains("Ollama or llama.cpp"),
+            "the marked tooltip names the providers that serve it: {marked_text}"
         );
         assert!(
             marked_text.contains("no request dispatches to a public provider"),
@@ -16235,12 +16234,12 @@ mod private_inference_toggle_tests {
         assert!(matches!(unmarked_color, Color::Muted));
         let unmarked_text = unmarked_label.as_ref();
         assert!(
-            unmarked_text.contains("private inference leg"),
+            unmarked_text.contains("restrict this thread to local models"),
             "the unmarked tooltip names what marking does: {unmarked_text}"
         );
         assert!(
-            unmarked_text.contains("kask.private_inference"),
-            "the unmarked tooltip names the PI-owned policy home: {unmarked_text}"
+            unmarked_text.contains("Ollama or llama.cpp"),
+            "the unmarked tooltip names the providers that serve it: {unmarked_text}"
         );
         assert!(
             !unmarked_text.contains("Tools off"),

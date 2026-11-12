@@ -8,36 +8,24 @@
 //! found at consolidation P4 when the mirrored init_by_array never
 //! terminated). Tests import `dme_harness::*`; the bin is a thin CLI
 //! over the same modules.
+//!
+//! The harness links no inference engine. The probe leg talks to a
+//! llama.cpp server the operator runs (`serving`); the converter, the
+//! contrast leg and the edit leg are pure math over files. Activation
+//! captures — the input of `contrast` and `convert` — are produced
+//! outside this crate.
 
 pub mod config;
+pub mod contrast;
+pub mod convert;
+pub mod edit;
+pub mod gguf;
+pub mod gguf_writer;
 pub mod mt;
 pub mod probe;
 pub mod problems;
 pub mod receipt;
 pub mod serving;
 
-// The capture path (the engine feature): in-process llama-cpp-4 for the
-// tensor-transaction hooks, built from the pinned canonical source via
-// the in-repo llama-cpp-sys-4 fork (LLAMA_CPP_SRC_DIR at build time).
-#[cfg(feature = "engine")]
-pub mod capture;
-#[cfg(feature = "engine")]
-pub mod embed;
-#[cfg(feature = "engine")]
-pub mod engine;
-
-// The converter (embedding-to-edit bridge), the contrast-u instrument
-// leg, and the edit leg need no in-process engine — only the shared GGUF
-// component.
 #[cfg(test)]
 mod test_util;
-
-pub mod contrast;
-pub mod convert;
-pub mod edit;
-
-// The shared GGUF component (P3): the private-inference stack's reader
-// (local_leg::gguf) + writer (local_leg::gguf_writer) — the hand parsers
-// are gone.
-pub use hkask_private_inference::local_leg::gguf as pi_gguf;
-pub use hkask_private_inference::local_leg::gguf_writer;

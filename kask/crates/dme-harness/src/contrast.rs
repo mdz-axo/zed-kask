@@ -33,8 +33,8 @@
 //! The step-phase pooling follows the E2-established dual-site per-step
 //! capture pattern (the design doc §2: "per-step captures through each
 //! trajectory") — the prompt phase is excluded from every pooled arm.
-//! Engine-free: pure f32/f64 math over the capture leg's files, like
-//! convert's math section. The capture writer stays untouched (P5).
+//! Engine-free: pure f32/f64 math over the capture files, like
+//! convert's math section.
 
 use crate::gguf_writer;
 use anyhow::{Context, Result};
@@ -56,8 +56,8 @@ pub struct ContrastArgs {
     pub top: usize,
 }
 
-/// One capture-manifest row (the capture leg's schema, mirrored for
-/// reading — the P5-frozen capture writer stays untouched).
+/// One capture-manifest row — the schema of the capture sets this leg
+/// reads (produced outside this crate).
 #[derive(Debug, Deserialize)]
 struct CaptureRow {
     problem_id: String,
@@ -667,7 +667,7 @@ mod tests {
                 &[0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
             );
         }
-        // label sidecars (the capture leg writes these per problem)
+        // label sidecars (one per problem in a capture set)
         std::fs::write(failing.path().join("p1.label.txt"), "hit_limit").unwrap();
         std::fs::write(progressing.path().join("p3.label.txt"), "correct_complete").unwrap();
         (failing, progressing)

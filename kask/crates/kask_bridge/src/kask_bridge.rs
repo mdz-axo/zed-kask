@@ -51,8 +51,6 @@ mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
-pub mod private_inference;
-pub mod private_inference_supervisor;
 mod settings;
 #[cfg(test)]
 mod test_support;

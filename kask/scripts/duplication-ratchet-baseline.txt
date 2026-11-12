@@ -1,11 +1,7 @@
-2774
+2771
 # Duplication-cluster ratchet (simplification program, Phase 1.2).
 # Metric: jscpd 5.4.0 --min-tokens 70 statistics.total.clones
 # over kask/ + fork-diverged files vs the scan base pinned in
 # duplication-scan-base.txt. The scan reads the shared working tree.
 # Bump in the same commit as the addition that justifies it; refresh after
 # removals and in the upstream-merge commit (together with the scan-base pin).
-#
-# Refreshed 2026-11-09 (F5): the dme-harness and hkask-private-inference
-# test fixtures consolidated their repeated setup (one ConvertFixture and
-# one fleet_brief helper), removing 8 clusters — 2782 -> 2774.

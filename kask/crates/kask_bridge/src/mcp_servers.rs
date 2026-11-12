@@ -1478,10 +1478,9 @@ mod tests {
         // The training-only child grants must not reappear. RunPod itself is
         // intentionally absent from this list: its API key remains live in the
         // native D29 OCR provider, but no MCP child consumes it now.
-        // HF_TOKEN is likewise reinstated zed-side (2026-11-04: the
-        // private-inference acquisition module is its read site) and stays
-        // listed here — this list asserts child-grant absence, not
-        // credential retirement; no MCP child receives it either.
+        // HF_TOKEN has no reader at all: its zed-side reinstatement
+        // (2026-11-04) was retired with the kask model-weights fetcher
+        // (2026-11-11), and no MCP child receives it either.
         const RETIRED_TRAINING_CREDENTIALS: &[&str] = &["HF_TOKEN", "RUNPOD_API_KEY"];
         const RETIRED_TRAINING_CONFIG: &[&str] = &[
             "HKASK_TRAINING_HOST",

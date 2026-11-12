@@ -23,10 +23,10 @@
 //! | `cached_system_prompt` | — | System prompt digest caching |
 //! | `cached_filtered_context` | — | Filtered context caching |
 //! | `active_skill` | D59 | Attribute tool failures to the running skill |
-//! | `private_inference` | D100 | Thread privacy mark: routing gate (FR-3) + the ingest |
-//! | | | provenance signal (FR-4). PI-surface-set (the thread-header toggle), |
-//! | | | never agent-callable; subagents inherit it (content flows through |
-//! | | | them); the routing policy home is `kask.private_inference` settings |
+//! | `private_inference` | D100 | Thread privacy mark: the routing gate + the ingest provenance |
+//! | | | signal. PI-surface-set (the thread-header toggle), never |
+//! | | | agent-callable; subagents inherit it (content flows through them). |
+//! | | | A marked thread runs only Zed's local Ollama or llama.cpp models |
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -319,10 +319,9 @@ impl KaskThreadState {
 
     // ── Private-inference routing mark (D100) ───────────────────────
 
-    /// Whether this thread is privacy-marked for private inference
-    /// routing (D100/FR-3): its inference resolves only to the private
-    /// leg, and content it produces carries the private-inference
-    /// provenance mark at ingest (FR-4). Curator and Z-K threads carry
+    /// Whether this thread is privacy-marked (D100): its inference
+    /// resolves only to a local Ollama or llama.cpp model, and content
+    /// it produces carries the private provenance mark at ingest. Curator and Z-K threads carry
     /// the identical mark — the enforcement reads this flag, never the
     /// agent identity (PI ruling 2026-10-30).
     pub fn is_private_inference(&self) -> bool {

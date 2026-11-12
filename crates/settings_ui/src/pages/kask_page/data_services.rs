@@ -238,17 +238,16 @@ mod tests {
     }
 
     /// The retired training-only vendors must not reappear as settings rows.
-    /// HF_TOKEN is not in that class: it was retired with the training
-    /// server for having no read site and reinstated 2026-11-04 with one —
-    /// the private-inference acquisition module — so its row must be
-    /// present (absent again would mean a dead credential row).
+    /// HF_TOKEN joins them: its one later reader, the kask model-weights
+    /// fetcher, was removed 2026-11-11, so a row for it would be a dead
+    /// credential row.
     #[test]
     fn training_only_data_services_are_absent() {
         let keys = data_service_descriptors()
             .into_iter()
             .map(|(key, _, _, _, _)| key)
             .collect::<std::collections::HashSet<_>>();
-        assert!(keys.contains("hf_token"));
+        assert!(!keys.contains("hf_token"));
         assert!(!keys.contains("nebius_project_id"));
         assert!(!keys.contains("nebius_subnet_id"));
     }

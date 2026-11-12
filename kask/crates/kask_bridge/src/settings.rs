@@ -84,11 +84,8 @@ pub struct KaskSettings {
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
 
-    /// Private-inference local-leg policy (M7/Seam B): the
-    /// `openai_compatible` provider id and the loopback endpoint. The
-    /// served fleet comes from the shipped model briefs; the endpoint
-    /// token lives at the provider `api_url` keychain slot — there is
-    /// no `*_enabled` toggle.
+    /// Private-thread policy: the MCP servers disabled on privacy-marked
+    /// threads and the local models that serve private memory.
     pub private_inference: KaskPrivateInferenceSettings,
 }
 
@@ -549,35 +546,20 @@ impl KaskModelsSettings {
     }
 }
 
-/// Private-inference local-leg policy (M7, Seam B — the
-/// `kask.private_inference` section). The PI-owned surface for the
-/// private local leg: which `openai_compatible` provider id the leg
-/// registers under, and the loopback endpoint a launched llama-server
-/// serves on. The served-model fleet is registry data (the shipped
-/// model briefs) — never a settings list; the endpoint token lives at
-/// the provider `api_url` keychain slot (D5 one-key-one-location), so
-/// there are no `*_enabled` toggles — the token's presence is the
-/// toggle.
+/// Private-thread policy (the `kask.private_inference` section).
 ///
-/// `Default` is the single source of truth: host/port delegate to the
-/// placement policy's own default (`PlacementPolicy::default()`), so
-/// the settings row and the placement compiler can never disagree on
-/// the endpoint. Do not add `#[serde(default = ...)]` attributes here
-/// (see `KaskSettings`).
+/// Private inference is served by the local Ollama or llama.cpp install
+/// through Zed's built-in providers. This section carries what a
+/// privacy-marked thread still needs from kask: the tool perimeter and
+/// the local models that embed, tag and rerank private memory. Which
+/// models a private thread may run is fixed
+/// (`settings_content::PRIVATE_THREAD_LOCAL_PROVIDERS`) and is not a
+/// setting.
+///
+/// `Default` is the single source of truth. Do not add
+/// `#[serde(default = ...)]` attributes here (see `KaskSettings`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskPrivateInferenceSettings {
-    /// The `openai_compatible` provider id (the settings HashMap key and
-    /// the qualified-name prefix, e.g.
-    /// `private-local/qwen3-8-flash-next`).
-    pub provider_id: String,
-    /// The loopback host (default from `PlacementPolicy::default()`).
-    pub host: String,
-    /// The loopback port (default from `PlacementPolicy::default()`).
-    pub port: u16,
-    /// zed-kask: D100 (operator ruling 2026-11-05) — additional local-leg
-    /// provider ids a privacy-marked thread may use on top of
-    /// `provider_id` (local by construction). Defaults to local ollama.
-    pub local_provider_ids: Vec<String>,
     /// zed-kask: D100 — MCP servers whose tool surface is disabled on
     /// privacy-marked threads (cloud-inference-dependent tools). Defaults
     /// to the media server.
@@ -606,17 +588,9 @@ pub struct KaskPrivateInferenceSettings {
 
 impl Default for KaskPrivateInferenceSettings {
     fn default() -> Self {
-        let policy = hkask_private_inference::local_leg::placement::PlacementPolicy::default();
         Self {
-            provider_id: "private-local".to_string(),
-            host: policy.host,
-            port: policy.port,
-            // D100: the single-home defaults (settings_content's consts —
+            // D100: the single-home default (settings_content's const —
             // never a second literal here).
-            local_provider_ids: settings_content::DEFAULT_LOCAL_PROVIDERS
-                .iter()
-                .map(|id| id.to_string())
-                .collect(),
             private_thread_disabled_servers:
                 settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
                     .iter()
@@ -643,10 +617,6 @@ impl From<KaskPrivateInferenceSettingsContent> for KaskPrivateInferenceSettings 
     fn from(c: KaskPrivateInferenceSettingsContent) -> Self {
         let default = Self::default();
         Self {
-            provider_id: c.provider_id.unwrap_or(default.provider_id),
-            host: c.host.unwrap_or(default.host),
-            port: c.port.unwrap_or(default.port),
-            local_provider_ids: c.local_provider_ids.unwrap_or(default.local_provider_ids),
             private_thread_disabled_servers: c
                 .private_thread_disabled_servers
                 .unwrap_or(default.private_thread_disabled_servers),
@@ -1310,34 +1280,20 @@ mod tests {
         // hard-coded path.
         assert_eq!(settings.data_dir, "");
         assert_eq!(settings.artifacts_dir, "");
-        // The private leg defaults to its provider id and the placement
-        // policy's loopback endpoint.
-        assert_eq!(settings.private_inference.provider_id, "private-local");
-        assert_eq!(settings.private_inference.host, "127.0.0.1");
-        assert_eq!(settings.private_inference.port, 8010);
-    }
-
-    #[test]
-    fn private_inference_defaults_match_the_placement_policy() {
-        // The settings row and the placement compiler must never disagree
-        // on the endpoint: the Default impl delegates to
-        // `PlacementPolicy::default()` by construction, and this pin
-        // holds the delegation in place.
-        let settings = KaskPrivateInferenceSettings::default();
-        let policy = hkask_private_inference::local_leg::placement::PlacementPolicy::default();
-        assert_eq!(settings.host, policy.host);
-        assert_eq!(settings.port, policy.port);
-        assert_eq!(settings.provider_id, "private-local");
     }
 
     #[test]
     fn private_inference_from_absent_content_fields_uses_defaults() {
         let effective: KaskPrivateInferenceSettings =
             KaskPrivateInferenceSettingsContent::default().into();
-        let default = KaskPrivateInferenceSettings::default();
-        assert_eq!(effective.provider_id, default.provider_id);
-        assert_eq!(effective.host, default.host);
-        assert_eq!(effective.port, default.port);
+        assert_eq!(
+            effective.private_thread_disabled_servers,
+            settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
+            "absent perimeter content uses the single-home default set"
+        );
         assert_eq!(
             effective.classifier_model,
             hkask_inference::model_constants::DEFAULT_PRIVATE_CLASSIFIER_MODEL,
@@ -1350,23 +1306,12 @@ mod tests {
         );
         // A present section with every field set overrides each one.
         let content = KaskPrivateInferenceSettingsContent {
-            provider_id: Some("pi-test".into()),
-            host: Some("127.0.0.2".into()),
-            port: Some(9020),
-            local_provider_ids: Some(vec!["lm-studio-local".into()]),
             private_thread_disabled_servers: Some(vec!["media".into()]),
             embedding_model: Some("ollama/custom-embed".into()),
             classifier_model: Some("ollama/custom-classifier".into()),
             rerank_model: Some("ollama/custom-rerank".into()),
         };
         let effective: KaskPrivateInferenceSettings = content.into();
-        assert_eq!(effective.provider_id, "pi-test");
-        assert_eq!(effective.host, "127.0.0.2");
-        assert_eq!(effective.port, 9020);
-        assert_eq!(
-            effective.local_provider_ids,
-            vec!["lm-studio-local".to_string()]
-        );
         assert_eq!(
             effective.private_thread_disabled_servers,
             vec!["media".to_string()]

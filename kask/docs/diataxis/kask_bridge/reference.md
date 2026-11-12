@@ -39,7 +39,7 @@ exports no skill executor (`kask/crates/kask_bridge/src/kask_bridge.rs:50-122`).
 `KaskSettings` contains the data and artifact roots plus 12 subsystem sections:
 `general`, `mcp`, `curator`, `memory`, `condenser`, `research`,
 `corpus`, `scenarios`, `prediction_markets`, `media`, `models`, and
-`private_inference` (`kask/crates/kask_bridge/src/settings.rs:35-104`).
+`private_inference` (`kask/crates/kask_bridge/src/settings.rs:35-90`).
 
 ```mermaid
 classDiagram
@@ -85,7 +85,7 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-BRIDGE-003
 verified_date: 2026-10-28
-verified_against: kask/crates/kask_bridge/src/settings.rs:35-104 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs media + Default; settings.rs models + Default; settings.rs private_inference + Default
+verified_against: kask/crates/kask_bridge/src/settings.rs:35-90 (KaskSettings); settings.rs general + Default; settings.rs mcp + Default; settings.rs media + Default; settings.rs models + Default; settings.rs private_inference + Default
 status: VERIFIED
 -->
 
@@ -107,7 +107,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:336-357` |
 | `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:405-440` |
 | `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:472-569` |
-| `KaskPrivateInferenceSettings` | provider id `private-local`; host 127.0.0.1; port 8010 (host/port from `PlacementPolicy::default()`) | `kask/crates/kask_bridge/src/settings.rs:598-632` |
+| `KaskPrivateInferenceSettings` | private-thread disabled servers `media`, `corpus`; local private-memory models `ollama/qwen3-embedding:0.6b`, `ollama/qwen3.5:4b`, `ollama/qwen3-reranker-4b:latest` | `kask/crates/kask_bridge/src/settings.rs:562-632` |
 
 ## Built-in MCP registry
 

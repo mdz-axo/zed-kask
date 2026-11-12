@@ -322,6 +322,26 @@ pub(crate) fn set_auto_compact_settings(
     AgentSettings::override_global(settings, cx);
 }
 
+/// zed-kask: D100 — register a fake provider under Zed's Ollama provider id
+/// and return it. A privacy-marked thread runs only models from the fixed
+/// local set (`settings::PRIVATE_THREAD_LOCAL_PROVIDERS`), and no setting
+/// widens it, so a test whose marked thread must actually run a turn
+/// serves it from this provider. Shared with thread.rs's test module.
+pub(crate) fn register_local_fake_provider(
+    cx: &mut TestAppContext,
+) -> Arc<FakeLanguageModelProvider> {
+    let provider = Arc::new(FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("ollama".to_string()),
+        LanguageModelProviderName::from("Ollama".to_string()),
+    ));
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+        });
+    });
+    provider
+}
+
 /// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
 /// variant exposed to the model as `terminal`. Tests that register
 /// `TerminalTool` directly need this because the sandboxing feature flag is
@@ -5587,31 +5607,18 @@ async fn test_context_server_tools_remain_cross_domain(cx: &mut TestAppContext) 
 /// Pinned end-to-end through the turn's offered tool names.
 #[gpui::test]
 async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
-    use gpui::UpdateGlobal as _;
-
     let ThreadTest {
-        fake,
-        model,
         thread,
         context_server_store,
         ..
     } = setup_thread_test_with_test_profile(cx).await;
 
-    // The fake provider serves as this test's local leg, so the marked
-    // thread keeps its model and turns actually run (the request-gate
-    // semantics are pinned separately in thread.rs).
-    cx.update(|cx| {
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings
-                    .kask
-                    .get_or_insert_default()
-                    .private_inference
-                    .get_or_insert_default()
-                    .local_provider_ids = Some(vec!["fake".to_string()]);
-            });
-        });
-    });
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the request-gate semantics
+    // are pinned separately in thread.rs).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
 
     let _media_calls = setup_context_server(
         "media",
@@ -5682,32 +5689,18 @@ async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContex
 /// `kask_server_tool_refuses_private_provenance_on_disabled_servers`).
 #[gpui::test]
 async fn corpus_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
-    use gpui::UpdateGlobal as _;
-
     let ThreadTest {
-        fake,
-        model,
         thread,
         context_server_store,
         ..
     } = setup_thread_test_with_test_profile(cx).await;
 
-    // The fake provider serves as this test's local leg, so the marked
-    // thread keeps its model and turns actually run (the media pin's
-    // pattern; the request-gate semantics are pinned separately in
-    // thread.rs).
-    cx.update(|cx| {
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings
-                    .kask
-                    .get_or_insert_default()
-                    .private_inference
-                    .get_or_insert_default()
-                    .local_provider_ids = Some(vec!["fake".to_string()]);
-            });
-        });
-    });
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the media pin's pattern;
+    // the request-gate semantics are pinned separately in thread.rs).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
 
     let _corpus_calls = setup_context_server(
         "corpus",
@@ -5780,32 +5773,19 @@ async fn corpus_server_tools_are_absent_on_private_threads(cx: &mut TestAppConte
 /// `kask_server_tool_refuses_private_provenance_on_disabled_servers`.
 #[gpui::test]
 async fn marking_mid_turn_re_scopes_the_running_turns_tool_map(cx: &mut TestAppContext) {
-    use gpui::UpdateGlobal as _;
-
     let ThreadTest {
-        fake,
-        model,
         thread,
         context_server_store,
         ..
     } = setup_thread_test_with_test_profile(cx).await;
 
-    // The fake provider is the local leg (the perimeter pin's pattern),
+    // A local provider serves the thread (the perimeter pin's pattern),
     // so the mid-turn mark does NOT clear the held model and the turn
     // keeps iterating — the request-gate arms are pinned separately in
     // thread.rs.
-    cx.update(|cx| {
-        settings::SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings(cx, |settings| {
-                settings
-                    .kask
-                    .get_or_insert_default()
-                    .private_inference
-                    .get_or_insert_default()
-                    .local_provider_ids = Some(vec!["fake".to_string()]);
-            });
-        });
-    });
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
 
     let _media_calls = setup_context_server(
         "media",

@@ -160,15 +160,37 @@ enum CompatibleProviderKind {
     Anthropic,
 }
 
+/// zed-kask: D100 — a compatible-provider entry may not take the id of a
+/// provider that serves privacy-marked threads. The registry has a single
+/// provider ID namespace and a later registration replaces an earlier one,
+/// so an entry named `ollama` or `llama.cpp` would replace the built-in
+/// local provider with an endpoint of the user's choosing — and a private
+/// thread admits models by provider id. Such an entry is ignored, with a
+/// warning naming it.
+fn shadows_private_thread_provider(id: &str, section: &str) -> bool {
+    let shadows = ::settings::PRIVATE_THREAD_LOCAL_PROVIDERS.contains(&id);
+    if shadows {
+        log::warn!(
+            "ignoring `{section}` provider `{id}`: the name is reserved for the \
+             built-in local provider that serves private threads"
+        );
+    }
+    shadows
+}
+
 impl CompatibleProviders {
     fn from_settings(cx: &App) -> Self {
         let settings = AllLanguageModelSettings::get_global(cx);
         let mut providers: HashMap<Arc<str>, CompatibleProviderKind> = settings
             .openai_compatible
             .keys()
+            .filter(|id| !shadows_private_thread_provider(id, "openai_compatible"))
             .map(|id| (id.clone(), CompatibleProviderKind::OpenAi))
             .collect();
         for id in settings.anthropic_compatible.keys() {
+            if shadows_private_thread_provider(id, "anthropic_compatible") {
+                continue;
+            }
             // The registry has a single provider ID namespace, so a name can
             // only refer to one provider. OpenAI-compatible entries win
             // collisions because they predate Anthropic-compatible ones, so
@@ -505,6 +527,33 @@ mod tests {
             .filter(|provider| provider.id().0.as_ref() == id)
             .map(|provider| provider.icon())
             .collect()
+    }
+
+    /// zed-kask: D100 — a compatible entry cannot take a private-thread
+    /// provider's id. Entries named `ollama` or `llama.cpp` in either
+    /// section are dropped before registration, so they never replace the
+    /// built-in local providers; other entries are unaffected.
+    #[gpui::test]
+    fn test_compatible_entries_cannot_shadow_private_thread_providers(cx: &mut App) {
+        let (_client, _credentials_provider) = init_test(cx);
+        let providers =
+            update_compatible_provider_settings(&["ollama", "acme"], &["llama.cpp", "zeta"], cx);
+        for reserved in ["ollama", "llama.cpp"] {
+            assert!(
+                !providers.0.contains_key(reserved),
+                "a compatible entry named `{reserved}` is dropped"
+            );
+        }
+        assert_eq!(
+            providers.0.get("acme"),
+            Some(&CompatibleProviderKind::OpenAi),
+            "an ordinary openai_compatible entry still registers"
+        );
+        assert_eq!(
+            providers.0.get("zeta"),
+            Some(&CompatibleProviderKind::Anthropic),
+            "an ordinary anthropic_compatible entry still registers"
+        );
     }
 
     #[gpui::test]

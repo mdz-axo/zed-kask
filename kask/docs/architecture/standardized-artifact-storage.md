@@ -204,8 +204,6 @@ status: VERIFIED
 | User agent files | `{data_dir}` | `agents/{agent_name}/` | `agent_name` via `sanitize_name()`; DB file is `{agent_name}.db` (e.g., `agents/curator/curator.db`); memory DB is `memory.db` | `agent_dir(name)` (`agent_paths.rs:159`) + `agent_db(name)` (`agent_paths.rs:227`) |
 | Archived chat threads | `{data_dir}` | `threads/` | files: `threads.db` (SQLite) | `resolve_under_data_dir(Path::new("threads/threads.db"))` |
 | User-facing MCP outputs | `{artifacts_dir}` | `{server}-mcp/{artifact-type}/` | readable purpose names such as `reports`, `transactions`, `cache`, `generated`, `workbooks` | `resolve_under_artifacts_dir(mcp_artifacts_subdir(server_id, artifact_type))` (`agent_paths.rs:154-156,211`) |
-| Core shared-service data artifacts (private-inference) | `{artifacts_dir}` | `private-inference/{artifact-type}/` | artifact types: `models/` (local weights — high-churn data artifacts, byte-verified vs upstream listings), `measurements/` (the measurement record + pinned instrument) | P1 wiring: `resolve_under_artifacts_dir(Path::new("private-inference/{artifact-type}/"))` — the helper exists (`agent_paths.rs:152`); the private-inference call site is proposed with the wrapper launcher |
-| Core shared-service engine install (private-inference) | `{data_dir}` | `private-inference/engine/` | pinned upstream engine clone + builds (llama.cpp `9e2a04a`; CPU/Vulkan/HIP); the pin lives in-tree at `kask/registry/private-inference/` | P1 wiring: `resolve_under_data_dir(Path::new("private-inference/engine/"))` — the helper exists (`agent_paths.rs:99`); the private-inference call site is proposed with the wrapper launcher |
 
 ## 3. Ownership principle
 

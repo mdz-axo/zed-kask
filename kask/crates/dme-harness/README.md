@@ -10,10 +10,10 @@ one direction, subtracted from 64 output columns per layer of Qwen3.5-0.8B,
 
 | mode | what it does |
 |---|---|
-| `probe` | measurement leg: N GSM8K-train problems under a card-anchored config, served through the CANONICAL route (the L4 supervisor launches the fleet model per the L1 manifest; completions ride the M3 endpoint semantics with per-row sampling-parity verification), emitted as archived-schema JSONL rows + stage summary |
-| `capture` | localization leg (the `engine` feature): per-layer activation captures — `l_out-N` / `ffn_out-N` (n_embd-wide) and the gated-activation sites feeding `ffn_down` (`ffn_swiglu-N` — Qwen3.5's fused path — `ffn_silu-N`, `ffn_silu_clamped-N`, n_ff-wide) |
+| `probe` | measurement leg: N GSM8K-train problems under a card-anchored config, against a llama.cpp server you run (bound to the GGUF by path; per-row sampling-parity verification), emitted as archived-schema JSONL rows + stage summary |
+| `contrast` | the contrast-u leg (pure math, engine-free): a failing/progressing capture pair -> per-layer `u-{L}.f32`, the swiglu column ranking `ranked-{L}.txt`, and the S-mass margin receipt |
 | `convert` | embedding-to-edit bridge (pure math, engine-free): embedder vectors + capture manifests -> `u.f32` / `k.f32` / `covdiag.f32` + a sha256-bound manifest + the edit spec; the explicit column-list trigger (corrective phase S2) round-trips a ranked column list into the sha-bound `columns.txt` + the `columns` spec instead; the manifest states the DME-2 projection (`projected_weights_touched`, `projected_edited_share` from the config's `total_weights`); the pre-emit lisp gate (`gates/pre-emit.lisp`) runs over the manifest at decision time |
-| `edit` | direction-subtraction edit on a GGUF copy through the shared GGUF writer (Q8_0 minimal-collateral codec; F16/BF16 direct half arithmetic) + edit receipt |
+| `edit` | direction-subtraction edit on a GGUF copy through the GGUF writer (Q8_0 minimal-collateral codec; F16/BF16 direct half arithmetic) + edit receipt |
 | `gguf-info` | GGUF metadata/tensor dump + sha256 |
 | `summary` | recompute a stage summary from a JSONL |
 
@@ -30,41 +30,46 @@ indicator special case), `dense` (the per-column weight file k, optional
 covdiag whitening), and `columns` (the sha-bound explicit column list —
 k = indicator(S), the paper-faithful mechanism).
 
-## The routes (no parallel infrastructure)
+## The routes
 
-- **Probe** consumes the private-inference stack (`hkask-private-inference`):
-  the L4 supervisor launches the fleet model, the plan is compiled from the
-  L1 manifest + L3 placement, and the completions go to
-  `LaunchPlan::endpoint()` with the M3 request shape. Default build — no
-  in-process engine needed.
-- **Capture** builds the PINNED CANONICAL SOURCE via the in-repo
-  llama-cpp-sys-4 fork (`kask/crates/llama-cpp-sys-4`, wired by the
-  workspace's `[patch.crates-io]`): the published sys crate ships a
-  vendored llama.cpp at an unpinned commit and its prebuilt route fails
-  closed (`LLAMA_PREBUILT_DIR ... cannot be verified against the active
-  llama.cpp patches`) while the decode-hooks patch is staged — so the fork
-  takes the source as an env and copies + patches + cmakes the pin
-  (commit 9e2a04a) inside its own OUT_DIR: pin-exact, patched, no second
-  engine tree, the shared build-hip untouched:
+The harness links no inference engine and launches no server.
+
+- **Probe** talks to a llama.cpp server you start yourself. Its slot
+  context must hold the generation cap plus 4,096 prompt tokens, and the
+  server must have loaded the same file you pass as `--gguf` — the probe
+  refuses otherwise, because the rows carry that file's sha256:
   ```
-  LLAMA_CPP_SRC_DIR=$HOME/Documents/zk-data/private-inference/engines/llama-cpp-mainline \
-    cargo build -p dme-harness --release --features engine
+  llama-server -m /path/to/model.gguf -c 8192 -np 1 --port 8080
+  dme-harness probe --gguf /path/to/model.gguf --endpoint http://127.0.0.1:8080 \
+    --config config-B.json --problems gsm8k-train.jsonl --out rows.jsonl
   ```
-- **Edit** and **gguf-info** consume the shared GGUF component
-  (`hkask_private_inference::local_leg::{gguf, gguf_writer}`) — this crate
-  carries no parser and no codec of its own.
+  The probe uses llama-server's native `/props`, `/apply-template` and
+  `/completion` routes; Ollama does not serve them. If the server was
+  started with an API key, export it as `LLAMA_API_KEY`.
+- **Edit** and **gguf-info** use the crate's own GGUF reader and writer
+  (`src/gguf.rs`, `src/gguf_writer.rs`; single-file GGUFs).
+- **Contrast** and **convert** read activation-capture sets
+  (`manifest.jsonl` plus per-site `.f32` files). This crate no longer
+  produces captures: the in-process capture and embedding legs were
+  removed with the vendored llama.cpp binding (2026-11-11), so new
+  capture sets must come from another tool.
 
 ## Build
 
-Default (probe / edit / gguf-info / summary): `cargo build -p dme-harness --release`
+`cargo build -p dme-harness --release`
 
-With the capture engine (see LLAMA_CPP_SRC_DIR above):
-`cargo build -p dme-harness --release --features engine`
+The live GGUF gates run against real artifacts when
+`DME_HARNESS_ARTIFACT_DIR` names the directory holding
+`Qwen3.5-0.8B-BF16.gguf` and `Qwen3.5-0.8B-Q8_0.gguf`, and skip otherwise:
+`DME_HARNESS_ARTIFACT_DIR=/path/to/dir cargo test -p dme-harness --test live_gguf_writer_gates -- --nocapture`
 
 ## The receipts' contract
 
 Rows follow the archived instrument's JSONL schema verbatim (all archived
 keys, none renamed or dropped) plus additive instrument keys only:
 `harness`, `backend`, `gguf_sha256`, `penalty_last_n`, `n_ctx`,
-`engine_version`, `server_generation_settings` (the sampling-parity
-receipt — every knob verified against the server's echo, per row).
+`engine_version` (the server's `build_info`), `server_generation_settings`
+(the sampling-parity receipt — every knob verified against the server's
+echo, per row). The archived `device` and `threads` keys read `"server"`
+and `0`: placement belongs to the server you started, and the harness
+cannot observe it.

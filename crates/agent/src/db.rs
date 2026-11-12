@@ -88,11 +88,9 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
-    /// zed-kask: D100 (Seam A) — this thread is privacy-marked for private
-    /// inference routing (FR-3, private-inference requirements D-2): its
-    /// inference resolves only to the private leg (`kask.private_inference`),
-    /// and content it produces carries the private-inference provenance mark
-    /// at ingest (FR-4). Serialized in the D28 metadata blob; a legacy blob
+    /// zed-kask: D100 (Seam A) — this thread is privacy-marked: its
+    /// inference resolves only to a local Ollama or llama.cpp model, and
+    /// content it produces carries the private provenance mark at ingest. Serialized in the D28 metadata blob; a legacy blob
     /// without the field reads as unmarked — threads written before D100
     /// existed were never marked, so the default is honest history, not a
     /// fail-open (the routing gate fails closed on load).

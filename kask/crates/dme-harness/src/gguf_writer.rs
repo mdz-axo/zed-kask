@@ -1,4 +1,4 @@
-//! The shared GGUF writer — spike 2's proven byte-exact patch primitive
+//! The GGUF writer — spike 2's proven byte-exact patch primitive
 //! plus the block codecs the edit leg needs (Q8_0, F16, BF16, F32) and the
 //! strided-column addressing of the DME anchor surface.
 //!
@@ -31,19 +31,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use super::gguf::{GGML_BF16, GGML_F16, GGML_F32, GGML_Q8_0, GgufError, GgufMeta, GgufTensor};
+use crate::gguf::{
+    self, GGML_BF16, GGML_F16, GGML_F32, GGML_Q8_0, GgufError, GgufMeta, GgufTensor,
+};
 
 impl GgufTensor {
     /// Exact byte length of the tensor's data region, from the reader's
-    /// one exact-size table (local_leg::gguf::exact_nbytes). Unsupported
+    /// one exact-size table (`gguf::exact_nbytes`). Unsupported
     /// storage types fail loudly — the writer never approximates a size.
     pub fn nbytes(&self) -> Result<u64, GgufError> {
-        super::gguf::exact_nbytes(self.ggml_type, self.nelements()).ok_or(
-            GgufError::UnsupportedType {
-                ty: self.ggml_type,
-                op: "nbytes",
-            },
-        )
+        gguf::exact_nbytes(self.ggml_type, self.nelements()).ok_or(GgufError::UnsupportedType {
+            ty: self.ggml_type,
+            op: "nbytes",
+        })
     }
 }
 
@@ -550,7 +550,7 @@ fn rel_l2(a: &[f32], b: &[f32]) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::local_leg::gguf::type_name;
+    use crate::gguf::type_name;
 
     #[test]
     fn q8_requant_idempotent() {

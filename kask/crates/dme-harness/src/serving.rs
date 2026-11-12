@@ -1,53 +1,51 @@
-//! The canonical serving route (P4) — the DME probe leg's ONE route.
+//! The serving route — the DME probe leg's ONE route.
 //!
-//! The L4 supervisor launches the canonical llama.cpp build per the L1
-//! manifest (fleet resolution → GGUF parse → hardware probe → the
-//! guard-verified LaunchPlan → startup probe → spawn → health-wait),
-//! and the completions ride the M3 `openai_compatible` semantics
-//! directly against `LaunchPlan::endpoint()`: `/apply-template` renders
-//! the GGUF's own chat template with `chat_template_kwargs`
-//! (`enable_thinking` — the DME-0 mechanism), `/completion` runs the
-//! pinned sampling contract. The request shape is the same semantics
-//! `kask_bridge/src/inference_providers.rs` routes for Zed; the bridge
-//! crate itself is gpui-coupled and is NOT linked here.
+//! The harness launches nothing. The operator runs a llama.cpp server
+//! (`llama-server -m <gguf> -c <n_ctx>`) and the probe connects to it:
+//! `GET /props` yields the receipts (the server's build, the model it
+//! loaded, the slot context), `/apply-template` renders the GGUF's own
+//! chat template with `chat_template_kwargs` (`enable_thinking` — the
+//! DME-0 mechanism), and `/completion` runs the pinned sampling contract.
 //!
-//! Sampling parity (the P4 gate): every knob — temperature, top_p,
-//! top_k, min_p, presence_penalty, repeat_penalty, seed, n_predict,
-//! repeat_last_n — is verified PER ROW against the server's
-//! `generation_settings` echo. A missing or mismatched knob is a typed
-//! failure naming it, never an approximation.
+//! Artifact binding: the rows carry the sha256 of the GGUF named on the
+//! command line, so the connect step refuses a server whose loaded
+//! `model_path` is a different file. A router-mode server (no single
+//! loaded model) is refused for the same reason.
+//!
+//! Sampling parity: every knob — temperature, top_p, top_k, min_p,
+//! presence_penalty, repeat_penalty, seed, n_predict, repeat_last_n — is
+//! verified PER ROW against the server's `generation_settings` echo. A
+//! missing or mismatched knob is a typed failure naming it, never an
+//! approximation.
 
-use std::io::Read as _;
 use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use hkask_private_inference::local_leg::placement::{GpuBackend, PlacementPolicy, probe_backend};
-use hkask_private_inference::local_leg::supervisor::{LaunchConfig, Supervisor, prepare_launch};
-use hkask_types::agent_paths::{resolve_under_artifacts_dir, resolve_under_data_dir};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-/// A running canonical server: the endpoint, the route client, and the
-/// runtime that keeps the supervisor's watch task alive. Dropping the
-/// struct drops the runtime (the watch task dies with it); call
-/// [`Serving::stop`] for the ordered drain (SIGTERM → wait → SIGKILL).
+/// The environment variable carrying the server's API key, when the
+/// server was started with one (llama-server's own variable name). The
+/// key reaches the harness from the environment, never argv.
+pub const API_KEY_ENV: &str = "LLAMA_API_KEY";
+
+/// A connected llama.cpp server and the receipts read from its `/props`.
 pub struct Serving {
+    /// The server's model alias.
     pub model_id: String,
+    /// The server's base URL.
     pub endpoint: String,
-    pub base: String,
-    /// The serving engine's `--version` line — the pin receipt.
+    /// The server's `build_info` — the engine receipt on every row.
     pub engine_version: String,
-    /// The rendered LaunchPlan — the exact argv the supervisor spawned.
-    pub launch_plan: String,
-    runtime: tokio::runtime::Runtime,
-    supervisor: Supervisor,
-    token: String,
+    /// The per-slot context length the server runs.
+    pub n_ctx: u32,
+    token: Option<String>,
     client: reqwest::blocking::Client,
 }
 
-/// The pinned sampling contract for one completion (the M3 route
-/// semantics; the field names are the server's own).
+/// The pinned sampling contract for one completion (the field names are
+/// the server's own).
 #[derive(Debug, Clone, Serialize)]
 pub struct CompletionRequest {
     pub prompt: String,
@@ -74,87 +72,101 @@ pub struct CompletionResponse {
     pub generation_settings: Value,
 }
 
-impl Serving {
-    /// Launch a fleet model through the supervisor (the canonical
-    /// route — no hand-spawned servers, no ad-hoc flags: the plan is
-    /// compiled from the L1 manifest, the L3 placement and the policy).
-    pub fn launch(model_id: &str, policy: PlacementPolicy) -> Result<Self> {
-        let backend = probe_backend();
-        let binary = match backend {
-            GpuBackend::Hip { binary } | GpuBackend::Vulkan { binary } => binary,
-            GpuBackend::None => bail!(
-                "no canonical llama.cpp build under the engine root — build it via \
-                 kask/scripts/build-llamacpp-mainline.sh (the L4 supervisor refuses \
-                 to launch anything else)"
-            ),
-        };
-        let token = mint_token()?;
-        let config = LaunchConfig {
-            model_id: model_id.to_string(),
-            binary: binary.clone(),
-            api_key: Some(token.clone()),
-            // The harness's own machine-state subtree — separate from the
-            // bridge's (different launch records, different policy port:
-            // never the PI page's slot).
-            state_dir: resolve_under_data_dir(Path::new("private-inference/dme-harness")),
-            models_root: resolve_under_artifacts_dir(Path::new("private-inference/models")),
-            briefs_dir: resolve_under_artifacts_dir(Path::new("private-inference/model-briefs")),
-            policy,
-        };
-        let prepared = prepare_launch(&config)
-            .with_context(|| format!("prepare the canonical launch of `{model_id}`"))?;
-        let launch_plan = prepared.plan.to_string();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("build the serving runtime")?;
-        let supervisor = Supervisor::default();
-        // prepare + spawn + health-wait (bounded by the measured 20-minute
-        // load bound inside the supervisor).
-        let snapshot = runtime
-            .block_on(supervisor.launch_prepared(config, &prepared))
-            .with_context(|| format!("launch `{model_id}` on the canonical route"))?;
-        let engine_version = probe_version_line(&binary)?;
-        let endpoint = snapshot.endpoint.clone();
-        let base = endpoint
-            .strip_suffix("/v1")
+/// The receipts a `/props` body must carry.
+#[derive(Debug, PartialEq)]
+struct ServerProps {
+    build_info: String,
+    model_alias: String,
+    model_path: String,
+    n_ctx: u32,
+}
+
+/// Read the receipts out of a `/props` body. Every field is required: a
+/// server that does not report one cannot be bound to a receipt.
+fn parse_props(props: &Value) -> Result<ServerProps> {
+    let text = |key: &str| -> Result<String> {
+        props[key]
+            .as_str()
             .map(str::to_string)
-            .unwrap_or_else(|| endpoint.clone());
+            .with_context(|| format!("the /props response carries `{key}`"))
+    };
+    let n_ctx = props["default_generation_settings"]["n_ctx"]
+        .as_u64()
+        .context("the /props response carries default_generation_settings.n_ctx")?;
+    Ok(ServerProps {
+        build_info: text("build_info")?,
+        model_alias: text("model_alias")?,
+        model_path: text("model_path")?,
+        n_ctx: u32::try_from(n_ctx).context("the server's n_ctx fits in u32")?,
+    })
+}
+
+/// Refuse a server whose loaded model is not the artifact the rows will
+/// hash. Paths compare canonicalized, so a symlinked or relative spelling
+/// of the same file passes.
+fn verify_served_artifact(served: &str, artifact: &Path) -> Result<()> {
+    if served.is_empty() || served == "none" {
+        bail!(
+            "the server reports no single loaded model (router mode) — start \
+             it with `-m {}` so the rows' sha256 names the model that answered",
+            artifact.display()
+        );
+    }
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    if canonical(Path::new(served)) != canonical(artifact) {
+        bail!(
+            "the server loaded `{served}` but the probe was given `{}` — the \
+             rows would hash a model that did not answer",
+            artifact.display()
+        );
+    }
+    Ok(())
+}
+
+impl Serving {
+    /// Connect to a running llama.cpp server and bind it to `artifact`,
+    /// the GGUF the rows' sha256 is taken from.
+    pub fn connect(endpoint: &str, artifact: &Path) -> Result<Self> {
+        let endpoint = endpoint.trim_end_matches('/').to_string();
         let client = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5400))
             .build()
             .context("build the route client")?;
+        let token = std::env::var(API_KEY_ENV).ok().filter(|t| !t.is_empty());
+        let url = format!("{endpoint}/props");
+        let mut request = client.get(&url);
+        if let Some(token) = &token {
+            request = request.bearer_auth(token);
+        }
+        let resp = request
+            .send()
+            .with_context(|| format!("GET {url} — is a llama.cpp server running at {endpoint}?"))?;
+        let status = resp.status();
+        let body: Value = resp
+            .json()
+            .with_context(|| format!("read the {url} body"))?;
+        if !status.is_success() {
+            bail!("GET {url} -> HTTP {status}: {body}");
+        }
+        let props = parse_props(&body)?;
+        verify_served_artifact(&props.model_path, artifact)?;
         Ok(Self {
-            model_id: snapshot.model_id,
+            model_id: props.model_alias,
             endpoint,
-            base,
-            engine_version,
-            launch_plan,
-            runtime,
-            supervisor,
+            engine_version: props.build_info,
+            n_ctx: props.n_ctx,
             token,
             client,
         })
     }
 
-    /// The ordered drain: SIGTERM → wait → SIGKILL (the supervisor's
-    /// stop path — no orphan servers after a leg).
-    pub fn stop(self) -> Result<()> {
-        let supervisor = self.supervisor;
-        self.runtime
-            .block_on(supervisor.stop())
-            .context("stop the canonical server")
-    }
-
     fn post(&self, path: &str, body: &Value) -> Result<Value> {
-        let url = format!("{}{path}", self.base);
-        let resp = self
-            .client
-            .post(&url)
-            .bearer_auth(&self.token)
-            .json(body)
-            .send()
-            .with_context(|| format!("POST {url}"))?;
+        let url = format!("{}{path}", self.endpoint);
+        let mut request = self.client.post(&url).json(body);
+        if let Some(token) = &self.token {
+            request = request.bearer_auth(token);
+        }
+        let resp = request.send().with_context(|| format!("POST {url}"))?;
         let status = resp.status();
         let body: Value = resp
             .json()
@@ -201,9 +213,9 @@ impl Serving {
     }
 }
 
-/// Verify every sampling knob against the server's echo — the P4 gate,
-/// applied per row. A missing knob is named as missing; a mismatched
-/// knob is named with both values. Never an approximation.
+/// Verify every sampling knob against the server's echo, per row. A
+/// missing knob is named as missing; a mismatched knob is named with
+/// both values. Never an approximation.
 pub fn verify_sampling_parity(req: &CompletionRequest, echo: &Value) -> Result<()> {
     let knobs: [(&str, Value); 9] = [
         ("temperature", json!(req.temperature)),
@@ -249,35 +261,111 @@ pub fn verify_sampling_parity(req: &CompletionRequest, echo: &Value) -> Result<(
     Ok(())
 }
 
-/// The engine's `--version` first line (the pin receipt on every row).
-fn probe_version_line(binary: &Path) -> Result<String> {
-    // One-shot CLI subprocess probe in a blocking harness — the async
-    // replacement exists for the UI process's threads, not this
-    // instrument (the ytdlp/ffmpeg detect-step precedent).
-    #[allow(clippy::disallowed_methods)]
-    let out = std::process::Command::new(binary)
-        .arg("--version")
-        .output()
-        .with_context(|| format!("probe {binary:?} --version"))?;
-    let text =
-        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
-    text.lines()
-        .find(|l| l.trim().starts_with("version:"))
-        .map(|l| l.trim().to_string())
-        .context("the engine binary prints a version line")
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_util::TempDir;
 
-/// Mint an endpoint token from the OS entropy pool — the supervisor's
-/// discipline: the token reaches the server from a 0600 file, never
-/// argv, and the requests carry it as the Bearer.
-fn mint_token() -> Result<String> {
-    let mut f = std::fs::File::open("/dev/urandom").context("open /dev/urandom")?;
-    let mut bytes = [0u8; 32];
-    f.read_exact(&mut bytes)
-        .context("read 32 bytes of entropy")?;
-    let mut s = String::with_capacity(64);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
+    fn request() -> CompletionRequest {
+        CompletionRequest {
+            prompt: "p".into(),
+            n_predict: 64,
+            temperature: 0.6,
+            top_p: 0.95,
+            top_k: 20,
+            min_p: 0.0,
+            presence_penalty: 1.5,
+            repeat_penalty: 1.0,
+            seed: 7,
+            repeat_last_n: 8192,
+        }
     }
-    Ok(s)
+
+    fn echo() -> Value {
+        json!({
+            "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+            "presence_penalty": 1.5, "repeat_penalty": 1.0, "seed": 7,
+            "n_predict": 64, "repeat_last_n": 8192
+        })
+    }
+
+    #[test]
+    fn parity_passes_on_a_matching_echo_and_names_each_failure() {
+        verify_sampling_parity(&request(), &echo()).expect("a matching echo passes");
+
+        let mut diverged = echo();
+        diverged["top_k"] = json!(40);
+        let err = verify_sampling_parity(&request(), &diverged)
+            .expect_err("a diverged knob fails")
+            .to_string();
+        assert!(err.contains("top_k: requested 20, echoed 40"), "{err}");
+
+        let mut dropped = echo();
+        dropped.as_object_mut().unwrap().remove("min_p");
+        let err = verify_sampling_parity(&request(), &dropped)
+            .expect_err("a missing knob fails")
+            .to_string();
+        assert!(
+            err.contains("missing knobs") && err.contains("min_p"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn props_parse_requires_every_receipt() {
+        let full = json!({
+            "build_info": "b1-9e2a04a",
+            "model_alias": "qwen35",
+            "model_path": "/m/q.gguf",
+            "default_generation_settings": { "n_ctx": 8192 }
+        });
+        assert_eq!(
+            parse_props(&full).expect("a full body parses"),
+            ServerProps {
+                build_info: "b1-9e2a04a".into(),
+                model_alias: "qwen35".into(),
+                model_path: "/m/q.gguf".into(),
+                n_ctx: 8192,
+            }
+        );
+        for key in ["build_info", "model_alias", "model_path"] {
+            let mut body = full.clone();
+            body.as_object_mut().unwrap().remove(key);
+            let err = parse_props(&body).expect_err("a missing receipt fails");
+            assert!(err.to_string().contains(key), "{err}");
+        }
+        let mut body = full;
+        body["default_generation_settings"] = json!({});
+        assert!(parse_props(&body).is_err(), "a missing n_ctx fails");
+    }
+
+    #[test]
+    fn a_server_serving_another_file_is_refused() {
+        let dir = TempDir::new("served-artifact");
+        let given = dir.path().join("given.gguf");
+        let other = dir.path().join("other.gguf");
+        std::fs::write(&given, b"a").unwrap();
+        std::fs::write(&other, b"b").unwrap();
+
+        verify_served_artifact(&given.display().to_string(), &given).expect("the same file passes");
+        // A different spelling of the same file passes (canonicalized).
+        let dotted = dir.path().join(".").join("given.gguf");
+        verify_served_artifact(&dotted.display().to_string(), &given)
+            .expect("an equivalent path passes");
+
+        let err = verify_served_artifact(&other.display().to_string(), &given)
+            .expect_err("another file is refused")
+            .to_string();
+        assert!(
+            err.contains("other.gguf") && err.contains("given.gguf"),
+            "{err}"
+        );
+
+        for router in ["none", ""] {
+            let err = verify_served_artifact(router, &given)
+                .expect_err("router mode is refused")
+                .to_string();
+            assert!(err.contains("router mode"), "{err}");
+        }
+    }
 }

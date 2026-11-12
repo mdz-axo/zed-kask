@@ -218,73 +218,29 @@ impl std::fmt::Display for NoModelConfiguredError {
 
 impl std::error::Error for NoModelConfiguredError {}
 
-// zed-kask: D100 (Seam A) — private-inference routing enforcement (FR-3,
-// private-inference requirements D-2). The thread's model IS the dispatch
-// decision, so the enforcement lives at the model-resolution points: the
-// storage gates (`set_model`, `set_summarization_model`, `from_db`'s
-// restore sanitize) and the request gate (`run_turn_internal`). The
-// policy home is the landed `kask.private_inference` settings section —
-// PI-owned, thread-unwritable (P4); a marked thread never widens its own
-// routing.
+// zed-kask: D100 (Seam A) — private-thread routing enforcement. The
+// thread's model IS the dispatch decision, so the enforcement lives at the
+// model-resolution points: the storage gates (`set_model`,
+// `set_summarization_model`, `from_db`'s restore sanitize) and the request
+// gate (`run_turn_internal`). A marked thread runs only models served by
+// Zed's built-in Ollama and llama.cpp providers; the set is fixed
+// (`settings::PRIVATE_THREAD_LOCAL_PROVIDERS`), so neither a thread nor a
+// setting widens it.
 
-/// zed-kask: D100 (operator ruling 2026-11-05) — the local-leg provider
-/// set a privacy-marked thread may run: the configured
-/// `kask.private_inference.provider_id` PLUS the settings-configured local
-/// providers (default: local ollama). Every member is local by
-/// construction — a marked thread runs models whose inference stays on
-/// this machine (the private leg or local ollama), never a cloud
-/// provider. With nothing configured, local ollama still serves (the
-/// default set); cloud providers are always refused (fail-closed).
-/// F1 (2026-11-08): since ollama >= 0.40 also serves cloud-proxied models
-/// under the local ollama provider, the set alone no longer suffices —
-/// the model-level `is_cloud_model_name` check
-/// ([`is_private_leg_model_id`]) closes that crossing.
-pub(crate) fn private_inference_local_providers(cx: &App) -> Vec<Arc<str>> {
-    let section = cx
-        .global::<settings::SettingsStore>()
-        .merged_settings()
-        .kask
-        .as_ref()
-        .and_then(|kask| kask.private_inference.as_ref());
-    match section {
-        Some(section) => section
-            .resolved_local_providers()
-            .into_iter()
-            .map(Arc::from)
-            .collect(),
-        None => settings::DEFAULT_LOCAL_PROVIDERS
-            .iter()
-            .map(|id| Arc::from(*id))
-            .collect(),
-    }
+/// D100 — may a privacy-marked thread run this model? The one admission
+/// decision lives in `settings::is_private_thread_local_model`: the
+/// provider is Zed's built-in Ollama or llama.cpp provider, and an Ollama
+/// cloud-proxied model (`ollama/glm-5.3:cloud`) is refused like any
+/// public provider.
+pub(crate) fn is_private_leg_model(model: &LanguageModel) -> bool {
+    is_private_leg_model_id(&model.provider_id.0, &model.id.0)
 }
 
-/// D100 — the private-leg predicate: a model is private-leg iff its
-/// provider is in the local-leg set (the configured private-inference
-/// provider or a local provider — ollama by default) AND the model is
-/// not a cloud entry. Cloud providers are never in the set (fail-closed);
-/// and since ollama >= 0.40 serves cloud-proxied models under the local
-/// ollama provider, the model-level [`is_cloud_model_name`] check closes
-/// that crossing (F1, 2026-11-08): `ollama/glm-5.3:cloud` is refused on
-/// a marked thread like any public provider.
-pub(crate) fn is_private_leg_model(model: &LanguageModel, cx: &App) -> bool {
-    is_private_leg_model_id(&model.provider_id.0, &model.id.0, cx)
-}
-
-/// D100/F1 — the provider-and-model form of the private-leg predicate,
-/// for surfaces that hold the pair as strings (the agent panel's model
-/// list, whose ids are `{provider}/{model}`).
-pub(crate) fn is_private_leg_model_id(provider_id: &str, model_name: &str, cx: &App) -> bool {
-    is_private_leg_provider(provider_id, cx) && !settings::is_ollama_cloud_model_name(model_name)
-}
-
-/// D100 — the provider-level form of the private-leg predicate, for
-/// surfaces that hold a provider id rather than a model (the agent
-/// panel's model list).
-pub(crate) fn is_private_leg_provider(provider_id: &str, cx: &App) -> bool {
-    private_inference_local_providers(cx)
-        .iter()
-        .any(|allowed| provider_id == allowed.as_ref())
+/// D100 — the provider-and-model form of the private-leg predicate, for
+/// surfaces that hold the pair as strings (the agent panel's model list,
+/// whose ids are `{provider}/{model}`).
+pub(crate) fn is_private_leg_model_id(provider_id: &str, model_name: &str) -> bool {
+    settings::is_private_thread_local_model(provider_id, model_name)
 }
 
 /// D100 (operator ruling 2026-11-05) — the PI-owned private-thread
@@ -324,9 +280,8 @@ pub(crate) fn server_disabled_on_private_threads(server_id: &str, cx: &App) -> b
 }
 
 /// D100 — returned when a privacy-marked thread would resolve or dispatch
-/// inference to a model outside the private inference leg. The request
-/// fails with this typed error; it never falls back to a public provider
-/// (FR-3(b)).
+/// inference to a model that is not served locally. The request fails
+/// with this typed error; it never falls back to a public provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateRoutingError {
     /// The refused model's provider.
@@ -339,9 +294,9 @@ impl std::fmt::Display for PrivateRoutingError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "private thread refused public model {}/{}: a privacy-marked \
-             thread routes only to the private inference leg \
-             (kask.private_inference)",
+            "private thread refused model {}/{}: a privacy-marked thread \
+             runs only local models served by Zed's Ollama or llama.cpp \
+             provider",
             self.provider_id, self.model_id
         )
     }
@@ -349,9 +304,9 @@ impl std::fmt::Display for PrivateRoutingError {
 
 impl std::error::Error for PrivateRoutingError {}
 
-/// D100 — returned when a privacy-marked thread has no resolvable
-/// private-leg model (the private leg unavailable): the turn fails with
-/// this typed error instead of falling back to a public default (FR-3).
+/// D100 — returned when a privacy-marked thread has no resolvable local
+/// model: the turn fails with this typed error instead of falling back
+/// to a public default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrivateModelUnavailableError;
 
@@ -359,9 +314,9 @@ impl std::fmt::Display for PrivateModelUnavailableError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "private thread has no private inference model available \
-             (kask.private_inference) — select a private-leg model; \
-             no public provider serves a privacy-marked thread"
+            "private thread has no local model selected — choose a model \
+             served by Zed's Ollama or llama.cpp provider; no public \
+             provider serves a privacy-marked thread"
         )
     }
 }
@@ -2179,8 +2134,8 @@ impl Thread {
         // thread never loads holding a public-leg model (a mark applied
         // after a public model was selected, a blob from before the gates
         // existed, or a hand-edited blob). The public model is dropped to
-        // `Unset`; the request path fails typed until a private-leg model
-        // is selected — never a public fallback. Pinned by
+        // `Unset`; the request path fails typed until a local model is
+        // selected — never a public fallback. Pinned by
         // `private_mark_round_trips_through_db` and
         // `a_marked_thread_never_loads_holding_a_public_model`.
         let mut kask = crate::kask_thread_state::KaskThreadState::new();
@@ -2188,12 +2143,12 @@ impl Thread {
             kask.set_private_inference(true);
         }
         let model = if kask.is_private_inference()
-            && matches!(&model, ThreadModel::Ready(m) if !is_private_leg_model(m, cx))
+            && matches!(&model, ThreadModel::Ready(m) if !is_private_leg_model(m))
         {
             log::warn!(
                 target: "agent.thread",
                 "private thread {} dropped restored public model at load — \
-                 the mark allows only the private inference leg",
+                 the mark allows only local Ollama or llama.cpp models",
                 id
             );
             ThreadModel::Unset
@@ -2520,16 +2475,16 @@ impl Thread {
 
     pub fn set_model(&mut self, model: LanguageModel, cx: &mut Context<Self>) {
         // zed-kask: D100 (Seam A) — the storage gate: a privacy-marked
-        // thread can never hold a model outside the private inference leg.
+        // thread can never hold a model that is not served locally.
         // The public model is refused — not stored, no `ModelChanged` — and
         // the attempt is logged; the turn path then fails typed
         // (`PrivateModelUnavailableError`) rather than dispatching. Pinned
         // by `private_thread_refuses_a_public_model_at_the_storage_gate`.
-        if self.kask.is_private_inference() && !is_private_leg_model(&model, cx) {
+        if self.kask.is_private_inference() && !is_private_leg_model(&model) {
             log::warn!(
                 target: "agent.thread",
-                "private thread {} refused public model {}/{} — only the private \
-                 inference leg (kask.private_inference) serves a marked thread",
+                "private thread {} refused public model {}/{} — only local \
+                 Ollama or llama.cpp models serve a marked thread",
                 self.id,
                 model.provider_id.0,
                 model.id.0
@@ -2561,13 +2516,12 @@ impl Thread {
     }
 
     /// zed-kask: D100 (Seam A) — mark or unmark this thread for private
-    /// inference routing (FR-3). The PI's surface (the thread-header
-    /// toggle) calls this; no agent-callable tool does (the rejected
-    /// unmark-tool register, D-3 §4 — unmarking widens exposure, so it
-    /// lives on PI-owned surfaces). Marking clears any held non-private-leg
+    /// inference routing. The PI's surface (the thread-header
+    /// toggle) calls this; no agent-callable tool does (unmarking widens
+    /// exposure, so it lives on PI-owned surfaces). Marking clears any held non-local
     /// model and summarization model — the storage gate could not have
     /// admitted them on a marked thread, and the request path then fails
-    /// typed (`PrivateModelUnavailableError`) until a private-leg model is
+    /// typed (`PrivateModelUnavailableError`) until a local model is
     /// selected: never a public fallback. Curator sessions mark and route
     /// identically (PI ruling 2026-10-30 — the enforcement reads this flag,
     /// never the agent identity). Pinned by
@@ -2583,7 +2537,7 @@ impl Thread {
 
         if private {
             if let Some(model) = self.model().cloned()
-                && !is_private_leg_model(&model, cx)
+                && !is_private_leg_model(&model)
             {
                 let old_usage = self.latest_token_usage();
                 self.model = ThreadModel::Unset;
@@ -2604,7 +2558,7 @@ impl Thread {
                 );
             }
             if let Some(model) = self.summarization_model.clone()
-                && !is_private_leg_model(&model, cx)
+                && !is_private_leg_model(&model)
             {
                 self.summarization_model = None;
                 log::warn!(
@@ -2663,13 +2617,13 @@ impl Thread {
         // zed-kask: D100 (Seam A) — the storage gate covers the
         // summarization slot too: title generation and summarization
         // dispatch thread content through this model, so a marked thread
-        // must never hold a public summarization model (FR-3's falsifier is
+        // must never hold a public summarization model (the falsifier is
         // any private-thread content reaching a public provider — this
         // path included). Pinned by
         // `private_thread_refuses_a_public_summarization_model`.
         if let Some(model) = model.as_ref()
             && self.kask.is_private_inference()
-            && !is_private_leg_model(model, cx)
+            && !is_private_leg_model(model)
         {
             log::warn!(
                 target: "agent.thread",
@@ -3245,8 +3199,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         // zed-kask: D100 (Seam A) — the turn-entry gate: a privacy-marked
-        // thread with no model fails with the private-leg named error, not
-        // the generic no-model error (FR-3(b): the operator must see the
+        // thread with no model fails with the private-thread named error,
+        // not the generic no-model error (the operator must see the
         // boundary, not a missing configuration). The request gate inside
         // run_turn_internal is the belt for paths that bypass this entry.
         // Pinned by `private_thread_turn_entry_fails_typed_with_no_model`.
@@ -3855,8 +3809,8 @@ impl Thread {
                     .or_else(|| this.model().cloned());
                 // zed-kask: D100 (Seam A) — the request gate: the last
                 // enforcement point before a provider request leaves the
-                // thread. A marked thread dispatches only to the private
-                // leg; with no private-leg model the turn fails typed
+                // thread. A marked thread dispatches only to a local
+                // model; with none selected the turn fails typed
                 // (`PrivateModelUnavailableError`) — never a public
                 // default. The refused-model arm is defense-in-depth: the
                 // storage gates and the mark-time clear make a held public
@@ -3865,7 +3819,7 @@ impl Thread {
                 // fails closed here instead of dispatching. Pinned by
                 // `private_thread_turn_fails_typed_with_no_public_dispatch`.
                 let model = match (this.kask.is_private_inference(), candidate) {
-                    (true, Some(model)) if !is_private_leg_model(&model, cx) => {
+                    (true, Some(model)) if !is_private_leg_model(&model) => {
                         return Err(anyhow!(PrivateRoutingError {
                             provider_id: model.provider_id.0.into(),
                             model_id: model.id.0.into(),
@@ -6869,10 +6823,10 @@ impl Thread {
         // registry global must not panic here; the thread's own model is
         // the documented fallback either way.
         // zed-kask: D100 (Seam A) — a privacy-marked thread compacts only
-        // on the private leg: the registry's global compaction model (a
+        // on its own local model: the registry's global compaction model (a
         // settings-set model that is public by default) is refused
-        // wholesale; the thread's own — gate-enforced private — model is
-        // the only compaction model a marked thread may use (FR-3's
+        // wholesale; the thread's own — gate-enforced local — model is
+        // the only compaction model a marked thread may use (the
         // falsifier is any private-thread content reaching a public
         // provider, and compaction dispatches thread content).
         if self.kask.is_private_inference() {
@@ -15669,34 +15623,18 @@ mod tests {
         );
     }
 
-    // ── zed-kask: D100 (Seam A) pins — private-inference routing ─────
+    // ── zed-kask: D100 (Seam A) pins — private-thread routing ────────
     //
-    // FR-3's oracle (private-inference requirements D-2, 2026-10-30): the
-    // global falsifier is private-thread content reaching any public
+    // The global falsifier is private-thread content reaching any public
     // provider, observed in any test or live session. These pins hold the
     // storage gate (model + summarization slots), the mark-time clear, the
     // turn-entry typed error, the D28 persistence round-trip, the
     // shared-thread round-trip, and the Curator parity ruling.
-
-    /// Set `kask.private_inference.provider_id` in the test's user settings
-    /// — the PI-owned policy home the gates read live. An id matching no
-    /// registered provider makes every model public (fail-closed); an id
-    /// matching the fake provider makes the fake private-leg.
-    fn set_private_inference_provider(cx: &mut TestAppContext, provider_id: &str) {
-        use gpui::UpdateGlobal as _;
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .private_inference
-                        .get_or_insert_default()
-                        .provider_id = Some(provider_id.to_string());
-                });
-            });
-        });
-    }
+    //
+    // The default test provider (`fake`) is not in the fixed local set, so
+    // its models stand in for public models; a test whose marked thread
+    // must run registers a fake under Zed's Ollama provider id
+    // (`register_local_fake_provider`).
 
     /// Falsifier (a), storage-gate leg: a privacy-marked thread can never
     /// hold a public model. Setting one before marking is accepted; the
@@ -15705,7 +15643,6 @@ mod tests {
     #[gpui::test]
     async fn private_thread_refuses_a_public_model_at_the_storage_gate(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "private-local");
         let model = fake.model("fake");
 
         cx.update(|cx| {
@@ -15737,13 +15674,13 @@ mod tests {
         });
     }
 
-    /// Falsifier (a), positive control: a marked thread turns on the
-    /// configured private leg — the gate must not over-block the PI's
-    /// stated use.
+    /// Falsifier (a), positive control: a marked thread turns on a model
+    /// served by Zed's Ollama provider — the gate must not over-block the
+    /// PI's stated use.
     #[gpui::test]
-    async fn private_thread_turns_on_the_configured_private_leg(cx: &mut TestAppContext) {
-        let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "fake");
+    async fn private_thread_turns_on_a_local_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream, _public) = setup_thread_for_test(cx).await;
+        let fake = crate::tests::register_local_fake_provider(cx);
         let model = fake.model("fake");
 
         let events = cx
@@ -15753,32 +15690,31 @@ mod tests {
                     thread.set_model(model.clone(), cx);
                     assert!(
                         thread.model().is_some(),
-                        "the private-leg model is accepted on a marked thread"
+                        "the local model is accepted on a marked thread"
                     );
                     thread.send(ClientUserMessageId::new(), vec!["hello"], cx)
                 })
             })
-            .expect("a marked thread with a private-leg model sends");
+            .expect("a marked thread with a local model sends");
         cx.run_until_parked();
 
         let request = fake
             .pending_completions_for(&model)
             .pop()
-            .expect("the turn dispatched to the private-leg provider");
+            .expect("the turn dispatched to the local provider");
         fake.send_text(&model, &request, "private reply");
         fake.end_stream(&model, &request);
         cx.run_until_parked();
         drop(events);
     }
 
-    /// FR-3(b): the unavailability path returns the typed, named error and
-    /// never a public fallback. A marked thread with no private-leg model
-    /// refuses the turn at entry with `PrivateModelUnavailableError` — the
-    /// registry's default (public) model is never consulted.
+    /// The unavailability path returns the typed, named error and never a
+    /// public fallback. A marked thread with no local model refuses the
+    /// turn at entry with `PrivateModelUnavailableError` — the registry's
+    /// default (public) model is never consulted.
     #[gpui::test]
     async fn private_thread_turn_entry_fails_typed_with_no_model(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "private-local");
 
         let send_result = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -15792,8 +15728,8 @@ mod tests {
         };
         let message = error.to_string();
         assert!(
-            message.contains("private inference model available"),
-            "the typed error names the private leg: {message}"
+            message.contains("no local model selected"),
+            "the typed error names what is missing: {message}"
         );
         assert!(
             message.contains("no public provider serves a privacy-marked thread"),
@@ -15812,7 +15748,6 @@ mod tests {
     #[gpui::test]
     async fn private_thread_refuses_a_public_summarization_model(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "private-local");
         let model = fake.model("fake");
 
         cx.update(|cx| {
@@ -15845,7 +15780,6 @@ mod tests {
     #[gpui::test]
     async fn curator_thread_marks_and_routes_identically(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "private-local");
         let model = fake.model("fake");
 
         cx.update(|cx| {
@@ -15865,15 +15799,14 @@ mod tests {
             });
         });
 
-        // The same Curator thread accepts the private-leg model once the
-        // policy allows it.
-        set_private_inference_provider(cx, "fake");
+        // The same marked Curator thread accepts a local model.
+        let local_model = crate::tests::register_local_fake_provider(cx).model("fake");
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.set_model(model.clone(), cx);
+                thread.set_model(local_model.clone(), cx);
                 assert!(
                     thread.model().is_some(),
-                    "a marked Curator thread runs on the private leg"
+                    "a marked Curator thread runs on a local model"
                 );
             });
         });
@@ -15955,7 +15888,6 @@ mod tests {
     #[gpui::test]
     async fn a_marked_thread_never_loads_holding_a_public_model(cx: &mut TestAppContext) {
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
-        set_private_inference_provider(cx, "private-local");
         let model = fake.model("fake");
 
         let fs = fs::FakeFs::new(cx.background_executor.clone());
@@ -15986,25 +15918,27 @@ mod tests {
         });
     }
 
-    /// D100 (operator ruling 2026-11-05): the local-leg SET — models on a
-    /// settings-listed local provider serve private threads even when the
-    /// private-inference provider id is not configured. `local_provider_ids`
-    /// names the fake provider; its models are private-leg.
+    /// D100 (operator ruling 2026-11-11): no setting widens the set. A
+    /// settings file that still carries the retired
+    /// `kask.private_inference` keys naming the fake provider — the keys
+    /// that used to admit a provider — loads without error and admits
+    /// nothing: the marked thread still refuses that provider's model.
     #[gpui::test]
-    async fn local_provider_set_extends_the_private_leg(cx: &mut TestAppContext) {
+    async fn no_setting_widens_the_private_thread_provider_set(cx: &mut TestAppContext) {
         use gpui::UpdateGlobal as _;
         let (thread, _event_stream, fake) = setup_thread_for_test(cx).await;
         cx.update(|cx| {
             settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .kask
-                        .get_or_insert_default()
-                        .private_inference
-                        .get_or_insert_default()
-                        // No provider_id — only the local set names a leg.
-                        .local_provider_ids = Some(vec!["fake".to_string()]);
-                });
+                store
+                    .set_user_settings(
+                        r#"{"kask": {"private_inference": {
+                            "provider_id": "fake",
+                            "local_provider_ids": ["fake"]
+                        }}}"#,
+                        cx,
+                    )
+                    .result()
+                    .expect("a settings file with the retired keys still loads");
             });
         });
         let model = fake.model("fake");
@@ -16014,17 +15948,17 @@ mod tests {
                 thread.set_private_inference(true, cx);
                 thread.set_model(model.clone(), cx);
                 assert!(
-                    thread.model().is_some(),
-                    "a local-listed provider's models serve a private thread \
-                     (the local-leg set, not just the configured provider)"
+                    thread.model().is_none(),
+                    "a provider named by the retired keys is still refused on \
+                     a marked thread"
                 );
             });
         });
     }
 
-    /// FR-3(c): the refusal text renders — a unit pin that the typed errors
-    /// name the refused model and the policy home, so the operator sees the
-    /// boundary, not a generic failure.
+    /// The refusal text renders — a unit pin that the typed errors name
+    /// the refused model and what a marked thread may run, so the operator
+    /// sees the boundary, not a generic failure.
     #[test]
     fn private_routing_errors_name_the_boundary() {
         let refused = PrivateRoutingError {
@@ -16037,14 +15971,14 @@ mod tests {
             "the refusal names the refused model: {text}"
         );
         assert!(
-            text.contains("kask.private_inference"),
-            "the refusal names the PI-owned policy home: {text}"
+            text.contains("Ollama or llama.cpp"),
+            "the refusal names what a marked thread may run: {text}"
         );
 
         let unavailable = PrivateModelUnavailableError.to_string();
         assert!(
-            unavailable.contains("kask.private_inference"),
-            "the unavailability error names the policy home: {unavailable}"
+            unavailable.contains("Ollama or llama.cpp"),
+            "the unavailability error names what to select: {unavailable}"
         );
         assert!(
             unavailable.contains("no public provider"),
@@ -16052,42 +15986,27 @@ mod tests {
         );
     }
 
-    /// F1 (2026-11-08): the private-leg predicate's decision table — ollama
-    /// cloud models are refused at the MODEL level while local ollama
-    /// models and the configured private leg stay admitted (the gate must
-    /// not over-block), and public providers stay refused as before. The
-    /// classifier itself lives in settings_content (the one home shared
-    /// with the bridge's local-model projections) and is pinned there.
-    #[gpui::test]
-    fn private_leg_predicate_refuses_ollama_cloud_models(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-        set_private_inference_provider(cx, "private-local");
-
-        cx.update(|cx| {
-            assert!(
-                !is_private_leg_model_id("ollama", "glm-5.3:cloud", cx),
-                "an ollama cloud model is not private-leg"
-            );
-            assert!(
-                !is_private_leg_model_id("ollama", "qwen3.5:397b-cloud", cx),
-                "the hyphenated cloud form is not private-leg"
-            );
-            assert!(
-                is_private_leg_model_id("ollama", "qwen3.5:4b", cx),
-                "a local ollama model stays private-leg"
-            );
-            assert!(
-                is_private_leg_model_id("private-local", "flint", cx),
-                "the configured private leg stays private-leg"
-            );
-            assert!(
-                !is_private_leg_model_id("openrouter", "z-ai/glm-5.3", cx),
-                "a public provider stays refused"
-            );
-        });
+    /// The thread-side predicate resolves through the one admission home
+    /// (`settings::is_private_thread_local_model`, whose full decision
+    /// table is pinned in settings_content): local Ollama and llama.cpp
+    /// models are admitted; an Ollama cloud model, the retired
+    /// `private-local` provider and a public provider are refused.
+    #[test]
+    fn private_leg_predicate_admits_only_local_ollama_and_llama_cpp() {
+        assert!(is_private_leg_model_id("ollama", "qwen3.5:4b"));
+        assert!(is_private_leg_model_id("llama.cpp", "qwen36-35b-a3b"));
+        assert!(
+            !is_private_leg_model_id("ollama", "glm-5.3:cloud"),
+            "an ollama cloud model is refused"
+        );
+        assert!(
+            !is_private_leg_model_id("private-local", "flint"),
+            "the retired kask provider is refused"
+        );
+        assert!(
+            !is_private_leg_model_id("openrouter", "z-ai/glm-5.3"),
+            "a public provider is refused"
+        );
     }
 
     #[gpui::test]

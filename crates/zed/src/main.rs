@@ -1390,12 +1390,6 @@ fn main() {
                 launch_pass_for_observer.clone(),
                 cx,
             );
-            // zed-kask: D9 (operator ruling 2026-11-08) — the private
-            // leg's provider entry is DERIVED state: the settings
-            // observer syncs it (compute, diff, write only when
-            // drifted — the MCP-runtime env-diff pattern). No button,
-            // no manual registration.
-            kask_bridge::private_inference_supervisor::sync_provider_entry(cx);
         })
         .detach();
 
@@ -2333,13 +2327,6 @@ fn main() {
                     }
                     agent::set_metacognition_provider(Some(std::sync::Arc::new(status_provider)));
 
-                    // zed-kask: D9/M7 (operator ruling 2026-11-08) — the
-                    // private leg's provider entry is DERIVED state: the
-                    // FIRST sync runs here (mint-if-absent token + compute,
-                    // diff, write-only-when-drifted), and the settings
-                    // observer re-syncs on every change — no button, no
-                    // manual registration, no hand-edit-wins residue.
-                    kask_bridge::private_inference_supervisor::sync_provider_entry(cx);
 
                     // zed-kask: D8 — algedonic alerts land on the "Algedonic
                     // review" kanban board through the same governed channel

@@ -1,7 +1,9 @@
-//! The live GGUF-component gates (P3 of the consolidation plan REV 2).
+//! The live GGUF reader/writer gates.
 //!
-//! Machine-gated receipts over the REAL DME artifacts (skip visibly, never
-//! pass silently, when the files are absent):
+//! Machine-gated receipts over the REAL DME artifacts. The directory
+//! holding them is named by `DME_HARNESS_ARTIFACT_DIR`; the test skips
+//! visibly (never passes silently) when the variable is unset or the
+//! files are absent:
 //!   1. byte-identity on re-parse — parse determinism, plus the writer's
 //!      no-edit round trip leaves the file byte-identical (sha256), plus
 //!      the alpha=0 strided edit on the real tensor bytes is byte-identical;
@@ -9,24 +11,42 @@
 //!   3. requant floor exactly 0.0 — requant(dequant(bytes)) == bytes on the
 //!      real Q8_0 tensor (ggml bit-compatibility).
 //!
-//! The patched-GGUF GENERATION smoke (load + short probe proves the edit
-//! is live) rides the canonical serving route — it runs with the harness
-//! migration (P4) and is reported at that gate.
+//! ```sh
+//! DME_HARNESS_ARTIFACT_DIR=/path/to/qwen35-0.8b \
+//!   cargo test -p dme-harness --test live_gguf_writer_gates -- --nocapture
+//! ```
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use hkask_private_inference::local_leg::gguf;
-use hkask_private_inference::local_leg::gguf_writer;
-use hkask_types::agent_paths::resolve_under_artifacts_dir;
+use dme_harness::{gguf, gguf_writer};
 
-/// The DME artifacts: the canonical models dir first (the P6 layout, one
-/// The DME artifacts — the canonical models dir, the ONE home (P6
-/// consolidated; the pre-consolidation locations are gone).
+const ARTIFACT_DIR_ENV: &str = "DME_HARNESS_ARTIFACT_DIR";
+
+/// A DME artifact under the directory `DME_HARNESS_ARTIFACT_DIR` names.
 fn dme_artifact(name: &str) -> Option<PathBuf> {
-    let path =
-        resolve_under_artifacts_dir(Path::new("private-inference/models/qwen35-0.8b")).join(name);
+    let dir = std::env::var_os(ARTIFACT_DIR_ENV)?;
+    let path = PathBuf::from(dir).join(name);
     path.is_file().then_some(path)
+}
+
+/// A scratch dir removed on drop (std-only — the harness carries no
+/// external dev-dependency).
+struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    fn new() -> Self {
+        let dir = std::env::temp_dir().join(format!("dme-live-gates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the scratch dir");
+        Self(dir)
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 const PARAM_COUNT_TARGET: u64 = 752_393_024;
@@ -34,7 +54,10 @@ const PARAM_COUNT_TARGET: u64 = 752_393_024;
 #[test]
 fn gguf_component_gates_on_the_real_dme_artifacts() {
     let Some(bf16) = dme_artifact("Qwen3.5-0.8B-BF16.gguf") else {
-        eprintln!("SKIP: the DME edit target Qwen3.5-0.8B-BF16.gguf is not on disk");
+        eprintln!(
+            "SKIP: the DME edit target Qwen3.5-0.8B-BF16.gguf was not found \
+             (set {ARTIFACT_DIR_ENV} to the directory holding it)"
+        );
         return;
     };
     let Some(q8) =
@@ -95,8 +118,8 @@ fn gguf_component_gates_on_the_real_dme_artifacts() {
     // --- gate 1c: the writer's no-edit write round-trip leaves the file
     //     byte-identical (a copy of the real artifact, one tensor written
     //     back unchanged) ---
-    let dir = tempfile::tempdir().expect("tempdir");
-    let copy = dir.path().join("roundtrip.gguf");
+    let scratch = ScratchDir::new();
+    let copy = scratch.0.join("roundtrip.gguf");
     std::fs::copy(&q8, &copy).expect("copy the smoke artifact");
     let before = gguf_writer::sha256_file(&copy).expect("sha256 before");
     let bytes = gguf_writer::read_tensor_bytes(&copy, &qmeta, t).expect("read from copy");

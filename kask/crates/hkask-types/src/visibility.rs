@@ -88,8 +88,8 @@ impl std::fmt::Display for Visibility {
 /// (the private-inference marking predicate, D-2 2026-10-30).
 ///
 /// `Visibility` answers WHO may see a record; this attribute answers
-/// WHERE it was produced — a thread routed to private inference (the
-/// local leg or the private cloud endpoint) marks its content so the
+/// WHERE it was produced — a privacy-marked thread (one that runs only
+/// local Ollama or llama.cpp models) marks its content so the
 /// per-surface filters (FR-4's recall/export blocks) and FR-3's routing
 /// enforcement can hold the line. The two axes compose; no parallel
 /// predicate exists (P5.5). Engine-independent: the mark travels with

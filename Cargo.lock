@@ -1977,8 +1977,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools 0.13.0",
- "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -4644,12 +4642,10 @@ name = "dme-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "hkask-private-inference",
- "hkask-types",
- "llama-cpp-4",
  "serde",
  "serde_json",
- "tokio",
+ "sha2 0.10.9",
+ "thiserror 2.0.21",
  "zed-reqwest",
 ]
 
@@ -5196,7 +5192,7 @@ dependencies = [
  "rustc_version",
  "toml 0.9.8",
  "vswhom",
- "winreg 0.55.0",
+ "winreg",
 ]
 
 [[package]]
@@ -8088,23 +8084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-private-inference"
-version = "0.40.2"
-dependencies = [
- "hkask-lisp",
- "hkask-types",
- "nix 0.30.1",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "toml 0.8.23",
- "zed-reqwest",
-]
-
-[[package]]
 name = "hkask-regulation"
 version = "0.40.2"
 dependencies = [
@@ -8393,7 +8372,7 @@ dependencies = [
  "log",
  "rustls",
  "rustls-platform-verifier",
- "webpki-roots 1.0.10",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -9505,7 +9484,6 @@ dependencies = [
  "chrono",
  "collections",
  "credentials_provider",
- "fs",
  "futures 0.3.34",
  "futures-util",
  "gpui",
@@ -9519,7 +9497,6 @@ dependencies = [
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
  "hkask-memory",
- "hkask-private-inference",
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",
@@ -10216,34 +10193,6 @@ name = "litrs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
-
-[[package]]
-name = "llama-cpp-4"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51569cd1e166802987b7d784b0bb90c54fc000bd0a15e88c0608b4e169ee9d07"
-dependencies = [
- "enumflags2",
- "llama-cpp-sys-4",
- "thiserror 2.0.21",
- "tracing",
-]
-
-[[package]]
-name = "llama-cpp-sys-4"
-version = "0.11.0"
-dependencies = [
- "bindgen",
- "cc",
- "cmake",
- "flate2",
- "glob",
- "patch-apply",
- "tar",
- "toml_edit 0.25.19+spec-1.1.0",
- "ureq 2.12.1",
- "winreg 0.56.0",
-]
 
 [[package]]
 name = "llama_cpp"
@@ -11571,17 +11520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nom_locate"
-version = "4.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e3c83c053b0713da60c5b8de47fe8e494fe3ece5267b2f23090a07a053ba8f3"
-dependencies = [
- "bytecount",
- "memchr",
- "nom 7.1.3",
-]
-
-[[package]]
 name = "noop_proc_macro"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12659,7 +12597,7 @@ dependencies = [
  "ort-sys",
  "smallvec",
  "tracing",
- "ureq 3.5.1",
+ "ureq",
 ]
 
 [[package]]
@@ -12670,7 +12608,7 @@ checksum = "8d22b0417f1838db5a3ac0b3f98dfe39f6fb73624aa0a27c6bbb5040b9c7db2b"
 dependencies = [
  "hmac-sha256",
  "lzma-rust2",
- "ureq 3.5.1",
+ "ureq",
 ]
 
 [[package]]
@@ -12913,17 +12851,6 @@ name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
-
-[[package]]
-name = "patch-apply"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fe95476ec50a4e9b95ed12a4677ff5996aba4329bf2535fb21c49afaad20809"
-dependencies = [
- "chrono",
- "nom 7.1.3",
- "nom_locate",
-]
 
 [[package]]
 name = "path"
@@ -13540,7 +13467,7 @@ dependencies = [
  "pet-virtualenv",
  "pet-windows-store",
  "regex",
- "winreg 0.55.0",
+ "winreg",
 ]
 
 [[package]]
@@ -13556,7 +13483,7 @@ dependencies = [
  "pet-python-utils",
  "pet-virtualenv",
  "regex",
- "winreg 0.55.0",
+ "winreg",
 ]
 
 [[package]]
@@ -18029,17 +17956,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
-name = "tar"
-version = "0.4.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
-dependencies = [
- "filetime",
- "libc",
- "xattr",
-]
-
-[[package]]
 name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18757,15 +18673,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toml_datetime"
-version = "1.1.3+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
-dependencies = [
- "serde_core",
-]
-
-[[package]]
 name = "toml_edit"
 version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18789,18 +18696,6 @@ dependencies = [
  "toml_datetime 0.7.3",
  "toml_parser",
  "winnow 0.7.13",
-]
-
-[[package]]
-name = "toml_edit"
-version = "0.25.19+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd43688c4858d7264ae1cf9a9f874a67c3feb74a883b1cd7bebd6a4ea8307218"
-dependencies = [
- "indexmap 2.14.0",
- "toml_datetime 1.1.3+spec-1.1.0",
- "toml_parser",
- "winnow 1.0.2",
 ]
 
 [[package]]
@@ -19541,21 +19436,6 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
-
-[[package]]
-name = "ureq"
-version = "2.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
-dependencies = [
- "base64 0.22.1",
- "log",
- "once_cell",
- "rustls",
- "rustls-pki-types",
- "url",
- "webpki-roots 0.26.11",
-]
 
 [[package]]
 name = "ureq"
@@ -20674,15 +20554,6 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.10",
-]
-
-[[package]]
-name = "webpki-roots"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9"
@@ -21572,16 +21443,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "winreg"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
-dependencies = [
- "cfg-if",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "winresource"
 version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22314,7 +22175,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots 1.0.10",
+ "webpki-roots",
 ]
 
 [[package]]
