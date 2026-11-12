@@ -215,7 +215,6 @@ fn task_edit_args(
 /// The form state for spawning a subagent on a task.
 pub(crate) struct SpawnTaskForm {
     pub skills: Entity<Editor>,
-    pub delegation_level: Entity<Editor>,
     /// The task id to spawn.
     pub task_id: String,
 }
@@ -236,40 +235,29 @@ impl SpawnTaskForm {
                 );
                 editor
             }),
-            delegation_level: cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(
-                    "Delegation level: minimal, standard, maximal",
-                    window,
-                    cx,
-                );
-                editor.set_text("standard".to_string(), window, cx);
-                editor
-            }),
             task_id: task_id.to_string(),
         }
     }
 
     /// Collect the form values into a `kanban_task_spawn` args JSON.
     pub(crate) fn collect_args(&self, cx: &gpui::App) -> serde_json::Value {
-        let skills_text = self.skills.read(cx).text(cx);
-        let level = self.delegation_level.read(cx).text(cx);
-
-        let mut args = json!({
-            "task_id": self.task_id,
-            "delegation_level": if level.trim().is_empty() { "standard" } else { level.trim() },
-        });
-
-        if !skills_text.trim().is_empty() {
-            let skills: Vec<String> = skills_text
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            args["delegated_skills"] = json!(skills);
-        }
-        args
+        task_spawn_args(&self.task_id, &self.skills.read(cx).text(cx))
     }
+}
+
+/// Build the `kanban_task_spawn` arguments: the task and the skills named
+/// in the child's prompt. The server refuses any other field.
+fn task_spawn_args(task_id: &str, skills_text: &str) -> serde_json::Value {
+    let mut args = json!({ "task_id": task_id });
+    let skills: Vec<&str> = skills_text
+        .split(',')
+        .map(str::trim)
+        .filter(|skill| !skill.is_empty())
+        .collect();
+    if !skills.is_empty() {
+        args["delegated_skills"] = json!(skills);
+    }
+    args
 }
 
 // ── Shared form and confirm-dialog UI ────────────────────────────────────
@@ -469,18 +457,12 @@ pub(crate) fn render_spawn_task_form(
     form: &SpawnTaskForm,
     cx: &mut Context<KanbanPanel>,
 ) -> impl IntoElement {
-    form_panel(cx, "Spawn Subagent", form.skills.clone())
-        .child(
-            h_flex()
-                .gap_2()
-                .child(div().w_48().child(form.delegation_level.clone())),
-        )
-        .child(action_row(
-            cx,
-            "spawn-task",
-            "Spawn",
-            KanbanPanel::submit_spawn_task,
-        ))
+    form_panel(cx, "Spawn Subagent", form.skills.clone()).child(action_row(
+        cx,
+        "spawn-task",
+        "Spawn",
+        KanbanPanel::submit_spawn_task,
+    ))
 }
 
 /// Render the create-board form.
@@ -868,6 +850,31 @@ impl KanbanPanel {
             true,
             cx,
         );
+    }
+}
+
+#[cfg(test)]
+mod spawn_form_contract_tests {
+    use super::task_spawn_args;
+
+    /// expect: "Spawning from the panel sends only what the server accepts."
+    /// The server's spawn request refuses unknown fields, so a stray key
+    /// here would fail every spawn from the panel.
+    /// post: the arguments deserialize as the server's `TaskSpawnRequest`
+    #[test]
+    fn spawn_args_match_the_servers_request() {
+        let bare = task_spawn_args("task-1", "  ");
+        assert_eq!(bare, serde_json::json!({ "task_id": "task-1" }));
+
+        let with_skills = task_spawn_args("task-1", " tdd, ,bug-hunt ");
+        assert_eq!(
+            with_skills["delegated_skills"],
+            serde_json::json!(["tdd", "bug-hunt"])
+        );
+        for args in [bare, with_skills] {
+            serde_json::from_value::<hkask_mcp_kata_kanban::types::TaskSpawnRequest>(args)
+                .expect("the server accepts the panel's spawn arguments");
+        }
     }
 }
 

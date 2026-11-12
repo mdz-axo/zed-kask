@@ -2,8 +2,7 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskSpec,
-    TaskStatus,
+    Board, ColumnDef, CriterionCitation, KataExperimentRecord, Task, TaskSpec, TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
@@ -1281,7 +1280,7 @@ fn interleaved_comments_moves_and_deliverables_preserve_each_other() {
 
 #[test]
 fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
-    for operation in ["claim", "unassign", "update", "verify", "reopen", "spawn"] {
+    for operation in ["claim", "unassign", "update", "verify", "reopen"] {
         for comment_first in [false, true] {
             let (svc, board, owner) = make_service_with_board();
             let spec = TaskSpec::new("Original".into())
@@ -1324,7 +1323,6 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                     .map(|_| ()),
                 "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
                 "reopen" => svc.task_reopen(task.id, owner).map(|_| ()),
-                "spawn" => svc.spawn_task(task.id, SpawnSpec::new(), owner).map(|_| ()),
                 _ => unreachable!("fixture operation"),
             };
             let comment = || svc.task_comment(task.id, owner, "Keep comment").map(|_| ());
@@ -1357,7 +1355,6 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                     expected.status = TaskStatus::InProgress;
                     expected.verification = None;
                 }
-                "spawn" => {}
                 _ => unreachable!("fixture operation"),
             }
             let (comments, _) = svc
@@ -1367,7 +1364,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                 comments.iter().filter(|c| c.body == "Keep comment").count(),
                 1
             );
-            assert_eq!(comments.len(), if operation == "spawn" { 2 } else { 1 });
+            assert_eq!(comments.len(), 1);
             assert!(
                 comments
                     .iter()
@@ -1645,7 +1642,7 @@ fn task_mutations_preserve_typed_missing_task_and_authorization_errors() {
             "deliverable" => svc
                 .task_add_deliverable(id, "Unauthorized", actor)
                 .map(|_| ()),
-            "spawn" => svc.spawn_task(id, SpawnSpec::new(), actor).map(|_| ()),
+            "spawn" => svc.task_for_spawn(id, actor).map(|_| ()),
             "delete" => svc.task_delete(id, actor).map(|_| ()),
             _ => unreachable!("fixture operation"),
         };

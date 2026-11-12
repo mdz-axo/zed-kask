@@ -106,12 +106,7 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 ### Agent spawning
 | Tool | Description |
 |------|-------------|
-| `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). `delegated_skills` are named in the child's prompt; `delegation_level` and `memory_scope` are recorded on the task and do not change what the child can do |
-
-### Contract management
-| Tool | Description |
-|------|-------------|
-| `contract_propose_expect` | Create kanban tasks for contracts missing `expect:` annotations |
+| `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). `delegated_skills` are named in the child's prompt. The task gets a comment only once the thread is queued |
 
 ## Configuration
 

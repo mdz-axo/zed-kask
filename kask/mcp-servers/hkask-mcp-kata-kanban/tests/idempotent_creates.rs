@@ -990,11 +990,21 @@ fn wire_field_name_matches_what_clients_send() {
 
     let spawn: TaskSpawnRequest = serde_json::from_value(serde_json::json!({
         "task_id": "t-1",
-        "delegation_level": "standard",
         "idempotency_key": "k",
     }))
     .expect("spawn payload deserializes");
     assert_eq!(spawn.idempotency_key.as_deref(), Some("k"));
+
+    // mcp-tool-review KK-18 pin: the two retired parameters are refused by
+    // name, never silently ignored — they were accepted and did nothing.
+    for retired in ["delegation_level", "memory_scope"] {
+        let error = serde_json::from_value::<TaskSpawnRequest>(serde_json::json!({
+            "task_id": "t-1",
+            retired: "standard",
+        }))
+        .expect_err("a retired spawn parameter is refused");
+        assert!(error.to_string().contains(retired), "{error}");
+    }
 }
 
 // ── Spawn on an unfunded ledger ─────────────────────────────────────────────
@@ -1022,22 +1032,32 @@ async fn spawn_is_not_blocked_by_an_unfunded_ledger() {
         .kanban_task_spawn(Parameters(TaskSpawnRequest {
             task_id,
             idempotency_key: Some("spawn-gesture".to_string()),
-            delegation_level: "standard".to_string(),
             delegated_skills: vec![],
-            memory_scope: None,
         }))
         .await
         .expect_err("spawn fails without a wired inference port");
 
     assert!(error.message.contains("No fallback was started"), "{error}");
 
+    // mcp-tool-review KK-18 pin: a spawn that did not go through leaves no
+    // comment on the task. Probed 2026-11-11: each failed attempt left a
+    // "Spawn configured" comment behind.
+    let comments = parse(
+        &server
+            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
+                task_id: task["task_id"].as_str().expect("task id").into(),
+                since_index: 0,
+            }))
+            .await
+            .expect("comments ok"),
+    );
+    assert_eq!(comments["total_count"], 0, "{comments}");
+
     let retry = server
         .kanban_task_spawn(Parameters(TaskSpawnRequest {
             task_id: task["task_id"].as_str().expect("task id").into(),
             idempotency_key: Some("spawn-gesture".into()),
-            delegation_level: "standard".into(),
             delegated_skills: vec![],
-            memory_scope: None,
         }))
         .await
         .expect_err("unknown spawn outcome must not repeat");
@@ -1203,9 +1223,7 @@ async fn spawn_task(
         .kanban_task_spawn(Parameters(TaskSpawnRequest {
             task_id: task_id.to_string(),
             idempotency_key: key.map(str::to_string),
-            delegation_level: "standard".to_string(),
             delegated_skills: vec![],
-            memory_scope: None,
         }))
         .await?;
     Ok(parse(&out))
@@ -1229,9 +1247,9 @@ async fn post_spawn_comment_failure_keeps_replay_protection() {
     let (server, _driver, port) = make_spawn_server();
     let task_id = board_and_task(&server).await;
 
-    // One-shot fault: the NEXT task_comment (the post-spawn result note —
-    // the pre-spawn config comment writes directly, not via task_comment)
-    // fails after the agent thread already exists.
+    // One-shot fault: the NEXT task_comment (the post-spawn result note,
+    // the only comment a spawn writes) fails after the agent thread
+    // already exists.
     server.service.fail_next_comments(1);
 
     let first = spawn_task(&server, &task_id, Some("spawn-gesture"))
@@ -1320,10 +1338,7 @@ async fn pending_claim_survives_reopen_and_refuses_the_spawn() {
     let crashed_store =
         hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(driver.clone())
             .expect("idempotency schema");
-    let request = serde_json::json!({
-        "task_id": task_id, "delegation_level": "standard",
-        "delegated_skills": [], "memory_scope": null,
-    });
+    let request = serde_json::json!({ "task_id": task_id, "delegated_skills": [] });
     let digest =
         hkask_mcp_kata_kanban::idempotency::request_sha256(&request).expect("request digest");
     assert_eq!(
@@ -1475,4 +1490,37 @@ async fn goal_listing_returns_current_goals_or_errors_without_cross_owner_disclo
         !denied.to_string().contains("schema"),
         "foreign caller cannot inspect the unsupported schema"
     );
+}
+
+/// mcp-tool-review KK-18 pin: a spawn that is queued leaves exactly one
+/// comment on the task, and that comment names the delegated skills. The
+/// comment used to be written before the attempt, so it also described
+/// spawns that never happened.
+#[tokio::test]
+async fn a_queued_spawn_leaves_one_comment_naming_the_skills() {
+    let (server, _driver, port) = make_spawn_server();
+    let task_id = board_and_task(&server).await;
+
+    server
+        .kanban_task_spawn(Parameters(TaskSpawnRequest {
+            task_id: task_id.clone(),
+            idempotency_key: None,
+            delegated_skills: vec!["tdd".into(), "bug-hunt".into()],
+        }))
+        .await
+        .expect("the spawn is queued");
+    assert_eq!(port.spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let comments = parse(
+        &server
+            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
+                task_id,
+                since_index: 0,
+            }))
+            .await
+            .expect("comments ok"),
+    );
+    assert_eq!(comments["total_count"], 1, "{comments}");
+    let body = comments["comments"][0]["body"].as_str().expect("body");
+    assert!(body.contains("Delegated skills: tdd, bug-hunt"), "{body}");
 }

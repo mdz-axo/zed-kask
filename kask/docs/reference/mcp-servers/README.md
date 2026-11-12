@@ -28,14 +28,14 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-8 built-in MCP servers, **242 registered tools** fleet-wide (all rows reconciled 2026-11-11 against the live `tool_surface_pin!` tests — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all eight auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+8 built-in MCP servers, **241 registered tools** fleet-wide (all rows reconciled 2026-11-11 against the live `tool_surface_pin!` tests — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all eight auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
 | [Corpus](corpus.md) | `kask/mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 25 |
 | Curator | `kask/mcp-servers/hkask-mcp-curator` | Curator agent metacognition (memory, regulation query, algedonic signals, skill-use issue reporting) | 15 |
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, fitness records (caller-asserted report references), selection fossils | 8 |
-| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and retained canonical goals with separate human closure | 27 |
+| Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and retained canonical goals with separate human closure | 26 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | Research evidence ingestion, annotation, transcription, source-linked excerpts, and time-keyed media layers | 90 |
 
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 28 |
@@ -44,11 +44,11 @@ mds_categories: [composition, domain]
 
 ### Count verification (unified 2026-10-05; re-verified 2026-10-28)
 
-Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (re-verified 2026-11-11): corpus 25 (`hkask_mcp_corpus.rs` → `tool_surface_is_exactly_25_registered_tools`), curator 15 (`hkask_mcp_curator.rs` → `tool_surface_is_exactly_15_registered_tools`), experimentation 8 (`hkask_mcp_experimentation.rs` → `tool_surface_is_exactly_8_registered_tools`), kata-kanban 27 (`hkask_mcp_kata_kanban.rs` → `tool_surface_is_exactly_27_registered_tools`), media 90 (`hkask_mcp_media.rs` → `tool_surface_is_exactly_90_registered_tools`), prediction-markets 28 (`hkask_mcp_prediction_markets.rs` → `tool_surface_is_exactly_28_registered_tools`), research 27 (`hkask_mcp_research.rs` → `tool_surface_is_exactly_27_registered_tools`), scenarios 22 (`hkask_mcp_scenarios.rs` → `tool_surface_is_exactly_22_registered_tools`).
+Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (re-verified 2026-11-11): corpus 25 (`hkask_mcp_corpus.rs` → `tool_surface_is_exactly_25_registered_tools`), curator 15 (`hkask_mcp_curator.rs` → `tool_surface_is_exactly_15_registered_tools`), experimentation 8 (`hkask_mcp_experimentation.rs` → `tool_surface_is_exactly_8_registered_tools`), kata-kanban 26 (`hkask_mcp_kata_kanban.rs` → `tool_surface_is_exactly_26_registered_tools`), media 90 (`hkask_mcp_media.rs` → `tool_surface_is_exactly_90_registered_tools`), prediction-markets 28 (`hkask_mcp_prediction_markets.rs` → `tool_surface_is_exactly_28_registered_tools`), research 27 (`hkask_mcp_research.rs` → `tool_surface_is_exactly_27_registered_tools`), scenarios 22 (`hkask_mcp_scenarios.rs` → `tool_surface_is_exactly_22_registered_tools`).
 
 Per-server specifics that survive the unification: the curator pin additionally asserts the removed escalation/advice-review tools stay unregistered (`curator_escalations`, `curator_escalation_resolve`, `curator_escalation_dismiss`, `curator_escalation_dismiss_by_pattern`, `curator_advice_mark_applied`, `curator_advice_reviews`); the experimentation tool-behavior suite drives every tool end-to-end over the real engine actor (`tests/tool_behavior.rs`).
 
-Arithmetic: `25 + 15 + 8 + 27 + 90 + 28 + 27 + 22 = 242`.
+Arithmetic: `25 + 15 + 8 + 26 + 90 + 28 + 27 + 22 = 241`.
 
 ## Common Patterns
 

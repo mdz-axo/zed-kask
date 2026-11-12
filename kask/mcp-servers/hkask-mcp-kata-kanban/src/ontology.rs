@@ -27,7 +27,6 @@
 pub use hkask_bridge_ontology::dc_bibo::{DATASET, REPORT};
 pub use hkask_bridge_ontology::pko::{
     CHANGE_OF_STATUS, STEP, STEP_EXECUTION, STEP_VERIFICATION, USER_QUESTION_OCCURRENCE,
-    WAS_ASSOCIATED_WITH,
 };
 
 use hkask_bridge_ontology::dc_bibo::DcConcept;
@@ -89,10 +88,6 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // Pulling work to begin it (P3): the claim assigns the caller and
         // starts the task — the same delegation-beginning sense as spawn.
         "kanban_task_claim_next" => Some(STEP_EXECUTION),
-        // contract_propose_expect creates kanban tasks for contracts
-        // missing expect annotations — a step of the contract
-        // governance procedure (delegation from the curator).
-        "contract_propose_expect" => Some(WAS_ASSOCIATED_WITH),
         _ => None,
     }
 }
@@ -136,8 +131,7 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_task_verify"
         | "kanban_task_kata_record"
         | "kanban_task_spawn"
-        | "kanban_task_claim_next"
-        | "contract_propose_expect" => Some(DATASET),
+        | "kanban_task_claim_next" => Some(DATASET),
         _ => None,
     }
 }
@@ -152,7 +146,7 @@ hkask_mcp_server::dual_axis_annotate!(
     tool_to_dc,
     PkoConcept,
     DcConcept,
-    &["kanban_", "contract_"],
+    &["kanban_"],
     &[],
 );
 

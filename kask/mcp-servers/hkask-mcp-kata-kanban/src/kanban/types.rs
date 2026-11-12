@@ -14,7 +14,6 @@ pub(crate) mod goal;
 pub(crate) mod kata;
 
 pub(crate) mod priority;
-pub(crate) mod spawn;
 pub(crate) mod task;
 pub(crate) mod task_spec;
 pub(crate) mod verification;
@@ -29,7 +28,6 @@ pub(crate) use kata::{KataExperimentRecord, TaskKataState};
 
 pub(crate) use hkask_types::TaskStatus;
 pub(crate) use priority::Priority;
-pub(crate) use spawn::SpawnSpec;
 pub(crate) use task::{Comment, Task};
 pub(crate) use task_spec::TaskSpec;
 pub(crate) use verification::{Verification, VerificationCriterion};

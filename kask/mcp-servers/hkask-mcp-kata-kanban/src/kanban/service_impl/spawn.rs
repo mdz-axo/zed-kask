@@ -1,26 +1,16 @@
 use super::*;
 
 impl KanbanService {
-    pub(crate) fn spawn_task(
+    /// Read a task for spawning: only its owner may delegate it. Writes
+    /// nothing — the task's record of a spawn is the comment made once the
+    /// spawn port has accepted the request.
+    pub(crate) fn task_for_spawn(
         &self,
         task_id: TaskId,
-        spawn_spec: super::SpawnSpec,
         actor: WebID,
-    ) -> Result<String, KanbanError> {
-        let (task, ()) = self.mutate_task(task_id, |task| {
-            Self::require_task_owner(task, actor)?;
-
-            let spawn_note = format!(
-                "Spawn configured: level={}, skills={:?}, memory={}",
-                spawn_spec.delegation_level, spawn_spec.delegated_skills, spawn_spec.memory_scope,
-            );
-            let comment = super::Comment::new(task_id, task.owner, spawn_note);
-            task.comments.push(comment);
-            Ok(())
-        })?;
-        Ok(format!(
-            "Spawn configured for '{}'. Skills: {:?}",
-            task.title, spawn_spec.delegated_skills
-        ))
+    ) -> Result<Task, KanbanError> {
+        let task = self.require_task(task_id)?;
+        Self::require_task_owner(&task, actor)?;
+        Ok(task)
     }
 }

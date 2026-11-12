@@ -3,7 +3,6 @@
 //! Each tool has a request struct and response struct serializable
 //! for MCP JSON-RPC transport.
 
-use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -422,20 +421,6 @@ pub(crate) struct TaskReopenResponse {
     pub new_status: String,
 }
 
-// ── Contract proposals ──────────────────────────────────────────────────────
-
-/// A proposal template for a contract missing its user-facing `expect:` annotation.
-/// Agents use this to compose and submit contract `expect:` annotation proposals.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct ContractProposeExpect {
-    pub board_id: String,
-    /// Proposals for missing `expect:` annotations (arbitrary JSON array of
-    /// `ExpectProposal`-shaped objects). Accepted as `AnyJsonValue` because
-    /// `hkask_types::ExpectProposal` is not `JsonSchema`-derivable from this
-    /// crate; the tool body deserializes into the typed struct.
-    pub proposals: AnyJsonValue,
-}
-
 // ── Kata prompts ───────────────────────────────────────────────────────
 
 /// One PDCA experiment record: the next step taken, the prediction it
@@ -522,18 +507,18 @@ pub(crate) struct TaskKataResponse {
 
 // ── Spawn ───────────────────────────────────────────────────────────────
 
+/// Request for `kanban_task_spawn`. Unknown fields are refused: the former
+/// `delegation_level` and `memory_scope` were accepted, validated and had no
+/// effect on the child (mcp-tool-review KK-18), so a caller still sending
+/// them is told rather than silently ignored.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TaskSpawnRequest {
     pub task_id: String,
     pub idempotency_key: Option<String>,
-    /// Delegation level: "minimal", "standard", or "maximal".
-    pub delegation_level: String,
-    /// Skills to delegate (e.g. ["bug-hunt", "tdd"]).
+    /// Skills named in the child's prompt (e.g. ["bug-hunt", "tdd"]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub delegated_skills: Vec<String>,
-    /// Memory scope: "none", "episodic", or "full".
-    #[serde(default)]
-    pub memory_scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

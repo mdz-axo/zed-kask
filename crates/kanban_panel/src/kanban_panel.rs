@@ -406,7 +406,6 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
             ("Kata coaching", &["kanban_task_kata_"]),
             ("Task tools", &["kanban_task_"]),
             ("Goal tools", &["kanban_goal_"]),
-            ("Contract grounding", &["contract_"]),
         ],
     );
     let prompt = format!(
@@ -427,14 +426,14 @@ fn steer_system_prompt(board_name: Option<&str>, board_id: Option<&str>) -> Shar
          cascade is available. Pass the board id so the cascade writes the durable link on every \
          spawned task.{board_clause}",
     );
-    // A `kanban_*`/`contract_*` name in the prompt that the server does not
+    // A `kanban_*` name in the prompt that the server does not
     // expose degrades to "tool not found" at dispatch time, so catch it here
     // in dev builds. The `steer_prompt_advertises_only_known_tools` test is
     // the CI enforcement.
     hkask_steer::verify_tool_advertisement(
         &prompt,
         hkask_mcp_kata_kanban::TOOL_NAMES,
-        &["kanban_", "contract_"],
+        &["kanban_"],
     );
     prompt.into()
 }
@@ -1103,7 +1102,7 @@ impl KanbanPanel {
                 resume_session_id: self.pending_resume.take(),
             },
             hkask_mcp_kata_kanban::TOOL_NAMES,
-            &["kanban_", "contract_"],
+            &["kanban_"],
             window,
             cx,
         );
@@ -2163,7 +2162,7 @@ mod tests {
         );
     }
 
-    /// Every `kanban_*`/`contract_*` token the Steer prompt names in backticks
+    /// Every `kanban_*` token the Steer prompt names in backticks
     /// must be a tool the server actually exposes. Without this, a rename in
     /// `hkask-mcp-kata-kanban` degrades silently to "tool not found" at dispatch
     /// time instead of failing here.
@@ -2173,7 +2172,7 @@ mod tests {
             steer_system_prompt(Some("Alpha Board"), Some("board-1")),
             steer_system_prompt(None, None),
         ] {
-            for name in hkask_steer::advertised_tool_names(&prompt, &["kanban_", "contract_"]) {
+            for name in hkask_steer::advertised_tool_names(&prompt, &["kanban_"]) {
                 assert!(
                     hkask_mcp_kata_kanban::TOOL_NAMES.contains(&name.as_str()),
                     "steer prompt advertises `{name}`, which is not in \

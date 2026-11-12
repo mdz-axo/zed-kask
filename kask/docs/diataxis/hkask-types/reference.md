@@ -19,9 +19,7 @@ to prevent cross-domain identifier confusion.[^newtype]
 ## Module inventory
 
 The crate root is authoritative at
-`kask/crates/hkask-types/src/hkask_types.rs:6-51`. The root also defines
-`ExpectProposal`, the proposal template for a contract missing its user-facing
-`expect:` annotation (`kask/crates/hkask-types/src/hkask_types.rs:76-90`).
+`kask/crates/hkask-types/src/hkask_types.rs:6-51`.
 
 ```mermaid
 classDiagram

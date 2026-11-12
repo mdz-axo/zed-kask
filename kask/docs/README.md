@@ -53,7 +53,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/testing-protocol.md`](reference/testing-protocol.md) | User expectation contracts, test-layer assignment, bounded proofs, and test-evidence validation. |
 | [`reference/verification-ladder.md`](reference/verification-ladder.md) | The five verification rungs (presence, liveness, truth, grounding, binding), their zed-kask homes and clocks, the provenance lattice, and the open rung gaps. |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation tracing, persisted records, and actual MCP outcome paths. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 8 built-in servers, 242 registered tools fleet-wide (reconciled 2026-11-11 against the `tool_surface_pin!` tests), and the fleet tool surface. |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 8 built-in servers, 241 registered tools fleet-wide (reconciled 2026-11-11 against the `tool_surface_pin!` tests), and the fleet tool surface. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline (25 tools). |
 | [`reference/mcp-servers/curator.md`](reference/mcp-servers/curator.md) | Curator server — sovereign memory, regulation readback, and the algedonic log (15 tools). |
 | [`reference/mcp-servers/experimentation.md`](reference/mcp-servers/experimentation.md) | Experimentation server — experiment registry for the sharded experimentation program (8 tools). |

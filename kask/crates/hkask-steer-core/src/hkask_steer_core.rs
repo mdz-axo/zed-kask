@@ -125,14 +125,14 @@ mod tests {
         let prompt = "Use `kanban_task_move` and `kanban_task_list`. \
                       The `kata-kanban` server id is not a tool (no prefix match on \
                       the suffix rule applies to `kanban_` alone). \
-                      Also `contract_propose_expect` and plain text.";
-        let names = advertised_tool_names(prompt, &["kanban_", "contract_"]);
+                      Also `media_layers_get` and plain text.";
+        let names = advertised_tool_names(prompt, &["kanban_", "media_"]);
         assert_eq!(
             names,
             vec![
                 "kanban_task_move".to_string(),
                 "kanban_task_list".to_string(),
-                "contract_propose_expect".to_string(),
+                "media_layers_get".to_string(),
             ]
         );
     }
@@ -178,17 +178,17 @@ mod tests {
             &[
                 "kanban_task_kata_prompt",
                 "kanban_task_create",
-                "contract_propose_expect",
+                "kanban_goal_get",
             ],
             &[
                 ("Kata coaching", &["kanban_task_kata_"]),
                 ("Task tools", &["kanban_task_"]),
-                ("Contract grounding", &["contract_"]),
+                ("Goal tools", &["kanban_goal_"]),
             ],
         );
         assert!(section.contains("**Kata coaching**: `kanban_task_kata_prompt`.\n"));
         assert!(section.contains("**Task tools**: `kanban_task_create`.\n"));
-        assert!(section.contains("**Contract grounding**: `contract_propose_expect`.\n"));
+        assert!(section.contains("**Goal tools**: `kanban_goal_get`.\n"));
     }
 
     #[test]

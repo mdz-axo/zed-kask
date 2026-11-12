@@ -172,7 +172,7 @@ When `KTM-2` evaluates to `"ran-and-pasted"` or `"demonstrated"`, the recorded e
 |----------|---------|
 | `decompose-tasks.j2` | Decompose a project into INVEST-compliant tasks with vertical slicing, dependencies, recomposition strategy, and acceptance criteria; emits `project_name`, `tasks`, and `recomposition`. Phase: decompose. |
 | `review-tasks.j2` | Review decomposed tasks for INVEST compliance, completeness, and recomposition viability. Phase: decompose. Tasks in `modified` carry specific change recommendations — apply the changes and include the revised tasks in the accepted pool before creating tasks via `kanban_task_create` (a structural change re-enters review). |
-| `configure-spawn.j2` | Configure spawn parameters: delegation level, skills, memory scope. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
+| `configure-spawn.j2` | Choose the skills to delegate for one task. Includes post-step instructions for the agent to call kanban_task_spawn. Phase: delegate. |
 | `coordinate-agents.j2` | Read active-task comment threads and prepare actionable replies. Includes post-step instructions for the agent to call kanban_task_comment. Phase: operate. |
 | `track-deliverables.j2` | Assess deliverables for completeness. Includes post-step instructions for the agent to call kanban_task_move and kanban_task_add_deliverable. Phase: operate. |
 | `verify-completion.j2` | Assess evidence criterion by criterion; comment and return failed work without a pass signal, and call `kanban_task_verify` only after `KTM-2` passes and operator-confirmed Review success. |

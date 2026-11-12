@@ -347,7 +347,7 @@ created date), the way the thread picker shows timestamps.
   rename), ownership check mirroring `kanban_board_delete`
   (`hkask_mcp_kata_kanban.rs:366-377`), update the board h_mem **value**
   preserving the PKO procedure ontology (the update path task moves already
-  use, `service_impl/service.rs:1344@mutate_task`), and emit a `board_renamed` REG span
+  use, `service_impl/service.rs:1401@mutate_task`), and emit a `board_renamed` REG span
   mirroring `board_created` (`service_impl/service.rs:313@board_create`).
 - Tool: thin `kanban_board_update` wrapper.
 - **Replay safety (refined in v1.1.0):** rename is convergent by
