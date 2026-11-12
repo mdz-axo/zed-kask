@@ -501,12 +501,13 @@ static WARNED_MISSING_CREDENTIALS: std::sync::OnceLock<
 /// `stream_completion` establishment deadline to child-process IPC clients so
 /// they can align their read deadline; see
 /// `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV`.
-pub async fn build_mcp_server_env(
+pub async fn build_mcp_server_env_with_sweep(
     server_id: &str,
     settings: &crate::KaskSettings,
     credentials_provider: &dyn credentials_provider::CredentialsProvider,
     inference_socket: Option<&str>,
     inference_timeout_secs: Option<u64>,
+    sweep: &CredentialSweep,
     cx: &gpui::AsyncApp,
 ) -> hkask_types::ServerEnv {
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
@@ -562,7 +563,20 @@ pub async fn build_mcp_server_env(
             env.insert(env_var, value);
             continue;
         }
-        match read_keychain_credential(server_id, &env_var, &url).await {
+        let read = match sweep.cached(&url) {
+            Some(read) => read,
+            None => {
+                // Hang-audit Pr3: one keychain read per distinct URL per
+                // sweep — see CredentialSweep. The memoized outcome carries
+                // the per-env-var trim: one URL resolves through one env
+                // var, so the value is what every server sharing the URL
+                // computes.
+                let read = read_keychain_credential(server_id, &env_var, &url).await;
+                sweep.record(&url, read.clone());
+                read
+            }
+        };
+        match read {
             KeychainCredentialRead::Loaded(value) => {
                 env.insert(env_var, value);
                 continue;
@@ -667,6 +681,32 @@ pub async fn build_mcp_server_env(
     hkask_types::ServerEnv::from_canonical(env)
 }
 
+/// The canonical per-server env composer with a fresh
+/// [`CredentialSweep`] per call: every credential is read from the keychain
+/// individually. The launch and restart loops call the sweep-sharing form
+/// ([`build_mcp_server_env_with_sweep`]) so a credential shared by several
+/// servers costs one keychain read per pass; tests and single-call callers
+/// use this form.
+pub async fn build_mcp_server_env(
+    server_id: &str,
+    settings: &crate::KaskSettings,
+    credentials_provider: &dyn credentials_provider::CredentialsProvider,
+    inference_socket: Option<&str>,
+    inference_timeout_secs: Option<u64>,
+    cx: &gpui::AsyncApp,
+) -> hkask_types::ServerEnv {
+    build_mcp_server_env_with_sweep(
+        server_id,
+        settings,
+        credentials_provider,
+        inference_socket,
+        inference_timeout_secs,
+        &CredentialSweep::new(),
+        cx,
+    )
+    .await
+}
+
 /// Env vars with a required startup-default passphrase.
 ///
 /// The default ("allostery") is a stated first-run requirement: DB-backed
@@ -699,7 +739,7 @@ const DEFAULT_PASSPHRASE_ENV_VARS: [&str; 1] = ["HKASK_DB_PASSPHRASE"];
 /// EXISTING key as `Missing` and told the operator to set keys that exist
 /// (observed live 2026-10-25 21:36 and 2026-10-26 11:07, the wedged secret
 /// portal; card db0d8e88).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum KeychainCredentialRead {
     /// A non-empty value, trimmed for injection where trimming applies.
     Loaded(String),
@@ -741,6 +781,55 @@ enum KeychainCredentialRead {
 /// strings, so `InvalidUtf8` cannot arise from this path today — the
 /// classifier stays total over what a keychain entry can hold.
 ///
+/// One keychain read per distinct credential URL per sweep (hang-audit Pr3).
+///
+/// The launch loop and the settings-change restart observer each recompute
+/// EVERY server's env in one pass, so a credential shared by several servers
+/// — `HKASK_DB_PASSPHRASE` alone is on seven allowlists — was read from the
+/// OS keychain once per server per sweep. Under the wedged-portal class each
+/// read burns its full 5s deadline (`KeychainError::Timeout` — the audit's
+/// 179-timeout hour), multiplying a wedge by the server count.
+///
+/// Sweep-scoped by construction: the caller creates one `CredentialSweep`
+/// per launch or restart pass, so `nudge_mcp_servers`'s freshness contract
+/// holds — a keychain write nudges the observer, the NEXT sweep re-reads
+/// the fresh value, and the restarted server carries it. Never
+/// process-global: a cached outcome never outlives the pass that read it.
+///
+/// The memo is keyed by URL and stores the classified
+/// [`KeychainCredentialRead`]: one keychain URL resolves through exactly one
+/// env var (the fixed `credential_urls_for_mcp` table), and the injection
+/// trim is env-var-based, so a cached `Loaded` value is the value every
+/// server sharing that URL computes.
+#[derive(Default)]
+pub struct CredentialSweep {
+    reads: std::sync::Mutex<std::collections::HashMap<String, KeychainCredentialRead>>,
+}
+
+impl CredentialSweep {
+    /// Create the per-pass memo. Construct one at the top of each launch
+    /// or restart sweep and share it across every
+    /// `build_mcp_server_env_with_sweep` call in that pass.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn cached(&self, url: &str) -> Option<KeychainCredentialRead> {
+        self.reads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(url)
+            .cloned()
+    }
+
+    fn record(&self, url: &str, read: KeychainCredentialRead) {
+        self.reads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(url.to_string(), read);
+    }
+}
+
 /// Test seam: tests install canned typed outcomes via `MockKeychain` in
 /// `crate::test_support`; without an installed mock, the real keystore is
 /// read.
@@ -2320,6 +2409,76 @@ mod tests {
             "unallowlisted config var must not survive the composed path — \
              the prior Path A bug leaked the full mcp_env() map"
         );
+    }
+
+    /// Hang-audit Pr3: one keychain read per distinct credential URL per
+    /// sweep. Two servers sharing `HKASK_DB_PASSPHRASE` over ONE sweep
+    /// consult the keychain once — the second server is served the
+    /// memoized outcome even after the keychain changed underneath — and a
+    /// FRESH sweep re-reads, preserving `nudge_mcp_servers`'s freshness
+    /// contract (a rotated key reaches the next restart pass).
+    #[tokio::test]
+    async fn credential_sweep_reads_each_url_once_per_sweep() {
+        let _guard = ENV_TEST_LOCK.lock().await;
+        let (_, passphrase_url) = crate::credential_urls_for_mcp()
+            .into_iter()
+            .find(|(env_var, _)| env_var == "HKASK_DB_PASSPHRASE")
+            .expect("HKASK_DB_PASSPHRASE has a credential URL");
+        let settings = crate::KaskSettings::default();
+        let provider = FakeCredentialsProvider::default();
+
+        let mock = MockKeychain::new()
+            .with_secret(&passphrase_url, b"keychain-secret-passphrase")
+            .install();
+        let cx = gpui::TestAppContext::single().to_async();
+        let sweep = CredentialSweep::new();
+        let curator = build_mcp_server_env_with_sweep(
+            "curator", &settings, &provider, None, None, &sweep, &cx,
+        )
+        .await;
+        assert_eq!(
+            curator.get("HKASK_DB_PASSPHRASE"),
+            Some("keychain-secret-passphrase")
+        );
+        drop(mock);
+
+        // The keychain now holds a rotated value; the shared sweep must
+        // serve the memoized outcome (one read per URL per sweep).
+        let mock = MockKeychain::new()
+            .with_secret(&passphrase_url, b"rotated-secret-passphrase")
+            .install();
+        let kanban = build_mcp_server_env_with_sweep(
+            "kata-kanban",
+            &settings,
+            &provider,
+            None,
+            None,
+            &sweep,
+            &cx,
+        )
+        .await;
+        assert_eq!(
+            kanban.get("HKASK_DB_PASSPHRASE"),
+            Some("keychain-secret-passphrase"),
+            "the shared sweep memoizes the URL's one read — the second \n             server is served the outcome the first server read"
+        );
+        drop(mock);
+
+        // A fresh sweep re-reads: the rotated key reaches the next pass.
+        let mock = MockKeychain::new()
+            .with_secret(&passphrase_url, b"rotated-secret-passphrase")
+            .install();
+        let fresh = CredentialSweep::new();
+        let curator_rotated = build_mcp_server_env_with_sweep(
+            "curator", &settings, &provider, None, None, &fresh, &cx,
+        )
+        .await;
+        assert_eq!(
+            curator_rotated.get("HKASK_DB_PASSPHRASE"),
+            Some("rotated-secret-passphrase"),
+            "a fresh sweep re-reads the keychain — a rotated key reaches \n             the next restart pass (the nudge freshness contract)"
+        );
+        drop(mock);
     }
 
     // ── startup-default passphrase tests ───────────────────────────────

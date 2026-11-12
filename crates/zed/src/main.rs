@@ -2704,9 +2704,14 @@ fn main() {
                     // values dropped out of order". Do NOT move this loop to
                     // `cx.background_spawn` — GPUI's background executor has no
                     // tokio reactor (see .rules).
+                    // zed-kask: hang-audit Pr3 — one sweep per launch pass:
+                    // each distinct credential URL is read from the keychain
+                    // once for all servers in this pass (the shared
+                    // `HKASK_DB_PASSPHRASE` alone was read once per server).
+                    let credential_sweep = kask_bridge::CredentialSweep::new();
                     for server_id in &servers_to_start_clone {
                         let binary = format!("hkask-mcp-{server_id}");
-                        let mcp_env = kask_server_env(server_id, cx).await;
+                        let mcp_env = kask_server_env(server_id, &credential_sweep, cx).await;
                         // Record the env baseline BEFORE starting so the
                         // settings-change restart observer can diff against it
                         // (an empty baseline = not yet launched = no-op). On
@@ -3628,15 +3633,20 @@ impl agent::KaskToolSource for ZedKaskToolSource {
     }
 }
 
-async fn kask_server_env(server_id: &str, cx: &mut gpui::AsyncApp) -> hkask_types::ServerEnv {
+async fn kask_server_env(
+    server_id: &str,
+    sweep: &kask_bridge::CredentialSweep,
+    cx: &mut gpui::AsyncApp,
+) -> hkask_types::ServerEnv {
     let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
     let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
-    kask_bridge::build_mcp_server_env(
+    kask_bridge::build_mcp_server_env_with_sweep(
         server_id,
         &settings,
         credentials_provider.as_ref(),
         kask_bridge::get_inference_socket_path().as_deref(),
         kask_bridge::get_inference_timeout_secs(),
+        sweep,
         cx,
     )
     .await
@@ -3750,8 +3760,12 @@ fn sync_kask_mcp_runtime_servers(
         let mut to_stop: Vec<&'static str> = Vec::new();
         let mut to_start: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
         let mut to_restart: Vec<(&'static str, String, hkask_types::ServerEnv)> = Vec::new();
+        // zed-kask: hang-audit Pr3 — one sweep per restart pass, so a
+        // credential shared across servers costs one keychain read here;
+        // the NEXT observer pass re-reads fresh (the nudge contract).
+        let credential_sweep = kask_bridge::CredentialSweep::new();
         for (server_id, loaded) in load_states {
-            let env = kask_server_env(server_id, cx).await;
+            let env = kask_server_env(server_id, &credential_sweep, cx).await;
             let previous = last_env
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())

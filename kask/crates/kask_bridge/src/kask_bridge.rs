@@ -82,9 +82,10 @@ pub use inference_socket::{
     set_inference_timeout_secs,
 };
 pub use mcp_servers::{
-    BUILT_IN_MCP_SERVERS, BuiltinMcpServer, build_mcp_server_env, builtin_mcp_server_ids,
-    builtin_mcp_server_pairs, filter_credentials_for_server,
-    remove_shadowing_context_server_entries, shadowed_context_server_entry_ids,
+    BUILT_IN_MCP_SERVERS, BuiltinMcpServer, CredentialSweep, build_mcp_server_env,
+    build_mcp_server_env_with_sweep, builtin_mcp_server_ids, builtin_mcp_server_pairs,
+    filter_credentials_for_server, remove_shadowing_context_server_entries,
+    shadowed_context_server_entry_ids,
 };
 pub use memory::{
     BridgeMemoryPort, CuratorRegulationArchive, RealMemoryPort, hydrate_operator_feedback,
