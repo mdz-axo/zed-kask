@@ -814,6 +814,56 @@ fn goal_row_shape_is_pinned_to_the_current_schema() {
     );
 }
 
+/// mcp-tool-review KK-24 pin: a criterion is its description and nothing
+/// else. `llm_prompt` was written as null on every criterion and read by
+/// nothing. Rows stored while it existed still decode — the criterion type
+/// ignores unknown keys, unlike `Goal`, whose top-level keys are closed — and
+/// their frozen digest is untouched because it is never recomputed.
+#[test]
+fn criteria_store_only_their_description_and_older_rows_still_read() {
+    let f = Fixture::new();
+    let goal = f.service.goal_create(declaration(), f.owner).expect("goal");
+    let store = f.store();
+    let row = |store: &HMemStore| {
+        store
+            .query_by_entity_attribute("kanban:goal", &goal.id.to_string())
+            .expect("goal row")
+            .into_iter()
+            .next()
+            .expect("one row")
+            .value
+    };
+    let written = row(&store);
+    for criterion in written["criteria"].as_array().expect("criteria") {
+        let keys: Vec<&String> = criterion.as_object().expect("criterion").keys().collect();
+        assert_eq!(keys, ["description"], "{criterion}");
+    }
+
+    // The shape the previous build wrote: the same row with a null
+    // `llm_prompt` on every criterion.
+    let mut older = written;
+    for criterion in older["criteria"].as_array_mut().expect("criteria") {
+        criterion["llm_prompt"] = serde_json::Value::Null;
+    }
+    store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:goal",
+            &goal.id.to_string(),
+            |_| Ok((Some(older), ())),
+        )
+        .expect("rewrite")
+        .expect("row exists");
+
+    let read = f.goal(goal.id);
+    assert_eq!(read.criteria, goal.criteria);
+    assert_eq!(read.spec_digest, goal.spec_digest);
+    assert_eq!(f.service.goal_list(&f.owner).expect("list").len(), 1);
+    assert!(
+        row(&store)["criteria"][0].get("llm_prompt").is_some(),
+        "a read does not rewrite the stored row"
+    );
+}
+
 /// The 2026-11-01 operator ruling retired the schema-3 fields no longer
 /// in the current shape (including `verdicts`). Rows still carrying a
 /// retired name are obsolete under the Forward-only policy: decode fails

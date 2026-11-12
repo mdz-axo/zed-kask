@@ -2887,3 +2887,45 @@ fn task_reads_and_task_creation_are_open_to_any_caller() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// mcp-tool-review KK-24 pin: a task's criteria store only their
+/// description, and a task row written while criteria carried a null
+/// `llm_prompt` still reads with the same criteria.
+#[test]
+fn task_criteria_store_only_their_description_and_older_rows_still_read() -> anyhow::Result<()> {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let board = svc.board_create(owner, "Criteria", &make_default_columns())?;
+    let task = svc.task_create(
+        board.id,
+        TaskSpec::new("With criteria".into()).with_criteria(vec![
+            VerificationCriterion::new("compiles".into()),
+            VerificationCriterion::new("tests pass".into()),
+        ]),
+        owner,
+    )?;
+    let written = serde_json::to_value(&task).expect("task serializes");
+    for criterion in written["criteria"].as_array().expect("criteria") {
+        let keys: Vec<&String> = criterion.as_object().expect("criterion").keys().collect();
+        assert_eq!(keys, ["description"], "{criterion}");
+    }
+
+    let mut older = written;
+    for criterion in older["criteria"].as_array_mut().expect("criteria") {
+        criterion["llm_prompt"] = serde_json::Value::Null;
+    }
+    svc.store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:task",
+            &task.id.to_string(),
+            |_| Ok((Some(older), ())),
+        )?
+        .expect("task row exists");
+
+    let read = svc.task_get(task.id)?.expect("task reads");
+    assert_eq!(read.criteria, task.criteria);
+    let listed = svc.task_list(board.id, None)?;
+    assert_eq!(listed.tasks.len(), 1);
+    assert!(listed.undecodable.is_empty(), "{:?}", listed.undecodable);
+    Ok(())
+}

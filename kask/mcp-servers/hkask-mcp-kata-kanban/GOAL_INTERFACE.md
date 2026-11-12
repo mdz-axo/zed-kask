@@ -50,6 +50,14 @@ The current field set is pinned key-for-key by test
 pinned as visible decode failures that leave stored bytes unchanged
 (`retired_verdict_fields_fail_decode_and_leave_stored_bytes_unchanged`).
 
+The version tracks whether stored rows still decode, nothing else. `Goal`'s
+own keys are closed (`deny_unknown_fields`), so removing or renaming one makes
+every stored row undecodable and needs the bump. A change every stored row
+still decodes under needs none: a criterion is `{ description }` and ignores
+unknown keys, so the always-null `llm_prompt` it once carried was removed in
+place, with rows written either way reading under both builds
+(`criteria_store_only_their_description_and_older_rows_still_read`).
+
 The canonical `kanban:goal` row is keyed by the goal ID. Only schema version **3**
 is accepted. `goal_list(owner)` returns `Vec<Goal>`; the MCP list returns that
 array, including closed goals. Caller ownership is checked before decoding.

@@ -3,7 +3,8 @@
 use super::*;
 use schemars::JsonSchema;
 
-/// The stored row shape is versioned: a field-set change bumps `schema_version`
+/// The stored row shape is versioned: a change to this struct's own keys (they
+/// are closed, so an old row would stop decoding) bumps `schema_version`
 /// (never an in-place field swap), updates the key-for-key shape pin in
 /// tests/goal_lifecycle.rs, and retires the previous shape's rows under the
 /// Forward-only reset policy (GOAL_INTERFACE.md "Schema evolution"). The

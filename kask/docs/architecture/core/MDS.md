@@ -50,7 +50,7 @@ The ontology is re-anchored to the **17 surviving kask crates** (16 `hkask-*` + 
 | `Task` | Unit of work with status lifecycle, priority, verification criteria | `task_id: TaskId`, `title`, `status: TaskStatus`, `priority: Priority`, `owner: WebID`, `board_id: BoardId` |
 | `Priority` | Task urgency level | `Low \| Medium \| High \| Critical` |
 | `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`kask/crates/hkask-types/src/kanban_status.rs:24`) |
-| `VerificationCriterion` | Acceptance spec with optional LLM evaluation prompt | `description: String`, `llm_prompt: Option<String>` |
+| `VerificationCriterion` | Acceptance spec: what "done" means for a task or a goal | `description: String` |
 | `Goal` | Retained canonical functional target; immutable specification/source, worker progress, human closure and independent findings remain separate | `id`, `goal_text`, `criteria`, `criterion_ids`, `spec_digest`, `source`, optional typed `forecast`, closure/assessments, `revision`, `indexed_revision`; canonical pact: `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` |
 | `GoalVerdict` | Worker progress verdict with complete criterion coverage, never human acceptance | `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/goal.rs` |
 | `NativeGoalClosure` / `NativeGoalOutcomeCorrection` | Host-authenticated human ActionChoice and separate append-only correction; no automatic success | Canonical pact; native ingress `crates/agent/src/tools/goal_tools.rs` |

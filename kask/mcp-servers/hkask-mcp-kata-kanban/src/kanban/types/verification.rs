@@ -2,28 +2,24 @@ use super::*;
 
 // ── Verification Criterion ─────────────────────────────────────────────────
 
-/// VerificationCriterion — an acceptance criterion for task completion.
+/// VerificationCriterion — an acceptance criterion for a task or a goal.
 ///
-/// Holds a natural-language specification of what "done" means for this task,
-/// plus an optional LLM evaluation prompt for automated verification.
+/// A natural-language statement of what "done" means. Unknown keys are
+/// ignored on decode, so rows written while the type carried an
+/// always-null `llm_prompt` still read.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationCriterion {
     /// Human-readable acceptance spec.
     pub description: String,
-    /// Optional prompt for LLM-mediated evaluation.
-    pub llm_prompt: Option<String>,
 }
 
 impl VerificationCriterion {
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// pre:  description is non-empty
-    /// post: returns a VerificationCriterion with no LLM prompt
+    /// post: returns a VerificationCriterion carrying the description
     pub fn new(description: String) -> Self {
-        Self {
-            description,
-            llm_prompt: None,
-        }
+        Self { description }
     }
 }
 
