@@ -94,6 +94,21 @@ fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
     EconomicDataClient::build_url(FRED_API_BASE, endpoint, &all)
 }
 
+/// FRED answers an id it does not have with HTTP 400 "The … does not
+/// exist." rather than an empty list, so the shared status map would call a
+/// missing caller-named resource a bad argument (mcp-tool-review PM2-15,
+/// live 2026-11-11). `not_found` is the message naming the missing thing.
+fn missing_as_not_found(error: EconomicDataError, not_found: String) -> EconomicDataError {
+    match error {
+        EconomicDataError::HttpError {
+            status: 400,
+            ref body,
+            ..
+        } if body.contains("does not exist") => EconomicDataError::NotFound(not_found),
+        other => other,
+    }
+}
+
 /// FRED's aggregation-frequency codes with the names this tool also accepts.
 const FRED_FREQUENCIES: &[(&str, &str)] = &[
     ("d", "daily"),
@@ -259,7 +274,10 @@ pub async fn get_observations(
     let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let url = fred_url("series/observations", key, &params_ref);
 
-    let body = client.fetch(FRED_PROVIDER, &url).await?;
+    let body = client
+        .fetch(FRED_PROVIDER, &url)
+        .await
+        .map_err(|e| missing_as_not_found(e, format!("FRED series {} not found", req.series_id)))?;
 
     // `null` when the provider omits it — never a fabricated 0.
     let count = body.get("count").and_then(|v| v.as_u64());
@@ -309,7 +327,10 @@ pub async fn get_series_info(
 ) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let url = fred_url("series", key, &[("series_id", req.series_id.as_str())]);
-    let body = client.fetch(FRED_PROVIDER, &url).await?;
+    let body = client
+        .fetch(FRED_PROVIDER, &url)
+        .await
+        .map_err(|e| missing_as_not_found(e, format!("FRED series {} not found", req.series_id)))?;
     series_info_from_body(&body, &req.series_id)
 }
 
@@ -353,7 +374,10 @@ pub async fn list_categories(
         key,
         &[("category_id", cat_id_str.as_str())],
     );
-    let body = client.fetch(FRED_PROVIDER, &url).await?;
+    let body = client
+        .fetch(FRED_PROVIDER, &url)
+        .await
+        .map_err(|e| missing_as_not_found(e, format!("FRED category {cat_id} not found")))?;
 
     let categories = body
         .get("categories")
@@ -389,7 +413,12 @@ pub async fn get_release(
     let release_id_str = req.release_id.to_string();
 
     let release_url = fred_url("release", key, &[("release_id", release_id_str.as_str())]);
-    let release_body = client.fetch(FRED_PROVIDER, &release_url).await?;
+    let release_body = client
+        .fetch(FRED_PROVIDER, &release_url)
+        .await
+        .map_err(|e| {
+            missing_as_not_found(e, format!("FRED release {} not found", req.release_id))
+        })?;
 
     // A release id FRED does not have is surfaced, never shaped into an
     // all-empty success.
@@ -529,5 +558,40 @@ mod tests {
         assert_eq!(fred_units_code("pch").ok(), Some("pch"));
         let error = fred_units_code("pct").expect_err("pct is not a FRED code");
         assert!(error.to_string().contains("pch"), "{error}");
+    }
+
+    /// mcp-tool-review PM2-15 pin: an id FRED does not have is `not_found`
+    /// naming it. Live 2026-11-11, an unknown series, release and category
+    /// each came back HTTP 400 "… does not exist." and reached the caller as
+    /// `invalid_argument`. Every other 400 stays the caller's bad argument.
+    #[test]
+    fn an_id_fred_does_not_have_is_not_found_naming_it() {
+        use hkask_mcp_server::server::McpToolError;
+        use hkask_types::McpErrorKind;
+        let http_400 = |message: &str| EconomicDataError::HttpError {
+            provider: FRED_PROVIDER,
+            status: 400,
+            body: format!(r#"{{"error_code":400,"error_message":"{message}"}}"#),
+        };
+        for missing in [
+            "Bad Request.  The series does not exist.",
+            "Bad Request.  The release does not exist.",
+            "Bad Request.  The category does not exist.",
+        ] {
+            let error = McpToolError::from(missing_as_not_found(
+                http_400(missing),
+                "FRED series ZZPROBEUNKNOWN not found".to_string(),
+            ));
+            assert_eq!(error.kind, McpErrorKind::NotFound, "{missing}");
+            assert_eq!(error.message, "FRED series ZZPROBEUNKNOWN not found");
+        }
+
+        let bad_date = McpToolError::from(missing_as_not_found(
+            http_400(
+                "Bad Request.  Variable observation_start is not a YYYY-MM-DD formatted date (e.g. 2000-02-24).",
+            ),
+            "FRED series FEDFUNDS not found".to_string(),
+        ));
+        assert_eq!(bad_date.kind, McpErrorKind::InvalidArgument);
     }
 }
