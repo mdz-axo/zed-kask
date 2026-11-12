@@ -3,6 +3,15 @@
 **Status: advisory input to the operator's algedonic-review ratification. It
 decides nothing and implements nothing.**
 
+**Updated 2026-11-11, about 20:45 PST:** two operator rulings given after
+delivery are recorded in §9, which revises the recommendations on decisions 1
+and 4. §1–§8 are otherwise as delivered.
+
+**Updated again, about 23:15 PST:** a third ruling settles the sub-question §9
+left open; it is recorded at the end of §9. The design note has since been
+revised to the ruled design, so quotations of the note in §1 refer to its
+original text, which is in git at `d2c8c18754`.
+
 Artifact under review:
 `kask/docs/research/curator-nostr-client-design-2026-11-11.md` (129 lines,
 untracked), as it stood from my first read until 18:52 PST, SHA-256
@@ -59,7 +68,8 @@ between "rework" and "accept-with-changes" is a judgment call here; the rule I
 used is stated in §7.
 
 The cheapest safe sequence the evidence supports: ship reads first (no key at
-all), and decide signing custody after that with usage in hand.
+all), and decide signing custody after that with usage in hand. (Custody has
+since been ruled — §9. Reads first still holds as a build order.)
 
 ## 1. Findings
 
@@ -696,9 +706,15 @@ none of its claims. Where it meets this review:
 - Its open item 5 (yank state of `nostr-sdk`) matches what I read on
   crates.io: six consecutive 0.45.x releases yanked, 0.45.6 current.
 
+The relay note was revised at 19:06 and now cites this review's F1, F10 and
+F12. The bullets above describe the 19:02 version; I have not reviewed either.
+
 ## 5. Recommendations on the four §7 decisions
 
 ### Decision 1 — Signing option A / B / C
+
+**Ruled by the operator after delivery — see §9. The text below is the
+pre-ruling recommendation, kept for the record.**
 
 **Recommendation: none of the three as written. Decide in two steps.**
 
@@ -760,6 +776,9 @@ at 18:05 PST and is one of three published write relays. The operator may
 want to look at their relay list.
 
 ### Decision 4 — Raw nsec paste, or ncryptsec only
+
+**Ruled by the operator after delivery — see §9. The text below is the
+pre-ruling recommendation, kept for the record.**
 
 **Recommendation: if a key is stored on this machine at all, ncryptsec only,
 with the passphrase asked for at signing and not stored.** Evidence: the
@@ -931,3 +950,195 @@ whether Amethyst desktop can serve as a remote signer.
 - The Secret Service queries read keyring metadata, not secrets.
 - No nsec appears in this review; the sweep for nsec-shaped strings is run
   after writing (reported in the handoff message).
+
+## 9. Operator rulings after delivery, and what they change
+
+Added 2026-11-11, about 20:45 PST. The three Nostr documents were committed
+by the operator at 19:27 (`d2c8c18754`), so the header's "untracked" is out
+of date; this section is an uncommitted change on top of that commit. Tree
+citations in this section are pinned to `05c7ab2000`. Between the first pin and this one, 14 of 15 cited files I
+re-checked are unchanged; `DIVERGENCE.md` changed on one line (L110), which
+this review does not cite.
+
+### The rulings, verbatim
+
+1. On what "stored in Data Services" means: "it means that like the other
+   service api keys the nsec private key for the active nostr identity in
+   zed-kask is stored or input into the nsec key field in the nostr settings
+   in the data services section of the kask settings."
+2. On custody, in reply to my proposal to keep that field and have it hold a
+   NIP-49 password-encrypted key (`ncryptsec`): "please proceed as proposed
+   with the ncryptsec".
+
+My reading of ruling 2: it adopts the proposal I had just put — the Nostr row
+and field stay; the editor process, not the MCP child, reads the slot and
+signs; the agent's verb is *draft*; a signature needs a human act — with the
+ncryptsec form of storage. If the ruling was meant more narrowly (storage
+form only), the items under "follows from the ruling" below are still my
+recommendation and not yet ruled.
+
+This closes the divergence §5 raised under decision 1: the key itself goes in
+Data Services. The account-only reading is off the table.
+
+### Decision 1, revised
+
+**Local key, signed in the editor process.** This is the note's Option A with
+one move: the signing happens in the editor, and `hkask-mcp-nostr-client`
+gets `credentials: &[]`. Options B and C are not taken for v1; a remote signer
+remains a possible second signer later and nothing here blocks it.
+
+Still open under decision 1: whether the editor takes `nostr-sdk` (or the
+`nostr` crate, whose registry metadata lists a `nip49` feature) or a smaller
+crate set for signing (F10). I have built neither.
+
+### Decision 4, revised
+
+**The slot holds an ncryptsec. The password is asked for when a publish is
+approved, and is not stored.**
+
+One sub-question the two rulings leave between them, which I am not settling:
+ruling 1 says the nsec is input into the field; ruling 2 says ncryptsec. The
+reading that satisfies both is that the field accepts either form and the
+keychain only ever receives an ncryptsec — a pasted raw nsec is encrypted in
+the editor, under a password asked for at that moment, before anything is
+written. The alternative is a field that accepts ncryptsec only. I recommend
+the first, because it matches ruling 1's wording and does not depend on the
+operator producing the blob elsewhere; the operator should confirm.
+
+### What follows from the ruling
+
+- **F1 gets a stronger fix than the one §1 proposed.** With the key
+  encrypted, a signature needs the password, and the model does not have it.
+  The veto stops depending on a prompt the model cannot click and starts
+  depending on a secret the model cannot supply. This holds only while the
+  password is never cached, never placed in a thread, and never returned to a
+  tool. A "remember for this session" option would return the design to F1.
+- **The password prompt cannot be a chat turn or the existing question
+  form.** "**All turns are ingested**" into memory (`DIVERGENCE.md` L37). The
+  elicitation form has no masked field (0 hits for `masked` in
+  `crates/agent_ui/src/conversation_view/elicitation.rs`), and the tool that
+  uses it hands the answer back to the model
+  (`crates/agent/src/tools/ask_user_tool.rs:118`). The decision prompt offers
+  buttons only (`crates/agent/src/thread.rs:9507`). A masked input exists as
+  a primitive (`crates/editor/src/editor.rs:9074`) and is used for a password
+  prompt already (`crates/git_ui_core/src/askpass_modal.rs:45`). So the
+  approval surface is a dedicated host prompt or the panel (§4): full note
+  text, signing npub, target relays, one masked password field.
+- **The slot no longer yields the key to whoever can read it.** That lowers
+  the weight of two earlier points: the session-unlocked keyring (F2) and the
+  settings page reading every row's value to test presence (F7,
+  `crates/settings_ui/src/pages/kask_page.rs:131`). Both now expose a blob.
+- **The npub preview needs the password.** An ncryptsec does not reveal its
+  public key. The row can ask for the password once at save, show the npub,
+  and discard both; that also proves the blob opens with the password the
+  operator believes it has. At every later signing, the public key derived
+  from the decrypted key must equal the recorded npub, or signing is refused.
+- **Key derivation runs off the foreground.** NIP-49 uses scrypt with a cost
+  byte chosen when the blob is made; its table gives 64 MiB and about 100 ms
+  at 16, and 1 GiB and about 2 seconds at 20. The editor has to accept the
+  cost it is given, within a bound, and refuse beyond it (the table's top
+  entry needs 4 GiB).
+- **Wipe after use.** NIP-49: "It is recommended that clients zero out the
+  memory of passwords and private keys before freeing that memory." The tree
+  already does this for other secrets (`use zeroize::Zeroizing;`,
+  `kask/crates/hkask-keystore/src/keychain.rs:17`).
+- **Password text is normalized** to Unicode NFKC before use, per NIP-49.
+- **A wrong password is a typed refusal**, not a retry loop: the cipher is
+  authenticated, so a wrong password is detectable; the draft stays pending.
+- **If a raw nsec is pasted**, NIP-49's security byte should record that the
+  key was "handled insecurely (… cut and paste unencrypted, etc)".
+
+Dependencies, from `Cargo.lock` at the pin: absent — `scrypt`,
+`chacha20poly1305`, `poly1305`, `aead`, `bech32`, `secp256k1`, `k256`;
+present — `chacha20`, `sha2`, `zeroize`, `unicode-normalization`. Nothing was
+added or resolved.
+
+### The flow this produces
+
+1. Agent calls a draft tool; the draft is stored, unsigned.
+2. Operator opens the pending draft (host prompt or panel) and reads the full
+   text, the npub and the target relays.
+3. Operator types the password and approves.
+4. Editor reads the ncryptsec from `kask://credentials/nostr`, derives the
+   key off the foreground, checks the derived npub, signs one kind 1 event,
+   wipes password and key.
+5. Editor stores the signed event and hands it to the child to broadcast.
+6. Child reports each relay's answer; a retry re-sends the stored event.
+
+### Additions to the test surface (§3)
+
+- NIP-49's own test data: its published encrypted key decrypts, under the
+  published password, to the published key; its normalization example
+  produces the stated bytes.
+- A wrong password yields the typed refusal and no signature.
+- No code path signs without a password entered in that same approval.
+- The password never appears in thread history, tool output or logs.
+- A blob whose cost byte exceeds the bound is refused before any allocation.
+- Interop: a throwaway key encrypted here opens with `amy key decrypt`, and
+  the reverse (`amy`'s help lists `key encrypt` and `key decrypt`).
+
+### What ncryptsec does not cover
+
+- **Password strength is now the whole protection for a blob this session can
+  reach.** Guessing is offline and unlimited. NIP-49 itself advises against
+  exposing these blobs, "as cracking a key may become easier".
+- The key is in editor memory for the moment of signing. One observation on
+  this machine: `ptrace_scope` is 1. I did not test what a same-user process
+  can read, nor whether keystrokes into the prompt can be observed.
+- A human who approves without reading is not stopped by any of this.
+- The key still cannot be rotated.
+
+### Not verified, and one correction
+
+- I told the operator in conversation that this is "the password-encrypted
+  form Amethyst exports". I have not seen that myself. Curator memory holds
+  an earlier session's account of Amethyst's backup screen offering an
+  "Encrypt key" button that produces an `ncryptsec1…` (thread `2402cc1e`,
+  recorded as model inference). The operator can confirm it at a glance. The
+  same thread asserts that Amethyst can act as a NIP-46 signer; that is also
+  unverified and no longer needed for v1.
+- `amy key encrypt NSEC|HEX --password X` exists per its help text, but takes
+  the key and the password as command arguments, where the shell history and
+  other processes can see them. I have not run it.
+- No build, no crate resolution, no cryptography executed.
+
+### What I did not do
+
+- **The keyring test I offered** (whether an agent terminal can read a secret
+  value, using a dummy slot) was not run. The ruling did not ask for it, it
+  would write to the operator's keyring, and with an ncryptsec in the slot
+  its result matters less: it would only show how exposed the blob is.
+- **The design note is not edited** — my brief forbids it. It still says
+  what it said; §3–§6 need bringing into line with these rulings.
+- **Nothing is implemented.** The note routes implementation through the
+  algedonic review and a delegated agent.
+
+### Third ruling (added about 23:15 PST)
+
+Asked whether the field should accept either form or ncryptsec only, the
+operator ruled: "nsec plus encryption password in nostr settings."
+
+That settles the sub-question under "Decision 4, revised": the row takes the
+nsec and a password, and the editor encrypts. An ncryptsec is not an input.
+
+One reading remains for the operator to confirm. I read the ruling as: the
+password is typed into the row and used, not saved, and is asked for again at
+each publish, which is what ruling 2 accepted. If the password were stored
+beside the encrypted key, the encryption would protect nothing. The design
+note and the plan both hold the settings row until this is confirmed.
+
+At the operator's instruction the design note was then revised to the ruled
+design, and a plan and a handoff prompt were written. They are in
+`/home/mdz-axolotl/Documents/zk-data/skills/task-breakdown/2026-11-11-curator-nostr-client/`.
+Planning turned up one correction to this review's test surface: the
+keystore crate's temporary keyring is compiled only for that crate's own
+tests, so tests elsewhere must use the fake credentials provider.
+
+### Standing of the verdict
+
+"Rework, targeted" was a verdict on the note's original text. (This
+subsection was written before the note was revised.) At that time the text was
+unchanged. Two of its four decisions are now ruled (1 and 4), which removes
+the main reason the options needed rework; decisions 2 and 3 are open with
+§5's recommendations. What remains is editorial: revise the note to state the
+ruled design, and settle the nsec-paste sub-question above.
