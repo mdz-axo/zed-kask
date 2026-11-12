@@ -104,6 +104,21 @@ const ALLOWED_LITERALS: &[(&str, &str)] = &[
         "bibo:Note",
     ),
     ("kask/crates/hkask-storage/src/hmem.rs", "bibo:Note"),
+    // The kata-kanban move-task tool description names the PKO individuals
+    // its response carries for in_progress and done — published at
+    // sources/pko/pko.ttl (https://w3id.org/pko#Completed, :1624;
+    // https://w3id.org/pko#InProgress, :1644 — both owl:NamedIndividual),
+    // and the description also states the null boundary (PKO publishes no
+    // status for backlog, ready, review). Introduced with the KK-22
+    // execution-status remediation (a0d43258c4).
+    (
+        "kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs",
+        "pko:Completed",
+    ),
+    (
+        "kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs",
+        "pko:InProgress",
+    ),
 ];
 
 /// Repo root (this crate lives at `<root>/kask/crates/hkask-bridge-ontology`).
