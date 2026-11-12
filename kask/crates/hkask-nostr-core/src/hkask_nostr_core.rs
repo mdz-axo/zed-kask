@@ -3,12 +3,19 @@
 //! secret key.
 //!
 //! The Nostr MCP server parses untrusted relay text, so it may depend on this
-//! crate and never on `hkask-nostr-signer`. Keeping the two apart at the crate
-//! boundary means a package that does not depend on the signer cannot link
-//! signing code under any build.
+//! crate and never on `hkask-nostr-signer`. That keeps key decryption and the
+//! code that holds a key out of the server.
+//!
+//! Known limit: the curve library (`k256`) compiles its Schnorr signing and
+//! verifying code under one feature, so its `SigningKey` type is linked here
+//! too. Nothing in this crate constructs one.
 
-use bech32::Bech32;
-use bech32::primitives::decode::CheckedHrpstring;
+mod event;
+mod nip19;
+
+pub use event::{Event, EventError, event_id};
+pub use nip19::{IdentifierError, decode_note, decode_npub, encode_note, encode_npub};
+
 use k256::schnorr::{Signature, VerifyingKey};
 use thiserror::Error;
 
@@ -34,40 +41,4 @@ pub fn verify_schnorr(
     let signature = Signature::from_bytes(signature).map_err(|_| VerifyError::BadSignature)?;
     key.verify_raw(message, &signature)
         .map_err(|_| VerifyError::BadSignature)
-}
-
-/// Why a NIP-19 identifier was not accepted. No variant carries the payload:
-/// the text may be a secret key pasted into the wrong field.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum IdentifierError {
-    /// The text is not a valid bech32 string.
-    #[error("not a bech32 string")]
-    NotBech32,
-    /// The text is bech32 but carries a different prefix.
-    #[error("expected the `{expected}` prefix, found `{found}`")]
-    WrongPrefix {
-        expected: &'static str,
-        found: String,
-    },
-    /// The payload is not 32 bytes.
-    #[error("payload is {found} bytes, expected 32")]
-    WrongLength { found: usize },
-}
-
-/// Decode a NIP-19 `npub` into the 32-byte x-only public key.
-pub fn decode_npub(text: &str) -> Result<[u8; 32], IdentifierError> {
-    let parsed = CheckedHrpstring::new::<Bech32>(text).map_err(|_| IdentifierError::NotBech32)?;
-    let found = parsed.hrp().to_lowercase();
-    // Checked before the payload is decoded, so a secret key pasted here is
-    // never turned into bytes.
-    if found != "npub" {
-        return Err(IdentifierError::WrongPrefix {
-            expected: "npub",
-            found,
-        });
-    }
-    let payload: Vec<u8> = parsed.byte_iter().collect();
-    <[u8; 32]>::try_from(payload).map_err(|payload| IdentifierError::WrongLength {
-        found: payload.len(),
-    })
 }

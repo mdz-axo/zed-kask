@@ -12,8 +12,10 @@
 
 mod nip49;
 mod secret;
+mod sign;
 
 pub use nip49::{
     DecryptError, ENCRYPT_LOG_N, EncryptError, MAX_LOG_N, decrypt_ncryptsec, encrypt_nsec,
 };
 pub use secret::{NsecError, SecretKey};
+pub use sign::{NOTE_KIND, SignError, sign_event};

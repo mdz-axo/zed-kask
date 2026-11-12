@@ -979,6 +979,7 @@ hkask-inference = { path = "kask/crates/hkask-inference" }
 
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
+hkask-nostr-core = { path = "kask/crates/hkask-nostr-core" }
 
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 

@@ -3,18 +3,18 @@ name = "hkask-nostr-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Public Nostr operations: signature verification and bech32 identifiers. Holds no secret-key code, so a package that depends only on this crate cannot link signing."
+description = "Public Nostr operations: event ids, event and signature verification, and bech32 identifiers. Holds no secret-key code of its own, so a package that depends only on this crate cannot link key decryption."
 
 [lib]
 path = "src/hkask_nostr_core.rs"
 
 [dependencies]
 bech32.workspace = true
-k256.workspace = true
-thiserror.workspace = true
-
-[dev-dependencies]
 hex.workspace = true
+k256.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

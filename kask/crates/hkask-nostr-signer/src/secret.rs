@@ -106,6 +106,16 @@ impl SecretKey {
         Ok(Self { signing_key })
     }
 
+    /// BIP-340 signature of `message` with the given auxiliary randomness.
+    /// `None` only if the curve library rejects the derived nonce, which
+    /// BIP-340 puts at negligible probability.
+    pub(crate) fn sign_raw(&self, message: &[u8], aux_rand: &[u8; 32]) -> Option<[u8; 64]> {
+        self.signing_key
+            .sign_raw(message, aux_rand)
+            .ok()
+            .map(|signature| signature.to_bytes())
+    }
+
     /// The raw key bytes, in a buffer that is wiped when dropped.
     pub(crate) fn expose_bytes(&self) -> Zeroizing<[u8; 32]> {
         let mut field_bytes = self.signing_key.to_bytes();
