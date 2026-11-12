@@ -6,13 +6,9 @@
 //! server's mapping onto those two axes, wired as the central
 //! `ToolContext::annotate_response` hook via the `mcp_server!` macro's
 //! annotate override — one point stamps every tool response at the
-//! `execute_tool` boundary, replacing the 17 per-site flat-response
-//! `ontology: kanban_type_to_pko(...)` emissions (operator ruling,
-//! option (b) migration 2026-10-18).
+//! `execute_tool` boundary.
 //!
-//! - **Process axis (PKO)** — follows the semantics the server's own
-//!   `pko.rs` established (its type→concept table is retained for the
-//!   NESTED per-item tags the hook cannot own): board lifecycle tools
+//! - **Process axis (PKO)** — board lifecycle tools
 //!   execute the board procedure's steps; goal tools verify and record
 //!   outcomes; task-write tools change task state (creation,
 //!   status change, assignment, deliverables, deletion); read tools
@@ -44,10 +40,9 @@ use hkask_bridge_ontology::pko::PkoConcept;
 /// `dual_axis_covers_all_registered_tools` (below) and the tool-surface
 /// pin over the live router.
 ///
-/// The concepts here are response-level: what the CALL did, matching the
-/// flat-response emissions this module replaces (the per-item nested
-/// tags in `pko.rs` describe what the ITEM is — Board/Task/Goal — and
-/// stay per-item).
+/// The concepts here are response-level: what the CALL did. The nested
+/// per-item tags (`BoardInfo.ontology`, `TaskInfo.ontology`) say what the
+/// ITEM is and are set where the item is built.
 pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
     match tool_name {
         // Board lifecycle: create/delete/import/export/list/update each
@@ -116,12 +111,16 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_goal_list"
         | "kanban_goal_get"
         | "kanban_task_list"
-        | "kanban_task_comments_since" => Some(REPORT),
+        | "kanban_task_comments_since"
+        // Export and the kata prompt store nothing: each compiles a
+        // reading of stored records (mcp-tool-review KK-12 — both were
+        // stamped as datasets under "writes").
+        | "kanban_board_export"
+        | "kanban_task_kata_prompt" => Some(REPORT),
         // Writes: everything that stores or modifies a record.
         "kanban_board_create"
         | "kanban_board_delete"
         | "kanban_board_import"
-        | "kanban_board_export"
         | "kanban_board_update"
         | "kanban_goal_create"
         | "kanban_goal_judge"
@@ -135,7 +134,6 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "kanban_task_add_deliverable"
         | "kanban_task_update"
         | "kanban_task_verify"
-        | "kanban_task_kata_prompt"
         | "kanban_task_kata_record"
         | "kanban_task_spawn"
         | "kanban_task_claim_next"
@@ -184,6 +182,9 @@ mod tests {
 
         assert_eq!(tool_to_dc("kanban_task_move"), Some(DATASET));
         assert_eq!(tool_to_dc("kanban_task_list"), Some(REPORT));
+        // Read-only tools are reports even when they sit beside writes.
+        assert_eq!(tool_to_dc("kanban_board_export"), Some(REPORT));
+        assert_eq!(tool_to_dc("kanban_task_kata_prompt"), Some(REPORT));
     }
 
     /// End-to-end: a real tool invocation through `execute_tool` carries

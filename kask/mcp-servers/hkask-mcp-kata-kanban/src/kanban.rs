@@ -16,9 +16,8 @@ pub(crate) mod types;
 
 // Re-export the public API from types
 pub(crate) use types::{
-    Board, ColumnDef, Comment, CriterionCitation, KanbanPhase, KataExperimentRecord, Priority,
-    SpawnSpec, Task, TaskFilter, TaskKataState, TaskSpec, TaskStatus, Verification,
-    VerificationCriterion,
+    Board, ColumnDef, Comment, CriterionCitation, KataExperimentRecord, Priority, SpawnSpec, Task,
+    TaskKataState, TaskSpec, TaskStatus, Verification, VerificationCriterion,
 };
 
 // Re-export the service and errors from service_impl

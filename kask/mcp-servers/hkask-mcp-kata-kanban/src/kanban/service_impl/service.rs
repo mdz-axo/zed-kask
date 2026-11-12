@@ -23,8 +23,8 @@ use super::types::{BoardFault, BoardListReport, KanbanError, TaskIndexFault, Tas
 
 use crate::kanban::mermaid::{ParsedBoard, columns_from_parsed};
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, Priority, Task, TaskFilter, TaskSpec, TaskStatus,
-    Verification, VerificationCriterion,
+    Board, ColumnDef, CriterionCitation, Priority, Task, TaskSpec, TaskStatus, Verification,
+    VerificationCriterion,
 };
 
 /// Core kanban coordination service.
@@ -731,7 +731,7 @@ impl KanbanService {
         Ok((tasks, undecodable))
     }
 
-    /// List tasks on a board, optionally filtered. Indexed rows that cannot
+    /// List tasks on a board, optionally only those in one status. Indexed rows that cannot
     /// be read are surfaced in `undecodable` — never silently dropped.
     ///
     /// pre:  board_id refers to an existing board
@@ -741,7 +741,7 @@ impl KanbanService {
     pub(crate) fn task_list(
         &self,
         board_id: BoardId,
-        filter: TaskFilter,
+        status: Option<TaskStatus>,
     ) -> Result<TaskListReport, KanbanError> {
         // Verify board exists
         self.board_get(board_id)?.ok_or_else(|| {
@@ -752,16 +752,10 @@ impl KanbanService {
         })?;
 
         let (mut tasks, undecodable) = self.board_tasks_with_faults(board_id)?;
-        tasks.retain(|task| {
-            filter.status.is_none_or(|s| task.status == s)
-                && filter.assignee.is_none_or(|a| task.assignee == Some(a))
-                && filter.priority.is_none_or(|p| task.priority == Some(p))
-        });
-
-        tasks.sort_by_key(|b| std::cmp::Reverse(b.created_at));
-        if let Some(limit) = filter.limit {
-            tasks.truncate(limit);
+        if let Some(status) = status {
+            tasks.retain(|task| task.status == status);
         }
+        tasks.sort_by_key(|b| std::cmp::Reverse(b.created_at));
 
         Ok(TaskListReport { tasks, undecodable })
     }

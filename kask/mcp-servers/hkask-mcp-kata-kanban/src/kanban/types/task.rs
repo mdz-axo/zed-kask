@@ -35,10 +35,6 @@ pub struct Task {
     /// the routine instead of restarting from zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) kata_state: Option<crate::kanban::types::TaskKataState>,
-    /// Story points (relative sizing, agile convention).
-    pub story_points: Option<u32>,
-    /// Estimated hours for completion.
-    pub estimated_hours: Option<f64>,
     /// Priority level.
     pub priority: Option<Priority>,
     /// Labels/tags for categorization and filtering.
@@ -55,8 +51,7 @@ pub struct Task {
     pub comments: Vec<Comment>,
     /// Deliverable links — file paths or URLs pointing to work outputs.
     pub deliverables: Vec<String>,
-    /// Optional phase grouping for work reassembly.
-    pub phase_id: Option<PhaseId>,
+
     /// When the task was created.
     pub created_at: DateTime<Utc>,
     /// When the task was last updated.
@@ -73,11 +68,6 @@ impl Task {
             description,
             criteria,
             advances,
-            story_points,
-            estimated_hours,
-            labels,
-            priority,
-            phase_id,
         } = spec;
         let now = Utc::now();
         Self {
@@ -92,14 +82,11 @@ impl Task {
             advances,
             verification: None,
             kata_state: None,
-            story_points,
-            estimated_hours,
-            labels,
-            priority,
+            labels: Vec::new(),
+            priority: None,
             reserved: false,
             comments: Vec::new(),
             deliverables: Vec::new(),
-            phase_id,
             created_at: now,
             updated_at: now,
         }
@@ -133,49 +120,6 @@ impl Comment {
             author,
             body,
             created_at: Utc::now(),
-        }
-    }
-}
-
-// ── Filter ─────────────────────────────────────────────────────────────────
-
-/// TaskFilter — criteria for listing/filtering tasks on a board.
-#[non_exhaustive]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct TaskFilter {
-    /// Filter by status (column).
-    pub status: Option<TaskStatus>,
-    /// Filter by assignee.
-    pub assignee: Option<WebID>,
-    /// Filter by priority.
-    pub priority: Option<Priority>,
-    /// Limit the number of results.
-    pub limit: Option<usize>,
-}
-
-impl TaskFilter {
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// post: returns an empty filter (matches all tasks)
-    pub fn all() -> Self {
-        Self {
-            status: None,
-            assignee: None,
-            priority: None,
-            limit: None,
-        }
-    }
-
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  arguments are valid
-    /// post: returns expected result
-    /// pre:  status is a valid TaskStatus
-    /// post: returns a filter matching only tasks with the given status
-    pub fn by_status(status: TaskStatus) -> Self {
-        Self {
-            status: Some(status),
-            assignee: None,
-            priority: None,
-            limit: None,
         }
     }
 }

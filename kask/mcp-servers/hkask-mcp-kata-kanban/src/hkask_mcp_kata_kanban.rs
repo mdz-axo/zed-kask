@@ -11,7 +11,6 @@
 pub mod idempotency;
 pub mod kanban;
 pub(crate) mod ontology;
-pub(crate) mod pko;
 /// Integration-test fixtures (the lib-crate test seam — `#[doc(hidden)]`
 /// keeps the public docs clean while the test binaries reach it through
 /// the lib; see the module docs for the no-`mod.rs` rationale). Gated to
@@ -30,15 +29,15 @@ pub use kanban::KanbanService;
 pub use kanban::types::goal::*;
 pub use kanban::types::verification::VerificationCriterion;
 pub(crate) use kanban::{
-    ColumnDef, KataExperimentRecord, KataStateUpdate, Priority, SpawnSpec, Task, TaskFilter,
-    TaskSpec, TaskStatus,
+    ColumnDef, KataExperimentRecord, KataStateUpdate, Priority, SpawnSpec, Task, TaskSpec,
+    TaskStatus,
 };
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
+use hkask_bridge_ontology::pko::{PROCEDURE, STEP};
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool};
 use hkask_storage::HMemStore;
-use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use std::sync::Arc;
@@ -215,7 +214,7 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
         text: comment.body.clone(),
         kind: "comment".to_string(),
         at: comment.created_at.to_rfc3339(),
-        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+        ontology: Some(STEP.to_string()),
     })
 }
 
@@ -245,7 +244,7 @@ fn task_info(t: &Task) -> TaskInfo {
         priority: t.priority.map(|p| p.to_string()),
         labels: t.labels.clone(),
         deliverables: t.deliverables.clone(),
-        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
+        ontology: Some(STEP.to_string()),
     }
 }
 
@@ -354,7 +353,7 @@ impl KanbanServer {
                             name: b.name,
                             column_count: b.columns.len(),
                             columns: column_infos(&b.columns),
-                            ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
+                            ontology: Some(PROCEDURE.to_string()),
                         })
                         .collect(),
                 }
@@ -547,10 +546,6 @@ impl KanbanServer {
         .await
     }
 
-    fn goal_with_summary(goal: &Goal) -> Result<serde_json::Value, McpToolError> {
-        serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))
-    }
-
     /// Read the complete canonical specification and history, including archives.
     #[tool(
         description = "Get a caller-owned canonical goal: original criteria and specification digest, closure, human corrections, assessment attempts, forecast and scores."
@@ -566,7 +561,7 @@ impl KanbanServer {
                 .goal_get(id, self.webid)
                 .map_err(map_kanban_error)?
                 .ok_or_else(|| McpToolError::not_found(format!("goal {id} not found")))?;
-            Self::goal_with_summary(&goal)
+            serde_json::to_value(goal).map_err(|e| McpToolError::internal(e.to_string()))
         })
         .await
     }
@@ -579,15 +574,7 @@ impl KanbanServer {
         Parameters(GoalListRequest {}): Parameters<GoalListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "kanban_goal_list", async {
-            let goals = self
-                .service
-                .goal_list(&self.webid)
-                .map_err(map_kanban_error)?;
-            let enriched: Vec<serde_json::Value> = goals
-                .iter()
-                .map(Self::goal_with_summary)
-                .collect::<Result<Vec<_>, McpToolError>>()?;
-            serde_json::to_value(enriched).map_err(|e| McpToolError::internal(e.to_string()))
+            respond(self.service.goal_list(&self.webid), |goals| goals)
         })
         .await
     }
@@ -756,18 +743,18 @@ impl KanbanServer {
                     )));
                 }
             };
-            let filter = match status {
+            let status = match status {
                 Some(s) => match crate::TaskStatus::parse_str(&s) {
-                    Some(st) => TaskFilter::by_status(st),
+                    Some(status) => Some(status),
                     None => {
                         return Err(McpToolError::invalid_argument(format!(
                             "invalid status: {s} (expected one of {TASK_STATUSES})"
                         )));
                     }
                 },
-                None => TaskFilter::all(),
+                None => None,
             };
-            respond(self.service.task_list(bid, filter), |report| {
+            respond(self.service.task_list(bid, status), |report| {
                 if compact {
                     // P2/P4: the token-frugal agent view — Done capped with
                     // the hidden count disclosed, operator-reserved tasks
@@ -1280,7 +1267,7 @@ impl KanbanServer {
                         &memory_scope,
                     )?;
                     let skills_for_agent = delegated_skills.clone();
-                    let spec = crate::SpawnSpec::new(tid)
+                    let spec = crate::SpawnSpec::new()
                         .with_level(&delegation_level)
                         .with_skills(delegated_skills);
                     let spec = if let Some(ref ms) = memory_scope {
@@ -1520,7 +1507,7 @@ impl KanbanServer {
             }
             let report = self
                 .service
-                .task_list(bid, TaskFilter::all())
+                .task_list(bid, None)
                 .map_err(map_kanban_error)?;
             let task_count = report.tasks.len();
             let undecodable_count = report.undecodable.len();

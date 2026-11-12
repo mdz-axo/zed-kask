@@ -8,7 +8,7 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | Tool | Description |
 |------|-------------|
 | `kanban_board_create` | Create a new kanban board with optional custom columns; `done_requires_verification` gates Done behind `kanban_task_verify` (stamped by convention for the reserved "Algedonic review" name) |
-| `kanban_board_list` | List all kanban boards owned by the caller |
+| `kanban_board_list` | List all kanban boards owned by the caller, with the change counter; a board row that fails to decode is reported in `undecodable_boards` |
 | `kanban_board_update` | Rename a kanban board (owner only); the name is the board's addressing key |
 | `kanban_board_delete` | Delete a kanban board and all its tasks |
 | `kanban_board_export` | Export a kanban board as mermaid kanban markdown |
@@ -24,7 +24,9 @@ Kata-Kanban workflow coordination MCP server — task management with WIP limits
 | `kanban_task_assign` | Claim an unassigned task as the authenticated caller (no arbitrary-agent assignment; the caller's identity is the assignee) |
 | `kanban_task_claim_next` | Pull the next claimable task: one transaction assigns the caller and moves the oldest unassigned Ready task to In Progress, skipping operator-reserved tasks and honoring the In Progress WIP limit (replay-protected by an optional idempotency key) |
 | `kanban_task_verify` | Record verification evidence for a Review task — the user's confirmation text is the pass signal (criteria guide work but do not gate completion; only the operator's relayed confirmation moves Review to Done) |
-| `kanban_task_reopen` | Reopen a completed task (Done → InProgress) |
+| `kanban_task_reopen` | Reopen a completed task (Done → InProgress); refused when In Progress is at its WIP limit or the board has no In Progress column |
+| `kanban_task_delete` | Delete a task and its board index entry (task owner only) |
+| `kanban_task_unassign` | Remove a task's assignee (task owner only) |
 
 Task mutations transform the current stored task inside the existing
 `HMemStore::update_value_atomic` transaction, rather than replacing an earlier
@@ -55,7 +57,7 @@ are distinct from worker progress and independent criterion assessment.
 | Tool | Description |
 |------|-------------|
 | `kanban_goal_create` | Declare 1–4 explicit criteria and their source; optionally freeze a prospective forecast |
-| `kanban_goal_judge` | Append worker progress with exact criterion coverage; done requires every criterion passed |
+| `kanban_goal_judge` | Check a worker verdict against the frozen criteria (exact criterion coverage; done requires every criterion passed). The verdict is validated, not stored: the call advances the goal's revision |
 | `kanban_goal_get` | Get the complete caller-owned specification and lifecycle history |
 | `kanban_goal_list` | Return an array of complete caller-owned current-schema goals, including closed records; invalid current records fail visibly |
 
@@ -92,19 +94,19 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 | Tool | Description |
 |------|-------------|
 | `kanban_task_comment` | Add a comment to a task (feedback thread for subagent↔agent communication) |
-| `kanban_task_comments_since` | Fetch task comments starting from an index (for incremental memory ingestion) |
+| `kanban_task_comments_since` | Fetch task comments starting from an index; `total_count` is the task's comment count, the next cursor |
 | `kanban_task_add_deliverable` | Attach a deliverable (file path or URL) to a task as work output |
 
 ### Kata prompts
 | Tool | Description |
 |------|-------------|
-| `kanban_task_kata_prompt` | Generate a task-scoped prompt; `stage` selects `coaching`, `improvement`, or `practice` (`sub_problem` required for `practice`) |
-| `kanban_task_kata_record` | Record durable kata state (target condition, focus obstacle, last experiment with prediction and outcome) — the prompts read it back, so a new session continues the routine instead of restarting from zero |
+| `kanban_task_kata_prompt` | Return the task's current state framed for one kata stage, with a pointer to the `kata-improvement` skill that holds the method; `stage` selects `coaching`, `improvement`, or `practice` (`sub_problem` required for `practice`). Read-only |
+| `kanban_task_kata_record` | Record durable kata state (a non-empty target condition, the focus obstacle, last experiment with prediction and outcome) — the prompt reads it back, so a new session continues the routine instead of restarting from zero. `focus_obstacle`: omit to keep, `null` to clear |
 
 ### Agent spawning
 | Tool | Description |
 |------|-------------|
-| `kanban_task_spawn` | Spawn a subagent for task execution with delegated skills |
+| `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). `delegated_skills` are named in the child's prompt; `delegation_level` and `memory_scope` are recorded on the task and do not change what the child can do |
 
 ### Contract management
 | Tool | Description |

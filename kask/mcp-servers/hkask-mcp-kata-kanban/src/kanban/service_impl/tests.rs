@@ -2,8 +2,8 @@ use super::service::KanbanService;
 use crate::VerificationCriterion;
 use crate::kanban::mermaid::{export_board_to_mermaid, parse_mermaid_kanban};
 use crate::kanban::{
-    Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskFilter,
-    TaskSpec, TaskStatus,
+    Board, ColumnDef, CriterionCitation, KataExperimentRecord, SpawnSpec, Task, TaskSpec,
+    TaskStatus,
 };
 use hkask_storage::HMemStore;
 use hkask_types::WebID;
@@ -89,13 +89,7 @@ struct FaultEnv {
 fn assert_board_and_task_retained(env: &FaultEnv, task: &Task) -> anyhow::Result<()> {
     assert!(env.service.board_get(env.board.id)?.is_some());
     assert!(env.service.task_get(task.id)?.is_some());
-    assert_eq!(
-        env.service
-            .task_list(env.board.id, TaskFilter::all())?
-            .tasks
-            .len(),
-        1
-    );
+    assert_eq!(env.service.task_list(env.board.id, None)?.tasks.len(), 1);
     assert_eq!(
         env.store.count()?,
         // board + task + index rows, plus the P1 change-counter row the
@@ -551,7 +545,7 @@ fn change_counter_moves_on_every_write_and_not_on_reads() -> anyhow::Result<()> 
     assert!(after_create > after_board, "task_create moves the counter");
 
     svc.board_list(&owner)?;
-    svc.task_list(board.id, TaskFilter::all())?;
+    svc.task_list(board.id, None)?;
     svc.task_get(task.id)?;
     assert_eq!(
         svc.changes_revision()?,
@@ -838,7 +832,7 @@ fn task_list_surfaces_undecodable_task_rows() -> anyhow::Result<()> {
         )?
         .expect("the corrupted row still exists");
 
-    let report = svc.task_list(board.id, TaskFilter::all())?;
+    let report = svc.task_list(board.id, None)?;
     assert!(
         report.tasks.is_empty(),
         "the corrupted row is not listed as a readable task"
@@ -1164,7 +1158,7 @@ fn export_import_round_trip_preserves_wip_limits() -> anyhow::Result<()> {
     let mut columns = KanbanService::standard_columns();
     columns[1] = ColumnDef::new("Ready".into(), TaskStatus::Ready, 1).with_wip_limit(2);
     let board = svc.board_create(owner, "WIP Round Trip", &columns)?;
-    let report = svc.task_list(board.id, TaskFilter::all())?;
+    let report = svc.task_list(board.id, None)?;
     let markdown = export_board_to_mermaid(&board, &report.tasks);
     let parsed = parse_mermaid_kanban(&markdown)?;
     let (imported, _) = svc.board_import(owner, "WIP Round Trip 2", &parsed)?;
@@ -1276,7 +1270,7 @@ fn interleaved_comments_moves_and_deliverables_preserve_each_other() {
         expected.updated_at = stored.updated_at;
         assert_eq!(stored, expected, "all unrelated fields: {pair:?}");
         assert_eq!(
-            svc.task_list(board.id, TaskFilter::default())
+            svc.task_list(board.id, None)
                 .expect("indexed read")
                 .tasks
                 .len(),
@@ -1330,9 +1324,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                     .map(|_| ()),
                 "verify" => svc.task_verify(task.id, "Confirmed", owner).map(|_| ()),
                 "reopen" => svc.task_reopen(task.id, owner).map(|_| ()),
-                "spawn" => svc
-                    .spawn_task(task.id, SpawnSpec::new(task.id), owner)
-                    .map(|_| ()),
+                "spawn" => svc.spawn_task(task.id, SpawnSpec::new(), owner).map(|_| ()),
                 _ => unreachable!("fixture operation"),
             };
             let comment = || svc.task_comment(task.id, owner, "Keep comment").map(|_| ());
@@ -1653,7 +1645,7 @@ fn task_mutations_preserve_typed_missing_task_and_authorization_errors() {
             "deliverable" => svc
                 .task_add_deliverable(id, "Unauthorized", actor)
                 .map(|_| ()),
-            "spawn" => svc.spawn_task(id, SpawnSpec::new(id), actor).map(|_| ()),
+            "spawn" => svc.spawn_task(id, SpawnSpec::new(), actor).map(|_| ()),
             "delete" => svc.task_delete(id, actor).map(|_| ()),
             _ => unreachable!("fixture operation"),
         };
@@ -1706,7 +1698,7 @@ fn interleaved_deletion_returns_not_found_without_resurrecting_task_or_index() {
         assert!(svc.task_get(task.id).expect("read missing task").is_none());
         if !delete_board {
             assert!(
-                svc.task_list(board.id, TaskFilter::default())
+                svc.task_list(board.id, None)
                     .expect("empty index")
                     .tasks
                     .is_empty()
@@ -1780,12 +1772,7 @@ fn task_create_atomic_when_index_insert_fails() -> anyhow::Result<()> {
             .task_create(env.board.id, TaskSpec::new("Task".into()), env.owner)
             .is_err()
     );
-    assert!(
-        env.service
-            .task_list(env.board.id, TaskFilter::all())?
-            .tasks
-            .is_empty()
-    );
+    assert!(env.service.task_list(env.board.id, None)?.tasks.is_empty());
     assert!(env.store.query_by_entity("kanban:task")?.is_empty());
     assert!(
         env.store
@@ -1949,7 +1936,7 @@ fn task_list_unfiltered() {
         .with_criteria(vec![VerificationCriterion::new("compile".into())]);
     svc.task_create(board.id, spec, owner).unwrap();
 
-    let tasks = svc.task_list(board.id, TaskFilter::all()).unwrap().tasks;
+    let tasks = svc.task_list(board.id, None).unwrap().tasks;
     assert_eq!(tasks.len(), 2);
     // The criteria text round-trips through the list — a reader sees what
     // "done" means, not just how many criteria exist. The TaskInfo wire
@@ -1972,13 +1959,13 @@ fn task_list_filter_by_status() {
         .unwrap();
 
     let backlog = svc
-        .task_list(board.id, TaskFilter::by_status(TaskStatus::Backlog))
+        .task_list(board.id, Some(TaskStatus::Backlog))
         .unwrap()
         .tasks;
     assert_eq!(backlog.len(), 1);
 
     let in_progress = svc
-        .task_list(board.id, TaskFilter::by_status(TaskStatus::InProgress))
+        .task_list(board.id, Some(TaskStatus::InProgress))
         .unwrap()
         .tasks;
     assert_eq!(in_progress.len(), 1);
@@ -2239,7 +2226,7 @@ fn task_delete_removes_task_and_index_rows_but_preserves_board() {
     assert!(service.task_get(task.id).expect("query task").is_none());
     assert!(
         service
-            .task_list(board.id, TaskFilter::all())
+            .task_list(board.id, None)
             .expect("task list")
             .tasks
             .is_empty()
@@ -2278,12 +2265,7 @@ fn task_delete_after_update_removes_replacement_payload() -> anyhow::Result<()> 
     )?;
     service.task_delete(task.id, owner)?;
     assert!(service.task_get(task.id)?.is_none());
-    assert!(
-        service
-            .task_list(board.id, TaskFilter::all())?
-            .tasks
-            .is_empty()
-    );
+    assert!(service.task_list(board.id, None)?.tasks.is_empty());
     assert!(store.query_by_entity("kanban:task")?.is_empty());
     assert!(
         store
@@ -2317,13 +2299,7 @@ fn task_delete_atomic_when_index_delete_fails() -> anyhow::Result<()> {
 
     assert!(env.service.task_delete(task.id, env.owner).is_err());
     assert!(env.service.task_get(task.id)?.is_some());
-    assert_eq!(
-        env.service
-            .task_list(env.board.id, TaskFilter::all())?
-            .tasks
-            .len(),
-        1
-    );
+    assert_eq!(env.service.task_list(env.board.id, None)?.tasks.len(), 1);
     assert!(env.service.board_get(env.board.id)?.is_some());
     assert_eq!(
         env.store.count()?,
@@ -2424,10 +2400,7 @@ fn export_import_round_trip_preserves_board_structure() {
     let (svc, board, owner) = make_board_with_tasks_for_round_trip();
 
     // Export: pull tasks through the service, render to mermaid markdown.
-    let tasks = svc
-        .task_list(board.id, TaskFilter::all())
-        .expect("task list")
-        .tasks;
+    let tasks = svc.task_list(board.id, None).expect("task list").tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
 
     // Parse the exported markdown.
@@ -2449,7 +2422,7 @@ fn export_import_round_trip_preserves_board_structure() {
     // Verify task titles per column match, in order. Group the new board's
     // tasks by status and compare the title lists against the parsed markdown.
     let new_tasks = svc
-        .task_list(new_board.id, TaskFilter::all())
+        .task_list(new_board.id, None)
         .expect("new board task list")
         .tasks;
     for column in &parsed.columns {
@@ -2497,10 +2470,7 @@ fn export_parse_round_trip_handles_special_characters() {
             .expect("task create");
     }
 
-    let tasks = svc
-        .task_list(board.id, TaskFilter::all())
-        .expect("task list")
-        .tasks;
+    let tasks = svc.task_list(board.id, None).expect("task list").tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -2531,10 +2501,7 @@ fn export_import_round_trip_preserves_column_order() {
         .board_create(owner, "Ordered Board", &columns)
         .expect("board create");
 
-    let tasks = svc
-        .task_list(board.id, TaskFilter::all())
-        .expect("task list")
-        .tasks;
+    let tasks = svc.task_list(board.id, None).expect("task list").tasks;
     let markdown = export_board_to_mermaid(&board, &tasks);
     let parsed = parse_mermaid_kanban(&markdown).expect("parse");
 
@@ -2596,10 +2563,7 @@ fn import_empty_board() {
         .expect("empty board import");
     assert_eq!(imported_count, 0);
     assert_eq!(board.columns.len(), 1);
-    let tasks = svc
-        .task_list(board.id, TaskFilter::all())
-        .expect("task list")
-        .tasks;
+    let tasks = svc.task_list(board.id, None).expect("task list").tasks;
     assert!(
         tasks.is_empty(),
         "imported empty board should have no tasks"
@@ -2744,10 +2708,7 @@ fn a_blank_task_title_is_refused_on_create_and_on_update() {
     );
     assert_eq!(svc.require_task(task.id).unwrap().title, "Named");
     assert_eq!(
-        svc.task_list(board.id, TaskFilter::all())
-            .unwrap()
-            .tasks
-            .len(),
+        svc.task_list(board.id, None).unwrap().tasks.len(),
         1,
         "no blank-titled task was stored"
     );

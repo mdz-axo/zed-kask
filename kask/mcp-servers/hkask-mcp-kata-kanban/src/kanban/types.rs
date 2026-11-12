@@ -5,7 +5,7 @@
 //! Verification criteria accept natural-language acceptance specs with optional LLM evaluation prompts.
 
 use chrono::{DateTime, Utc};
-use hkask_types::id::{BoardId, ColumnId, CommentId, GoalID, PhaseId, TaskId, WebID};
+use hkask_types::id::{BoardId, ColumnId, CommentId, GoalID, TaskId, WebID};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod board;
@@ -13,7 +13,6 @@ pub(crate) mod column;
 pub(crate) mod goal;
 pub(crate) mod kata;
 
-pub(crate) mod phase;
 pub(crate) mod priority;
 pub(crate) mod spawn;
 pub(crate) mod task;
@@ -29,9 +28,8 @@ pub(crate) use goal::CriterionCitation;
 pub(crate) use kata::{KataExperimentRecord, TaskKataState};
 
 pub(crate) use hkask_types::TaskStatus;
-pub(crate) use phase::KanbanPhase;
 pub(crate) use priority::Priority;
 pub(crate) use spawn::SpawnSpec;
-pub(crate) use task::{Comment, Task, TaskFilter};
+pub(crate) use task::{Comment, Task};
 pub(crate) use task_spec::TaskSpec;
 pub(crate) use verification::{Verification, VerificationCriterion};

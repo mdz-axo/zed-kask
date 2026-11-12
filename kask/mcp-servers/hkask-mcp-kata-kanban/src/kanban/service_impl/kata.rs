@@ -249,23 +249,18 @@ context for the full guided drill.",
     /// Build a human-readable evidence summary from a task's current state.
     ///
     /// Shared by all three kata prompt methods. Includes status, assignee,
-    /// estimates, deliverables, and recent comments — the task-specific data
+    /// kata state, deliverables, and recent comments — the task-specific data
     /// that makes the display useful regardless of which kata stage the task
     /// is in.
     fn task_evidence_summary(&self, task: &Task) -> String {
         let mut summary = format!(
             "Status: {}
 Assignee: {}
-Est. hours: {}
-Story points: {}
 Updated: {}",
             task.status,
             task.assignee
                 .map(|a| a.redacted_display())
                 .unwrap_or_else(|| "none".into()),
-            task.estimated_hours
-                .map_or("?".into(), |h| format!("{}h", h)),
-            task.story_points.map_or("?".into(), |p| format!("{}pt", p)),
             task.updated_at.format("%Y-%m-%d %H:%M"),
         );
 

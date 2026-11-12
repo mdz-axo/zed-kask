@@ -17,17 +17,6 @@ pub(crate) struct TaskSpec {
     /// thereafter (see `CriterionCitation`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advances: Vec<CriterionCitation>,
-
-    /// Story points for relative sizing (agile convention).
-    pub story_points: Option<u32>,
-    /// Estimated hours for completion.
-    pub estimated_hours: Option<f64>,
-    /// Labels/tags for categorization.
-    pub labels: Vec<String>,
-    /// Priority level.
-    pub priority: Option<Priority>,
-    /// Optional phase grouping.
-    pub phase_id: Option<PhaseId>,
 }
 
 impl TaskSpec {
@@ -40,12 +29,6 @@ impl TaskSpec {
             description: None,
             criteria: Vec::new(),
             advances: Vec::new(),
-
-            story_points: None,
-            estimated_hours: None,
-            labels: Vec::new(),
-            priority: None,
-            phase_id: None,
         }
     }
 

@@ -11,11 +11,8 @@ impl KanbanService {
             Self::require_task_owner(task, actor)?;
 
             let spawn_note = format!(
-                "Spawn configured: level={}, skills={:?}, memory={}, tools={:?}",
-                spawn_spec.delegation_level,
-                spawn_spec.delegated_skills,
-                spawn_spec.memory_scope,
-                spawn_spec.tool_servers,
+                "Spawn configured: level={}, skills={:?}, memory={}",
+                spawn_spec.delegation_level, spawn_spec.delegated_skills, spawn_spec.memory_scope,
             );
             let comment = super::Comment::new(task_id, task.owner, spawn_note);
             task.comments.push(comment);

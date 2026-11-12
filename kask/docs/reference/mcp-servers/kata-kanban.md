@@ -32,8 +32,7 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
   and `kask/docs/research/goal-reference-models.md`; the kata tools on
   Toyota Kata (Rother 2010); WIP limits on Anderson (2010); the task
   lifecycle on the PKO procedure mapping
-  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/ontology.rs`,
-  `kask/mcp-servers/hkask-mcp-kata-kanban/src/pko.rs`) and
+  (`kask/mcp-servers/hkask-mcp-kata-kanban/src/ontology.rs`) and
   `kask/docs/diagrams/kanban.md`. `contract_propose_expect`
   (platform-convention utility) and `kanban_task_spawn` (in-tree
   delegation contract: D33, `crates/agent/src/delegation_authority.rs`)

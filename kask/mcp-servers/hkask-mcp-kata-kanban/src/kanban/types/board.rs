@@ -18,8 +18,7 @@ pub struct Board {
     pub owner: WebID,
     /// Columns in display order (position-sorted).
     pub columns: Vec<ColumnDef>,
-    /// Project phases for work grouping and reassembly.
-    pub(crate) phases: Vec<KanbanPhase>,
+
     /// Structural Done-gate policy: when true, the Done column is a
     /// verification outcome reachable only through `kanban_task_verify`
     /// (Review → Done), never an ordinary column move. Stamped at creation
@@ -42,7 +41,6 @@ impl Board {
             name,
             owner,
             columns,
-            phases: Vec::new(),
             done_requires_verification: false,
             created_at: Utc::now(),
         }

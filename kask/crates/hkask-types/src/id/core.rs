@@ -145,10 +145,6 @@ impl private::Sealed for UserKind {}
 #[cfg(feature = "sql")]
 impl IdKind for UserKind {}
 
-pub enum PhaseKind {}
-impl private::Sealed for PhaseKind {}
-impl IdKind for PhaseKind {}
-
 pub enum CommentKind {}
 impl private::Sealed for CommentKind {}
 impl IdKind for CommentKind {}
@@ -176,7 +172,6 @@ pub type EmbeddingID = Id<EmbeddingKind>;
 #[cfg(feature = "sql")]
 pub type UserID = Id<UserKind>;
 
-pub type PhaseId = Id<PhaseKind>;
 pub type CommentId = Id<CommentKind>;
 pub type BoardId = Id<BoardKind>;
 pub type ColumnId = Id<ColumnKind>;

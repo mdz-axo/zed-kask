@@ -61,7 +61,7 @@ pub use closed_vocab::normalize_closed_vocab;
 
 pub use block_provenance::BlockProvenance;
 pub use id::{
-    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EventID, GoalID, HMemId, Id, PhaseId, TaskId,
+    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EventID, GoalID, HMemId, Id, TaskId,
     TemplateID, WebID,
 };
 pub use kanban_status::TaskStatus;

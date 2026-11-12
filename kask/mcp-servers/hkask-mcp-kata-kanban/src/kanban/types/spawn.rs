@@ -1,52 +1,26 @@
-use super::*;
-
 // ── Spawn Specification ─────────────────────────────────────────────────
 
-/// SpawnSpec — configuration for spawning a sub-agent to execute a task.
-///
-/// Defines what capabilities (skills, memory scope, tool access) the parent
-/// agent delegates to the spawned sub-agent. Spawning is consent-mediated
-/// (P1) — the parent chooses what to delegate.
-///
-/// Delegation levels:
-/// - Minimal: read-only access to the task, no memory, restricted tools
-/// - Standard: read-write task access, episodic memory, kanban tools
-/// - Maximal: full agent capabilities within the task scope
-#[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// SpawnSpec — what a spawn request asked for, recorded on the task as a
+/// comment. The skills are named in the child's prompt; the level and the
+/// memory scope are recorded only — nothing in this server or the spawn
+/// port reads them to change what the child can do.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpawnSpec {
-    /// The task this spawn is for.
-    pub task_id: TaskId,
     /// Delegation level: "minimal", "standard", or "maximal".
     pub(crate) delegation_level: String,
-    /// Skills to delegate to the spawned agent.
+    /// Skills named in the spawned agent's prompt.
     pub delegated_skills: Vec<String>,
     /// Memory scope: "none", "episodic", or "full".
     pub(crate) memory_scope: String,
-    /// Tool servers accessible to the spawned agent.
-    pub(crate) tool_servers: Vec<String>,
-    /// Maximum time the spawned agent can run (seconds).
-    pub(crate) timeout_seconds: Option<u64>,
-    /// Template/skill registries accessible to the spawned agent.
-    pub(crate) registries: Vec<String>,
-    /// File paths or artifact roots the agent can access.
-    pub(crate) artifacts: Vec<String>,
 }
 
 impl SpawnSpec {
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  task_id is valid
-    /// post: returns a SpawnSpec with standard delegation defaults
-    pub fn new(task_id: TaskId) -> Self {
+    /// post: returns a SpawnSpec with the standard defaults
+    pub fn new() -> Self {
         Self {
-            task_id,
             delegation_level: "standard".into(),
             delegated_skills: vec!["kanban".into()],
             memory_scope: "episodic".into(),
-            tool_servers: vec!["kata-kanban".into()],
-            timeout_seconds: None,
-            registries: Vec::new(),
-            artifacts: Vec::new(),
         }
     }
 

@@ -18,8 +18,8 @@
 // Imports needed by child submodules via `use super::*`
 #[allow(unused_imports)]
 use crate::kanban::{
-    Comment, KanbanPhase, KataExperimentRecord, Priority, SpawnSpec, Task, TaskFilter,
-    TaskKataState, TaskSpec, TaskStatus, Verification, VerificationCriterion,
+    Comment, KataExperimentRecord, Priority, SpawnSpec, Task, TaskKataState, TaskSpec, TaskStatus,
+    Verification, VerificationCriterion,
 };
 use hkask_types::WebID;
 use hkask_types::id::TaskId;
