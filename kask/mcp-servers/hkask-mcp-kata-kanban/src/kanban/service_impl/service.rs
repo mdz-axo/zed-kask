@@ -19,7 +19,7 @@ use hkask_types::id::{BoardId, TaskId};
 use hkask_types::kanban_wire::{ALGEDONIC_BOARD_NAME, KANBAN_BOARD_NAME_MAX_CHARS};
 use serde_json::Value;
 
-use super::types::{KanbanError, TaskIndexFault, TaskListReport};
+use super::types::{BoardFault, BoardListReport, KanbanError, TaskIndexFault, TaskListReport};
 
 use crate::kanban::mermaid::{ParsedBoard, columns_from_parsed};
 use crate::kanban::{
@@ -411,28 +411,41 @@ impl KanbanService {
         ]
     }
 
-    /// List all boards for a given owner.
+    /// List all boards for a given owner. A row of the owner's that fails
+    /// to decode is surfaced in `undecodable`, never silently dropped — the
+    /// rule `task_list` already follows (mcp-tool-review KK-02: a corrupt
+    /// board row used to vanish from the listing with no signal).
     ///
     /// pre:  owner is a valid WebID
-    /// post: returns all boards owned by this agent
+    /// post: returns the owner's readable boards plus the owner's rows
+    ///       that could not be decoded
     #[must_use = "result must be used"]
-    pub(crate) fn board_list(&self, owner: &WebID) -> Result<Vec<Board>, KanbanError> {
+    pub(crate) fn board_list(&self, owner: &WebID) -> Result<BoardListReport, KanbanError> {
         let h_mems = self
             .store
             .query_by_entity(BOARD_ENTITY)
             .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
 
         let mut boards: Vec<Board> = Vec::new();
-        for t in &h_mems {
-            if t.access.owner_webid == *owner
-                && let Ok(board) = serde_json::from_value::<Board>(t.value.clone())
-            {
-                boards.push(board);
+        let mut undecodable = Vec::new();
+        for t in h_mems {
+            if t.access.owner_webid != *owner {
+                continue;
+            }
+            match serde_json::from_value::<Board>(t.value) {
+                Ok(board) => boards.push(board),
+                Err(error) => undecodable.push(BoardFault {
+                    board_id: t.attribute,
+                    reason: format!("board row failed to decode: {error}"),
+                }),
             }
         }
 
         boards.sort_by_key(|b| std::cmp::Reverse(b.created_at));
-        Ok(boards)
+        Ok(BoardListReport {
+            boards,
+            undecodable,
+        })
     }
 
     /// Get a board by ID.
@@ -613,6 +626,17 @@ impl KanbanService {
         Ok([task_row, index_row])
     }
 
+    /// A task title must carry text: the title is how a task is addressed
+    /// on the board, and the mermaid export writes one title per line, so a
+    /// blank title is a task that export/import silently loses
+    /// (mcp-tool-review KK-03).
+    fn validate_task_title(title: &str) -> Result<(), KanbanError> {
+        if title.trim().is_empty() {
+            return Err(KanbanError::InvalidInput("task title is empty".into()));
+        }
+        Ok(())
+    }
+
     /// Create a new task on a board.
     ///
     /// pre:  board_id refers to an existing board; spec.title is non-empty; owner is valid
@@ -624,6 +648,7 @@ impl KanbanService {
         spec: TaskSpec,
         owner: WebID,
     ) -> Result<Task, KanbanError> {
+        Self::validate_task_title(&spec.title)?;
         self.validate_goal_citations(&spec.advances, owner)?;
         let task = Task::new(board_id, spec, owner);
         let records = Self::task_h_mems(&task)?;
@@ -911,10 +936,11 @@ impl KanbanService {
             // P4: Clear Boundaries — only tasks in Backlog or Ready can be claimed.
             // InProgress/Review/Done tasks are not claimable.
             if !matches!(task.status, TaskStatus::Backlog | TaskStatus::Ready) {
-                return Err(KanbanError::InvalidTransition {
+                return Err(KanbanError::NotInRequiredStatus {
                     task: task_id,
-                    from: task.status,
-                    to: task.status,
+                    action: "claimed",
+                    status: task.status,
+                    required: "backlog or ready",
                 });
             }
 
@@ -1227,6 +1253,9 @@ impl KanbanService {
         advances: Option<Vec<CriterionCitation>>,
         reserved: Option<bool>,
     ) -> Result<Task, KanbanError> {
+        if let Some(new_title) = &title {
+            Self::validate_task_title(new_title)?;
+        }
         // Validate cross-record citations before taking the task write lock.
         if let Some(new_advances) = &advances {
             Self::require_task_owner(&self.require_task(task_id)?, actor)?;
@@ -1262,19 +1291,53 @@ impl KanbanService {
 
     /// Reopen a completed task — move from Done back to InProgress.
     ///
-    /// pre:  task_id refers to a task in Done status
+    /// A reopen is an entry into In Progress like any other, so it passes
+    /// the same in-transaction WIP admission `task_move` uses, and it needs
+    /// a column to land in. Before this (mcp-tool-review KK-04) a reopen
+    /// put a second task into a WIP-1 column that had just refused a move,
+    /// and on a board with no In Progress column it left the task in a
+    /// status no column shows and no move could leave.
+    ///
+    /// pre:  task_id refers to a task in Done status; the board has an
+    ///       In Progress column with capacity
     /// post: task moves to InProgress, verification cleared
     #[must_use = "result must be used"]
     pub(crate) fn task_reopen(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let (task, ()) = self.mutate_task(task_id, |task| {
+        let task = self.require_task(task_id)?;
+        let board = self.board_get(task.board_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "board".to_string(),
+                id: task.board_id.to_string(),
+            })
+        })?;
+        let (task, ()) = self.mutate_task_scanning(task_id, |task, reads| {
             Self::require_task_owner(task, actor)?;
 
             if task.status != TaskStatus::Done {
+                return Err(KanbanError::NotInRequiredStatus {
+                    task: task_id,
+                    action: "reopened",
+                    status: task.status,
+                    required: "done",
+                });
+            }
+            let Some(column) = board.column_for_status(TaskStatus::InProgress) else {
                 return Err(KanbanError::InvalidTransition {
                     task: task_id,
                     from: task.status,
                     to: TaskStatus::InProgress,
                 });
+            };
+            if let Some(limit) = column.wip_limit {
+                let count =
+                    Self::count_status_in_txn(reads, task.board_id, TaskStatus::InProgress)?;
+                if count >= limit as usize {
+                    return Err(KanbanError::WipLimitExceeded {
+                        column: column.name.clone(),
+                        limit,
+                        current: count as u32,
+                    });
+                }
             }
 
             task.status = TaskStatus::InProgress;

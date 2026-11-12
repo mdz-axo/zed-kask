@@ -219,6 +219,12 @@ fn derive_task_activity(task: &Task) -> Option<TaskActivity> {
     })
 }
 
+/// The closed vocabularies this server parses, as the error text names them
+/// (a refusal against a closed set names the valid values — mcp-tool-review
+/// KK-08).
+const TASK_STATUSES: &str = "backlog, ready, in_progress, review, done";
+const PRIORITIES: &str = "low, medium, high, critical";
+
 /// Map a domain `Task` to its wire `TaskInfo` (P4: carries `reserved`) —
 /// shared by `kanban_task_list` and `kanban_task_claim_next` so the two
 /// read paths cannot drift.
@@ -236,6 +242,9 @@ fn task_info(t: &Task) -> TaskInfo {
         advances_count: t.advances.len(),
         activity,
         reserved: t.reserved,
+        priority: t.priority.map(|p| p.to_string()),
+        labels: t.labels.clone(),
+        deliverables: t.deliverables.clone(),
         ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
     }
 }
@@ -283,7 +292,10 @@ impl KanbanServer {
                                         }
                                         Ok(col)
                                     }
-                                    None => Err(format!("invalid status: {}", input.status)),
+                                    None => Err(format!(
+                                        "invalid status: {} (expected one of {TASK_STATUSES})",
+                                        input.status
+                                    )),
                                 },
                             )
                             .collect::<Result<Vec<_>, _>>(),
@@ -323,10 +335,19 @@ impl KanbanServer {
             // P1: the cheap-poll counter rides the board list the panel
             // already re-reads every tick for identity reconciliation.
             let changes = self.service.changes_revision().map_err(map_kanban_error)?;
-            respond(self.service.board_list(&self.webid), move |boards| {
+            respond(self.service.board_list(&self.webid), move |report| {
                 BoardListResponse {
                     changes,
-                    boards: boards
+                    undecodable_boards: report
+                        .undecodable
+                        .into_iter()
+                        .map(|fault| UndecodableBoardInfo {
+                            board_id: fault.board_id,
+                            reason: fault.reason,
+                        })
+                        .collect(),
+                    boards: report
+                        .boards
                         .into_iter()
                         .map(|b| BoardInfo {
                             board_id: b.id.to_string(),
@@ -351,7 +372,7 @@ impl KanbanServer {
     /// pre:  board_id is a valid board id owned by the caller
     /// post: the board and all its tasks are deleted; returns the task count
     #[tool(
-        description = "Delete a kanban board and all its tasks. Exposes KanbanService::board_delete as an MCP tool."
+        description = "Delete a kanban board and all its tasks (board owner only). Returns the number of tasks deleted."
     )]
     pub async fn kanban_board_delete(
         &self,
@@ -486,7 +507,7 @@ impl KanbanServer {
     /// needs user input). The verdict is validated against the frozen
     /// criteria and advances the goal's revision; it is not stored.
     #[tool(
-        description = "Report a judge verdict (done/continue/blocked) with confidence and a result for every criterion of the goal."
+        description = "Check a worker verdict (done/continue/blocked) against a goal's frozen criteria: confidence in [0,1], exactly one result per criterion, done only when every criterion passed. The verdict is validated, not stored: the call advances the goal's revision and its text is not retained. Never a human acceptance."
     )]
     pub async fn kanban_goal_judge(
         &self,
@@ -519,7 +540,7 @@ impl KanbanServer {
                 self.service.goal_judge(gid, goal_verdict, self.webid),
                 |goal| GoalJudgeResponse {
                     goal_id: goal.id.to_string(),
-                    verdict: verdict,
+                    verdict: verdict_value.as_str().to_string(),
                 },
             )
         })
@@ -532,7 +553,7 @@ impl KanbanServer {
 
     /// Read the complete canonical specification and history, including archives.
     #[tool(
-        description = "Get a caller-owned canonical goal with full original criteria, progress, closure, assessment, forecast and delivery history."
+        description = "Get a caller-owned canonical goal: original criteria and specification digest, closure, human corrections, assessment attempts, forecast and scores."
     )]
     pub async fn kanban_goal_get(
         &self,
@@ -659,7 +680,9 @@ impl KanbanServer {
                 Some(ref p) if p.is_empty() => Some(None),
                 Some(p) => {
                     let parsed = Priority::parse_str(&p).ok_or_else(|| {
-                        McpToolError::invalid_argument(format!("invalid priority: {p}"))
+                        McpToolError::invalid_argument(format!(
+                            "invalid priority: {p} (expected one of {PRIORITIES}, or an empty string to clear)"
+                        ))
                     })?;
                     Some(Some(parsed))
                 }
@@ -720,7 +743,11 @@ impl KanbanServer {
             let bid = parse_board_id(&board_id)?;
             // P2: closed view vocabulary — an unknown view name is a typed
             // refusal, never a silent full listing.
-            let compact = match view.as_deref() {
+            let compact = match view
+                .as_deref()
+                .map(|view| hkask_types::normalize_closed_vocab(view).to_lowercase())
+                .as_deref()
+            {
                 None | Some("full") => false,
                 Some("compact") => true,
                 Some(other) => {
@@ -734,7 +761,7 @@ impl KanbanServer {
                     Some(st) => TaskFilter::by_status(st),
                     None => {
                         return Err(McpToolError::invalid_argument(format!(
-                            "invalid status: {s}"
+                            "invalid status: {s} (expected one of {TASK_STATUSES})"
                         )));
                     }
                 },
@@ -805,7 +832,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Move a task to a new column (status transition). On boards whose Done column is verification-gated (e.g. the Algedonic review board), use kanban_task_verify in Review to reach Done; moving to Done directly is refused. The response carries pko_execution_status — the new status mapped to its PKO execution status (queued/inProgress/verifying/completed) via the shared vocabulary bridge."
+        description = "Move a task to an adjacent column (status transition; statuses: backlog, ready, in_progress, review, done). On boards whose Done column is verification-gated (e.g. the Algedonic review board), use kanban_task_verify in Review to reach Done; moving to Done directly is refused. The response carries pko_execution_status: pko:InProgress or pko:Completed, and null for backlog, ready and review, for which PKO publishes no status."
     )]
     pub async fn kanban_task_move(
         &self,
@@ -829,7 +856,7 @@ impl KanbanServer {
                 Some(s) => s,
                 None => {
                     return Err(McpToolError::invalid_argument(format!(
-                        "invalid target_status: {target_status}"
+                        "invalid target_status: {target_status} (expected one of {TASK_STATUSES})"
                     )));
                 }
             };
@@ -923,9 +950,7 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(
-        description = "Delete a task and its board index entry (task owner only). Exposes KanbanService::task_delete as an MCP tool."
-    )]
+    #[tool(description = "Delete a task and its board index entry (task owner only).")]
     pub async fn kanban_task_delete(
         &self,
         Parameters(TaskDeleteRequest { task_id }): Parameters<TaskDeleteRequest>,
@@ -962,7 +987,7 @@ impl KanbanServer {
     }
 
     #[tool(
-        description = "Verify a completed task against its acceptance criteria (evidence text is the pass signal)."
+        description = "Record the operator's confirmation on a task in Review and move it to Done (task owner only). Any non-empty evidence passes; the task's criteria are echoed for the reader and do not gate the result."
     )]
     pub async fn kanban_task_verify(
         &self,
@@ -1028,8 +1053,7 @@ impl KanbanServer {
             let tid = parse_task_id(&task_id)?;
             respond(
                 self.service.task_comments_since(tid, since_index),
-                |comments| {
-                    let total = comments.len() + since_index;
+                |(comments, total)| {
                     let mapped: Vec<TaskCommentResponse> = comments
                         .into_iter()
                         .map(|c| TaskCommentResponse {
@@ -1102,7 +1126,7 @@ impl KanbanServer {
     // ── Kata tools — scientific-thinking prompts scoped to a task ──────────
 
     #[tool(
-        description = "Generate a kata prompt scoped to a task. stage selects the kata: 'coaching' (5-question Coaching Kata dialogue), 'improvement' (Improvement Kata PDCA cycle), or 'practice' (Starter Kata observation drill — requires sub_problem). The former kanban_task_kata_coaching/improvement/practice trio, merged."
+        description = "Return a task's current state (status, criteria, recorded kata state, deliverables, last three comments) framed for one kata stage, with a pointer to the kata-improvement skill that holds the method. stage: 'coaching', 'improvement', or 'practice' (requires sub_problem). Read-only."
     )]
     pub async fn kanban_task_kata_prompt(
         &self,
@@ -1165,7 +1189,7 @@ impl KanbanServer {
     /// pre:  task_id is a valid task id; the caller is the task owner or assignee
     /// post: the task's kata state is updated and echoed back
     #[tool(
-        description = "Record durable Improvement Kata state on a task (target_condition, the one focus_obstacle, last_experiment with next_step/prediction/outcome). The kata prompts read this state back, so a new session continues the routine instead of restarting from zero. At least one field required; a first record requires target_condition. The focus_obstacle double-Option: omit to keep, null to clear, string to set."
+        description = "Record durable Improvement Kata state on a task (target_condition, the one focus_obstacle, last_experiment with next_step/prediction/outcome). kanban_task_kata_prompt reads this state back, so a new session continues the routine instead of restarting from zero. At least one field required; a first record requires a non-empty target_condition. focus_obstacle: omit to keep, null to clear, a string to set."
     )]
     pub async fn kanban_task_kata_record(
         &self,
@@ -1227,7 +1251,9 @@ impl KanbanServer {
     /// with native built-in tools only — this server passes an empty MCP
     /// narrowing to the parent grant. A missing grant or uncertain outcome is
     /// surfaced without fallback execution.
-    #[tool(description = "Spawn a subagent for task execution with delegated skills")]
+    #[tool(
+        description = "Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). delegated_skills are named in the child's prompt; delegation_level and memory_scope are validated and recorded on the task as a comment but do not change what the child can do. With idempotency_key, a retry after an uncertain failure is refused instead of spawning twice."
+    )]
     pub async fn kanban_task_spawn(
         &self,
         Parameters(TaskSpawnRequest {
@@ -1629,7 +1655,9 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
     match e {
         KanbanError::NotFound(nf) => McpToolError::not_found(nf.to_string()),
         KanbanError::InvalidInput(msg) => McpToolError::invalid_argument(msg),
-        KanbanError::InvalidTransition { .. } => McpToolError::failed_precondition(e.to_string()),
+        KanbanError::InvalidTransition { .. } | KanbanError::NotInRequiredStatus { .. } => {
+            McpToolError::failed_precondition(e.to_string())
+        }
         KanbanError::PermissionDenied(msg) => McpToolError::permission_denied(msg),
         KanbanError::WipLimitExceeded { .. } => McpToolError::failed_precondition(e.to_string()),
         KanbanError::Internal(msg) => McpToolError::internal(msg),
@@ -1831,4 +1859,29 @@ fn mcp_goal_authority_is_only_declare_progress_and_full_reads() {
         serde_json::from_value::<types::GoalCreateRequest>(forged).is_err(),
         "actor string is not a human receipt"
     );
+}
+
+/// mcp-tool-review KK-11 pin: a description says what the tool does for its
+/// caller. Each phrase refused below was either false or an implementation
+/// note (2026-11-11).
+#[test]
+fn tool_descriptions_carry_no_retired_claims() {
+    let tools = KanbanServer::tool_router().list_all();
+    let description = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .and_then(|tool| tool.description.as_ref())
+            .unwrap_or_else(|| panic!("{name} has a description"))
+            .to_string()
+    };
+    for tool in &tools {
+        let text = tool.description.as_deref().unwrap_or_default();
+        assert!(!text.contains("Exposes KanbanService"), "{}", tool.name);
+    }
+    assert!(!description("kanban_task_move").contains("queued"));
+    assert!(!description("kanban_goal_get").contains("progress"));
+    assert!(description("kanban_goal_judge").contains("not stored"));
+    assert!(description("kanban_task_verify").contains("do not gate"));
+    assert!(description("kanban_task_spawn").contains("do not change what the child can do"));
 }

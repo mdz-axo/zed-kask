@@ -29,14 +29,20 @@ impl KanbanService {
         Ok(comment)
     }
 
-    /// Fetch comments starting from a given index (for incremental polling).
+    /// Fetch comments starting from a given index (for incremental polling),
+    /// with the task's total comment count — the poller's next cursor. The
+    /// total comes from the task, never from the requested index: adding
+    /// the two (mcp-tool-review KK-06) reported 5 comments on a task with 2
+    /// when asked for index 5, and a poller that stored it skipped the next
+    /// three comments.
     pub(crate) fn task_comments_since(
         &self,
         task_id: TaskId,
         since_index: usize,
-    ) -> Result<Vec<Comment>, KanbanError> {
+    ) -> Result<(Vec<Comment>, usize), KanbanError> {
         let task = self.require_task(task_id)?;
-        Ok(task.comments.into_iter().skip(since_index).collect())
+        let total = task.comments.len();
+        Ok((task.comments.into_iter().skip(since_index).collect(), total))
     }
 
     pub(crate) fn task_add_deliverable(

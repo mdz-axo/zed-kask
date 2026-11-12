@@ -63,7 +63,7 @@ fn assert_boards_isolated_by_owner() {
     svc.board_create(bob, "Bob's Board", &make_default_columns())
         .unwrap();
 
-    let alice_boards = svc.board_list(&alice).unwrap();
+    let alice_boards = svc.board_list(&alice).unwrap().boards;
     assert_eq!(alice_boards.len(), 1);
     assert_eq!(alice_boards[0].name, "Alice's Board");
 }
@@ -198,7 +198,10 @@ fn board_create_stores_trimmed_name() {
         .board_create(owner, "  Padded Board  ", &make_default_columns())
         .unwrap();
     assert_eq!(board.name, "Padded Board");
-    assert_eq!(svc.board_list(&owner).unwrap()[0].name, "Padded Board");
+    assert_eq!(
+        svc.board_list(&owner).unwrap().boards[0].name,
+        "Padded Board"
+    );
 }
 
 /// The 128-character cap (operator decision 2026-09-18; Planka
@@ -229,7 +232,7 @@ fn board_create_accepts_name_at_the_cap() {
         .board_create(owner, &at_cap, &make_default_columns())
         .unwrap();
     assert_eq!(board.name.chars().count(), KANBAN_BOARD_NAME_MAX_CHARS);
-    assert_eq!(svc.board_list(&owner).unwrap()[0].name, at_cap);
+    assert_eq!(svc.board_list(&owner).unwrap().boards[0].name, at_cap);
 }
 
 /// Rename enforces the same cap at the same boundary; a failed rename
@@ -240,7 +243,7 @@ fn board_rename_rejects_name_over_the_cap() {
     let over_cap = "x".repeat(KANBAN_BOARD_NAME_MAX_CHARS + 1);
     assert!(svc.board_rename(board.id, &over_cap).is_err());
     assert_eq!(
-        svc.board_list(&board.owner).unwrap()[0].name,
+        svc.board_list(&board.owner).unwrap().boards[0].name,
         "Test Board",
         "a failed rename must leave the original name intact"
     );
@@ -266,7 +269,7 @@ fn board_rename_round_trips() {
     assert_eq!(renamed.columns.len(), board.columns.len());
     assert_eq!(renamed.created_at, board.created_at);
 
-    let boards = svc.board_list(&renamed.owner).unwrap();
+    let boards = svc.board_list(&renamed.owner).unwrap().boards;
     assert_eq!(boards.len(), 1);
     assert_eq!(boards[0].name, "Renamed Board");
     // The task links survive — the board's PKO procedure root is the same
@@ -283,7 +286,7 @@ fn board_rename_rejects_empty_after_trim() {
     let (svc, board, _owner) = make_service_with_board();
     assert!(svc.board_rename(board.id, "   ").is_err());
     assert_eq!(
-        svc.board_list(&board.owner).unwrap()[0].name,
+        svc.board_list(&board.owner).unwrap().boards[0].name,
         "Test Board",
         "a failed rename must leave the original name intact"
     );
@@ -306,7 +309,7 @@ fn board_rename_to_same_name_converges() {
     let twice = svc.board_rename(board.id, "Test Board").unwrap();
     assert_eq!(twice.name, "Test Board");
     assert_eq!(
-        svc.board_list(&board.owner).unwrap().len(),
+        svc.board_list(&board.owner).unwrap().boards.len(),
         1,
         "a converged rename must not mint a second board"
     );
@@ -1365,7 +1368,7 @@ fn remaining_task_mutations_preserve_interleaved_comments_in_both_orders() {
                 "spawn" => {}
                 _ => unreachable!("fixture operation"),
             }
-            let comments = svc
+            let (comments, _) = svc
                 .task_comments_since(task.id, 0)
                 .expect("comment readback");
             assert_eq!(
@@ -1513,9 +1516,18 @@ fn interleaved_lifecycle_changes_validate_the_current_status() {
                     .expect("competing lifecycle change");
             },
         );
+        // Verify is a move to Done and keeps the transition error; claim
+        // and reopen are not column moves and name the status they need.
         assert!(
-            matches!(result, Err(KanbanError::InvalidTransition { .. })),
-            "{operation}"
+            matches!(
+                (operation, &result),
+                ("verify", Err(KanbanError::InvalidTransition { .. }))
+                    | (
+                        "claim" | "reopen",
+                        Err(KanbanError::NotInRequiredStatus { .. })
+                    )
+            ),
+            "{operation}: {result:?}"
         );
         let stored = svc.require_task(task.id).expect("task survives");
         assert_eq!(
@@ -2075,8 +2087,17 @@ fn task_claim_rejects_in_progress_task() {
 
     let err = svc.task_claim(task.id, WebID::new()).unwrap_err();
     assert!(
-        matches!(err, super::KanbanError::InvalidTransition { .. }),
-        "claiming an InProgress task should fail with InvalidTransition, got: {err}"
+        matches!(err, super::KanbanError::NotInRequiredStatus { .. }),
+        "claiming an InProgress task names the status it needs, got: {err}"
+    );
+    // mcp-tool-review KK-07 pin: the refusal used to read "cannot move
+    // from in_progress to in_progress".
+    let message = err.to_string();
+    assert!(
+        message.contains("cannot be claimed")
+            && message.contains("in_progress")
+            && message.contains("backlog or ready"),
+        "{message}"
     );
 }
 
@@ -2095,8 +2116,8 @@ fn task_claim_rejects_done_task() {
 
     let err = svc.task_claim(task.id, WebID::new()).unwrap_err();
     assert!(
-        matches!(err, super::KanbanError::InvalidTransition { .. }),
-        "claiming a Done task should fail with InvalidTransition, got: {err}"
+        matches!(err, super::KanbanError::NotInRequiredStatus { .. }),
+        "claiming a Done task names the status it needs, got: {err}"
     );
 }
 
@@ -2181,7 +2202,13 @@ fn board_delete_removes_board_and_tasks() {
     let tasks_deleted = service.board_delete(board.id, owner).expect("delete board");
     assert_eq!(tasks_deleted, 2);
     assert!(service.board_get(board.id).expect("query board").is_none());
-    assert!(service.board_list(&owner).expect("board list").is_empty());
+    assert!(
+        service
+            .board_list(&owner)
+            .expect("board list")
+            .boards
+            .is_empty()
+    );
     assert_eq!(
         store.count().expect("row count"),
         // The board, task and index rows are gone; the P1 change-counter
@@ -2577,4 +2604,250 @@ fn import_empty_board() {
         tasks.is_empty(),
         "imported empty board should have no tasks"
     );
+}
+
+// ── mcp-tool-review 2026-11-11 pins ─────────────────────────────────────────
+
+/// A done task on a five-column board whose In Progress column holds
+/// `wip_limit` tasks; returns the service, the owner, the done task and the
+/// task occupying In Progress.
+fn done_task_beside_a_full_in_progress_column() -> (
+    KanbanService,
+    WebID,
+    hkask_types::id::TaskId,
+    hkask_types::id::TaskId,
+) {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let mut columns = KanbanService::standard_columns();
+    columns[2] = ColumnDef::new("In Progress".into(), TaskStatus::InProgress, 2).with_wip_limit(1);
+    let board = svc.board_create(owner, "Reopen WIP", &columns).unwrap();
+    let done = svc
+        .task_create(board.id, TaskSpec::new("Done".into()), owner)
+        .unwrap();
+    for status in [
+        TaskStatus::Ready,
+        TaskStatus::InProgress,
+        TaskStatus::Review,
+    ] {
+        svc.task_move(done.id, status, owner).unwrap();
+    }
+    svc.task_verify(done.id, "confirmed", owner).unwrap();
+    let occupant = svc
+        .task_create(board.id, TaskSpec::new("Occupant".into()), owner)
+        .unwrap();
+    for status in [TaskStatus::Ready, TaskStatus::InProgress] {
+        svc.task_move(occupant.id, status, owner).unwrap();
+    }
+    (svc, owner, done.id, occupant.id)
+}
+
+/// mcp-tool-review KK-04 pin: a reopen enters In Progress and so passes the
+/// same WIP admission a move does. Probed 2026-11-11 against the installed
+/// server: the move into a full WIP-1 column was refused, the reopen was
+/// admitted, and the column then held two tasks.
+#[test]
+fn reopen_honors_the_in_progress_wip_limit() {
+    let (svc, owner, done, occupant) = done_task_beside_a_full_in_progress_column();
+
+    let refused = svc.task_reopen(done, owner);
+    assert!(
+        matches!(
+            &refused,
+            Err(KanbanError::WipLimitExceeded {
+                limit: 1,
+                current: 1,
+                ..
+            })
+        ),
+        "a reopen into a full column is refused like a move: {refused:?}"
+    );
+    let stored = svc.require_task(done).unwrap();
+    assert_eq!(
+        stored.status,
+        TaskStatus::Done,
+        "the refused task is unchanged"
+    );
+    assert!(stored.verification.is_some(), "its verification is kept");
+
+    // Capacity freed: the same reopen is admitted.
+    svc.task_move(occupant, TaskStatus::Review, owner).unwrap();
+    let reopened = svc
+        .task_reopen(done, owner)
+        .expect("capacity admits the reopen");
+    assert_eq!(reopened.status, TaskStatus::InProgress);
+    assert_eq!(reopened.verification, None);
+}
+
+/// mcp-tool-review KK-04 pin: a board without an In Progress column has
+/// nowhere for a reopened task to land. Probed 2026-11-11: the reopen
+/// succeeded, the task left the export, and no move could bring it back.
+#[test]
+fn reopen_is_refused_on_a_board_without_an_in_progress_column() {
+    let svc = KanbanService::new(make_store());
+    let owner = WebID::new();
+    let columns = vec![
+        ColumnDef::new("Backlog".into(), TaskStatus::Backlog, 0),
+        ColumnDef::new("Done".into(), TaskStatus::Done, 1),
+    ];
+    let board = svc.board_create(owner, "Two Column", &columns).unwrap();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Finished".into()), owner)
+        .unwrap();
+    svc.task_move(task.id, TaskStatus::Done, owner).unwrap();
+
+    let refused = svc.task_reopen(task.id, owner);
+    assert!(
+        matches!(
+            &refused,
+            Err(KanbanError::InvalidTransition {
+                from: TaskStatus::Done,
+                to: TaskStatus::InProgress,
+                ..
+            })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(svc.require_task(task.id).unwrap().status, TaskStatus::Done);
+}
+
+/// mcp-tool-review KK-03 pin: a task title must carry text. Probed
+/// 2026-11-11: empty and whitespace titles were created, and a board with
+/// two tasks exported two and re-imported one.
+#[test]
+fn a_blank_task_title_is_refused_on_create_and_on_update() {
+    let (svc, board, owner) = make_service_with_board();
+    for blank in ["", "   ", "\t\n"] {
+        let refused = svc.task_create(board.id, TaskSpec::new(blank.into()), owner);
+        assert!(
+            matches!(&refused, Err(KanbanError::InvalidInput(message)) if message.contains("title")),
+            "{blank:?}: {refused:?}"
+        );
+    }
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Named".into()), owner)
+        .unwrap();
+    let refused = svc.task_update(
+        task.id,
+        owner,
+        Some("  ".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(
+        matches!(&refused, Err(KanbanError::InvalidInput(_))),
+        "{refused:?}"
+    );
+    assert_eq!(svc.require_task(task.id).unwrap().title, "Named");
+    assert_eq!(
+        svc.task_list(board.id, TaskFilter::all())
+            .unwrap()
+            .tasks
+            .len(),
+        1,
+        "no blank-titled task was stored"
+    );
+}
+
+/// mcp-tool-review KK-02 pin: an owner's board row that fails to decode is
+/// reported, not dropped. Before, `board_list` skipped it with no signal
+/// while `task_list` on the same store already surfaced its bad rows.
+#[test]
+fn board_list_surfaces_undecodable_board_rows() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let healthy = svc.board_create(owner, "Healthy", &make_default_columns())?;
+    svc.store
+        .update_value_atomic::<_, hkask_storage::HMemError>(
+            "kanban:board",
+            &board.id.to_string(),
+            |_| Ok((Some(serde_json::json!({"corrupted": true})), ())),
+        )?
+        .expect("the corrupted row still exists");
+
+    let report = svc.board_list(&owner)?;
+    assert_eq!(report.boards.len(), 1);
+    assert_eq!(report.boards[0].id, healthy.id);
+    assert_eq!(report.undecodable.len(), 1);
+    assert_eq!(report.undecodable[0].board_id, board.id.to_string());
+    assert!(
+        report.undecodable[0].reason.contains("failed to decode"),
+        "{}",
+        report.undecodable[0].reason
+    );
+    // Another owner's view is unaffected by a row that is not theirs.
+    assert!(svc.board_list(&WebID::new())?.undecodable.is_empty());
+    Ok(())
+}
+
+/// mcp-tool-review KK-05 pin: a blank target condition is not a target.
+#[test]
+fn kata_record_refuses_a_blank_target_condition() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Kata task".into()), owner)?;
+    for blank in ["", "   "] {
+        let refused = svc.task_kata_record(
+            task.id,
+            owner,
+            KataStateUpdate {
+                target_condition: Some(blank.into()),
+                focus_obstacle: None,
+                last_experiment: None,
+            },
+        );
+        assert!(
+            matches!(&refused, Err(KanbanError::InvalidInput(message)) if message.contains("target_condition")),
+            "{blank:?}: {refused:?}"
+        );
+    }
+    assert!(svc.require_task(task.id)?.kata_state.is_none());
+    Ok(())
+}
+
+/// mcp-tool-review KK-06 pin: the comment total is the task's, whatever
+/// index was asked for. Probed 2026-11-11: a task with two comments
+/// reported `total_count: 5` for `since_index: 5`.
+#[test]
+fn comments_since_reports_the_tasks_total_not_the_requested_index() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Thread".into()), owner)?;
+    svc.task_comment(task.id, owner, "first")?;
+    svc.task_comment(task.id, owner, "second")?;
+    for (since, returned) in [(0, 2), (1, 1), (2, 0), (5, 0)] {
+        let (comments, total) = svc.task_comments_since(task.id, since)?;
+        assert_eq!(comments.len(), returned, "since_index {since}");
+        assert_eq!(total, 2, "since_index {since}");
+    }
+    Ok(())
+}
+
+/// mcp-tool-review KK-09 pin: the wire `TaskInfo` reads back what the write
+/// tools store. `kanban_task_update` set priority and labels and
+/// `kanban_task_add_deliverable` attached paths, and no MCP read returned
+/// any of the three.
+#[test]
+fn task_info_reads_back_priority_labels_and_deliverables() -> anyhow::Result<()> {
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc.task_create(board.id, TaskSpec::new("Fields".into()), owner)?;
+    svc.task_update(
+        task.id,
+        owner,
+        None,
+        None,
+        None,
+        Some(Some(crate::kanban::Priority::High)),
+        Some(vec!["alpha".into()]),
+        None,
+        None,
+    )?;
+    svc.task_add_deliverable(task.id, "out/report.md", owner)?;
+
+    let info = crate::task_info(&svc.require_task(task.id)?);
+    assert_eq!(info.priority.as_deref(), Some("high"));
+    assert_eq!(info.labels, vec!["alpha".to_string()]);
+    assert_eq!(info.deliverables, vec!["out/report.md".to_string()]);
+    Ok(())
 }

@@ -186,6 +186,18 @@ context for the full guided drill.",
                     .to_string(),
             ));
         }
+        // The target condition is the artifact the routine converges on;
+        // a blank one is "a target nobody wrote down" by another route
+        // (mcp-tool-review KK-05).
+        if update
+            .target_condition
+            .as_deref()
+            .is_some_and(|target| target.trim().is_empty())
+        {
+            return Err(KanbanError::InvalidInput(
+                "target_condition must not be empty".to_string(),
+            ));
+        }
         let (task, ()) = self.mutate_task(task_id, |task| {
             Self::require_task_actor(task, actor)?;
             if let Some(experiment) = &update.last_experiment

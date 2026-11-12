@@ -52,9 +52,24 @@ pub struct ColumnInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardListRequest {}
 
+/// One of the caller's board rows that could not be decoded — surfaced
+/// degradation, never a silent skip (the task listing's rule, applied to
+/// boards).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UndecodableBoardInfo {
+    /// The board id whose row could not be decoded.
+    pub board_id: String,
+    /// The decode error.
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BoardListResponse {
     pub boards: Vec<BoardInfo>,
+    /// The caller's board rows that could not be decoded — the listing
+    /// degrades visibly instead of shrinking.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undecodable_boards: Vec<UndecodableBoardInfo>,
     /// The per-database change counter (P1, the kanzo changes-counter
     /// pattern): a monotonic stamp moved by every write. A poller that
     /// remembers the last value can skip re-fetching derived state until
@@ -292,6 +307,16 @@ pub struct TaskInfo {
     /// them with a disclosed count.
     #[serde(default)]
     pub reserved: bool,
+    /// The task's priority, when one is set. `kanban_task_update` writes it;
+    /// this is its read path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// The task's labels (`kanban_task_update` writes them).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
+    /// Deliverables attached with `kanban_task_add_deliverable`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deliverables: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
@@ -364,7 +389,8 @@ pub struct TaskCommentsSinceRequest {
 pub(crate) struct TaskCommentsSinceResponse {
     pub task_id: String,
     pub comments: Vec<TaskCommentResponse>,
-    /// Total comment count on the task (for cursor tracking).
+    /// Total comment count on the task — the cursor a poller passes as the
+    /// next `since_index`. Independent of the requested index.
     pub total_count: usize,
 }
 
@@ -437,13 +463,29 @@ pub struct TaskKataRecordRequest {
     /// converges toward).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_condition: Option<String>,
-    /// Keep (`None`) / clear (`Some(None)`) / set (`Some(Some(text))`) the
-    /// focus obstacle — the ONE obstacle currently being worked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The ONE obstacle currently being worked: omit the field to keep the
+    /// recorded obstacle, send `null` to clear it, send a string to set it.
+    #[serde(
+        default,
+        deserialize_with = "present_as_some",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub focus_obstacle: Option<Option<String>>,
     /// Replace the last experiment record (`None` keeps the existing one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_experiment: Option<KataExperimentInfo>,
+}
+
+/// Deserialize a field that is present as `Some(value)`, so an explicit JSON
+/// `null` reaches the handler as `Some(None)`. serde's own `Option<Option<T>>`
+/// reads `null` as the outer `None` — the same as an absent field — which
+/// made "null to clear" unreachable over the wire (mcp-tool-review KK-01).
+fn present_as_some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// Response for `kanban_task_kata_record` — the state now recorded on the

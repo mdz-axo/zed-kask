@@ -23,8 +23,14 @@ impl Priority {
         }
     }
 
+    /// Parse a wire priority. Padding and wrapping quotes are tolerated,
+    /// like every other closed vocabulary on this server (`TaskStatus`,
+    /// verdict, kata stage).
     pub fn parse_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        match hkask_types::normalize_closed_vocab(s)
+            .to_lowercase()
+            .as_str()
+        {
             "low" => Some(Priority::Low),
             "medium" | "med" => Some(Priority::Medium),
             "high" => Some(Priority::High),

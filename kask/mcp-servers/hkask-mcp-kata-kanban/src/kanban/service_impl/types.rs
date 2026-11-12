@@ -22,6 +22,18 @@ pub enum KanbanError {
         to: TaskStatus,
     },
 
+    /// An action that is not a column move was refused because of the
+    /// task's current status (claim, reopen). `InvalidTransition` used to
+    /// carry these and rendered "cannot move from in_progress to
+    /// in_progress" (mcp-tool-review KK-07).
+    #[error("task {task} cannot be {action}: it is {status}, and must be {required}")]
+    NotInRequiredStatus {
+        task: TaskId,
+        action: &'static str,
+        status: TaskStatus,
+        required: &'static str,
+    },
+
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
@@ -56,6 +68,24 @@ pub(crate) struct TaskIndexFault {
     pub task_id: String,
     /// Why the row could not be read (missing row, or the decode error).
     pub reason: String,
+}
+
+/// One of an owner's board rows that could not be decoded for a board
+/// listing — named and explained, like [`TaskIndexFault`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BoardFault {
+    /// The board id (the row's key) whose value could not be decoded.
+    pub board_id: String,
+    /// The decode error.
+    pub reason: String,
+}
+
+/// The result of a board listing: the readable boards plus the owner's
+/// rows that could not be decoded — surfaced, never silently dropped.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BoardListReport {
+    pub boards: Vec<crate::kanban::Board>,
+    pub undecodable: Vec<BoardFault>,
 }
 
 /// The result of a board task listing: the readable tasks plus the indexed

@@ -330,3 +330,196 @@ async fn claim_next_tool_claims_and_replays() {
         "the exhausted pull says so in plain text: {message}"
     );
 }
+
+// ── mcp-tool-review 2026-11-11 wire pins ────────────────────────────────────
+
+async fn record_kata(
+    server: &KanbanServer,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, McpToolError> {
+    let request: TaskKataRecordRequest =
+        serde_json::from_value(arguments).expect("arguments deserialize like a tool call");
+    let out = server.kanban_task_kata_record(Parameters(request)).await?;
+    Ok(parse(&out))
+}
+
+/// mcp-tool-review KK-01 pin: `"focus_obstacle": null` clears the obstacle.
+/// The description promised "null to clear", but serde reads a null into
+/// `Option<Option<T>>` as the outer `None`, the same as an absent field.
+/// Probed 2026-11-11 against the installed server: null alone was refused
+/// as an empty update, and null beside another field left the obstacle set.
+#[tokio::test]
+async fn kata_record_null_clears_the_focus_obstacle_and_omission_keeps_it() {
+    let server = make_server();
+    let board_id = create_board(&server, "kata-wire", false).await;
+    let task_id = create_task(&server, &board_id, "kata task").await;
+
+    let first = record_kata(
+        &server,
+        serde_json::json!({"task_id": task_id, "target_condition": "t1", "focus_obstacle": "o1"}),
+    )
+    .await
+    .expect("first record");
+    assert_eq!(first["focus_obstacle"], "o1");
+
+    let kept = record_kata(
+        &server,
+        serde_json::json!({"task_id": task_id, "target_condition": "t2"}),
+    )
+    .await
+    .expect("an omitted obstacle is kept");
+    assert_eq!(kept["focus_obstacle"], "o1", "{kept}");
+
+    let cleared = record_kata(
+        &server,
+        serde_json::json!({"task_id": task_id, "focus_obstacle": null}),
+    )
+    .await
+    .expect("null alone is a real update: it clears the obstacle");
+    assert!(cleared.get("focus_obstacle").is_none(), "{cleared}");
+    assert_eq!(cleared["target_condition"], "t2");
+
+    let empty = record_kata(&server, serde_json::json!({"task_id": task_id})).await;
+    assert!(empty.is_err(), "no field at all is still refused");
+}
+
+/// mcp-tool-review KK-06 pin at the wire: `total_count` is the cursor.
+#[tokio::test]
+async fn comments_since_total_count_is_the_cursor() {
+    let server = make_server();
+    let board_id = create_board(&server, "comments-wire", false).await;
+    let task_id = create_task(&server, &board_id, "thread").await;
+    for body in ["first", "second"] {
+        server
+            .kanban_task_comment(Parameters(TaskCommentRequest {
+                task_id: task_id.clone(),
+                body: body.into(),
+            }))
+            .await
+            .expect("comment ok");
+    }
+    for (since, returned) in [(0usize, 2usize), (2, 0), (5, 0)] {
+        let out = server
+            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
+                task_id: task_id.clone(),
+                since_index: since,
+            }))
+            .await
+            .expect("comments ok");
+        let value = parse(&out);
+        assert_eq!(value["comments"].as_array().map(Vec::len), Some(returned));
+        assert_eq!(value["total_count"], 2, "since_index {since}: {value}");
+    }
+}
+
+/// mcp-tool-review KK-08/KK-09 pins: a refused closed-set value names the
+/// valid set; padding and case are tolerated on every closed set; and the
+/// full listing reads back the priority and labels `kanban_task_update`
+/// wrote (the deliverables read path is pinned on `task_info` in the lib,
+/// where the deliverable request type is visible).
+#[tokio::test]
+async fn closed_sets_name_their_values_and_task_fields_read_back() {
+    let server = make_server();
+    let board_id = create_board(&server, "vocab-wire", false).await;
+    let task_id = create_task(&server, &board_id, "fields").await;
+
+    let update = |priority: &str| TaskUpdateRequest {
+        task_id: task_id.clone(),
+        title: None,
+        description: None,
+        criteria: None,
+        priority: Some(priority.to_string()),
+        labels: Some(vec!["alpha".into()]),
+        advances: None,
+        reserved: None,
+    };
+    let refused = server
+        .kanban_task_update(Parameters(update("urgent")))
+        .await
+        .expect_err("urgent is not a priority");
+    assert!(
+        refused.message.contains("low, medium, high, critical"),
+        "{}",
+        refused.message
+    );
+    server
+        .kanban_task_update(Parameters(update(" High ")))
+        .await
+        .expect("a padded, capitalized priority resolves");
+
+    let refused = server
+        .kanban_task_move(Parameters(TaskMoveRequest {
+            task_id: task_id.clone(),
+            target_status: "bogus".into(),
+        }))
+        .await
+        .expect_err("bogus is not a status");
+    assert!(
+        refused
+            .message
+            .contains("backlog, ready, in_progress, review, done"),
+        "{}",
+        refused.message
+    );
+
+    let list = |view: Option<&str>| TaskListRequest {
+        board_id: board_id.clone(),
+        status: None,
+        view: view.map(str::to_string),
+    };
+    let compact = parse(
+        &server
+            .kanban_task_list(Parameters(list(Some(" Compact "))))
+            .await
+            .expect("a padded, capitalized view resolves"),
+    );
+    assert_eq!(compact["compact_tasks"].as_array().map(Vec::len), Some(1));
+
+    let full = parse(
+        &server
+            .kanban_task_list(Parameters(list(None)))
+            .await
+            .expect("full list ok"),
+    );
+    let task = &full["tasks"][0];
+    assert_eq!(task["priority"], "high", "{task}");
+    assert_eq!(task["labels"], serde_json::json!(["alpha"]), "{task}");
+}
+
+/// mcp-tool-review KK-10 pin: the judge response carries the canonical
+/// verdict, not the caller's spelling. Probed 2026-11-11: `" Done "` was
+/// accepted and echoed back as `" Done "`.
+#[tokio::test]
+async fn goal_judge_returns_the_canonical_verdict() {
+    let server = make_server();
+    let created = parse(
+        &server
+            .kanban_goal_create(Parameters(
+                serde_json::from_value(serde_json::json!({
+                    "goal_text": "wire goal",
+                    "criteria": [{"description": "observable"}],
+                    "source": {"interaction_id": "t", "session_id": "t", "source": "test"}
+                }))
+                .expect("goal request"),
+            ))
+            .await
+            .expect("goal create ok"),
+    );
+    let judged = parse(
+        &server
+            .kanban_goal_judge(Parameters(GoalJudgeRequest {
+                goal_id: created["id"].as_str().expect("goal id").to_string(),
+                verdict: " Done ".into(),
+                confidence: 0.9,
+                criterion_results: vec![CriterionJudgmentInput {
+                    index: 0,
+                    passed: true,
+                    note: "evidence".into(),
+                }],
+                reasoning: "reason".into(),
+            }))
+            .await
+            .expect("judge ok"),
+    );
+    assert_eq!(judged["verdict"], "done", "{judged}");
+}
