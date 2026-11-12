@@ -743,6 +743,7 @@ impl KanbanPanel {
         self.selected_board_id = None;
         self.board_name = None;
         self.tasks.clear();
+        self.unreadable_tasks = 0;
         self.kanban_widget = None;
     }
 

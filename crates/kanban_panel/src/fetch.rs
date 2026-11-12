@@ -81,6 +81,7 @@ impl KanbanPanel {
                             let changed =
                                 tasks_should_refetch(this.last_seen_changes, response.changes);
                             this.last_seen_changes = Some(response.changes);
+                            this.unreadable_boards = response.undecodable_boards.len();
                             this.boards = response.boards;
                             // P1: the counter-gate flag — the auto-select
                             // path below may fetch the task list itself;
@@ -238,6 +239,7 @@ impl KanbanPanel {
                     this.fetching = false;
                     match parsed {
                         Some(response) => {
+                            this.unreadable_tasks = response.undecodable_tasks.len();
                             this.tasks = response.tasks;
                             this.build_or_update_widget(cx);
                         }

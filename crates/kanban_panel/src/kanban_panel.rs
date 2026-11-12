@@ -194,6 +194,23 @@ fn visible_panel_error<'a>(
     mutation_error.or(fetch_error)
 }
 
+/// The notice for rows the server listed as unreadable (its
+/// `undecodable_boards` / `undecodable_tasks` reports). The rows are missing
+/// from what the panel shows, so the panel names how many: a listing that
+/// shrinks silently reads as a board with less work on it. `None` when
+/// every row was read.
+fn unreadable_rows_notice(boards: usize, tasks: usize) -> Option<SharedString> {
+    let count = |n: usize, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+    let what = match (boards, tasks) {
+        (0, 0) => return None,
+        (boards, 0) => count(boards, "board"),
+        (0, tasks) => count(tasks, "task"),
+        (boards, tasks) => format!("{} and {}", count(boards, "board"), count(tasks, "task")),
+    };
+    let verb = if boards + tasks == 1 { "is" } else { "are" };
+    Some(format!("{what} could not be read and {verb} not shown").into())
+}
+
 fn exhausted_mutation_message(label: &str, outcome_unknown: bool) -> SharedString {
     if outcome_unknown {
         format!(
@@ -476,6 +493,10 @@ pub(crate) struct ColumnDef {
 struct BoardListResponse {
     #[serde(default)]
     boards: Vec<BoardInfo>,
+    /// Board rows the server could not decode. They are absent from
+    /// `boards`; the panel says so instead of showing a shorter list.
+    #[serde(default)]
+    undecodable_boards: Vec<serde_json::Value>,
     #[serde(default)]
     changes: u64,
 }
@@ -517,6 +538,10 @@ struct TaskActivityInfo {
 struct TaskListResponse {
     #[serde(default)]
     tasks: Vec<TaskInfo>,
+    /// Indexed task rows the server could not read. They are absent from
+    /// `tasks`; the panel says so instead of showing a shorter board.
+    #[serde(default)]
+    undecodable_tasks: Vec<serde_json::Value>,
 }
 
 /// One comment from `kanban_task_comments_since`.
@@ -642,6 +667,10 @@ pub struct KanbanPanel {
     error: Option<SharedString>,
     /// Last mutation result, retained across automatic board/task refreshes.
     mutation_error: Option<SharedString>,
+    /// Board rows the last board listing reported as unreadable.
+    unreadable_boards: usize,
+    /// Task rows the last task listing reported as unreadable.
+    unreadable_tasks: usize,
     /// Auto-refresh task — periodically re-fetches the task list. Cancelled
     /// when the panel is dropped.
     refresh_task: Option<Task<()>>,
@@ -731,6 +760,8 @@ impl KanbanPanel {
                 fetching: false,
                 error: None,
                 mutation_error: None,
+                unreadable_boards: 0,
+                unreadable_tasks: 0,
                 refresh_task: None,
                 last_detail_open: None,
                 comments_fetched: HashSet::new(),
@@ -1200,13 +1231,20 @@ impl KanbanPanel {
         )
     }
 
-    /// Render the error strip.
+    /// Render the error strip. An error takes the strip; otherwise it
+    /// carries the unreadable-rows notice when the server reported any.
     fn render_error(&self) -> Option<impl IntoElement> {
-        visible_panel_error(self.mutation_error.as_ref(), self.error.as_ref()).map(|error| {
-            Label::new(format!("Error: {error}"))
+        let text = match visible_panel_error(self.mutation_error.as_ref(), self.error.as_ref()) {
+            Some(error) => format!("Error: {error}"),
+            None => {
+                unreadable_rows_notice(self.unreadable_boards, self.unreadable_tasks)?.to_string()
+            }
+        };
+        Some(
+            Label::new(text)
                 .size(LabelSize::Small)
-                .color(Color::Warning)
-        })
+                .color(Color::Warning),
+        )
     }
 
     /// Render the loading state.
@@ -2062,6 +2100,49 @@ mod tests {
         // A successful payload must NOT be misclassified as an error envelope.
         let ok = r#"{"content":{"boards":[]}}"#;
         assert!(hkask_types::tool_response::parse_tool_error(ok).is_none());
+    }
+
+    /// mcp-tool-review KK-21 pin: the server lists board and task rows it
+    /// could not read (`undecodable_boards`, `undecodable_tasks`); the panel
+    /// used to drop both keys, so an unreadable row simply vanished. The
+    /// response models read the reports and the notice names the counts.
+    #[test]
+    fn unreadable_rows_are_read_from_the_wire_and_named() {
+        let boards: super::BoardListResponse = serde_json::from_value(serde_json::json!({
+            "boards": [],
+            "undecodable_boards": [{"board_id": "b1", "reason": "decode failed"}],
+            "changes": 3
+        }))
+        .expect("board list parses");
+        assert_eq!(boards.undecodable_boards.len(), 1);
+        let tasks: super::TaskListResponse = serde_json::from_value(serde_json::json!({
+            "tasks": [],
+            "undecodable_tasks": [
+                {"task_id": "t1", "reason": "indexed task row is missing"},
+                {"task_id": "t2", "reason": "task row failed to decode"}
+            ]
+        }))
+        .expect("task list parses");
+        assert_eq!(tasks.undecodable_tasks.len(), 2);
+        // A healthy listing omits both keys and reads as zero.
+        let healthy: super::TaskListResponse =
+            serde_json::from_value(serde_json::json!({"tasks": []})).expect("parses");
+        assert!(healthy.undecodable_tasks.is_empty());
+
+        let notice = |boards, tasks| super::unreadable_rows_notice(boards, tasks);
+        assert_eq!(notice(0, 0), None);
+        assert_eq!(
+            notice(1, 0).as_deref(),
+            Some("1 board could not be read and is not shown")
+        );
+        assert_eq!(
+            notice(0, 2).as_deref(),
+            Some("2 tasks could not be read and are not shown")
+        );
+        assert_eq!(
+            notice(1, 2).as_deref(),
+            Some("1 board and 2 tasks could not be read and are not shown")
+        );
     }
 
     /// A mutation whose outcome is unknown must NOT be retried.
