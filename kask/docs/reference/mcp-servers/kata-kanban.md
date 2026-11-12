@@ -91,7 +91,9 @@ The kanban-board reference-model assessment (Wekan, Planka, Kan, Kanboard — na
   admission), kata-prompt, spawn (worktree-isolated via the
   parent-authorized `WorktreeSpawnPort`; takes the task and the skills to
   name in the child's prompt and refuses any other field; a missing grant
-  or uncertain reply never starts a fallback, and a spawn that did not go
+  (`host/create_worktree_thread` for this server under
+  `kask.mcp.delegated_tools`) is `permission_denied` naming it; a missing
+  grant or uncertain reply never starts a fallback, and a spawn that did not go
   through leaves no comment on the task).
 - **Who may read and write:** mutations check the caller (task owner or
   assignee; owner alone for delete, verify, reopen, unassign, update and

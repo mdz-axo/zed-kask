@@ -1238,7 +1238,7 @@ impl KanbanServer {
     /// narrowing to the parent grant. A missing grant or uncertain outcome is
     /// surfaced without fallback execution.
     #[tool(
-        description = "Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). delegated_skills are named in the child's prompt. The task gets a comment only once the thread is queued. With idempotency_key, a retry after an uncertain failure is refused instead of spawning twice."
+        description = "Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge and the host/create_worktree_thread grant for this server under kask.mcp.delegated_tools, refused permission_denied without it). delegated_skills are named in the child's prompt. The task gets a comment only once the thread is queued. With idempotency_key, a retry after an uncertain failure is refused instead of spawning twice."
     )]
     pub async fn kanban_task_spawn(
         &self,
@@ -1348,8 +1348,14 @@ impl KanbanServer {
                     result_note_error,
                 })
             }
+            // The editor refused (no grant, or the grant was revoked before
+            // the queued request ran), so no thread exists and the caller may
+            // retry under the same key once the grant is in place.
             Err(hkask_types::InferenceError::Auth(message)) => {
-                Err(McpToolError::permission_denied(message))
+                Err(McpToolError::permission_denied(format!(
+                    "{message}. No thread was started. The grant is host/create_worktree_thread, \
+                     listed for kata-kanban under kask.mcp.delegated_tools."
+                )))
             }
             Err(error) => Err(McpToolError::unavailable(format!(
                 "Worktree spawn did not return success: {error}. No fallback was started; reconcile before retrying because effects may have occurred."
@@ -1753,4 +1759,6 @@ fn tool_descriptions_carry_no_retired_claims() {
     // The spawn parameters that did nothing are gone, not explained (KK-18).
     let spawn = description("kanban_task_spawn");
     assert!(!spawn.contains("delegation_level") && !spawn.contains("memory_scope"));
+    // The grant a spawn needs is named where the caller reads it (KK-22).
+    assert!(spawn.contains("host/create_worktree_thread"));
 }

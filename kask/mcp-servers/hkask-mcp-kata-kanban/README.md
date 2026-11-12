@@ -106,7 +106,7 @@ See [the exact ownership boundary](GOAL_INTERFACE.md).
 ### Agent spawning
 | Tool | Description |
 |------|-------------|
-| `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge). `delegated_skills` are named in the child's prompt. The task gets a comment only once the thread is queued |
+| `kanban_task_spawn` | Queue a worktree-isolated subagent thread for a task (task owner only; needs the editor's IPC bridge and the `host/create_worktree_thread` grant for this server under `kask.mcp.delegated_tools`, refused `permission_denied` without it). `delegated_skills` are named in the child's prompt. The task gets a comment only once the thread is queued |
 
 ## Who may read and write
 

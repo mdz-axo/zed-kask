@@ -1549,3 +1549,68 @@ async fn import_over_a_declared_wip_limit_is_invalid_argument() {
     );
     assert_eq!(board_count(&server).await, 0);
 }
+
+/// The editor's refusal when the server holds no worktree grant.
+struct UngrantedWorktreeSpawn;
+
+impl WorktreeSpawnPort for UngrantedWorktreeSpawn {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        _prompt: &'a str,
+        _title: &'a str,
+        _worktree_name: Option<&'a str>,
+        _base_ref: Option<&'a str>,
+        _allowed_tools: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>> {
+        Box::pin(async {
+            Err(InferenceError::Auth(
+                "Worktree creation requires parent-granted authority".to_string(),
+            ))
+        })
+    }
+}
+
+/// mcp-tool-review KK-22 pin: a spawn the editor refuses for want of the
+/// grant is `permission_denied`, names the grant and the setting that holds
+/// it, leaves no comment, and releases the key (the refusal proves no thread
+/// was started, unlike a lost reply).
+#[tokio::test]
+async fn an_ungranted_spawn_is_permission_denied_naming_the_grant() {
+    let driver = SqliteDriver::in_memory_driver();
+    let idempotency = Arc::new(
+        hkask_mcp_kata_kanban::idempotency::IdempotencyStore::with_driver(Arc::clone(&driver))
+            .expect("idempotency schema"),
+    );
+    let server = KanbanServer::new(
+        WebID::new(),
+        KanbanService::new(HMemStore::from_driver(driver).expect("hmem store")),
+        Arc::new(UngrantedWorktreeSpawn),
+        Arc::clone(&idempotency),
+        idempotency,
+    );
+    let task_id = board_and_task(&server).await;
+
+    for attempt in ["first", "same-key retry"] {
+        let error = spawn_task(&server, &task_id, Some("spawn-ungranted"))
+            .await
+            .expect_err("an ungranted spawn is refused");
+        assert_eq!(error.kind, McpErrorKind::PermissionDenied, "{attempt}");
+        assert!(
+            error.message.contains("host/create_worktree_thread")
+                && error.message.contains("kask.mcp.delegated_tools"),
+            "{attempt}: {}",
+            error.message
+        );
+    }
+
+    let comments = parse(
+        &server
+            .kanban_task_comments_since(Parameters(TaskCommentsSinceRequest {
+                task_id,
+                since_index: 0,
+            }))
+            .await
+            .expect("comments ok"),
+    );
+    assert_eq!(comments["total_count"], 0, "{comments}");
+}
