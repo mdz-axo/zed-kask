@@ -801,9 +801,13 @@ mod tests {
         }
 
         let prompts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        crate::inference_chat::set_global_inference_port(std::sync::Arc::new(CapturingPort {
-            prompts: prompts.clone(),
-        }));
+        // D61-style scoped port — the classifier-race fix: this test's port
+        // is thread-local, so a parallel test can no longer clear or replace
+        // it mid-flight, and the process global stays untouched.
+        let _scoped_port =
+            crate::inference_chat::set_scoped_inference_port(std::sync::Arc::new(CapturingPort {
+                prompts: prompts.clone(),
+            }));
 
         let curator_store = CuratorStore::for_tests(None);
         let curator_consolidation = std::sync::Arc::new(std::sync::RwLock::new(
@@ -836,7 +840,6 @@ mod tests {
             ctx.classifier_model.expect("configured in this fixture"),
         )
         .await;
-        crate::inference_chat::clear_global_inference_port();
 
         assert!(
             tags.is_none(),
@@ -970,9 +973,14 @@ mod tests {
 
         let models: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        crate::inference_chat::set_global_inference_port(std::sync::Arc::new(ModelRecordingPort {
-            models: models.clone(),
-        }));
+        // D61-style scoped port (the classifier race): thread-local, so the
+        // parallel suite cannot clear or replace it mid-turn, and the
+        // process global stays untouched.
+        let _scoped_port = crate::inference_chat::set_scoped_inference_port(std::sync::Arc::new(
+            ModelRecordingPort {
+                models: models.clone(),
+            },
+        ));
 
         let curator_store = CuratorStore::for_tests(None);
         let consolidation = std::sync::Arc::new(std::sync::RwLock::new(
@@ -1023,7 +1031,6 @@ mod tests {
         write_turn(&ctx, public_record)
             .await
             .expect("public turn ingest");
-        crate::inference_chat::clear_global_inference_port();
 
         let recorded = models
             .lock()

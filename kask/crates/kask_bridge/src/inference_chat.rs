@@ -88,6 +88,16 @@ pub fn clear_global_inference_port() {
 /// Returns a clone of the `Arc` — the caller holds it only for the duration
 /// of its request.
 pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
+    #[cfg(test)]
+    {
+        // D61-style scoped override: a test-thread port wins over the
+        // process global (see `set_scoped_inference_port`). Production
+        // builds compile this leg away entirely.
+        let scoped = SCOPED_INFERENCE_PORT.with(|slot| slot.borrow().clone());
+        if scoped.is_some() {
+            return scoped;
+        }
+    }
     match GLOBAL_INFERENCE_PORT.lock() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => {
@@ -97,6 +107,52 @@ pub fn global_inference_port() -> Option<std::sync::Arc<dyn InferencePort>> {
             );
             poisoned.into_inner().clone()
         }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// D61-style test scoping for the inference port (the memory::ingest
+    /// classifier race): a test-thread override read BEFORE the process
+    /// global in `global_inference_port`, so parallel tests cannot inherit
+    /// each other's recorder ports and a sibling test's install/clear of the
+    /// global slot can never land mid-flight on another test's turns.
+    /// Production builds never set this slot.
+    static SCOPED_INFERENCE_PORT: std::cell::RefCell<
+        Option<std::sync::Arc<dyn InferencePort>>,
+    > = std::cell::RefCell::new(None);
+}
+
+/// RAII restore for [`set_scoped_inference_port`] — dropping clears the
+/// thread's slot, panic unwinding included. The `Rc` marker is the D61
+/// ownership discipline: the guard cannot move to another thread, so it can
+/// never clear another thread's slot.
+#[cfg(test)]
+pub struct ScopedInferencePortGuard {
+    _same_thread: std::rc::Rc<()>,
+}
+
+#[cfg(test)]
+impl Drop for ScopedInferencePortGuard {
+    fn drop(&mut self) {
+        SCOPED_INFERENCE_PORT.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+/// Install a test-thread-scoped inference port — the D61 scoped-override
+/// pattern at the bridge's inference seam. Tests that record or capture
+/// inference calls install through this, NOT the process-global slot: the
+/// scoped port is invisible to parallel tests on other threads, the
+/// process global stays untouched for production wiring, and a rogue test
+/// writing the global cannot disturb a scoped test either. The returned
+/// guard restores the slot on drop.
+#[cfg(test)]
+pub fn set_scoped_inference_port(
+    port: std::sync::Arc<dyn InferencePort>,
+) -> ScopedInferencePortGuard {
+    SCOPED_INFERENCE_PORT.with(|slot| *slot.borrow_mut() = Some(port));
+    ScopedInferencePortGuard {
+        _same_thread: std::rc::Rc::new(()),
     }
 }
 
@@ -1344,6 +1400,56 @@ mod tests {
     use language_model_core::{LanguageModelCompletionError, LanguageModelProviderName};
     use std::sync::Arc;
     use std::time::Duration;
+
+    /// D61-style scoping pin (the memory::ingest classifier race): a scoped
+    /// port on this thread is served regardless of a parallel thread writing
+    /// the process-global slot — the exact interference that made the
+    /// classifier test fail nondeterministically in the parallel suite —
+    /// the scoped install never touches the global, and the guard's drop
+    /// restores the global read on this thread.
+    #[test]
+    fn scoped_port_isolates_a_thread_from_global_slot_interference() {
+        let scoped: std::sync::Arc<dyn InferencePort> =
+            std::sync::Arc::new(crate::NoModelInferencePort);
+        let guard = super::set_scoped_inference_port(std::sync::Arc::clone(&scoped));
+
+        // The saboteur hammers the process-global slot from another thread.
+        std::thread::spawn(|| {
+            super::set_global_inference_port(std::sync::Arc::new(crate::NoModelInferencePort));
+            super::clear_global_inference_port();
+            super::set_global_inference_port(std::sync::Arc::new(crate::NoModelInferencePort));
+        })
+        .join()
+        .expect("saboteur thread");
+
+        let served = super::global_inference_port().expect("the scoped port is served");
+        assert!(
+            std::sync::Arc::ptr_eq(&served, &scoped),
+            "the thread's scoped port wins over any process-global interference"
+        );
+
+        // The scoped install never wrote the global: another thread still
+        // sees the saboteur's last write, not the scoped port.
+        let other_thread = std::thread::spawn(super::global_inference_port);
+        let global_seen = other_thread
+            .join()
+            .expect("probe thread")
+            .expect("the global slot holds the saboteur's port");
+        assert!(
+            !std::sync::Arc::ptr_eq(&global_seen, &scoped),
+            "the scoped port never leaked into the process-global slot"
+        );
+
+        drop(guard);
+        let after = super::global_inference_port().expect("the global read is restored");
+        assert!(
+            std::sync::Arc::ptr_eq(&after, &global_seen),
+            "guard drop restores the process-global read on this thread"
+        );
+
+        // Test hygiene: leave the global slot as production expects it.
+        super::clear_global_inference_port();
+    }
 
     fn test_resilience_config() -> crate::InferenceResilienceConfig {
         crate::InferenceResilienceConfig {
