@@ -289,6 +289,8 @@ members = [
     "kask/crates/hkask-condenser",
     "kask/crates/hkask-steer-core",
     "kask/crates/dme-harness",
+    "kask/crates/hkask-nostr-core",
+    "kask/crates/hkask-nostr-signer",
 
     "crates/hkask-tool-invoker",
     "crates/hkask-viz-core",
@@ -995,6 +997,15 @@ hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-kata-kanban = { path = "kask/mcp-servers/hkask-mcp-kata-kanban" }
 hkask-mcp-media = { path = "kask/mcp-servers/hkask-mcp-media" }
 hkask-mcp-experimentation = { path = "kask/mcp-servers/hkask-mcp-experimentation" }
+# Nostr signing set, used only by hkask-nostr-core and hkask-nostr-signer.
+# Pinned exactly: these crates verify and produce signatures for an identity
+# key that cannot be rotated, so a version change is a reviewed change and
+# never a side effect of `cargo update`.
+k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
+bech32 = "=0.12.0"
+scrypt = { version = "=0.12.0", default-features = false }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["zeroize"] }
+unicode-normalization = "=0.1.25"
 ed25519-dalek = "2"
 # `zeroize` feature: without it the GHASH subkey inside a long-lived `Aes256Gcm`
 # is not wiped on drop (upstream gates `ghash_key.zeroize()` behind it), leaving
