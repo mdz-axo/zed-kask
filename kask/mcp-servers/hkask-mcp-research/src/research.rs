@@ -1,20 +1,20 @@
-//! hkask-mcp-research — Web search, extraction, browsing, evidence scoring,
-//! paper identity, and the research-run ledger.
+//! hkask-mcp-research — Web search, extraction, evidence scoring, paper
+//! identity, and the research-run ledger.
 //!
 //! MCP server crate containing the research tool surface and business logic:
-//! provider pool with RRF fusion, content extraction, headless browsing,
-//! response caching, and rate limiting.
+//! provider pool with RRF fusion, content extraction, response caching, and
+//! rate limiting.
 
 pub mod apa;
 pub(crate) mod breaker;
 pub mod cache;
 pub mod db;
 pub(crate) mod evidence;
+pub(crate) mod page_text;
 pub mod paper_id;
 pub(crate) mod performance;
 pub mod providers;
 pub(crate) mod runs;
-pub(crate) mod strip_html;
 pub mod types;
 
 use std::collections::HashMap;

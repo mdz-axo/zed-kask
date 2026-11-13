@@ -8315,6 +8315,7 @@ dependencies = [
  "hkask-mcp-test-support",
  "hkask-storage",
  "hkask-types",
+ "html5ever",
  "pdf-extract",
  "r2d2",
  "regex",

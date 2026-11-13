@@ -289,6 +289,49 @@ Before, only the last provider's error was returned, so a Firecrawl refusal
 reached the caller as RawFetch declining JSON. A single failure is returned
 unchanged.
 
+## Page text from the keyless extractor (2026-11-12)
+
+RawFetch is the extractor that needs no key, and the fallback when
+Firecrawl fails. Until this date it returned an empty string for any page
+that begins with a doctype, which is nearly every page: its hand-written
+scanner read every `<!` as the start of a comment. It also lost all text
+after an inline script containing `<`, left character references
+undecoded, and dropped link targets. Measured on one public page before
+the change: 0 characters keyless, 937 through Firecrawl.
+
+It now reads the page with html5ever's tokenizer and writes:
+
+- headings with their level, paragraph breaks, itemised and numbered
+  lists, one line per table row, and preformatted blocks inside a fence;
+- link text with its target, resolved against the fetched URL (fragments
+  and non-web schemes keep only their text);
+- no script, style, SVG, form-control or template content;
+- `<noscript>` content as text, since this fetcher runs no script;
+- the page `<title>` as `metadata.title`.
+
+`main_content_only` (default true) now applies to RawFetch: when the page
+has a `<main>` or `role="main"` element, that element is the result;
+navigation, sidebars and footers are left out either way. With `false`
+the whole page is returned. Before, only Firecrawl read the argument.
+
+By content type: HTML is read as above; an image, audio, video or font is
+refused naming the type; anything else (plain text, JSON, XML) is returned
+as served, with its lines intact.
+
+Measured after the change, same page, keyless, isolated copy: 937
+characters in 128 ms; the text matches Firecrawl's apart from line
+wrapping and one date Firecrawl rewrote as relative ("last month").
+
+A page is given 2 seconds to parse. Ordinary markup takes milliseconds
+per megabyte (5.2 MB in 72 ms, release build); markup built to be slow is
+refused with a typed error instead of holding the call. No tree is built:
+html5ever's tree builder took 326 ms for 16,000 nested `<div>` and 7 ms
+for 16,000 side by side, and nesting depth is chosen by the page.
+
+Not changed: the size of a fetched body is bounded only by the 30-second
+request timeout, and a page that needs script to render still yields
+little text, reported by the existing under-500-characters note.
+
 ## Citation — APA 7 (2026-11-12)
 
 `cite_sources` formats sources as an APA 7 reference list (operator ruling

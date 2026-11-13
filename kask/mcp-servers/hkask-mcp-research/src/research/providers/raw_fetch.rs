@@ -1,5 +1,5 @@
 use super::{WebError, WebExtractProvider};
-use crate::research::strip_html;
+use crate::research::page_text::{PARSE_BUDGET, page_text};
 use crate::research::types::*;
 use async_trait::async_trait;
 use std::net::SocketAddr;
@@ -153,6 +153,36 @@ impl RawFetchProvider {
     }
 }
 
+/// How a fetched body is turned into text.
+#[derive(Debug, PartialEq, Eq)]
+enum BodyKind {
+    Html,
+    Text,
+    NotText,
+}
+
+/// Classify a body by its declared media type. With no declared type, a
+/// body that begins with `<` is read as HTML and anything else as text.
+/// A declared image, audio, video or font type is refused: its bytes went
+/// through a lossy text decode and are not content. Every other declared
+/// type is returned as served (JSON, XML, plain text, source files, and
+/// text served under a generic binary type).
+fn body_kind(media_type: Option<&str>, body: &str) -> BodyKind {
+    match media_type {
+        Some("text/html" | "application/xhtml+xml") => BodyKind::Html,
+        Some(mime)
+            if ["image/", "audio/", "video/", "font/"]
+                .iter()
+                .any(|prefix| mime.starts_with(prefix)) =>
+        {
+            BodyKind::NotText
+        }
+        Some(_) => BodyKind::Text,
+        None if body.trim_start().starts_with('<') => BodyKind::Html,
+        None => BodyKind::Text,
+    }
+}
+
 /// Extract a PDF's text layer with `pdf-extract` (text layer only, no OCR).
 /// This replaces the former refusal "RawFetch cannot extract PDF content;
 /// use a PDF extraction provider" — that message advertised a PDF
@@ -214,16 +244,14 @@ impl WebExtractProvider for RawFetchProvider {
         // Report where the content actually came from: with a permitted
         // (validated) redirect, the final URL is the truthful provenance.
         let final_url = resp.url().clone();
-        let pdf_content_type = resp
+        let media_type = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .is_some_and(|mime| mime.eq_ignore_ascii_case("application/pdf"))
-            });
+            .and_then(|value| value.split(';').next())
+            .map(|mime| mime.trim().to_ascii_lowercase())
+            .filter(|mime| !mime.is_empty());
+        let pdf_content_type = media_type.as_deref() == Some("application/pdf");
         if status.is_success() && pdf_content_type {
             let bytes = resp
                 .bytes()
@@ -249,12 +277,38 @@ impl WebExtractProvider for RawFetchProvider {
             // through to the next provider.
             return extract_pdf_content(&final_url, body.as_bytes());
         }
-        Ok(ExtractedContent {
-            url: final_url.to_string(),
-            content: strip_html::strip_html(&body),
-            format: "markdown".to_string(),
-            metadata: None,
-        })
+        match body_kind(media_type.as_deref(), &body) {
+            BodyKind::Html => {
+                let page =
+                    page_text(&body, Some(&final_url), opts.main_content_only).map_err(|_| {
+                        WebError::ProviderError(format!(
+                            "RawFetch could not read the page within {} s: its markup is built \
+                             to be slow to parse",
+                            PARSE_BUDGET.as_secs()
+                        ))
+                    })?;
+                Ok(ExtractedContent {
+                    url: final_url.to_string(),
+                    content: page.text,
+                    format: "markdown".to_string(),
+                    metadata: page
+                        .title
+                        .map(|title| serde_json::json!({ "title": title })),
+                })
+            }
+            // Text that is not HTML is returned as served: parsing it as
+            // HTML would collapse its lines into one.
+            BodyKind::Text => Ok(ExtractedContent {
+                url: final_url.to_string(),
+                content: body,
+                format: "markdown".to_string(),
+                metadata: None,
+            }),
+            BodyKind::NotText => Err(WebError::ProviderError(format!(
+                "RawFetch cannot extract text from content type {}",
+                media_type.as_deref().unwrap_or("(none)")
+            ))),
+        }
     }
 
     async fn health(&self) -> Result<(), WebError> {
@@ -340,6 +394,106 @@ mod tests {
             .expect_err("JSON unsupported");
         assert!(error.to_string().contains("cannot produce structured JSON"));
         assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+
+    fn typed_response(content_type: &str, body: &str) -> Arc<Vec<u8>> {
+        Arc::new(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .into_bytes(),
+        )
+    }
+
+    /// expect: a fetched HTML page that begins with a doctype yields its
+    /// text, its title, and link targets resolved against the fetched URL.
+    /// The provider returned an empty string for such a page (measured
+    /// 2026-11-12 on a public page: 0 characters).
+    #[tokio::test]
+    async fn raw_fetch_reads_a_doctype_page() {
+        let (url, _) = http_fixture(typed_response(
+            "text/html; charset=utf-8",
+            "<!doctype html><html><head><title>Example Domains</title>\
+             <script>if (1 < 2) { track(); }</script></head><body>\
+             <nav><a href=\"/\">Home</a></nav>\
+             <main><h1>Example Domains</h1>\
+             <p>Reserved for documentation &amp; examples. See <a href=\"/help\">help</a>.</p></main>\
+             <footer>Footer text</footer></body></html>",
+        ))
+        .await;
+        let provider = RawFetchProvider::new().expect("provider");
+        let extracted = provider
+            .extract(&format!("{url}/page"), &extract_options())
+            .await
+            .expect("extracts");
+        assert_eq!(
+            extracted.content,
+            format!(
+                "# Example Domains\n\nReserved for documentation & examples. See [help]({url}/help)."
+            )
+        );
+        assert_eq!(
+            extracted.metadata,
+            Some(serde_json::json!({"title": "Example Domains"}))
+        );
+
+        // main_content_only=false keeps the navigation and the footer.
+        let mut whole = extract_options();
+        whole.main_content_only = false;
+        let extracted = provider
+            .extract(&format!("{url}/page"), &whole)
+            .await
+            .expect("extracts");
+        assert!(extracted.content.contains("Home"), "{}", extracted.content);
+        assert!(
+            extracted.content.contains("Footer text"),
+            "{}",
+            extracted.content
+        );
+    }
+
+    /// expect: a body that is text but not HTML is returned as served, line
+    /// structure intact; a declared image is refused, not decoded as text.
+    #[tokio::test]
+    async fn raw_fetch_returns_plain_text_as_served_and_refuses_an_image() {
+        let (url, _) = http_fixture(typed_response(
+            "text/plain",
+            "line one\n  indented <not a tag>\nline three\n",
+        ))
+        .await;
+        let provider = RawFetchProvider::new().expect("provider");
+        let extracted = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect("extracts");
+        assert_eq!(
+            extracted.content,
+            "line one\n  indented <not a tag>\nline three\n"
+        );
+        assert_eq!(extracted.metadata, None);
+
+        let (url, _) = http_fixture(typed_response("image/png", "\u{fffd}PNG\r\n")).await;
+        let error = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect_err("an image is not text");
+        assert!(error.to_string().contains("image/png"), "{error}");
+    }
+
+    /// expect: with no declared type, a body that begins with markup is
+    /// read as HTML and anything else as text.
+    #[test]
+    fn body_kind_follows_the_declared_type_then_the_body() {
+        assert_eq!(body_kind(Some("text/html"), "x"), BodyKind::Html);
+        assert_eq!(
+            body_kind(Some("application/xhtml+xml"), "x"),
+            BodyKind::Html
+        );
+        assert_eq!(body_kind(Some("application/json"), "{}"), BodyKind::Text);
+        assert_eq!(body_kind(Some("video/mp4"), "x"), BodyKind::NotText);
+        assert_eq!(body_kind(None, "  <html>"), BodyKind::Html);
+        assert_eq!(body_kind(None, "plain"), BodyKind::Text);
     }
 
     /// Build a minimal, structurally valid single-page PDF whose content

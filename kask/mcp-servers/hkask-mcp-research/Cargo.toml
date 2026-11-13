@@ -46,6 +46,8 @@ blake3.workspace = true
 futures-util.workspace = true
 regex.workspace = true
 pdf-extract.workspace = true
+# HTML parsing for the keyless extractor's page text (research/page_text.rs).
+html5ever.workspace = true
 
 [dev-dependencies]
 # tool_behavior.rs drives the real tool surface through Parameters<T>:

@@ -22,7 +22,7 @@ The 15 `rss_` feed tools and `web_browse` were removed on 2026-11-12 by operator
 
 Every tool refuses an argument it does not define, naming it.
 
-`web_extract` accepts `markdown` or `json`. RawFetch, the keyless extractor, cannot produce structured JSON: a `json` request needs Firecrawl. For a PDF it returns the text layer; a scanned PDF with no text layer is a typed error naming the corpus server's OCR route. Responses (including cache hits) must match the requested format.
+`web_extract` accepts `markdown` or `json`. RawFetch, the keyless extractor, cannot produce structured JSON: a `json` request needs Firecrawl. For an HTML page it returns the page text as light Markdown (headings, lists, table rows, link targets, the title in `metadata.title`) and honours `main_content_only`. For a PDF it returns the text layer; a scanned PDF with no text layer is a typed error naming the corpus server's OCR route. Responses (including cache hits) must match the requested format.
 
 The `web_search.strategy` input schema advertises `quick`, `web` (`semantic` alias), `news`, and `deep` (`research` alias). `evaluate_evidence.duplication` advertises `semantic` or omission. An unsupported value is a typed invalid-argument error naming the accepted values.
 
