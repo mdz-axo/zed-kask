@@ -161,7 +161,7 @@ and are retained in prose form as the historical record):**
 
 **Mechanism/impact:** an existing cache leaf symlink redirects a write outside the allowed root. A dangling output symlink returns NotFound during canonicalization, survives reconstruction, then redirects a later write. Neither requires a race; OS write permissions still apply.
 
-**Counterevidence/disproof:** slug validation blocks textual traversal, not symlinks. A stronger helper exists at `kask/mcp-servers/hkask-mcp-corpus/src/path_safety.rs:28–65`, but these paths do not use it. Eight existing shared path tests passed without covering these cases.
+**Counterevidence/disproof:** slug validation blocks textual traversal, not symlinks. A stronger helper exists at `kask/mcp-servers/hkask-mcp-corpus/src/path_safety.rs:30–67`, but these paths do not use it. Eight existing shared path tests passed without covering these cases.
 
 **Repair:** replace permissive write interfaces with complete-destination, symlink-resistant opening/publication. Another pre-write canonicalization alone does not solve the race variant.
 

@@ -68,7 +68,7 @@ lists parameters. Enforcement anchors (paths relative to the repository root):
 
 | Invariant | Current enforcement |
 |---|---|
-| One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:391-451` |
+| One bounded word-window engine, real overlap including explicit zero | `kask/crates/hkask-memory/src/text_chunking.rs:123`; `kask/mcp-servers/hkask-mcp-corpus/src/helpers.rs:452-512` |
 | Required current-protocol classification, identity correlation and server-resolved published anchors | `kask/crates/hkask-types/src/corpus.rs`; `kask/crates/hkask-bridge-ontology/src/term_resolution.rs`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs` |
 | Full-source stored context and partition-stable prompt IDs | `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:133-267`; `kask/mcp-servers/hkask-mcp-corpus/src/services/prompt_builder.rs:286`; `kask/crates/hkask-types/src/corpus.rs:56` |
 | Structured evidence across generation and ingestion | `kask/mcp-servers/hkask-mcp-corpus/src/services/qa_pipeline.rs:26`; `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus/qa_parsing.rs:53` |

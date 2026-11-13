@@ -150,7 +150,7 @@ If `WS-1` returns `false`, stop before calling `corpus_compose` or rendering `wr
    has no `no_validate` parameter. Confirm the target exists;
    `centroid_missing=true` with null distance/pass is unvalidated, not a
    successful check
-   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:292–339`).
+   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs:275–322`).
 4. Reassemble the recomposed units, preserving the document's structure
    (headings, code blocks, tables stay verbatim — a style voice never
    rewrites code or identifiers).

@@ -28,7 +28,7 @@ mds_categories: [domain, composition]
 >   `lisp_eval_tool.rs:497@evaluate_lisp_controlled`).
 >   H8 direct/routed corpus queries share one body; only Lisp options are offloaded and
 >   observe request-context cancellation, leaving downstream inference/retrieval/generation alone
->   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-243`). Explicit rmcp cancel
+>   (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-244`). Explicit rmcp cancel
 >   reaches the worker; plain EOF does not immediately signal it (tested context cancellation
 >   follows service-owner teardown after drain). No immediate disconnect or shutdown-worker-join promise.
 >   H4C measurements remain deferred; H6 native Stop validation was not performed;
