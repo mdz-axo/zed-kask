@@ -36,9 +36,9 @@ use crate::research::{
     MAX_QUERY_LENGTH, MAX_URL_LENGTH, NewResearchRun, PingOutput, ProviderProfileOutput,
     ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest,
     ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
-    SearchResultOutput, SearchStrategy, WebError, WebSearchPort, build_provider_pool, cache_key,
-    llm_rerank, normalize_closed_vocab, parse_closed_vocab, parse_closed_vocab_const,
-    provider_profile, score_evidence_set,
+    SearchResultOutput, SearchStrategy, WebSearchPort, build_provider_pool, cache_key, llm_rerank,
+    normalize_closed_vocab, parse_closed_vocab, parse_closed_vocab_const, provider_profile,
+    score_evidence_set,
 };
 
 // ── Constants ──
@@ -1097,34 +1097,18 @@ impl ResearchServer {
                     // preprint and the published version of the same work)
                     // stay consumer-verifiable via the surfaced list.
                     let mut candidates = self.pool.resolve_title(&title, 3).await.map_err(|e| {
-                        // The kind is load-bearing for the reliability ledger:
-                        // a Crossref 429 burst (observed 2026-11-02: parallel
-                        // run-scoped resolve_paper calls all Crossref-429'd,
-                        // the outcome breakdown carried `failed_precondition`
-                        // and the sensor degraded to 0.75 on transient
-                        // throttling) must surface as external rate limiting,
-                        // not as a tool defect. The honest kind per variant:
-                        // 429 → `rate_limited` (still degrades — the tool
-                        // genuinely failed for the caller — but the breakdown
-                        // names the remedy: back off, don't diagnose the
-                        // tool); transport failure → `unavailable` (the
-                        // config-gap class the ledger's not-tool-fault policy
-                        // already excludes from the success-rate math).
-                        match e {
-                            WebError::RateLimited(detail) => {
-                                McpToolError::rate_limited(format!(
-                                    "Crossref bibliographic search rate limited: {detail}"
-                                ))
-                            }
-                            WebError::ProviderUnavailable(detail) => {
-                                McpToolError::unavailable(format!(
-                                    "Crossref bibliographic search unavailable: {detail}"
-                                ))
-                            }
-                            other => McpToolError::failed_precondition(format!(
-                                "Crossref bibliographic search failed: {other}"
-                            )),
-                        }
+                        // The kind is the one every other tool here gives
+                        // the same failure (`WebError::kind`): a Crossref
+                        // 429 is `rate_limited` (back off; observed
+                        // 2026-11-02 as a burst that had been reported as
+                        // `failed_precondition`), a transport failure is
+                        // `unavailable`, and a Crossref error response is
+                        // `internal`. The last was `failed_precondition`,
+                        // which tells the caller a setup step is missing.
+                        McpToolError::new(
+                            e.kind(),
+                            format!("Crossref bibliographic search failed: {e}"),
+                        )
                     })?;
                     candidates.sort_by_key(|c| {
                         !crate::research::providers::title_matches_exactly(&title, &c.title)
@@ -1166,8 +1150,8 @@ impl ResearchServer {
 
             // OpenAlex enrichment — best-effort, surfaced either way: the
             // identity is the deterministic floor and never blocked by the
-            // metadata tier. Ok(None) = no record (or no lookup path for the
-            // kind); Err = the lookup failed — both surface as notes.
+            // metadata tier. Ok(None) = OpenAlex was asked and holds no
+            // record; Err = the lookup failed — both surface as notes.
             let metadata = match self.pool.resolve_paper_id(&parsed).await {
                 Ok(Some(metadata)) => {
                     result["openalex"] = serde_json::json!({
@@ -1990,5 +1974,77 @@ mod search_order_tests {
                 "https://example.org/old-second",
             ]
         );
+    }
+}
+
+/// `resolve_paper` through the real provider pool, with OpenAlex answered
+/// by a fixture: the handler is called with JSON arguments.
+#[cfg(test)]
+mod paper_resolution_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    use super::ResearchServer;
+    use crate::research::providers::OpenAlexProvider;
+    use crate::research::types::ResolvePaperRequest;
+    use crate::research::{ProviderPool, RateLimiter, ResponseCache};
+
+    /// expect: an arXiv identifier is enriched from OpenAlex. The identity
+    /// keeps the version the caller gave; the lookup uses arXiv's DOI
+    /// without it. Before, the response said "no OpenAlex record for this
+    /// identifier" for every arXiv identifier, and no request had been made.
+    #[tokio::test]
+    async fn an_arxiv_identifier_is_enriched_from_openalex() {
+        let work = r#"{"id": "https://openalex.org/W2626778328",
+            "doi": "https://doi.org/10.48550/arxiv.1706.03762",
+            "title": "Attention Is All You Need", "publication_year": 2017}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{work}",
+            work.len()
+        )
+        .into_bytes();
+        let (base, requests) = crate::test_support::http_fixture_capturing_requests(response).await;
+        let pool = ProviderPool::new(
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some(OpenAlexProvider::at(&base)),
+            None,
+        );
+        let server = ResearchServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(pool),
+            Arc::new(ResponseCache::new(0, Duration::from_secs(1))),
+            RateLimiter::new(1000, 60),
+            None,
+            Arc::new(NoopInferencePort),
+            None,
+            None,
+            None,
+            None,
+        );
+        let request: ResolvePaperRequest =
+            serde_json::from_value(serde_json::json!({"query": "arXiv:1706.03762v5"}))
+                .expect("arguments decode");
+        let response = server
+            .resolve_paper(Parameters(request))
+            .await
+            .expect("resolves");
+        let body = hkask_mcp_test_support::parse_envelope(&response);
+        assert_eq!(body["identifier"]["kind"], "arxiv", "{body}");
+        assert_eq!(body["identifier"]["value"], "1706.03762v5", "{body}");
+        assert_eq!(body["openalex"]["openalex_id"], "W2626778328", "{body}");
+        assert_eq!(
+            body["openalex"]["title"], "Attention Is All You Need",
+            "{body}"
+        );
+        assert!(body["openalex"].get("note").is_none(), "{body}");
+
+        let sent = requests.lock().expect("requests").clone();
+        assert_eq!(sent.len(), 1, "one lookup");
+        assert_eq!(sent[0].target, "/works/doi:10.48550/arxiv.1706.03762");
     }
 }

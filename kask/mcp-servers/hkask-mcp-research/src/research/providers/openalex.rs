@@ -19,26 +19,43 @@ const OPENALEX_API_BASE: &str = "https://api.openalex.org";
 #[derive(Clone)]
 pub(crate) struct OpenAlexProvider {
     client: reqwest::Client,
+    /// The API base; a test points it at a fixture.
+    base: String,
 }
 
 impl OpenAlexProvider {
     pub fn new() -> Result<Self, WebError> {
         Ok(Self {
             client: super::provider_http_client()?,
+            base: OPENALEX_API_BASE.to_string(),
         })
     }
 
-    /// The direct-lookup path for an identifier, or None when the kind has
-    /// no OpenAlex lookup key (arXiv).
-    fn work_path(id: &PaperId) -> Option<String> {
+    /// A provider that sends its requests to `base` (a test fixture).
+    #[cfg(test)]
+    pub(crate) fn at(base: &str) -> Self {
+        let mut provider = Self::new().expect("provider");
+        provider.base = base.to_string();
+        provider
+    }
+
+    /// The direct-lookup path for an identifier.
+    ///
+    /// An arXiv identifier is looked up by the DOI arXiv registers for it,
+    /// `10.48550/arxiv.<id>`, without the version suffix: OpenAlex holds
+    /// the unversioned DOI and answers 404 for a versioned one (measured
+    /// 2026-11-12: `1706.03762` found, `1706.03762v5` not found).
+    fn work_path(&self, id: &PaperId) -> String {
+        let base = &self.base;
         match id {
-            PaperId::Doi(doi) => Some(format!("{OPENALEX_API_BASE}/works/doi:{doi}")),
-            PaperId::OpenAlex(openalex_id) => {
-                Some(format!("{OPENALEX_API_BASE}/works/{openalex_id}"))
-            }
-            PaperId::Pmid(pmid) => Some(format!("{OPENALEX_API_BASE}/works/pmid:{pmid}")),
-            PaperId::Pmcid(pmcid) => Some(format!("{OPENALEX_API_BASE}/works/pmcid:{pmcid}")),
-            PaperId::Arxiv(_) => None,
+            PaperId::Doi(doi) => format!("{base}/works/doi:{doi}"),
+            PaperId::OpenAlex(openalex_id) => format!("{base}/works/{openalex_id}"),
+            PaperId::Pmid(pmid) => format!("{base}/works/pmid:{pmid}"),
+            PaperId::Pmcid(pmcid) => format!("{base}/works/pmcid:{pmcid}"),
+            PaperId::Arxiv(arxiv_id) => format!(
+                "{base}/works/doi:10.48550/arxiv.{}",
+                arxiv_id_without_version(arxiv_id)
+            ),
         }
     }
 
@@ -61,11 +78,9 @@ impl OpenAlexProvider {
     }
 
     /// Resolve a typed identifier to its OpenAlex work record. Ok(None)
-    /// when there is no lookup path for the kind or no record exists (404).
+    /// when no record exists (404).
     pub(crate) async fn resolve(&self, id: &PaperId) -> Result<Option<PaperMetadata>, WebError> {
-        let Some(path) = Self::work_path(id) else {
-            return Ok(None);
-        };
+        let path = self.work_path(id);
         let (status, body) = self.send_read(self.client.get(&path)).await?;
         if status.as_u16() == 404 {
             return Ok(None);
@@ -80,6 +95,22 @@ impl OpenAlexProvider {
             });
         }
         Ok(parse_openalex_work(&body))
+    }
+}
+
+/// An arXiv identifier with its `vN` version suffix removed. The suffix is
+/// recognised the way `parse_paper_id` recognises it: a `v` followed only
+/// by digits, at the end.
+fn arxiv_id_without_version(arxiv_id: &str) -> &str {
+    match arxiv_id.rsplit_once('v') {
+        Some((base, version))
+            if !base.is_empty()
+                && !version.is_empty()
+                && version.chars().all(|digit| digit.is_ascii_digit()) =>
+        {
+            base
+        }
+        _ => arxiv_id,
     }
 }
 
@@ -219,7 +250,7 @@ impl WebSearchProvider for OpenAlexProvider {
         let (status, body) = self
             .send_read(
                 self.client
-                    .get(format!("{OPENALEX_API_BASE}/works"))
+                    .get(format!("{}/works", self.base))
                     .query(&params),
             )
             .await?;
@@ -241,7 +272,7 @@ impl WebSearchProvider for OpenAlexProvider {
     async fn health(&self) -> Result<(), WebError> {
         let response = self
             .client
-            .get(format!("{OPENALEX_API_BASE}/works"))
+            .get(format!("{}/works", self.base))
             .query(&[("search", "test"), ("per_page", "1")])
             .send()
             .await
@@ -383,6 +414,49 @@ mod openalex_tests {
             Some("https://repo.example.org/first.pdf")
         );
         assert_eq!(results[1].oa_pdf_url, None);
+    }
+
+    /// expect: an arXiv identifier is looked up by arXiv's DOI for it,
+    /// without the version suffix. Before, no request was made for an
+    /// arXiv identifier and the caller was told OpenAlex has no record.
+    #[tokio::test]
+    async fn an_arxiv_identifier_is_looked_up_by_its_unversioned_arxiv_doi() {
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{WORK_FIXTURE}",
+            WORK_FIXTURE.len()
+        )
+        .into_bytes();
+        let (base, requests) = crate::test_support::http_fixture_capturing_requests(response).await;
+        let provider = OpenAlexProvider::at(&base);
+        for arxiv_id in ["1706.03762v5", "1706.03762"] {
+            let work = provider
+                .resolve(&PaperId::Arxiv(arxiv_id.to_string()))
+                .await
+                .expect("lookup succeeds")
+                .expect("a record");
+            assert_eq!(work.openalex_id, "W2741809807", "{arxiv_id}");
+        }
+        let targets: Vec<String> = requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .map(|request| request.target.clone())
+            .collect();
+        assert_eq!(
+            targets,
+            [
+                "/works/doi:10.48550/arxiv.1706.03762",
+                "/works/doi:10.48550/arxiv.1706.03762"
+            ]
+        );
+    }
+
+    /// expect: only a trailing `v` followed by digits is a version.
+    #[test]
+    fn only_a_trailing_version_suffix_is_removed() {
+        assert_eq!(arxiv_id_without_version("2401.12345v12"), "2401.12345");
+        assert_eq!(arxiv_id_without_version("2401.12345"), "2401.12345");
+        assert_eq!(arxiv_id_without_version("2401.12345v"), "2401.12345v");
     }
 
     #[test]

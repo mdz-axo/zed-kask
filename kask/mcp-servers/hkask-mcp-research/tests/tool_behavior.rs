@@ -566,7 +566,7 @@ defaults_pool! {
 }
 
 /// Stub whose `resolve_title` errors with `WebError::ProviderError` — a
-/// genuine protocol failure that stays a tool fault (`FailedPrecondition`).
+/// Crossref error response (`Internal`).
 struct ProviderErrorTitlePool;
 
 defaults_pool! {
@@ -3366,10 +3366,10 @@ async fn resolve_paper_title_mode_classifies_transport_failure_as_unavailable() 
 }
 
 #[tokio::test]
-async fn resolve_paper_title_mode_classifies_provider_error_as_failed_precondition() {
-    // A genuine Crossref protocol failure (HTTP 500) stays a tool
-    // fault: the tool is broken, the caller should retry later or
-    // diagnose, not back off.
+async fn resolve_paper_title_mode_classifies_a_crossref_error_response_as_internal() {
+    // A Crossref error response (HTTP 500) carries the kind every other
+    // tool here gives a provider error. It was `failed_precondition`,
+    // which tells the caller a setup step is missing.
     let server = make_server_with_pool(Arc::new(ProviderErrorTitlePool));
     let error = err(server
         .resolve_paper(Parameters(ResolvePaperRequest {
@@ -3378,7 +3378,7 @@ async fn resolve_paper_title_mode_classifies_provider_error_as_failed_preconditi
             run_id: None,
         }))
         .await);
-    assert_error_kind(&error, McpErrorKind::FailedPrecondition);
+    assert_error_kind(&error, McpErrorKind::Internal);
     assert!(
         error.message.contains("Crossref error 500"),
         "names the protocol failure: {}",

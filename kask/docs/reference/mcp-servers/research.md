@@ -535,8 +535,24 @@ candidate, not a verified document (the copy can be a different version
 than the cited work — the consumer verifies identity). The identity is
 the deterministic floor and is returned even when the metadata lookup
 degrades (a note either way — never silent). arXiv IDs have no direct
-OpenAlex lookup key and resolve to no-record. Pass `run_id` to record the
-resolution into the run ledger.
+OpenAlex lookup key and resolved to no-record until 2026-11-12 (below).
+Pass `run_id` to record the resolution into the run ledger.
+
+An arXiv ID is enriched from OpenAlex (2026-11-12). The lookup uses the DOI
+arXiv registers for the paper, `10.48550/arxiv.<id>`, without the version
+suffix; `identifier.value` keeps the version the caller gave. Before, the
+response said "no OpenAlex record for this identifier" for every arXiv ID
+and no request had been made. Measured against OpenAlex: `1706.03762`
+resolves; the same DOI with `v5` appended is a 404, which is why the suffix
+is dropped. The record can be the published version of the preprint,
+carrying the journal's DOI (measured on `hep-ex/0307015`, an old-style ID
+that `resolve_paper` itself does not accept as input).
+
+In title mode, a Crossref error response is reported as `internal`, the
+kind every other tool here gives a provider error. It was
+`failed_precondition`, which tells a caller that a setup step is missing.
+A Crossref 429 stays `rate_limited` and a transport failure `unavailable`;
+all three messages now begin "Crossref bibliographic search failed:".
 
 An OpenAlex work ID resolves to `https://openalex.org/works/W…`, the page
 OpenAlex serves (2026-11-12). Before, `canonical_url` was
