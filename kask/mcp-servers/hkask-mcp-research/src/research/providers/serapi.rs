@@ -266,7 +266,7 @@ impl SerapiProvider {
             // Store full transcript in content_previews for downstream extraction
             content_previews: {
                 let mut map = std::collections::HashMap::new();
-                map.insert(video_url.to_lowercase(), transcript_text);
+                map.insert(super::result_key(&video_url), transcript_text);
                 map
             },
             ..Default::default()

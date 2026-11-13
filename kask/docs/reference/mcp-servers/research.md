@@ -320,6 +320,31 @@ single-provider call they change the order only if the provider attaches a
 preview or a score to some of its results and not others (source read; not
 measured). That is finding R-18, awaiting a ruling.
 
+## One page, one result (2026-11-12)
+
+Search results for the same page are merged under one key. The key was
+the whole URL lowercased, which got both directions wrong. Measured on one
+provider call: the `http` and `https` forms of one Wikipedia article came
+back as two results; and lowercasing the path would merge two different
+pages whose paths differ only in case.
+
+The key is now: scheme (`http` and `https` taken as one), host without
+regard to case, port unless it is the default, path and query with their
+case kept, no fragment. Consequences for `web_search`:
+
+- one page returned as `http://…` and `https://…`, with a differently
+  cased host, or with a `#fragment`, is one result;
+- pages whose path or query differ only in case stay separate;
+- a single-provider call is de-duplicated too (it was not), keeping the
+  first position;
+- in a fused search a provider counts once per page, at its best rank. A
+  provider that returned one page twice was counted as two providers and
+  both ranks were added to the page's score.
+
+The URL shown for a merged result is the first one received. Treating
+`http` and `https` as one page is a heuristic; `www.` and a trailing slash
+are not folded.
+
 ## arXiv queries (2026-11-12)
 
 The arXiv provider sent the caller's query to arXiv unchanged. arXiv reads

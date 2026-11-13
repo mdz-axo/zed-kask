@@ -137,6 +137,37 @@ pub(crate) async fn validate_provider_url(url: &str) -> Result<(), WebError> {
         .map_err(|e| WebError::BadArgs(e.message))
 }
 
+/// The key under which search results for the same page are merged, and
+/// under which a provider's preview or score is joined to its result.
+///
+/// Scheme and host are case-insensitive and a default port is the same as
+/// none (RFC 3986 §6.2); a fragment names a place inside the page; `http`
+/// and `https` on the same host and path are taken to be one page (a
+/// heuristic: the usual case is a redirect from one to the other). The
+/// path and query keep their case: they are case-sensitive, and the key
+/// used before lowercased them, merging distinct pages. A string that is
+/// not a URL is its own key.
+pub(crate) fn result_key(url: &str) -> String {
+    let url = url.trim();
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return url.to_string();
+    };
+    let scheme = match parsed.scheme() {
+        "http" | "https" => "web",
+        other => other,
+    };
+    let mut key = format!("{scheme}://{}", parsed.host_str().unwrap_or_default());
+    if let Some(port) = parsed.port() {
+        key.push_str(&format!(":{port}"));
+    }
+    key.push_str(parsed.path());
+    if let Some(query) = parsed.query() {
+        key.push('?');
+        key.push_str(query);
+    }
+    key
+}
+
 /// Whether a URL's path names a PDF document — the extract chain's cue to
 /// prefer the local deterministic extractor over third-party scrapers
 /// (see `extract_chain_order`).
@@ -521,20 +552,21 @@ impl ProviderPool {
         match result {
             Ok(output) => {
                 let total = output.results.len();
+                // A page the provider returned twice is listed once, at
+                // its first position.
+                let mut seen = std::collections::HashSet::new();
                 let ranked: Vec<RankedResult> = output
                     .results
                     .into_iter()
+                    .filter(|r| seen.insert(result_key(&r.url)))
                     .enumerate()
                     .map(|(rank, r)| RankedResult {
                         rrf_score: rrf_score(RRF_K, &[rank]),
                         provider_count: 1,
                         providers: vec![kind.to_string()],
                         best_rank: Some(rank),
-                        content_preview: output
-                            .content_previews
-                            .get(&r.url.to_lowercase())
-                            .cloned(),
-                        semantic_score: output.semantic_scores.get(&r.url.to_lowercase()).copied(),
+                        content_preview: output.content_previews.get(&result_key(&r.url)).cloned(),
+                        semantic_score: output.semantic_scores.get(&result_key(&r.url)).copied(),
                         title: r.title,
                         url: r.url,
                         description: r.description,
@@ -543,6 +575,7 @@ impl ProviderPool {
                         oa_pdf_url: r.oa_pdf_url,
                     })
                     .collect();
+                let kept = ranked.len();
                 Ok(CompoundSearchResult {
                     query: query.query.clone(),
                     strategy: format!("provider:{kind}"),
@@ -554,7 +587,7 @@ impl ProviderPool {
                     providers_failed: Vec::new(),
                     providers_skipped: Vec::new(),
                     total_before_dedup: total,
-                    duplicates_removed: 0,
+                    duplicates_removed: total - kept,
                 })
             }
             Err(e) => Ok(CompoundSearchResult {
@@ -774,11 +807,17 @@ impl ProviderPool {
         let mut url_map: HashMap<String, UrlEntry> = HashMap::new();
 
         for (provider, rank, result) in all_results {
-            let key = result.url.to_lowercase();
+            let key = result_key(&result.url);
             match url_map.get_mut(&key) {
                 Some(entry) => {
-                    entry.providers.push(provider.clone());
-                    entry.ranks.push(rank);
+                    // Each provider counts once per page, at its best
+                    // rank (results arrive in rank order). A provider that
+                    // returned the page twice was counted as two providers
+                    // and its two ranks were added together.
+                    if !entry.providers.contains(&provider) {
+                        entry.providers.push(provider.clone());
+                        entry.ranks.push(rank);
+                    }
                     // Always prefer academic sources over web/search-engine sources
                     let is_academic = matches!(
                         result.source.as_deref(),
@@ -1558,6 +1597,37 @@ mod tests {
             "Provider unavailable: RawFetch request failed"
         );
         assert!(matches!(chain_error(Vec::new()), WebError::NoProvider));
+    }
+
+    /// expect: the merge key treats scheme, host case, default port and
+    /// fragment as the same page, and keeps path and query case.
+    #[test]
+    fn result_key_merges_one_page_and_keeps_distinct_pages_apart() {
+        let key = result_key("https://en.wikipedia.org/wiki/Mean_reciprocal_rank");
+        for same in [
+            "http://en.wikipedia.org/wiki/Mean_reciprocal_rank",
+            "https://EN.Wikipedia.org/wiki/Mean_reciprocal_rank",
+            "https://en.wikipedia.org:443/wiki/Mean_reciprocal_rank",
+            "http://en.wikipedia.org:80/wiki/Mean_reciprocal_rank#History",
+            "  https://en.wikipedia.org/wiki/Mean_reciprocal_rank ",
+        ] {
+            assert_eq!(result_key(same), key, "{same}");
+        }
+        for different in [
+            "https://en.wikipedia.org/wiki/Mean_Reciprocal_Rank",
+            "https://en.wikipedia.org/wiki/Mean_reciprocal_rank?action=history",
+            "https://en.wikipedia.org:8443/wiki/Mean_reciprocal_rank",
+            "https://de.wikipedia.org/wiki/Mean_reciprocal_rank",
+            "https://en.wikipedia.org/wiki/Mean_reciprocal_rank/",
+        ] {
+            assert_ne!(result_key(different), key, "{different}");
+        }
+        assert_ne!(
+            result_key("https://example.org/a?q=A"),
+            result_key("https://example.org/a?q=a")
+        );
+        // Not a URL: its own key, unchanged.
+        assert_eq!(result_key("not a url"), "not a url");
     }
 
     /// Extract stub that fails with a fixed provider message.

@@ -115,7 +115,7 @@ impl WebSearchProvider for TavilyProvider {
                     .filter_map(|item| {
                         let url = item["url"].as_str()?;
                         if let Some(content) = item["content"].as_str() {
-                            content_previews.insert(url.to_lowercase(), content.to_string());
+                            content_previews.insert(super::result_key(url), content.to_string());
                         }
                         Some(SearchResult {
                             title: item["title"].as_str()?.to_string(),

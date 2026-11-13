@@ -608,7 +608,7 @@ impl ResearchServer {
                 .results
                 .into_iter()
                 .map(|r| {
-                    let key = r.url.to_lowercase();
+                    let key = crate::research::providers::result_key(&r.url);
                     FindSimilarResultOutput {
                         title: r.title,
                         url: r.url,
@@ -1947,6 +1947,72 @@ mod search_order_tests {
             .await,
             expected
         );
+    }
+
+    /// expect: one page returned under two schemes or with a differently
+    /// cased host is one result; two pages whose paths differ only in case
+    /// stay two. Measured 2026-11-12 on one provider call: the http and
+    /// https forms of one page came back as two results, and the old key
+    /// (the whole URL lowercased) would have merged the two distinct paths.
+    #[tokio::test]
+    async fn one_page_is_listed_once_and_paths_keep_their_case() {
+        let pages: Vec<(&'static str, Option<&'static str>)> = vec![
+            ("https://en.wikipedia.org/wiki/Mean_reciprocal_rank", None),
+            (
+                "http://EN.wikipedia.org/wiki/Mean_reciprocal_rank#History",
+                None,
+            ),
+            ("https://en.wikipedia.org/wiki/Mean_Reciprocal_Rank", None),
+        ];
+        let expected = [
+            "https://en.wikipedia.org/wiki/Mean_reciprocal_rank",
+            "https://en.wikipedia.org/wiki/Mean_Reciprocal_Rank",
+        ];
+        let single = server(vec![Box::new(FixedProvider {
+            kind: "tavily",
+            results: pages.clone(),
+        })]);
+        assert_eq!(
+            result_urls(
+                &single,
+                serde_json::json!({"query": "mrr", "provider": "tavily"})
+            )
+            .await,
+            expected
+        );
+
+        // Fused: the page both providers returned outranks the page one
+        // returned, and each provider counts once for it.
+        let fused = server(vec![
+            Box::new(FixedProvider {
+                kind: "tavily",
+                results: pages,
+            }),
+            Box::new(FixedProvider {
+                kind: "brave",
+                results: vec![("http://en.wikipedia.org/wiki/Mean_reciprocal_rank", None)],
+            }),
+        ]);
+        let request: SearchRequest =
+            serde_json::from_value(serde_json::json!({"query": "mrr", "strategy": "web"}))
+                .expect("arguments decode");
+        let response = fused
+            .web_search(Parameters(request))
+            .await
+            .expect("search succeeds");
+        let body = hkask_mcp_test_support::parse_envelope(&response);
+        let results = body["results"].as_array().expect("results");
+        assert_eq!(results.len(), 2, "{body}");
+        assert_eq!(results[0]["url"], expected[0], "{body}");
+        let mut providers: Vec<&str> = results[0]["providers"]
+            .as_array()
+            .expect("providers")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        providers.sort_unstable();
+        assert_eq!(providers, ["brave", "tavily"], "{body}");
+        assert_eq!(results[1]["url"], expected[1], "{body}");
     }
 
     /// expect: each recommendation on a tool-selected search carries what

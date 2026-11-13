@@ -70,10 +70,10 @@ impl ExaProvider {
                     .filter_map(|item| {
                         let url = item["url"].as_str()?;
                         if let Some(score) = item["score"].as_f64() {
-                            semantic_scores.insert(url.to_lowercase(), score);
+                            semantic_scores.insert(super::result_key(url), score);
                         }
                         if let Some(text) = item["text"].as_str() {
-                            content_previews.insert(url.to_lowercase(), text.to_string());
+                            content_previews.insert(super::result_key(url), text.to_string());
                         }
                         Some(SearchResult {
                             title: item["title"].as_str()?.to_string(),
@@ -164,5 +164,29 @@ impl WebSearchProvider for ExaProvider {
 
     async fn health(&self) -> Result<(), WebError> {
         self.health_probe().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: a result's preview and score are stored under the key the
+    /// pool looks them up by, for a URL with capitals in host and path.
+    /// The two sides each derived the key themselves; they now share
+    /// `result_key`, and a mismatch would drop every preview silently.
+    #[test]
+    fn previews_and_scores_are_stored_under_the_pool_lookup_key() {
+        let url = "https://Example.org/Papers/RRF.html";
+        let output = ExaProvider::parse_search_results(&serde_json::json!({
+            "results": [{"url": url, "title": "RRF", "text": "preview text", "score": 0.42}]
+        }));
+        assert_eq!(output.results.len(), 1);
+        let key = super::super::result_key(&output.results[0].url);
+        assert_eq!(
+            output.content_previews.get(&key).map(String::as_str),
+            Some("preview text")
+        );
+        assert_eq!(output.semantic_scores.get(&key).copied(), Some(0.42));
     }
 }
