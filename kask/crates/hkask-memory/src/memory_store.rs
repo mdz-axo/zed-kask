@@ -669,6 +669,15 @@ impl MemoryStore {
         self.h_mem_store.get_by_id(id).map_err(Into::into)
     }
 
+    /// Every h_mem stored under exactly `entity`, newest first, without
+    /// decay, dedup or a recall touch. An index lookup, where the prefix
+    /// read below scans the table: maintenance passes that know the whole
+    /// key (one thread's turns, one thread's watermark, one lesson key) use
+    /// this, and it cannot return a sibling whose key merely starts the same.
+    pub fn h_mems_by_entity(&self, entity: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        self.h_mem_store.query_by_entity(entity).map_err(Into::into)
+    }
+
     /// Query all h_mems by entity prefix, without decay or dedup.
     /// Used by the purge tool to find all h_mems (assertions, QA pairs,
     /// and any other attributes) matching a corpus prefix for deletion.
@@ -1060,6 +1069,32 @@ impl MemoryStore {
                 prefix,
                 count,
                 "h_mems deleted by entity prefix (forgotten)"
+            );
+        }
+        Ok(count)
+    }
+
+    /// Delete every h_mem stored under exactly `entity`, in one statement,
+    /// then remove the emptied entity's embeddings and memory_links rows.
+    /// Returns the number of h_mems deleted. The exact sibling of
+    /// [`Self::delete_h_mems_by_entity_prefix`]: an entity whose key merely
+    /// begins with `entity` is untouched, and the delete is an index lookup.
+    pub fn delete_h_mems_by_entity(&self, entity: &str) -> Result<usize, MemoryStoreError> {
+        let count = self
+            .h_mem_store
+            .driver()
+            .execute(
+                "DELETE FROM hmems WHERE entity = ?1",
+                &[DbValue::Text(entity.to_string())],
+            )
+            .map_err(|e| MemoryStoreError::HMem(HMemError::from(e)))?;
+        if count > 0 {
+            self.cleanup_orphaned_references_for_entity(entity, None);
+            tracing::debug!(
+                target: "hkask.memory",
+                entity,
+                count,
+                "h_mems deleted by exact entity (forgotten)"
             );
         }
         Ok(count)
@@ -3304,5 +3339,39 @@ mod tests {
             matches!(error, MemoryStoreError::NoEmbeddingsForCentroid(ref prefix) if prefix == "style:absent:"),
             "wrong error: {error:?}"
         );
+    }
+
+    /// mcp-tool-review CU-14 pin: the exact-entity read and delete touch one
+    /// entity. A sibling whose key begins with it is neither returned nor
+    /// deleted (the prefix forms return and delete both), and the emptied
+    /// entity's embedding goes with its rows while the sibling's stays.
+    #[test]
+    fn exact_entity_read_and_delete_leave_prefix_siblings_alone() -> anyhow::Result<()> {
+        let store = test_store();
+        let owner = hkask_types::WebID::new();
+        for (entity, text) in [("curator:thread:a", "one"), ("curator:thread:ab", "two")] {
+            store.store(HMem::new(
+                entity,
+                "chunk:1:0",
+                serde_json::json!(text),
+                owner,
+            ))?;
+            let mut vector = vec![0.0f32; hkask_storage::embedding_dim()];
+            vector[0] = 1.0;
+            store.store_embedding(entity, &vector, "test-model", Some(text))?;
+        }
+
+        assert_eq!(store.h_mems_by_entity_prefix("curator:thread:a")?.len(), 2);
+        let exact = store.h_mems_by_entity("curator:thread:a")?;
+        assert_eq!(exact.len(), 1);
+        assert_eq!(exact[0].entity, "curator:thread:a");
+
+        assert_eq!(store.delete_h_mems_by_entity("curator:thread:a")?, 1);
+        assert!(store.h_mems_by_entity("curator:thread:a")?.is_empty());
+        assert!(!store.has_embedding_for_passage("curator:thread:a", "one")?);
+        assert_eq!(store.h_mems_by_entity("curator:thread:ab")?.len(), 1);
+        assert!(store.has_embedding_for_passage("curator:thread:ab", "two")?);
+        assert_eq!(store.delete_h_mems_by_entity("curator:thread:a")?, 0);
+        Ok(())
     }
 }

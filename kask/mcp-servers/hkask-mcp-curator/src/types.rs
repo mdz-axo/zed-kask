@@ -1,16 +1,48 @@
 //! Request types for hkask-mcp-curator MCP tools.
 
 use hkask_types::AnyJsonValue;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 
+/// The ontology axes `curator_memory_recall` can recall along.
+pub const ONTOLOGY_AXES: [&str; 4] = [
+    "dc_type",
+    "dc_subject",
+    "pko_procedure",
+    "ontology_namespace",
+];
+
+/// The strategies `memory_resolve_contradiction` accepts.
+pub const RESOLUTION_STRATEGIES: [&str; 2] = ["forget", "update_confidence"];
+
+/// The sweep modes `curator_memory_backfill_embeddings` accepts.
+pub const BACKFILL_MODES: [&str; 2] = ["missing", "model_mismatch"];
+
+// Closed-vocabulary inputs stay strings (the handler names the accepted
+// values when it refuses one); the schema enumerates the same lists so a
+// caller sees them before the call.
+fn optional_ontology_axis_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": ONTOLOGY_AXES}, {"type": "null"}]})
+}
+
+fn resolution_strategy_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": RESOLUTION_STRATEGIES})
+}
+
+fn optional_backfill_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": BACKFILL_MODES}, {"type": "null"}]})
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PingRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BackfillEmbeddingsRequest {
-    /// List the candidates that would be embedded, without embedding
-    /// anything. Default false.
+    /// List the candidates and change nothing. Default false. In
+    /// "model_mismatch" mode a dry run still makes one embedding call, to
+    /// learn the provider's own name for the configured model.
     pub dry_run: Option<bool>,
     /// Sweep mode. "missing" (default): embed h_mems whose exact canonical
     /// passage has no embedding row. "model_mismatch": re-embed stored
@@ -19,22 +51,30 @@ pub struct BackfillEmbeddingsRequest {
     /// two-form predicate the search gate excludes on, so a model
     /// migration's gated-out rows are restored rather than silently
     /// invisible.
+    #[schemars(schema_with = "optional_backfill_mode_schema")]
     pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SemanticSearchRequest {
+    /// The question or topic to search for. Must not be blank.
     pub query: String,
+    /// Maximum results (default 10; values outside 1-50 are clamped).
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FederatedSearchRequest {
+    /// The question or topic to search for. Must not be blank.
     pub query: String,
+    /// Maximum results (default 10; values outside 1-50 are clamped).
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RegQueryRequest {
     /// Optional Regulation path prefix. Matches the exact path or dot-delimited
     /// descendants (for example, `reg.skill` includes `reg.skill.<id>`).
@@ -45,17 +85,14 @@ pub struct RegQueryRequest {
     /// Lookback window in seconds (default: 3600 = 1 hour) when `namespace`
     /// is set. Required when `namespace` is absent (see above).
     pub window_seconds: Option<u64>,
-    /// Maximum events to return (default: 100)
+    /// Maximum events to return (default 100; must be positive). The
+    /// oldest events in the window are returned first; `limit_reached` in
+    /// the response is true when more may exist.
     pub limit: Option<usize>,
 }
 
-/// Recall shape for `curator_memory_recall`.
-///
-/// - `perspective_scoped`: h_mems written by the curator (first-person
-///   turn history). Uses `query_for_deduped` with the curator's WebID.
-/// - `entity_wide`: all h_mems for the entity regardless of perspective.
-///   Uses `query_deduped` (no perspective filter).
-/// - `both`: return both recall shapes in separate JSON keys.
+// The enum's doc comment is its schema description: it stays one line.
+/// Which rows entity recall returns.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryRecallType {
@@ -66,23 +103,29 @@ pub enum MemoryRecallType {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryRecallRequest {
-    pub entity: String,
-    /// Recall shape: `perspective_scoped` (curator's turns), `entity_wide`
-    /// (all h_mems for the entity), or `both`. Defaults to `both`.
+    /// The exact entity to recall. Give this, or `ontology_axis` with
+    /// `ontology_value` — exactly one of the two.
+    pub entity: Option<String>,
+    /// Recall shape for entity recall: `perspective_scoped` (rows whose
+    /// perspective is the curator), `entity_wide` (all h_mems for the
+    /// entity), or `both`. Defaults to `both`. Unused with `ontology_axis`.
     #[serde(default)]
     pub recall_shape: MemoryRecallType,
-    /// Optional ontology axis to recall along instead of the entity (P5.4).
-    /// One of `dc_type`, `dc_subject`, `pko_procedure`, `ontology_namespace`.
-    /// When set, `ontology_value` supplies the term and `entity` is ignored.
+    /// Ontology axis to recall along instead of an entity (P5.4). Requires
+    /// `ontology_value`.
+    #[schemars(schema_with = "optional_ontology_axis_schema")]
     pub ontology_axis: Option<String>,
     /// The term to match on `ontology_axis` (e.g. `bibo:Article` for
-    /// `dc_type`, `omc` for `ontology_namespace`).
+    /// `dc_type`, `omc` for `ontology_namespace`). Requires `ontology_axis`.
     pub ontology_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AlgedonicLogRequest {
+    /// Lookback window in hours (default 24).
     pub hours: Option<u32>,
 }
 
@@ -90,35 +133,24 @@ pub struct AlgedonicLogRequest {
 /// The curator searches its semantic + episodic memory for relevant
 /// fragments and returns them as a structured consultation response.
 ///
-/// This is a memory-grounded consultation, not a full curator agent turn —
-/// the curator MCP server has no inference port. A full inference-grounded
-/// response requires the in-process Curator agent (`CuratorAgentServer`),
-/// which lives in the zed process, not in this MCP server. The tool's
-/// description makes this clear so the calling agent knows what it gets.
+/// This is a memory-grounded consultation, not a full curator agent turn:
+/// the server embeds the query and returns stored fragments; it does not
+/// generate a response. A synthesized response requires the in-process
+/// Curator agent (`CuratorAgentServer`), which lives in the zed process.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CuratorConsultRequest {
-    /// The question or topic to consult the curator about.
+    /// The question or topic to consult the curator about. Must not be blank.
     pub query: String,
-    /// Maximum number of memory fragments to return per store (default: 5).
+    /// Maximum fragments per scope (default 5; values outside 1-20 are
+    /// clamped).
     pub limit: Option<usize>,
 }
 
-/// Skill-use issue report — submitted by a skill's `on_failure` config when
-/// an MCP tool call fails or produces unexpected output. The Curator
-/// collects these reports across skills and invocations to identify patterns
-/// (e.g. "dcf_valuation fails 40% of the time when growth_rate > 0.3") and
-/// issue CuratorDirectives to evolve the MCP tool.
-///
-/// The report is stored as an episodic h_mem in the curator's memory store
-/// with entity `skill_use_issue:<skill_name>` so it is queryable via
-/// `curator_memory_recall` and `curator_semantic_search`.
-/// Ownership class for a reported skill-use failure.
-///
-/// expect: "Every skill-use failure names who can act on it, or explicitly says ownership is unknown."
-/// [P8] Motivating: Semantic Grounding — attribution controls which evidence can justify a skill change.
-/// [P4] Constraining: Clear Boundaries — ownership is a closed vocabulary, never a free string.
-/// pre: serialized values use the snake_case wire names below
-/// post: unknown or omitted ownership maps to `Unknown`; invented values are rejected
+// The ownership enum's doc comment is its schema description: it stays
+// one line. Its contract — a closed vocabulary; `unknown` is explicit and
+// an omitted or invented value is rejected — is pinned by the tests below.
+/// Who can act on a reported skill-use failure.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillUseFailureOrigin {
@@ -147,9 +179,15 @@ impl SkillUseFailureOrigin {
     }
 }
 
+/// Skill-use issue report — filed when an MCP tool call fails or produces
+/// unexpected output while a skill runs. Stored as an h_mem under
+/// `skill_use_issue:<skill_name>` so the reports are found by
+/// `curator_memory_recall` and `curator_semantic_search`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReportSkillUseIssueRequest {
     /// The skill manifest ID (e.g. "superforecasting", "scenario-planning").
+    /// It becomes part of the entity key: lowercase [a-z0-9:._-] only.
     pub skill_name: String,
     /// The MCP tool name that failed or produced unexpected output
     /// (e.g. "market_match", "scenario_score").
@@ -269,6 +307,7 @@ mod tests {
 /// without a citation. This is Dunning's structured-reflection principle:
 /// the model must ground its assertion in evidence, not free-associate.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryInsertRequest {
     /// The entity (subject) of the memory — e.g. "company:AAPL", "skill:superforecasting".
     pub entity: String,
@@ -284,7 +323,8 @@ pub struct MemoryInsertRequest {
     /// requirement). The tool rejects inserts without a citation.
     pub evidence_h_mem_id: String,
     /// Optional: a human-readable note explaining the reasoning behind this
-    /// memory. Stored in the h_mem's value as a `_note` field.
+    /// memory. Stored in the h_mem's value as a `_note` field; a value that
+    /// is not a JSON object is stored as `{"value": ..., "_note": ...}`.
     pub note: Option<String>,
 }
 
@@ -298,11 +338,13 @@ pub struct MemoryInsertRequest {
 /// This is the calibration mechanism: confidence is adjusted by outcome
 /// feedback, not by self-assessment.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryUpdateRequest {
     /// The h_mem ID to update.
     pub h_mem_id: String,
-    /// The new confidence value (0.0–1.0). Will be Bayesian-combined with
-    /// the existing confidence, not replaced.
+    /// The new confidence value, 0.0 to 1.0 inclusive (a value outside the
+    /// range is refused). Bayesian-combined with the existing confidence,
+    /// not replaced: 0.5 leaves it unchanged.
     pub new_confidence: f64,
     /// Optional: a new value to replace the existing one. Missing recall text
     /// is derived automatically and the canonical passage is re-embedded.
@@ -329,21 +371,24 @@ pub struct MemoryUpdateRequest {
 /// confidence), add consonant (insert reconciling memory), remove dissonant
 /// (forget — delete the row).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryResolveContradictionRequest {
     /// The h_mem IDs involved in the contradiction.
     pub h_mem_ids: Vec<String>,
     /// The resolution strategy: "forget" (delete the dissonant h_mem from
-    /// the database) or
-    /// "update_confidence" (lower confidence on the contradicted one).
+    /// the database) or "update_confidence" (set the contradicted one's
+    /// confidence to `new_confidence`).
+    #[schemars(schema_with = "resolution_strategy_schema")]
     pub strategy: String,
     /// The h_mem ID to act on (the one to forget or update). For
     /// "update_confidence", the new confidence value must be provided.
     pub target_h_mem_id: String,
-    /// For "update_confidence": the new confidence value. Ignored for other
-    /// strategies.
+    /// For "update_confidence": the confidence to set, 0.0 to 1.0. It
+    /// replaces the stored confidence (memory_update combines instead).
+    /// Ignored for "forget".
     pub new_confidence: Option<f64>,
     /// Evidence-grounding: the reason for this resolution (must cite the
-    /// contradiction observed).
+    /// contradiction observed). Must not be blank.
     pub reason: String,
 }
 
@@ -365,12 +410,14 @@ pub struct MemoryResolveContradictionRequest {
 /// decay (which lowers recall weight but never deletes) and from
 /// confidence-based consolidation (which deletes low-confidence h_mems).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryPruneRequest {
-    /// Maximum age in days. h_mems older than this are candidates for deletion.
+    /// Maximum age in days (positive). h_mems older than this are
+    /// candidates for deletion.
     pub max_age_days: i64,
-    /// If set, spare h_mems recalled within this many days. An h_mem that was
-    /// recalled recently stays even if it is old — the decay clock was reset,
-    /// so it is still active in the recall path.
+    /// If set (positive), spare h_mems recalled within this many days. An
+    /// h_mem that was recalled recently stays even if it is old — the decay
+    /// clock was reset, so it is still active in the recall path.
     pub spare_recalled_within_days: Option<i64>,
     /// Prune ALL layers including knowledge-layer rows (operator rulings,
     /// verified status, reified lessons). Opt-in: the default scope is turn
@@ -398,9 +445,11 @@ pub struct MemoryPruneRequest {
 /// Normalization: lowercase, strip punctuation, collapse whitespace.
 /// "AAPL." and "aapl" are treated as duplicates.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryDedupRequest {
-    /// Maximum h_mems to scan. Defaults to 10_000 if omitted. The scan is
-    /// bounded to prevent unbounded memory reads on very large stores.
+    /// Maximum h_mems to scan, newest first. Defaults to 10_000 if omitted.
+    /// `limit_reached` in the response is true when older rows may have
+    /// been left unscanned.
     pub limit: Option<usize>,
 }
 
@@ -414,12 +463,13 @@ pub struct MemoryDedupRequest {
 /// Insertion still goes through `memory_insert`, which requires evidence
 /// citation (the turn h_mem ID), preserving the evidence-grounding invariant.
 ///
-/// The tool queries the curator's memory for all h_mems with entity
-/// `curator:thread:<thread_id>`, returns their IDs and content, and suggests
-/// candidate (entity, attribute, value) triples the curator might extract.
-/// The curator reviews and inserts the ones worth keeping.
+/// The tool reads the h_mems stored under exactly
+/// `curator:thread:<thread_id>` and returns their IDs and content. The
+/// curator reviews them and inserts the lessons worth keeping.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MemoryExtractRequest {
-    /// The thread id whose turns to extract candidates from.
+    /// The complete thread id whose turns to list. Must not be blank; a
+    /// partial id matches nothing.
     pub thread_id: String,
 }

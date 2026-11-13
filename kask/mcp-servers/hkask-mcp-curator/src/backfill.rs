@@ -162,8 +162,26 @@ pub(crate) async fn backfill_model_mismatched_rows(
             Some(hkask_storage::embedding_dim() as u32),
         )
         .await;
-    let actual_model = match &probe {
-        Ok(batch) => batch.actual_model.clone(),
+    // The probe is a billed embedding call (dry runs included): its usage
+    // rides the tool's envelope, and a failed probe is named in the result
+    // — selection then compares against the requested form only, which can
+    // list rows stored under the provider's own name for the same model.
+    let (actual_model, identity_probe_error) = match probe {
+        Ok(batch) => {
+            hkask_mcp_server::server::record_tool_usage(batch.usage);
+            (batch.actual_model, None)
+        }
+        // A real sweep deletes each stale row before storing its
+        // replacement. With the embedder not answering, every store would
+        // fail after its delete, so the sweep stops here with nothing
+        // deleted.
+        Err(error) if !dry_run => {
+            return Err(crate::embed_error(
+                &error,
+                "the model-mismatch sweep did not start (nothing was deleted): the embedding \
+                 model did not answer the identity probe",
+            ));
+        }
         Err(error) => {
             tracing::warn!(
                 target: "hkask.mcp.curator",
@@ -171,7 +189,7 @@ pub(crate) async fn backfill_model_mismatched_rows(
                 "identity probe failed — model-mismatch selection compares \
                  against the requested form only"
             );
-            None
+            (None, Some(error.to_string()))
         }
     };
 
@@ -234,6 +252,7 @@ pub(crate) async fn backfill_model_mismatched_rows(
             "mode": "model_mismatch",
             "requested_model": requested_model,
             "actual_model": actual_model,
+            "identity_probe_error": identity_probe_error,
             "candidate_count": candidates.len(),
             "unsupported_count": unsupported.len(),
             "skipped_private": skipped_private,
@@ -242,10 +261,11 @@ pub(crate) async fn backfill_model_mismatched_rows(
                 "entity": entity,
                 "stored_model": stored_model,
             })).collect::<Vec<_>>(),
-            "guidance": "Dry run — nothing re-embedded. Re-run without dry_run to sweep."
+            "guidance": "Dry run — nothing re-embedded (one embedding call was made to learn the provider's name for the model). Re-run without dry_run to sweep."
         }));
     }
 
+    // A real sweep reaches here only with an answered probe.
     let candidate_count = candidates.len();
     let mut results = Vec::with_capacity(candidate_count);
     let mut re_embedded = 0usize;

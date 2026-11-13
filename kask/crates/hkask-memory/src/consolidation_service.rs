@@ -222,7 +222,7 @@ mod tests {
             EmbeddingStore::from_driver(driver, hkask_storage::embedding_dim()).unwrap(),
         ));
         let perspective = WebID::from_persona(b"curator");
-        let consolidator = MemoryConsolidator::new(store_b.clone());
+        let consolidator = MemoryConsolidator::new(store_b);
 
         // Cold sweep through B (empty store): runs, arms the gate.
         let first = consolidator.consolidate(&perspective, 0.5).unwrap();

@@ -767,8 +767,8 @@ the real pruning and ingestion-independence controls remain green.
 ### Distillation pass (ALWAYS-mode)
 
 **Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
-(spawn `:163`, core `distill_store` `:404`), started from the server
-factory (`hkask_mcp_curator.rs:1625-1630`).
+(spawn `:165`, core `distill_store` `:408`), started from the server
+factory (`hkask_mcp_curator.rs:1909-1913`).
 
 The `curator_memory_extract` tool is on-demand ALWAYS-mode learning: an
 agent lists a thread's turns and inserts the lessons worth keeping. The
@@ -1101,16 +1101,16 @@ floor — live in the curator server, pinned by
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
   dissonant h_mem; `update_confidence` reduces its importance. These are the
   only supported strategies (operator reaffirmation 2026-09-04).
-- **`curator_memory_prune`** (`:1626`) — deterministic bulk hygiene:
+- **`curator_memory_prune`** (`:1557`) — deterministic bulk hygiene:
   delete curator h_mems older than `max_age_days`, optionally sparing
   those recalled within a recent window.
 - **`curator_memory_dedup`** — deterministic bulk hygiene: group by
   (entity, attribute, normalized string value), keep the highest-confidence
   h_mem, and delete the rest. Non-string values are skipped; the result
   reports `deleted_count`.
-- **`curator_memory_extract`** (`:1858`) — on-demand reification-candidate
-  extraction; inserts nothing automatically (`:1858-1862`).
-- **`curator_report_skill_use_issue`** (`:1228`) — skill-reported tool
+- **`curator_memory_extract`** (`:1736`) — lists one thread's stored turns, by its
+  complete id, as candidates for `memory_insert`; read-only.
+- **`curator_report_skill_use_issue`** (`:1197`) — skill-reported tool
   issues stored at the 0.5 floor under `skill_use_issue:<skill_name>`,
   with the report text embedded under the entity (the same shared
   contract) so the reports are semantically recallable.
@@ -1190,7 +1190,9 @@ sovereignty:
 
 - **The user can see what's in memory.** The curator MCP server's
   `curator_memory_recall`, `curator_semantic_search`, and
-  `curator_federated_search` tools are read-only and available to all threads.
+  `curator_federated_search` tools are available to all threads. They delete
+  and insert nothing; recall by entity counts as a use and resets the returned
+  rows' decay clocks (§7), which the other two do not.
   Federated results label Curator versus corpus provenance explicitly, so
   external evidence cannot masquerade as stored Curator knowledge.
 
@@ -1225,17 +1227,18 @@ sovereignty:
 
 - **The user can purge memory.** The `memory_resolve_contradiction` tool
   allows the user to forget or reduce confidence in a memory
-  (`hkask_mcp_curator.rs:1223`). `curator_memory_prune` (`:1307`)
-  and `curator_memory_dedup` (`:1705`) provide deterministic bulk hygiene.
+  (`hkask_mcp_curator.rs:1467`). `curator_memory_prune` (`:1557`)
+  and `curator_memory_dedup` (`:1648`) provide deterministic bulk hygiene.
   The user is never trapped by accumulated memory.
 
-- **Forgetting is deliberate, not automatic.** Consolidation (automatic)
-  only deletes low-confidence h_mems — it never
-  deletes memories the user might want
-  (`kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`). Therapy
-  (user-initiated) is the deliberate forgetting process — the user chooses
-  what to forget and why. The distillation pass (§6) only adds —
-  automatic forgetting remains out of bounds.
+- **Two things are deleted without a request, and both are bounded.**
+  Consolidation deletes h_mems at or below the confidence floor
+  (`kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`).
+  The distillation-gated forgetting pass (§6) deletes conversation turns —
+  never lessons — once their thread's distillation watermark is older than
+  `forgetting_days` (default 7; 0 disables it). The distillation pass itself
+  only adds. Forgetting a lesson or a fact is deliberate: therapy
+  (user-initiated) proposes it and the user chooses what to forget and why.
 
 ```mermaid
 graph TD
@@ -1273,7 +1276,7 @@ knowledge or consent.
 | 2 | Absence signaling (hypocognition guard) | ✅ Done (`context_injector.rs:395-407`) |
 | 3 | Connectedness tracking (co-occurrence links) | ✅ Done — schema (`schema.sql:21-29`), recording (`context_injector.rs:456`), ranking bonus (`kask/crates/kask_bridge/src/memory.rs::RealMemoryPort::recall_from`, candidate sort) |
 | 4 | Canonical goal evidence and optional forecasts | Replaced 2026-10-20 — retained source/specification, native human closure, blinded unknown-aware assessment and revision-safe current recall; no score-to-confidence mutation (§4) |
-| 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1223-1530`) |
+| 5 | Curator memory edit tools | ✅ Done (`hkask_mcp_curator.rs:1291`, `:1411`, `:1467`) |
 | 6 | Therapy process (skill) | ✅ Done (`.agents/skills/therapy/SKILL.md`) |
 | 7 | Q3 reflection pass | Partial — the additive distillation pass landed 2026-09-01 (§6, operator "Option A" ruling); modification-reflection remains therapy-only |
 | 8 | ALWAYS-mode distillation pass | ✅ Done — additive lesson layer, latest-only transactional watermark, source-thread key reuse, and mutable-state provenance gate (`distillation.rs`) |

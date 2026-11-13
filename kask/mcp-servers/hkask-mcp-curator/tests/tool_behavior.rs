@@ -449,7 +449,7 @@ async fn memory_recall_ontology_axis_without_value_is_rejected() {
     let server = make_server();
     let error = server
         .curator_memory_recall(Parameters(MemoryRecallRequest {
-            entity: "test-entity".to_string(),
+            entity: None,
             recall_shape: MemoryRecallType::default(),
             ontology_axis: Some("dc_type".to_string()),
             ontology_value: None,
@@ -475,7 +475,7 @@ async fn memory_recall_rejects_unknown_ontology_axis() {
     let server = make_server();
     let error = server
         .curator_memory_recall(Parameters(MemoryRecallRequest {
-            entity: "test-entity".to_string(),
+            entity: None,
             recall_shape: MemoryRecallType::default(),
             ontology_axis: Some("bogus_axis".to_string()),
             ontology_value: Some("whatever".to_string()),
@@ -504,7 +504,7 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
         server,
         curator_memory_recall,
         MemoryRecallRequest {
-            entity: "never-seen".to_string(),
+            entity: Some("never-seen".to_string()),
             recall_shape: MemoryRecallType::Both,
             ontology_axis: None,
             ontology_value: None,
@@ -1043,7 +1043,7 @@ async fn public_call_contexts_never_receive_private_rows() {
         server,
         curator_memory_recall,
         MemoryRecallRequest {
-            entity: "curator:thread:m5-mixed".to_string(),
+            entity: Some("curator:thread:m5-mixed".to_string()),
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
@@ -1081,7 +1081,7 @@ async fn private_call_contexts_receive_their_private_rows() {
     let response = hkask_mcp_server::with_call_provenance(
         hkask_types::InferenceProvenance::PrivateInference,
         server.curator_memory_recall(Parameters(MemoryRecallRequest {
-            entity: "curator:thread:m5-mixed".to_string(),
+            entity: Some("curator:thread:m5-mixed".to_string()),
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
@@ -1374,7 +1374,7 @@ async fn memory_citation_round_trip_from_tool_surface() {
         server,
         curator_memory_recall,
         MemoryRecallRequest {
-            entity: entity.to_string(),
+            entity: Some(entity.to_string()),
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
@@ -1507,7 +1507,7 @@ async fn memory_insert_stamps_model_inference_and_recall_surfaces_the_tier() {
         server,
         curator_memory_recall,
         MemoryRecallRequest {
-            entity: "zed-kask".to_string(),
+            entity: Some("zed-kask".to_string()),
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
@@ -1749,9 +1749,9 @@ async fn insert_path_embedding_failure_fails_the_insert_and_lands_nothing() {
         .await
         .expect_err("embedding failure must fail the insert");
     assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
-        "an embedding failure is a failed precondition — the insert cannot meet \
-         its recallability contract — got: {error:?}",
+        matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
+        "a provider that did not answer is transient (retry), classified by what \
+         failed — got: {error:?}",
     );
     assert!(
         error.message.contains("NOT stored"),
@@ -1781,8 +1781,8 @@ async fn insert_path_embedding_failure_fails_the_insert_and_lands_nothing() {
         .await
         .expect_err("embedding failure must fail the skill-use report");
     assert!(
-        matches!(error.kind, hkask_types::McpErrorKind::FailedPrecondition),
-        "an embedding failure is a failed precondition — got: {error:?}",
+        matches!(error.kind, hkask_types::McpErrorKind::Unavailable),
+        "a provider that did not answer is transient — got: {error:?}",
     );
     let reported = memory
         .h_mems_by_entity_prefix("skill_use_issue:therapy")
@@ -2926,7 +2926,7 @@ async fn reg_query_filters_namespace_in_sql_before_limit() {
             .as_array()
             .expect("events array")
             .iter()
-            .all(|event| event["phase"] == "Sense"),
+            .all(|event| event["phase"] == "sense"),
         "sense-phase skill feedback must be visible: {skill_response}",
     );
 
@@ -3012,8 +3012,14 @@ async fn reg_query_surfaces_unavailable_archive_as_typed_error() {
         }))
         .await
         .expect_err("missing RegulationArchive must be visible");
-    assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
-    assert!(error.message.contains("RegulationArchive not available"));
+    assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+    assert!(
+        error
+            .message
+            .contains("Regulation archive is not available"),
+        "got: {}",
+        error.message
+    );
 }
 
 // ── Algedonic log — happy ───────────────────────────────────────────────────
@@ -3420,4 +3426,800 @@ async fn federated_search_ready_path_carries_resolution_failure_count() {
             .is_some_and(|r| r.contains("1 semantic hits failed h_mem resolution")),
         "the Ready status must carry the failure count — got: {response}",
     );
+}
+
+// ── mcp-tool-review 2026-11-12 pins ─────────────────────────────────────────
+//
+// Each pin crosses the wire: the request is decoded from the JSON a caller
+// sends (the same serde path `Parameters<T>` uses), then handed to the tool.
+
+/// Decode tool arguments the way the server does.
+fn wire<T: serde::de::DeserializeOwned>(arguments: serde_json::Value) -> T {
+    serde_json::from_value(arguments).expect("arguments decode like a tool call")
+}
+
+/// A server whose database exists but does not open: created under one
+/// passphrase, opened under another. The temp directory is returned so it
+/// outlives the server.
+fn server_with_unopenable_database() -> (CuratorServer, tempfile::TempDir) {
+    ensure_embedding_model_env();
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory
+        .path()
+        .join("curator.db")
+        .to_string_lossy()
+        .into_owned();
+    drop(hkask_storage::open_or_repair(&path, "the-right-passphrase").expect("create db"));
+    let database = CuratorDb::open_at(
+        path,
+        Some("a-different-passphrase".to_string()),
+        std::path::PathBuf::new(),
+        90.0,
+    );
+    (
+        CuratorServer::new(WebID::new(), Arc::new(database), failing_inference_port()),
+        directory,
+    )
+}
+
+/// An inference port whose embedder is not configured (no provider prefix,
+/// no credential) — a configuration failure, distinct from an outage.
+struct NotConfiguredEmbedPort;
+
+impl hkask_types::InferencePort for NotConfiguredEmbedPort {
+    stub_generate_arm!();
+
+    fn embed_with_dimensions<'a>(
+        &'a self,
+        _model: &str,
+        _texts: &[String],
+        _dimensions: Option<u32>,
+    ) -> hkask_types::EmbedWithIdentityFuture<'a> {
+        Box::pin(async {
+            Err(hkask_types::EmbeddingGenerationError::NotConfigured(
+                "ZZ_API_KEY not set".to_string(),
+            ))
+        })
+    }
+}
+
+fn seed_private_h_mem(memory: &hkask_memory::MemoryStore, entity: &str, text: &str) -> String {
+    let h_mem = hkask_storage::HMem::new(
+        entity,
+        "chunk:1:0",
+        serde_json::Value::String(text.to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    let id = h_mem.id.to_string();
+    memory.store(h_mem).expect("seed private h_mem");
+    id
+}
+
+/// CU-01: a lookback amount no calendar offset can hold is refused as
+/// invalid_argument. Before, the handler panicked and the request got no
+/// response at all (three tools), or the window wrapped negative and an
+/// empty success came back (`reg_query`, u64 max).
+#[tokio::test]
+async fn oversized_lookback_windows_are_refused_not_panicked() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_aged_h_mem(&memory, "curator:thread:keep", "chunk:1:0", "x".into(), 30);
+
+    let error = server
+        .curator_algedonic_log(Parameters(wire(
+            serde_json::json!({"hours": 4_000_000_000u64}),
+        )))
+        .await
+        .expect_err("hours beyond the calendar");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(error.message.contains("hours"), "got: {}", error.message);
+
+    for window in [u64::MAX, 9_300_000_000_000_000u64] {
+        let error = server
+            .reg_query(Parameters(wire(
+                serde_json::json!({"window_seconds": window}),
+            )))
+            .await
+            .expect_err("window beyond the calendar");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains("window_seconds"),
+            "got: {}",
+            error.message
+        );
+    }
+
+    for arguments in [
+        serde_json::json!({"max_age_days": 9_000_000_000_000_000_000i64}),
+        serde_json::json!({"max_age_days": 1, "spare_recalled_within_days": 9_000_000_000_000_000_000i64}),
+        serde_json::json!({"max_age_days": 1, "spare_recalled_within_days": 0}),
+    ] {
+        let error = server
+            .curator_memory_prune(Parameters(wire(arguments.clone())))
+            .await
+            .expect_err("prune amount out of range");
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::InvalidArgument,
+            "{arguments}"
+        );
+    }
+    assert_eq!(
+        memory
+            .h_mems_by_entity("curator:thread:keep")
+            .expect("query")
+            .len(),
+        1,
+        "a refused prune deletes nothing"
+    );
+}
+
+/// CU-02: an argument the tool does not declare is refused. Before, a
+/// misspelled scope on `curator_memory_prune` (`prefix` for `prefixes`) was
+/// dropped and the prune ran on the default scope.
+#[test]
+fn undeclared_arguments_are_refused_at_decode() {
+    let error = serde_json::from_value::<MemoryPruneRequest>(
+        serde_json::json!({"max_age_days": 1, "prefix": ["skill_use_issue:"]}),
+    )
+    .expect_err("a misspelled scope must not decode");
+    assert!(
+        error.to_string().contains("unknown field `prefix`"),
+        "{error}"
+    );
+
+    fn refuses_unknown<T: serde::de::DeserializeOwned + std::fmt::Debug>(
+        name: &str,
+        mut valid: serde_json::Value,
+    ) {
+        serde_json::from_value::<T>(valid.clone())
+            .unwrap_or_else(|error| panic!("{name}: the valid form must decode: {error}"));
+        valid["zz_undeclared"] = serde_json::json!(1);
+        let error = serde_json::from_value::<T>(valid).expect_err(name);
+        assert!(
+            error.to_string().contains("unknown field"),
+            "{name}: {error}"
+        );
+    }
+    let id = "33333333-3333-4333-8333-333333333333";
+    refuses_unknown::<PingRequest>("PingRequest", serde_json::json!({}));
+    refuses_unknown::<SemanticSearchRequest>(
+        "SemanticSearchRequest",
+        serde_json::json!({"query": "q"}),
+    );
+    refuses_unknown::<FederatedSearchRequest>(
+        "FederatedSearchRequest",
+        serde_json::json!({"query": "q"}),
+    );
+    refuses_unknown::<MemoryRecallRequest>(
+        "MemoryRecallRequest",
+        serde_json::json!({"entity": "e"}),
+    );
+    refuses_unknown::<CuratorConsultRequest>(
+        "CuratorConsultRequest",
+        serde_json::json!({"query": "q"}),
+    );
+    refuses_unknown::<AlgedonicLogRequest>("AlgedonicLogRequest", serde_json::json!({}));
+    refuses_unknown::<RegQueryRequest>(
+        "RegQueryRequest",
+        serde_json::json!({"window_seconds": 60}),
+    );
+    refuses_unknown::<ReportSkillUseIssueRequest>(
+        "ReportSkillUseIssueRequest",
+        serde_json::json!({"skill_name": "s", "tool_name": "t", "step_ordinal": 1, "error": "e", "failure_origin": "unknown"}),
+    );
+    refuses_unknown::<MemoryInsertRequest>(
+        "MemoryInsertRequest",
+        serde_json::json!({"entity": "e", "attribute": "a", "value": "\"v\"", "evidence_h_mem_id": id}),
+    );
+    refuses_unknown::<MemoryUpdateRequest>(
+        "MemoryUpdateRequest",
+        serde_json::json!({"h_mem_id": id, "new_confidence": 0.5}),
+    );
+    refuses_unknown::<MemoryResolveContradictionRequest>(
+        "MemoryResolveContradictionRequest",
+        serde_json::json!({"h_mem_ids": [id], "strategy": "forget", "target_h_mem_id": id, "reason": "r"}),
+    );
+    refuses_unknown::<MemoryPruneRequest>(
+        "MemoryPruneRequest",
+        serde_json::json!({"max_age_days": 1}),
+    );
+    refuses_unknown::<MemoryDedupRequest>("MemoryDedupRequest", serde_json::json!({}));
+    refuses_unknown::<BackfillEmbeddingsRequest>(
+        "BackfillEmbeddingsRequest",
+        serde_json::json!({}),
+    );
+    refuses_unknown::<MemoryExtractRequest>(
+        "MemoryExtractRequest",
+        serde_json::json!({"thread_id": "t"}),
+    );
+}
+
+/// CU-03: `curator_memory_extract` reads one thread, exactly. A blank id is
+/// refused (before: it matched every thread's turns), a partial id matches
+/// nothing (before: every thread starting with it), and a public call
+/// context does not receive a private-marked turn (before: no filter).
+#[tokio::test]
+async fn extract_reads_exactly_one_thread_and_filters_private_turns() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_h_mem(
+        &memory,
+        "curator:thread:t1",
+        "chunk:1:0",
+        "public t1".into(),
+    );
+    seed_h_mem(
+        &memory,
+        "curator:thread:t10",
+        "chunk:1:0",
+        "public t10".into(),
+    );
+    seed_private_h_mem(&memory, "curator:thread:t1", "private t1");
+
+    let error = server
+        .curator_memory_extract(Parameters(wire(serde_json::json!({"thread_id": ""}))))
+        .await
+        .expect_err("a blank thread id");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+    let partial = invoke_tool!(
+        server,
+        curator_memory_extract,
+        wire(serde_json::json!({"thread_id": "t"}))
+    );
+    assert_eq!(partial["turn_count"], 0, "{partial}");
+
+    let public = invoke_tool!(
+        server,
+        curator_memory_extract,
+        wire(serde_json::json!({"thread_id": "t1"}))
+    );
+    assert_eq!(public["turn_count"], 1, "{public}");
+    assert_eq!(public["candidates"][0]["value"], "public t1");
+    assert_eq!(public["excluded_private_rows"], 1, "{public}");
+    assert!(public["candidates"][0].get("evidence_citation").is_none());
+
+    let private = hkask_mcp_server::with_call_provenance(
+        hkask_types::InferenceProvenance::PrivateInference,
+        server.curator_memory_extract(Parameters(wire(serde_json::json!({"thread_id": "t1"})))),
+    )
+    .await
+    .expect("private context");
+    let private = parse_envelope(&private);
+    assert_eq!(private["turn_count"], 2, "{private}");
+    assert!(private.get("excluded_private_rows").is_none());
+}
+
+/// CU-04: with the database not open, every store-backed tool returns a
+/// typed error that names the cause, and ping says degraded. Before,
+/// `curator_consult` and `curator_memory_recall` returned a success holding
+/// `{"status":"unavailable"}`, the others said only "MemoryStore not
+/// available", and ping said `ok`.
+#[tokio::test]
+async fn a_database_that_does_not_open_is_a_typed_error_naming_the_cause() {
+    let (server, _directory) = server_with_unopenable_database();
+
+    let ping = invoke_tool!(server, curator_ping, wire(serde_json::json!({})));
+    assert_eq!(ping["status"], "degraded", "{ping}");
+    assert_eq!(ping["stores"]["memory"], false);
+    assert!(
+        ping["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("HKASK_DB_PASSPHRASE")),
+        "{ping}"
+    );
+
+    let consult = server
+        .curator_consult(Parameters(wire(serde_json::json!({"query": "anything"}))))
+        .await
+        .expect_err("consult with no store");
+    let recall = server
+        .curator_memory_recall(Parameters(wire(serde_json::json!({"entity": "anything"}))))
+        .await
+        .expect_err("recall with no store");
+    let search = server
+        .curator_semantic_search(Parameters(wire(serde_json::json!({"query": "anything"}))))
+        .await
+        .expect_err("search with no store");
+    let log = server
+        .curator_algedonic_log(Parameters(wire(serde_json::json!({}))))
+        .await
+        .expect_err("log with no store");
+    for (tool, error) in [
+        ("consult", consult),
+        ("recall", recall),
+        ("search", search),
+        ("log", log),
+    ] {
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::PermissionDenied,
+            "{tool}: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("HKASK_DB_PASSPHRASE"),
+            "{tool} must name the variable: {}",
+            error.message
+        );
+    }
+}
+
+/// CU-05: `curator_memory_recall` takes an entity or an ontology axis.
+/// Before, `entity` was required even for axis recall (where it was
+/// ignored), and an `ontology_value` without an axis was silently dropped.
+#[tokio::test]
+async fn recall_takes_an_entity_or_an_axis_and_refuses_mixed_forms() {
+    let server = make_server();
+
+    let by_axis = invoke_tool!(
+        server,
+        curator_memory_recall,
+        wire(serde_json::json!({"ontology_axis": "dc_type", "ontology_value": "zz-type"}))
+    );
+    assert_eq!(by_axis["count"], 0, "{by_axis}");
+
+    for arguments in [
+        serde_json::json!({}),
+        serde_json::json!({"entity": ""}),
+        serde_json::json!({"entity": "e", "ontology_value": "zz-type"}),
+        serde_json::json!({"entity": "e", "ontology_axis": "dc_type", "ontology_value": "zz-type"}),
+    ] {
+        let error = server
+            .curator_memory_recall(Parameters(wire(arguments.clone())))
+            .await
+            .expect_err("a mixed or empty form");
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::InvalidArgument,
+            "{arguments}: {}",
+            error.message
+        );
+    }
+}
+
+/// CU-06: a confidence outside 0.0-1.0 is refused. Before, it was clamped
+/// silently (7 became 1.0, which pooling then treats as near-certainty).
+#[tokio::test]
+async fn confidence_arguments_outside_the_unit_interval_are_refused() {
+    let (server, memory) = make_server_with_embeddings();
+    let id = seed_h_mem(&memory, "zz-probe:confidence", "finding", "v".into());
+
+    for value in [7.0, -0.1] {
+        let error = server
+            .memory_update(Parameters(wire(
+                serde_json::json!({"h_mem_id": id, "new_confidence": value}),
+            )))
+            .await
+            .expect_err("out-of-range confidence");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains("new_confidence"),
+            "{}",
+            error.message
+        );
+    }
+    let error = server
+        .memory_resolve_contradiction(Parameters(wire(serde_json::json!({
+            "h_mem_ids": [id], "strategy": "update_confidence", "target_h_mem_id": id,
+            "new_confidence": 1.5, "reason": "zz"
+        }))))
+        .await
+        .expect_err("out-of-range confidence");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+    let stored = memory
+        .get_by_id(&id.parse().expect("id"))
+        .expect("read")
+        .expect("the row is still there under its id");
+    assert!((stored.confidence.value() - 1.0).abs() < 1e-9);
+}
+
+/// CU-07: `memory_resolve_contradiction` checks its arguments before it
+/// reads or deletes. Before, a blank reason was accepted (the description
+/// says a reason is required) and an unknown strategy was reported only
+/// after the target lookup.
+#[tokio::test]
+async fn resolve_contradiction_refuses_a_blank_reason_and_an_unknown_strategy_first() {
+    let (server, memory) = make_server_with_embeddings();
+    let id = seed_h_mem(&memory, "zz-probe:resolve", "finding", "v".into());
+
+    let error = server
+        .memory_resolve_contradiction(Parameters(wire(serde_json::json!({
+            "h_mem_ids": [id], "strategy": "forget", "target_h_mem_id": id, "reason": "  "
+        }))))
+        .await
+        .expect_err("a blank reason");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    assert!(error.message.contains("reason"), "{}", error.message);
+
+    let unknown = "33333333-3333-4333-8333-333333333333";
+    let error = server
+        .memory_resolve_contradiction(Parameters(wire(serde_json::json!({
+            "h_mem_ids": [unknown], "strategy": "merge", "target_h_mem_id": unknown, "reason": "zz"
+        }))))
+        .await
+        .expect_err("an unknown strategy");
+    assert_eq!(
+        error.kind,
+        hkask_types::McpErrorKind::InvalidArgument,
+        "the strategy is checked before the target lookup: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("forget") && error.message.contains("update_confidence"),
+        "{}",
+        error.message
+    );
+    assert!(
+        memory
+            .get_by_id(&id.parse().expect("id"))
+            .expect("read")
+            .is_some(),
+        "a refused call deletes nothing"
+    );
+}
+
+/// CU-08: `memory_insert` keeps a note on a value that is not an object
+/// (before: dropped silently), returns the new row's id (before: no id, so
+/// the row could not be updated or cited without a second read), accepts a
+/// re-asserted non-object value (before: refused as a contradiction with
+/// itself), and does not reset the decay clock of the rows it compares.
+#[tokio::test]
+async fn insert_keeps_notes_returns_its_id_and_leaves_compared_rows_untouched() {
+    let (server, memory) = make_server_with_embeddings();
+    let evidence = seed_h_mem(
+        &memory,
+        "curator:thread:zz-evidence",
+        "chunk:1:0",
+        "source".into(),
+    );
+
+    let mut sibling = hkask_storage::HMem::new(
+        "zz-probe:insert",
+        "older_fact",
+        serde_json::Value::String("older".to_string()),
+        WebID::new(),
+    );
+    let stale = chrono::Utc::now() - chrono::Duration::days(10);
+    sibling.recalled_at = stale;
+    let sibling_id = sibling.id;
+    memory.store(sibling).expect("seed sibling");
+
+    let inserted = invoke_tool!(
+        server,
+        memory_insert,
+        wire(serde_json::json!({
+            "entity": "zz-probe:insert", "attribute": "count", "value": "5",
+            "evidence_h_mem_id": evidence, "note": "why five"
+        }))
+    );
+    let new_id = inserted["h_mem_id"]
+        .as_str()
+        .expect("the response names the new row");
+    let stored = memory
+        .get_by_id(&new_id.parse().expect("id"))
+        .expect("read")
+        .expect("the returned id resolves");
+    assert_eq!(stored.value["value"], 5, "{}", stored.value);
+    assert_eq!(stored.value["_note"], "why five", "{}", stored.value);
+
+    let again = invoke_tool!(
+        server,
+        memory_insert,
+        wire(serde_json::json!({
+            "entity": "zz-probe:insert", "attribute": "count", "value": "5",
+            "evidence_h_mem_id": evidence
+        }))
+    );
+    assert_eq!(
+        again["inserted"], true,
+        "a re-assertion is not a contradiction: {again}"
+    );
+
+    let differing = server
+        .memory_insert(Parameters(wire(serde_json::json!({
+            "entity": "zz-probe:insert", "attribute": "count", "value": "6",
+            "evidence_h_mem_id": evidence
+        }))))
+        .await
+        .expect_err("a differing value");
+    assert_eq!(
+        differing.kind,
+        hkask_types::McpErrorKind::FailedPrecondition
+    );
+
+    let sibling = memory
+        .get_by_id(&sibling_id)
+        .expect("read")
+        .expect("sibling");
+    assert!(
+        (sibling.recalled_at - stale).num_seconds().abs() < 2,
+        "the contradiction check is not a recall: recalled_at moved to {}",
+        sibling.recalled_at
+    );
+}
+
+/// CU-09: a skill-use report returns its row id, and that id is accepted
+/// as `memory_insert` evidence (the learning loop's own step: report, then
+/// record the lesson citing the report). Blank identifying fields are refused.
+#[tokio::test]
+async fn a_skill_use_report_returns_an_id_that_memory_insert_accepts_as_evidence() {
+    let (server, _memory) = make_server_with_embeddings();
+
+    let report = invoke_tool!(
+        server,
+        curator_report_skill_use_issue,
+        wire(serde_json::json!({
+            "skill_name": "zz-probe-skill", "tool_name": "zz_tool", "step_ordinal": 1,
+            "error": "zz failure", "failure_origin": "unknown"
+        }))
+    );
+    let report_id = report["h_mem_id"]
+        .as_str()
+        .expect("the report names its row");
+
+    let lesson = invoke_tool!(
+        server,
+        memory_insert,
+        wire(serde_json::json!({
+            "entity": "zz-probe:lesson", "attribute": "from_report",
+            "value": "\"a lesson\"", "evidence_h_mem_id": report_id
+        }))
+    );
+    assert_eq!(lesson["inserted"], true, "{lesson}");
+
+    for arguments in [
+        serde_json::json!({"skill_name": " ", "tool_name": "t", "step_ordinal": 1, "error": "e", "failure_origin": "unknown"}),
+        serde_json::json!({"skill_name": "s", "tool_name": "", "step_ordinal": 1, "error": "e", "failure_origin": "unknown"}),
+        serde_json::json!({"skill_name": "s", "tool_name": "t", "step_ordinal": 1, "error": "", "failure_origin": "unknown"}),
+    ] {
+        let error = server
+            .curator_report_skill_use_issue(Parameters(wire(arguments.clone())))
+            .await
+            .expect_err("a blank identifying field");
+        assert_eq!(
+            error.kind,
+            hkask_types::McpErrorKind::InvalidArgument,
+            "{arguments}"
+        );
+    }
+}
+
+/// CU-10: an embedding failure is classified by what failed. A provider
+/// that is not configured is `permission_denied` naming what is missing; an
+/// outage is `unavailable`. Before, the write paths reported every failure
+/// as `failed_precondition` and federated search reported every failure as
+/// `unavailable`.
+#[tokio::test]
+async fn embedding_failures_are_classified_by_cause() {
+    let (unconfigured, memory) = make_server_with_embedding_port(Arc::new(NotConfiguredEmbedPort));
+    let evidence = seed_h_mem(
+        &memory,
+        "curator:thread:zz-evidence",
+        "chunk:1:0",
+        "source".into(),
+    );
+    let insert = serde_json::json!({
+        "entity": "zz-probe:classified", "attribute": "a", "value": "\"v\"",
+        "evidence_h_mem_id": evidence
+    });
+
+    let error = unconfigured
+        .memory_insert(Parameters(wire(insert.clone())))
+        .await
+        .expect_err("insert with an unconfigured embedder");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+    assert!(error.message.contains("ZZ_API_KEY"), "{}", error.message);
+    assert!(error.message.contains("NOT stored"), "{}", error.message);
+    let error = unconfigured
+        .curator_federated_search(Parameters(wire(serde_json::json!({"query": "q"}))))
+        .await
+        .expect_err("federated search with an unconfigured embedder");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::PermissionDenied);
+
+    let (offline, memory) = make_server_with_embedding_port(failing_inference_port());
+    let evidence = seed_h_mem(
+        &memory,
+        "curator:thread:zz-evidence",
+        "chunk:1:0",
+        "source".into(),
+    );
+    let mut insert = insert;
+    insert["evidence_h_mem_id"] = serde_json::json!(evidence);
+    let error = offline
+        .memory_insert(Parameters(wire(insert)))
+        .await
+        .expect_err("insert during an outage");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+    let error = offline
+        .curator_federated_search(Parameters(wire(serde_json::json!({"query": "q"}))))
+        .await
+        .expect_err("federated search during an outage");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+    assert!(
+        memory
+            .h_mems_by_entity("zz-probe:classified")
+            .expect("query")
+            .is_empty(),
+        "no row lands without its vector"
+    );
+}
+
+/// CU-11: `curator_consult` reports the rows it excluded. Before, it was
+/// the one recall tool that dropped private-marked rows (and rows gated out
+/// by the embedding model) without saying so, so a filtered result read as
+/// "the curator has no memory of this". Blank queries are refused by both
+/// query tools.
+#[tokio::test]
+async fn consult_reports_excluded_rows_and_blank_queries_are_refused() {
+    let (server, memory) = make_server_with_embeddings();
+    seed_private_h_mem(&memory, "curator:thread:zz-private", "a private turn");
+    seed_embedding(&memory, "curator:thread:zz-private");
+
+    let consult = invoke_tool!(
+        server,
+        curator_consult,
+        wire(serde_json::json!({"query": "any question"}))
+    );
+    assert_eq!(consult["entity_wide_fragments"]["count"], 0, "{consult}");
+    assert_eq!(consult["excluded_private_rows"], 1, "{consult}");
+
+    let federated = invoke_tool!(
+        server,
+        curator_federated_search,
+        wire(serde_json::json!({"query": "any question"}))
+    );
+    let reason = federated["sources"][0]["reason"].as_str().expect("reason");
+    assert!(
+        reason.starts_with("1 private-marked row(s) excluded"),
+        "the reason is a sentence, not a fragment after a separator: {reason}"
+    );
+
+    for blank in ["", "   "] {
+        let error = server
+            .curator_consult(Parameters(wire(serde_json::json!({"query": blank}))))
+            .await
+            .expect_err("a blank consult query");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        let error = server
+            .curator_semantic_search(Parameters(wire(serde_json::json!({"query": blank}))))
+            .await
+            .expect_err("a blank search query");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    }
+}
+
+/// CU-12: bounded reads say when the bound was reached. Before, a
+/// `reg_query` that hit its limit, an algedonic log at 500 and a dedup that
+/// scanned only the newest `limit` rows were indistinguishable from complete
+/// results; `reg_query` accepted `limit: 0` and returned an empty success.
+/// The phase is the stored wire word, not a Rust debug rendering.
+#[tokio::test]
+async fn bounded_reads_report_when_the_bound_was_reached() {
+    let (server, archive) = make_server_with_regulation_archive();
+    let base = chrono::Utc::now() - chrono::Duration::minutes(5);
+    for offset in 0..3 {
+        archive
+            .persist(&regulation_record(
+                "reg.skill",
+                "zz.operator_feedback",
+                base + chrono::Duration::seconds(offset),
+                "zz",
+            ))
+            .expect("seed record");
+    }
+
+    let cut = invoke_tool!(
+        server,
+        reg_query,
+        wire(serde_json::json!({"window_seconds": 3600, "limit": 2}))
+    );
+    assert_eq!(cut["count"], 2);
+    assert_eq!(cut["limit_reached"], true, "{cut}");
+    assert_eq!(cut["ordering"], "oldest_first");
+    assert_eq!(cut["events"][0]["phase"], "sense");
+    let whole = invoke_tool!(
+        server,
+        reg_query,
+        wire(serde_json::json!({"window_seconds": 3600, "limit": 10}))
+    );
+    assert_eq!(whole["limit_reached"], false, "{whole}");
+
+    let error = server
+        .reg_query(Parameters(wire(
+            serde_json::json!({"window_seconds": 3600, "limit": 0}),
+        )))
+        .await
+        .expect_err("limit 0");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+
+    let log = invoke_tool!(server, curator_algedonic_log, wire(serde_json::json!({})));
+    assert_eq!(log["limit_reached"], false, "{log}");
+
+    let (server, memory) = make_server_with_embeddings();
+    for index in 0..3 {
+        seed_h_mem(
+            &memory,
+            "zz-probe:dedup",
+            &format!("a{index}"),
+            "same".into(),
+        );
+    }
+    let dedup = invoke_tool!(
+        server,
+        curator_memory_dedup,
+        wire(serde_json::json!({"limit": 2}))
+    );
+    assert_eq!(dedup["scanned"], 2);
+    assert_eq!(dedup["limit_reached"], true, "{dedup}");
+    let dedup = invoke_tool!(server, curator_memory_dedup, wire(serde_json::json!({})));
+    assert_eq!(dedup["limit_reached"], false, "{dedup}");
+}
+
+/// CU-13: the model-mismatch sweep. A real sweep whose identity probe fails
+/// stops before deleting anything (before: it deleted each stale row and
+/// then failed to store its replacement, leaving the rows unembedded). A
+/// dry run reports the failed probe, and the probe's embedding call shows
+/// in the tool's usage (before: the call was made and reported as no usage).
+#[tokio::test]
+async fn a_model_mismatch_sweep_with_a_dead_embedder_deletes_nothing() {
+    let (offline, memory) = make_server_with_embedding_port(failing_inference_port());
+    seed_h_mem(
+        &memory,
+        "zz-probe:sweep-stale",
+        "finding",
+        "stale passage".into(),
+    );
+    memory
+        .store_embedding(
+            "zz-probe:sweep-stale",
+            &unit_vector(),
+            "legacy-model",
+            Some("stale passage"),
+        )
+        .expect("seed stale embedding");
+    let before = memory.embedding_count().expect("count");
+
+    let error = offline
+        .curator_memory_backfill_embeddings(Parameters(wire(
+            serde_json::json!({"mode": "model_mismatch"}),
+        )))
+        .await
+        .expect_err("a sweep with no embedder");
+    assert_eq!(error.kind, hkask_types::McpErrorKind::Unavailable);
+    assert!(
+        error.message.contains("nothing was deleted"),
+        "{}",
+        error.message
+    );
+    assert_eq!(memory.embedding_count().expect("count"), before);
+
+    let dry = invoke_tool!(
+        offline,
+        curator_memory_backfill_embeddings,
+        wire(serde_json::json!({"mode": "model_mismatch", "dry_run": true}))
+    );
+    assert!(dry["identity_probe_error"].is_string(), "{dry}");
+    assert_eq!(memory.embedding_count().expect("count"), before);
+
+    let (online, memory) = make_server_with_embeddings();
+    seed_h_mem(
+        &memory,
+        "zz-probe:sweep-stale",
+        "finding",
+        "stale passage".into(),
+    );
+    let output = online
+        .curator_memory_backfill_embeddings(Parameters(wire(
+            serde_json::json!({"mode": "model_mismatch", "dry_run": true}),
+        )))
+        .await
+        .expect("dry run");
+    let envelope: serde_json::Value = serde_json::from_str(&output).expect("envelope");
+    assert_eq!(
+        envelope["usage"]["calls"], 1,
+        "the dry run's identity probe is an embedding call: {envelope}"
+    );
+    assert!(envelope["content"]["identity_probe_error"].is_null());
 }

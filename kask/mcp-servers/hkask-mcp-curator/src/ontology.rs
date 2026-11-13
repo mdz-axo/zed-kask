@@ -8,8 +8,9 @@
 //! - **Process axis (PKO)** — the curator's memory is a curation
 //!   procedure: recall/search/consult observe the executions of the
 //!   ingestion and turn-storage procedures that produced the stored
-//!   knowledge; insert/update/resolve/prune/dedup/backfill/extract are
-//!   curation steps executing; report-skill-use-issue records an issue
+//!   knowledge (extract lists one thread's stored turns and writes
+//!   nothing, so it is one of these); insert/update/resolve/prune/dedup/
+//!   backfill are curation steps executing; report-skill-use-issue records an issue
 //!   occurrence from a failed or unexpected tool result; ping verifies
 //!   the server's readiness.
 //! - **State axis (DC+BIBO)** — write responses are datasets (a stored or
@@ -46,7 +47,8 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         "curator_memory_recall"
         | "curator_semantic_search"
         | "curator_federated_search"
-        | "curator_consult" => Some(PROCEDURE_EXECUTION),
+        | "curator_consult"
+        | "curator_memory_extract" => Some(PROCEDURE_EXECUTION),
         // Recording a skill-use issue is the canonical issue occurrence:
         // an error or unexpected output an agent encountered during
         // execution, filed for review.
@@ -56,15 +58,14 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         "curator_algedonic_log" | "reg_query" => Some(PROCEDURE_EXECUTION),
         // Memory writes are curation steps executing: storing,
         // confidence-combining, contradiction resolution, forgetting,
-        // deduplication, embedding backfill, and candidate extraction
-        // are each one step of the curation procedure.
+        // deduplication and embedding backfill are each one step of the
+        // curation procedure.
         "memory_insert"
         | "memory_update"
         | "memory_resolve_contradiction"
         | "curator_memory_prune"
         | "curator_memory_dedup"
-        | "curator_memory_backfill_embeddings"
-        | "curator_memory_extract" => Some(STEP_EXECUTION),
+        | "curator_memory_backfill_embeddings" => Some(STEP_EXECUTION),
         // The liveness check verifies the server's readiness — the
         // stores are attached and responsive.
         "curator_ping" => Some(STEP_VERIFICATION),
@@ -84,9 +85,9 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
         | "curator_memory_prune"
         | "curator_memory_dedup"
         | "curator_memory_backfill_embeddings"
-        | "curator_memory_extract"
         | "curator_report_skill_use_issue" => Some(DATASET),
-        "curator_memory_recall"
+        "curator_memory_extract"
+        | "curator_memory_recall"
         | "curator_semantic_search"
         | "curator_federated_search"
         | "curator_consult"

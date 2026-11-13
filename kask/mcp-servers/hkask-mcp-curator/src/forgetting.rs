@@ -167,7 +167,10 @@ pub(crate) fn forget_distilled_threads(
             continue;
         };
         let shared_entity = format!("{SHARED_TURN_PREFIX}{thread_id}");
-        let turns = memory.h_mems_by_entity_prefix(&shared_entity)?;
+        // Exact read, by the entity index: this thread's turns only. The
+        // prefix read scanned the whole table once per aged watermark and
+        // returned the turns of any thread whose id began with this one's.
+        let turns = memory.h_mems_by_entity(&shared_entity)?;
         let (covered, uncovered): (Vec<&HMem>, Vec<&HMem>) =
             turns.iter().partition(|turn| turn.observed_at <= through);
 
@@ -175,11 +178,12 @@ pub(crate) fn forget_distilled_threads(
             // Everything the thread holds is proven distilled (including
             // legacy embeddings no passage text can attribute) — the whole
             // entity can go. Embeddings are deleted first so the count is
-            // captured here; the prefix delete is self-cleaning (it sweeps
-            // emptied entities' references itself) and would find nothing
-            // left to remove.
+            // captured here; the entity delete is self-cleaning (it sweeps
+            // the emptied entity's references itself) and would find nothing
+            // left to remove. Exact, like the read above: a sibling thread
+            // whose id begins with this one's keeps its turns.
             let deleted_embeddings = memory.delete_embeddings_by_entity(&shared_entity)?;
-            let deleted_rows = memory.delete_h_mems_by_entity_prefix(&shared_entity)?;
+            let deleted_rows = memory.delete_h_mems_by_entity(&shared_entity)?;
             (deleted_rows, deleted_embeddings)
         } else {
             // Delete only the rows READ as covered — per id, never a blind
@@ -714,6 +718,46 @@ mod tests {
                 orphans_swept: 0,
             },
             "a second pass must be a no-op — deleted turns stay deleted"
+        );
+    }
+
+    /// mcp-tool-review CU-14 pin: the pass reads and deletes one thread's
+    /// turns, exactly. A thread whose id begins with an aged thread's id
+    /// keeps its turns and its embedding — the prefix read returned them as
+    /// the aged thread's own and the pass deleted them without a watermark
+    /// of theirs. (Production thread ids are UUIDs, which never prefix one
+    /// another; the exact read removes the dependence on that.)
+    #[test]
+    fn forgetting_never_deletes_a_sibling_threads_turns() {
+        let (memory, _driver, now) = seed_old_distilled_thread();
+        let old = now - chrono::Duration::days(10);
+        seed_turn(
+            &memory,
+            "curator:thread:old-thread-2",
+            "sibling turn",
+            old - chrono::Duration::days(1),
+        );
+        seed_embedding(&memory, "curator:thread:old-thread-2", "sibling turn", 1.0);
+
+        let outcome = forget_distilled_threads(&memory, now, 7).expect("pass");
+        assert_eq!(
+            outcome.turns_deleted, 1,
+            "only the watermarked thread's turn"
+        );
+        assert_eq!(outcome.embeddings_deleted, 1);
+        assert_eq!(
+            memory
+                .h_mems_by_entity("curator:thread:old-thread-2")
+                .expect("query")
+                .len(),
+            1,
+            "a never-distilled sibling is never forgotten"
+        );
+        assert!(
+            memory
+                .has_embedding_for_passage("curator:thread:old-thread-2", "sibling turn")
+                .expect("embedding"),
+            "the sibling's embedding survives"
         );
     }
 

@@ -38,6 +38,9 @@ use types::*;
 
 const SERVER_NAME: &str = "hkask-mcp-curator";
 
+/// The most events one `curator_algedonic_log` call returns.
+const ALGEDONIC_LOG_LIMIT: u64 = 500;
+
 /// Cap on fragments one entity may contribute to semantic recall. A thread
 /// entity holds one h_mem per turn; without a cap a single chatty thread
 /// floods the whole result set and every other entity vanishes from recall.
@@ -67,9 +70,7 @@ enum SemanticRecallError {
         source: hkask_memory::MemoryStoreError,
     },
     #[error(
-        "no embedding model configured — set kask.models.embedding_model \\
-             (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-             hidden code constant"
+        "no embedding model configured — set kask.models.embedding_model (injected as HKASK_EMBEDDING_MODEL); kask never falls back to a hidden code constant"
     )]
     EmbeddingNotConfigured,
     /// zed-kask: D100's named follow-up (operator-approved 2026-11-06) — the
@@ -137,6 +138,79 @@ fn routed_model_for_provenance(
             private_model.ok_or(SemanticRecallError::PrivateEmbeddingNotConfigured)
         }
         _ => configured_model.ok_or(SemanticRecallError::EmbeddingNotConfigured),
+    }
+}
+
+/// The rows the call's provenance admits, and how many it excluded — the
+/// one filter every row-returning read shares, so each surfaces its count.
+fn admitted(h_mems: Vec<hkask_storage::HMem>) -> (Vec<hkask_storage::HMem>, usize) {
+    let total = h_mems.len();
+    let kept: Vec<_> = h_mems.into_iter().filter(call_admits).collect();
+    let excluded = total - kept.len();
+    (kept, excluded)
+}
+
+/// The start of a lookback window, or `invalid_argument` when the amount
+/// does not fit a calendar offset. `delta` is `None` when the unit
+/// conversion itself overflowed.
+fn lookback_start(
+    field: &str,
+    delta: Option<chrono::Duration>,
+) -> Result<chrono::DateTime<chrono::Utc>, McpToolError> {
+    delta
+        .and_then(|delta| chrono::Utc::now().checked_sub_signed(delta))
+        .ok_or_else(|| {
+            McpToolError::invalid_argument(format!("{field} is too large to be a lookback window"))
+        })
+}
+
+/// A confidence argument must be a probability; the store would otherwise
+/// clamp an out-of-range value silently.
+fn checked_confidence(field: &str, value: f64) -> Result<hkask_types::Confidence, McpToolError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(hkask_types::Confidence::new(value))
+    } else {
+        Err(McpToolError::invalid_argument(format!(
+            "{field} must be between 0.0 and 1.0, got {value}"
+        )))
+    }
+}
+
+/// A free-text argument that must carry text.
+fn require_text(field: &str, value: &str) -> Result<(), McpToolError> {
+    if value.trim().is_empty() {
+        Err(McpToolError::invalid_argument(format!(
+            "{field} must not be empty"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// An unset embedding-model setting is absent state with a named remedy:
+/// one kind at every site that needs the model (the write paths, federated
+/// search, the model-mismatch sweep).
+fn model_not_configured(context: &str, reason: &SemanticRecallError) -> McpToolError {
+    McpToolError::failed_precondition(format!("{context}: {reason}"))
+}
+
+/// Classify an embedding failure under the canonical error contract: a
+/// missing provider or credential is configuration to fix, a dropped
+/// connection or a retryable status is transient, the rest is a fault.
+pub(crate) fn embed_error(
+    error: &hkask_types::EmbeddingGenerationError,
+    context: &str,
+) -> McpToolError {
+    use hkask_types::EmbeddingGenerationError as E;
+    let message = format!("{context}: {error}");
+    match error {
+        E::NotConfigured(_) => McpToolError::permission_denied(message),
+        E::Connection(_) | E::Api(408 | 429 | 500..=599, _) => McpToolError::unavailable(message),
+        E::InvalidRequest(_)
+        | E::Api(..)
+        | E::Json(_)
+        | E::EmptyResponse
+        | E::DimensionMismatch { .. } => McpToolError::internal(message),
     }
 }
 
@@ -228,45 +302,27 @@ fn h_mem_with_distance(t: &hkask_storage::HMem, distance: &f64) -> serde_json::V
     fragment
 }
 
-/// One exact-entity recall leg: open the memory store, run `query`, and
-/// return the leg as one JSON object — hits under count/h_mems (`take`
-/// capping the serialized hits; `valid_from` adding the perspective-scoped
-/// observed-at field), the query error as text, or the unavailable status
-/// when the store cannot open. `fallback_reason` names the semantic-recall
-/// degradation so the exact fallback reads as degraded, not as matches.
+/// One exact-entity recall leg: run `query` and return the leg as one JSON
+/// object — hits under count/h_mems (`take` capping the serialized hits;
+/// `valid_from` adding the perspective-scoped observed-at field). A store
+/// error is the call's typed error, never a field inside a success.
+/// `fallback_reason` names the semantic-recall degradation so the exact
+/// fallback reads as degraded, not as matches.
 fn exact_recall_leg(
-    memory: Result<&Arc<hkask_memory::MemoryStore>, McpToolError>,
+    memory: &hkask_memory::MemoryStore,
     query: impl FnOnce(
         &hkask_memory::MemoryStore,
     ) -> Result<Vec<hkask_storage::HMem>, hkask_memory::MemoryStoreError>,
     take: Option<usize>,
     valid_from: bool,
     fallback_reason: Option<&str>,
-) -> serde_json::Value {
-    let memory = match memory {
-        Ok(memory) => memory,
-        Err(_) => return json!({"status": "unavailable"}),
-    };
-    let h_mems = match query(memory) {
-        Ok(h_mems) => h_mems,
-        Err(e) => return json!({"error": format!("{e}")}),
-    };
+) -> Result<serde_json::Value, McpToolError> {
+    let h_mems = query(memory).map_err(|e| map_memory_store_error(e, "Entity recall failed"))?;
     // M5 (FR-4 falsifier (b)): a public call context never returns a
     // private-marked row — the exclusion is counted and surfaced,
     // never silently dropped (an empty leg with exclusions reads as
     // filtered, not as "no memory found").
-    let mut excluded_private = 0usize;
-    let h_mems: Vec<_> = h_mems
-        .into_iter()
-        .filter(|h_mem| {
-            if call_admits(h_mem) {
-                true
-            } else {
-                excluded_private += 1;
-                false
-            }
-        })
-        .collect();
+    let (h_mems, excluded_private) = admitted(h_mems);
     let hits = match take {
         Some(limit) => h_mems.iter().take(limit).collect::<Vec<_>>(),
         None => h_mems.iter().collect::<Vec<_>>(),
@@ -293,25 +349,33 @@ fn exact_recall_leg(
         ));
     }
     leg["h_mems"] = json!(serialized);
-    leg
+    Ok(leg)
 }
 
 /// Strip the derived keys the insert path adds (`recall_text`, `_note`)
 /// before comparing a new value against a stored one — the write-path
-/// contradiction check compares payloads, not storage decorations.
+/// contradiction check compares payloads, not storage decorations. A value
+/// that is not an object and has no text of its own is stored wrapped as
+/// `{"value": ...}` (by the store, or by the note path below), so the wrapper
+/// compares as the value it holds.
 fn comparable_payload(value: &serde_json::Value) -> serde_json::Value {
     let mut value = value.clone();
     if let Some(object) = value.as_object_mut() {
         object.remove("recall_text");
         object.remove("_note");
+        if object.len() == 1 {
+            if let Some(inner) = object.remove("value") {
+                return inner;
+            }
+        }
     }
     value
 }
 
 hkask_mcp_server::mcp_server!(
     pub struct CuratorServer {
-        /// Self-healing handle over the curator's sovereign `curator.db`. All
-        /// four stores are read through `db.get()` on every tool call so a
+        /// Self-healing handle over the curator's sovereign `curator.db`.
+        /// Both stores are read through it on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
         /// Inference port for semantic memory recall — embeds recall queries
@@ -327,23 +391,33 @@ hkask_mcp_server::mcp_server!(
 impl CuratorServer {
     // ── Liveness ───────────────────────────────────────────────────────
 
-    #[tool(description = "Liveness check")]
+    #[tool(
+        description = "Liveness check: reports whether each of the server's two stores (curator memory, Regulation archive) is open. status is ok when both are, degraded with the reason when one is not."
+    )]
     pub async fn curator_ping(
         &self,
         Parameters(_req): Parameters<PingRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_ping", async {
             let stores = self.db.get();
-            Ok(json!({
-                "status": "ok",
+            let healthy = stores.regulation_store.is_some() && stores.memory.is_some();
+            let mut body = json!({
+                "status": if healthy { "ok" } else { "degraded" },
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
                 "stores": {
-
                     "regulation_store": stores.regulation_store.is_some(),
                     "memory": stores.memory.is_some(),
                 }
-            }))
+            });
+            if !healthy {
+                body["reason"] = json!(
+                    self.db
+                        .outage_reason()
+                        .unwrap_or_else(|| "a store is not open".to_string())
+                );
+            }
+            Ok(body)
         })
         .await
     }
@@ -370,8 +444,8 @@ impl CuratorServer {
         query_model: &str,
         query_actual_model: Option<&str>,
     ) -> Result<SemanticRecall, SemanticRecallError> {
-        let stores = self.db.get();
-        let memory = stores
+        let memory = self
+            .db
             .memory()
             .map_err(|source| SemanticRecallError::MemoryUnavailable { source })?;
         let knn_limit = limit.saturating_mul(MAX_FRAGMENTS_PER_ENTITY).max(limit);
@@ -508,9 +582,9 @@ impl CuratorServer {
         Parameters(req): Parameters<SemanticSearchRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_semantic_search", async {
+            require_text("query", &req.query)?;
             let limit = req.limit.unwrap_or(10).clamp(1, 50);
-            let stores = self.db.get();
-            let memory = stores.memory()?;
+            let memory = self.db.memory()?;
 
             // Semantic leg: embed the query, KNN over stored embeddings,
             // resolve each hit to its h_mem. This is the path a natural-
@@ -550,44 +624,20 @@ impl CuratorServer {
                 // able to tell "no similar memories" from "semantic recall
                 // unavailable" (the unwrap_or(0) trap).
                 Err(reason) => {
-                    let mut exact = memory.query_deduped(&req.query).map_err(|e| match e {
-                        hkask_memory::MemoryStoreError::HMem(
-                            hkask_storage::HMemError::Infra(ref infra),
-                        )
-                        | hkask_memory::MemoryStoreError::Embedding(
-                            hkask_storage::EmbeddingError::Infrastructure(ref infra),
-                        ) => map_infra_error(infra, "Semantic recall failed"),
-                        other => McpToolError::internal(format!("Semantic recall failed: {other}")),
-                    })?;
-                    let serialized: Vec<serde_json::Value> = exact
-                        .iter()
-                        .take(limit)
-                        .map(|t| h_mem_fragment(t))
-                        .collect();
+                    let exact = memory
+                        .query_deduped(&req.query)
+                        .map_err(|e| map_memory_store_error(e, "Semantic recall failed"))?;
+                    // M5: the fallback leg filters too — degradation and
+                    // the privacy boundary compose.
+                    let (exact, excluded_private) = admitted(exact);
+                    let serialized: Vec<serde_json::Value> =
+                        exact.iter().take(limit).map(h_mem_fragment).collect();
                     let mut result = json!({
                         "count": serialized.len(),
                         "mode": "entity_exact",
                         "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
                         "results": serialized,
                     });
-                    // M5: the fallback leg filters too — degradation and
-                    // the privacy boundary compose.
-                    let mut excluded_private = 0usize;
-                    exact.retain(|h_mem| {
-                        if call_admits(h_mem) {
-                            true
-                        } else {
-                            excluded_private += 1;
-                            false
-                        }
-                    });
-                    let serialized: Vec<serde_json::Value> = exact
-                        .iter()
-                        .take(limit)
-                        .map(|t| h_mem_fragment(t))
-                        .collect();
-                    result["count"] = json!(serialized.len());
-                    result["results"] = json!(serialized);
                     if excluded_private > 0 {
                         result["excluded_private_rows"] = json!(excluded_private);
                     }
@@ -616,12 +666,14 @@ impl CuratorServer {
             // leg's LOCAL model only (each sealed source's model gate then
             // surfaces its per-source exclusion); unset/empty is the
             // surfaced degrade, never a widening to the cloud.
+            // An unset model setting is absent state with a named remedy,
+            // the same class the write paths and the backfill sweep report.
             let embedding_model = routed_model_for_provenance(
                 hkask_mcp_server::current_call_provenance(),
                 hkask_inference::model_constants::private_embedding_model(),
                 curator_embedding_model(),
             )
-            .map_err(|reason| McpToolError::permission_denied(reason.to_string()))?;
+            .map_err(|reason| model_not_configured("federated search did not run", &reason))?;
             let batch = self
                 .inference_port
                 .embed_with_dimensions(
@@ -630,11 +682,9 @@ impl CuratorServer {
                     Some(hkask_storage::embedding_dim() as u32),
                 )
                 .await
-                .map_err(|error| {
-                    McpToolError::unavailable(format!("Federated query embedding failed: {error}"))
-                })?;
+                .map_err(|error| embed_error(&error, "Federated query embedding failed"))?;
             let query_vector = batch.vectors.into_iter().next().ok_or_else(|| {
-                McpToolError::unavailable("Federated query embedding returned no vector")
+                McpToolError::internal("Federated query embedding returned no vector")
             })?;
             // S-01 completion: the federated embedding call's measured
             // usage flows to the executing tool's envelope.
@@ -688,12 +738,14 @@ impl CuratorServer {
                     });
                     if recall.excluded_private > 0 {
                         if let Some(last) = statuses.last_mut() {
-                            last.reason = Some(format!(
-                                "{}; {} private-marked row(s) excluded by the call \
-                                 context's provenance (M5, FR-4)",
-                                last.reason.as_deref().unwrap_or_default(),
+                            let excluded = format!(
+                                "{} private-marked row(s) excluded by the call context's provenance",
                                 recall.excluded_private
-                            ));
+                            );
+                            last.reason = Some(match last.reason.take() {
+                                Some(reason) => format!("{reason}; {excluded}"),
+                                None => excluded,
+                            });
                         }
                     }
                     batches.push(hkask_memory::RankedSourceBatch {
@@ -781,7 +833,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Recall the Curator's memory about an entity. Set `recall_shape` to `perspective_scoped` (curator's own turns) or `entity_wide` (all h_mems for the entity) or `both`. Set `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) plus `ontology_value` to recall along the dual-axis ontology instead of the entity — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace."
+        description = "Recall the Curator's memory by exact entity, or along an ontology axis. Give `entity` (with `recall_shape`: `perspective_scoped` for rows whose perspective is the curator, `entity_wide` for every h_mem of the entity, or `both`), or give `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) with `ontology_value` — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace. Exactly one of the two. Entity recall counts as a use: it resets the returned rows' decay clocks. Axis recall does not."
     )]
     pub async fn curator_memory_recall(
         &self,
@@ -789,7 +841,17 @@ impl CuratorServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_recall", async {
             let recall_shape = req.recall_shape.clone();
-            let stores = self.db.get();
+            let entity = req.entity.as_deref().filter(|entity| !entity.is_empty());
+            if req.ontology_axis.is_none() && req.ontology_value.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "ontology_value requires ontology_axis",
+                ));
+            }
+            if req.ontology_axis.is_some() && entity.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "give entity or ontology_axis, not both — the two are separate recalls",
+                ));
+            }
 
             // Ontology-axis recall (P5.4): when an axis is named, recall along
             // the dual-axis anchoring instead of the entity. This is what makes
@@ -802,7 +864,7 @@ impl CuratorServer {
                         "ontology_axis requires ontology_value",
                     ));
                 };
-                let memory = stores.memory()?;
+                let memory = self.db.memory()?;
                 let h_mems = match axis {
                     "dc_type" => memory.query_by_dc_type(value),
                     "dc_subject" => memory.query_by_dc_subject(value),
@@ -810,26 +872,15 @@ impl CuratorServer {
                     "ontology_namespace" => memory.query_by_ontology_namespace(value),
                     other => {
                         return Err(McpToolError::invalid_argument(format!(
-                            "unknown ontology_axis '{other}' — expected 'dc_type', \
-                             'dc_subject', 'pko_procedure', or 'ontology_namespace'"
+                            "unknown ontology_axis '{other}' — expected one of: {}",
+                            ONTOLOGY_AXES.join(", ")
                         )));
                     }
                 }
                 .map_err(|e| map_memory_store_error(e, "Ontology recall failed"))?;
                 // M5: the same partition as the recall legs — public call
                 // contexts never receive private-marked rows.
-                let mut excluded_private = 0usize;
-                let h_mems: Vec<_> = h_mems
-                    .into_iter()
-                    .filter(|h_mem| {
-                        if call_admits(h_mem) {
-                            true
-                        } else {
-                            excluded_private += 1;
-                            false
-                        }
-                    })
-                    .collect();
+                let (h_mems, excluded_private) = admitted(h_mems);
                 let serialized: Vec<serde_json::Value> = h_mems
                     .iter()
                     .map(|t| {
@@ -850,29 +901,35 @@ impl CuratorServer {
                 return Ok(result);
             }
 
+            let Some(entity) = entity else {
+                return Err(McpToolError::invalid_argument(
+                    "give an entity, or ontology_axis with ontology_value",
+                ));
+            };
+            let memory = self.db.memory()?;
             let mut result = json!({});
 
             if recall_shape == MemoryRecallType::PerspectiveScoped
                 || recall_shape == MemoryRecallType::Both
             {
                 result["perspective_scoped"] = exact_recall_leg(
-                    stores.memory(),
-                    |memory| memory.query_for_deduped(&req.entity, self.webid),
+                    &memory,
+                    |memory| memory.query_for_deduped(entity, self.webid),
                     None,
                     true,
                     None,
-                );
+                )?;
             }
             if recall_shape == MemoryRecallType::EntityWide
                 || recall_shape == MemoryRecallType::Both
             {
                 result["entity_wide"] = exact_recall_leg(
-                    stores.memory(),
-                    |memory| memory.query_deduped(&req.entity),
+                    &memory,
+                    |memory| memory.query_deduped(entity),
                     None,
                     false,
                     None,
-                );
+                )?;
             }
             Ok(result)
         })
@@ -905,8 +962,9 @@ impl CuratorServer {
         Parameters(req): Parameters<CuratorConsultRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_consult", async {
+            require_text("query", &req.query)?;
             let limit = req.limit.unwrap_or(5).clamp(1, 20);
-            let stores = self.db.get();
+            let memory = self.db.memory()?;
             let mut result = json!({
                 "query": req.query,
                 "note": "Memory-grounded consultation — raw fragments, not a synthesized response. The calling agent synthesizes."
@@ -920,7 +978,7 @@ impl CuratorServer {
             // return zero fragments.
             let semantic = self.semantic_recall_fragments(&req.query, limit).await;
             match &semantic {
-                Ok(recall) if !recall.fragments.is_empty() => {
+                Ok(recall) => {
                     // Entity-wide — the curator's consolidated knowledge:
                     // every KNN-resolved h_mem regardless of who wrote it.
                     let entity_wide: Vec<serde_json::Value> = recall
@@ -950,10 +1008,12 @@ impl CuratorServer {
                         "h_mems": perspective_scoped,
                     });
 
-                    // Hits that failed h_mem resolution — or rows the model
-                    // gate excluded — must not vanish: name the counts so
-                    // partial (or fully failed) recall reads as degraded, not
-                    // as missing memories.
+                    // Hits that failed h_mem resolution, rows the model gate
+                    // excluded and rows the call's provenance excluded must
+                    // not vanish: name the counts so partial (or empty)
+                    // recall reads as degraded or filtered, not as missing
+                    // memories. One arm serves the empty case too, so an
+                    // empty result carries the same counts.
                     if let Some(note) = degradation_note(
                         recall.resolution_failures,
                         recall.excluded_model_mismatch,
@@ -965,6 +1025,13 @@ impl CuratorServer {
                     }
                     result["entity_wide_fragments"] = entity_wide_json;
                     result["perspective_scoped_fragments"] = perspective_json;
+                    if recall.excluded_private > 0 {
+                        result["excluded_private_rows"] = json!(recall.excluded_private);
+                    }
+                    if recall.excluded_model_mismatch > 0 {
+                        result["model_mismatch_excluded"] =
+                            json!(recall.excluded_model_mismatch);
+                    }
                 }
                 // Degradation, not a silent fallback — surface why semantic
                 // recall is unavailable, then fall back to the exact-entity
@@ -976,40 +1043,19 @@ impl CuratorServer {
                 Err(reason) => {
                     let reason = reason.to_string();
                     result["entity_wide_fragments"] = exact_recall_leg(
-                        stores.memory(),
+                        &memory,
                         |memory| memory.query_deduped(&req.query),
                         Some(limit),
                         false,
                         Some(&reason),
-                    );
+                    )?;
                     result["perspective_scoped_fragments"] = exact_recall_leg(
-                        stores.memory(),
+                        &memory,
                         |memory| memory.query_for_deduped(&req.query, self.webid),
                         Some(limit),
                         true,
                         Some(&reason),
-                    );
-                }
-                Ok(recall) => {
-                    // Every KNN hit failed to resolve, or none matched. When
-                    // hits failed, bare count:0 scopes would read as "the
-                    // curator has no memory of this" — say resolution failed
-                    // instead (the empty-result-as-success trap).
-                    let mut entity_wide_json = json!({
-                        "count": 0,
-                        "h_mems": [],
-                    });
-                    let mut perspective_json = json!({
-                        "count": 0,
-                        "h_mems": [],
-                    });
-                    if recall.resolution_failures > 0 {
-                        let note = resolution_failure_note(recall.resolution_failures, 0);
-                        entity_wide_json["note"] = json!(note);
-                        perspective_json["note"] = json!(note);
-                    }
-                    result["entity_wide_fragments"] = entity_wide_json;
-                    result["perspective_scoped_fragments"] = perspective_json;
+                    )?;
                 }
             }
 
@@ -1020,33 +1066,38 @@ impl CuratorServer {
 
     // ── Algedonic History ──────────────────────────────────────────────
 
-    #[tool(description = "Read the newest algedonic events in a time window")]
+    #[tool(
+        description = "Read the algedonic events recorded in a lookback window (default 24 hours), newest first, at most 500. limit_reached is true when the window may hold more."
+    )]
     pub async fn curator_algedonic_log(
         &self,
         Parameters(req): Parameters<AlgedonicLogRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_algedonic_log", async {
-            let stores = self.db.get();
-            let store = stores.regulation_store()?;
             let hours = req.hours.unwrap_or(24);
-            let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
-            match store.query_recent_algedonic(since, 500) {
-                Ok(events) => {
-                    let s: Vec<serde_json::Value> = events
-                        .iter()
-                        .map(|e| {
-                            json!({
-                                "timestamp": e.timestamp.to_rfc3339(),
-                                "span": e.span.path,
-                                "phase": format!("{:?}", e.phase),
-                                "observation": e.observation,
-                            })
-                        })
-                        .collect();
-                    Ok(json!({"window_hours": hours, "ordering": "newest_first", "count": s.len(), "events": s}))
-                }
-                Err(e) => Err(map_infra_error(&e, "Algedonic query failed")),
-            }
+            let since = lookback_start("hours", chrono::Duration::try_hours(i64::from(hours)))?;
+            let store = self.db.regulation_store()?;
+            let events = store
+                .query_recent_algedonic(since, ALGEDONIC_LOG_LIMIT)
+                .map_err(|e| map_infra_error(&e, "Algedonic query failed"))?;
+            let s: Vec<serde_json::Value> = events
+                .iter()
+                .map(|e| {
+                    json!({
+                        "timestamp": e.timestamp.to_rfc3339(),
+                        "span": e.span.path,
+                        "phase": e.phase.as_str(),
+                        "observation": e.observation,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "window_hours": hours,
+                "ordering": "newest_first",
+                "count": s.len(),
+                "limit_reached": s.len() as u64 == ALGEDONIC_LOG_LIMIT,
+                "events": s,
+            }))
         })
         .await
     }
@@ -1054,7 +1105,7 @@ impl CuratorServer {
     // ── Regulation Query (for platform governance transparency) ────────────────
 
     #[tool(
-        description = "Query Regulation records across namespaces within a time window. An optional namespace prefix matches that path or dot-delimited descendants before the chronological result limit is applied. At least one of `namespace` or `window_seconds` must be provided — a request with neither is rejected as invalid_argument (the truncated-argument signature), not defaulted to all records."
+        description = "Query Regulation records across namespaces within a time window, oldest first. An optional namespace prefix matches that path or dot-delimited descendants before the result limit is applied. At least one of `namespace` or `window_seconds` must be provided — a request with neither is rejected as invalid_argument (the truncated-argument signature), not defaulted to all records. limit_reached is true when the window may hold more than `limit`."
     )]
     pub async fn reg_query(
         &self,
@@ -1074,11 +1125,18 @@ impl CuratorServer {
                      arguments did not arrive (truncated tool-call JSON), not an all-records query",
                 ));
             }
-            let stores = self.db.get();
-            let store = stores.regulation_store()?;
             let window_secs = req.window_seconds.unwrap_or(3600);
             let limit = req.limit.unwrap_or(100) as u64;
-            let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
+            if limit == 0 {
+                return Err(McpToolError::invalid_argument("limit must be positive"));
+            }
+            let since = lookback_start(
+                "window_seconds",
+                i64::try_from(window_secs)
+                    .ok()
+                    .and_then(chrono::Duration::try_seconds),
+            )?;
+            let store = self.db.regulation_store()?;
             let records = store
                 .query_records(since, req.namespace.as_deref(), limit)
                 .map_err(|e| map_infra_error(&e, "Regulation query failed"))?;
@@ -1089,7 +1147,7 @@ impl CuratorServer {
                         "timestamp": event.timestamp.to_rfc3339(),
                         "namespace": event.span.namespace.as_str(),
                         "path": event.span.path,
-                        "phase": format!("{:?}", event.phase),
+                        "phase": event.phase.as_str(),
                         "observation": event.observation,
                     })
                 })
@@ -1107,7 +1165,9 @@ impl CuratorServer {
             Ok(json!({
                 "namespace": namespace_info,
                 "window_seconds": window_secs,
+                "ordering": "oldest_first",
                 "count": events.len(),
+                "limit_reached": events.len() as u64 == limit,
                 "events": events
             }))
         })
@@ -1132,15 +1192,17 @@ impl CuratorServer {
     /// messages, add fallbacks). Complements the existing runtime telemetry
     /// (reg.* spans, algedonic events).
     #[tool(
-        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an h_mem for Curator pattern analysis. The report includes skill/tool/step evidence, a granular failure_type, and a required controlled failure_origin ownership class."
+        description = "Report a skill-use issue when an MCP tool call fails or produces unexpected output. Stored as an h_mem for Curator pattern analysis; the response carries its h_mem_id, which memory_insert accepts as evidence. The report includes skill/tool/step evidence, a granular failure_type, and a required controlled failure_origin ownership class."
     )]
     pub async fn curator_report_skill_use_issue(
         &self,
         Parameters(req): Parameters<ReportSkillUseIssueRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_report_skill_use_issue", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
+            require_text("skill_name", &req.skill_name)?;
+            require_text("tool_name", &req.tool_name)?;
+            require_text("error", &req.error)?;
+            let memory = self.db.memory()?;
 
             let entity = format!("skill_use_issue:{}", req.skill_name);
             let now = chrono::Utc::now();
@@ -1177,12 +1239,13 @@ impl CuratorServer {
             .with_confidence(hkask_types::Confidence::new(0.5));
             let write = memory.prepare_semantic_write(h_mem)
                 .map_err(|e| map_memory_store_error(e, "Failed to prepare skill-use issue report"))?;
-            publish_semantic_write(self.inference_port.as_ref(), write).await?;
+            let written_id = publish_semantic_write(self.inference_port.as_ref(), write).await?;
 
             RegulationSpan::Curation.emit("skill_use_issue_reported");
 
             Ok(json!({
                 "reported": true,
+                "h_mem_id": written_id.to_string(),
                 "entity": entity,
                 "skill_name": req.skill_name,
                 "tool_name": req.tool_name,
@@ -1216,25 +1279,25 @@ impl CuratorServer {
     ///
     /// The value's text is embedded under the entity (the entity_ref
     /// invariant) so `curator_semantic_search` finds the memory by meaning,
-    /// not just by exact entity name. Embedding failure is non-fatal and
-    /// surfaced in the output.
+    /// not just by exact entity name. An embedding failure fails the insert:
+    /// no row lands without its vector.
     ///
     /// Evidence-grounding: the `evidence_h_mem_id` field must cite a
     /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment."
+        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment. An existing memory for the same entity and attribute with a different value refuses the insert, naming it. The response carries the new h_mem_id."
     )]
     pub async fn memory_insert(
         &self,
         Parameters(req): Parameters<MemoryInsertRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_insert", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
+            require_text("attribute", &req.attribute)?;
+            let memory = self.db.memory()?;
 
             let (_evidence_id, evidence) = fetch_existing_h_mem(
-                memory,
+                &memory,
                 "evidence_h_mem_id",
                 &req.evidence_h_mem_id,
                 format!(
@@ -1254,8 +1317,10 @@ impl CuratorServer {
             // `memory_update` (revision by id) and the machine ingestion
             // paths are unaffected — the gate is the deliberate
             // model-facing knowledge write only.
+            // The untouched read: a contradiction check is not a recall, so
+            // it must not reset the decay clocks of the rows it compares.
             let existing = memory
-                .query_deduped(&req.entity)
+                .query_deduped_untouched(&req.entity)
                 .map_err(|e| map_memory_store_error(e, "Failed to read existing memories for the contradiction check"))?;
             let incoming = serde_json::Value::from(req.value);
             let new_payload = comparable_payload(&incoming);
@@ -1280,8 +1345,13 @@ impl CuratorServer {
 
             // Evidence and notes are tool concerns; passage derivation and
             // atomic row/vector publication belong to the shared store.
+            // A value that is not an object is wrapped so the note has a
+            // field to live in — a note is never dropped.
             let mut value = incoming;
             if let Some(note) = &req.note {
+                if !value.is_object() {
+                    value = json!({ "value": value });
+                }
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("_note".to_string(), serde_json::Value::String(note.clone()));
                 }
@@ -1312,12 +1382,13 @@ impl CuratorServer {
             let provenance = h_mem.provenance.as_str();
             let write = memory.prepare_semantic_write(h_mem)
                 .map_err(|e| map_memory_store_error(e, "Failed to prepare curator memory"))?;
-            publish_semantic_write(self.inference_port.as_ref(), write).await?;
+            let written_id = publish_semantic_write(self.inference_port.as_ref(), write).await?;
 
             RegulationSpan::Curation.emit("memory_inserted");
 
             Ok(json!({
                 "inserted": true,
+                "h_mem_id": written_id.to_string(),
                 "entity": req.entity,
                 "attribute": req.attribute,
                 "confidence": 0.5,
@@ -1335,18 +1406,18 @@ impl CuratorServer {
     /// The new confidence is combined with the existing confidence using
     /// log-odds (Bayesian) pooling — not replacement.
     #[tool(
-        description = "Update an existing memory's confidence via Bayesian combination. The new confidence is combined (not replaced) with the existing value using log-odds pooling."
+        description = "Update an existing memory's confidence via Bayesian combination. The new confidence (0.0 to 1.0) is combined (not replaced) with the existing value using log-odds pooling: above 0.5 raises it, below 0.5 lowers it, 0.5 leaves it unchanged. The row is replaced; the response carries the replacement h_mem_id."
     )]
     pub async fn memory_update(
         &self,
         Parameters(req): Parameters<MemoryUpdateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_update", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
+            let new_confidence_raw = checked_confidence("new_confidence", req.new_confidence)?;
+            let memory = self.db.memory()?;
 
             let (h_mem_id, existing_h_mem) = fetch_existing_h_mem(
-                memory,
+                &memory,
                 "h_mem_id",
                 &req.h_mem_id,
                 format!("h_mem '{}' not found", req.h_mem_id),
@@ -1354,7 +1425,6 @@ impl CuratorServer {
             )?;
 
             // Bayesian-combine the new confidence with the existing one.
-            let new_confidence_raw = hkask_types::Confidence::new(req.new_confidence);
             let combined = hkask_memory::combine_confidences(
                 existing_h_mem.confidence,
                 new_confidence_raw,
@@ -1392,24 +1462,30 @@ impl CuratorServer {
     /// in the memory store by forgetting or de-conflicting contradictory
     /// h_mems.
     #[tool(
-        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the h_mem from the database), 'update_confidence' (lower confidence). Requires a reason citing the contradiction."
+        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the target h_mem from the database), 'update_confidence' (set the target's confidence to new_confidence; the row is replaced and the response carries the replacement id). Requires a non-blank reason citing the contradiction; the reason is returned in the response and is not stored."
     )]
     pub async fn memory_resolve_contradiction(
         &self,
         Parameters(req): Parameters<MemoryResolveContradictionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "memory_resolve_contradiction", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
-
             if req.h_mem_ids.is_empty() || req.h_mem_ids.iter().any(|id| id.trim().is_empty()) {
                 return Err(McpToolError::invalid_argument(
                     "h_mem_ids must contain at least one non-empty h_mem ID",
                 ));
             }
+            require_text("reason", &req.reason)?;
+            if !RESOLUTION_STRATEGIES.contains(&req.strategy.as_str()) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "Unknown strategy '{}' — must be one of: {}",
+                    req.strategy,
+                    RESOLUTION_STRATEGIES.join(", ")
+                )));
+            }
+            let memory = self.db.memory()?;
 
             let (target_id, target_h_mem) = fetch_existing_h_mem(
-                memory,
+                &memory,
                 "target_h_mem_id",
                 &req.target_h_mem_id,
                 format!("Target h_mem '{}' not found", req.target_h_mem_id),
@@ -1436,7 +1512,7 @@ impl CuratorServer {
                             "new_confidence is required for 'update_confidence' strategy",
                         )
                     })?;
-                    let confidence = hkask_types::Confidence::new(new_confidence);
+                    let confidence = checked_confidence("new_confidence", new_confidence)?;
                     let write = memory
                         .prepare_semantic_revision(&target_id, target_h_mem.value, confidence)
                         .map_err(|e| {
@@ -1454,8 +1530,8 @@ impl CuratorServer {
                         "reason": req.reason
                     }))
                 }
-                other => Err(McpToolError::invalid_argument(format!(
-                    "Unknown strategy '{other}' — must be one of: forget, update_confidence"
+                other => Err(McpToolError::internal(format!(
+                    "strategy '{other}' passed validation but has no handler"
                 ))),
             }
         })
@@ -1483,14 +1559,26 @@ impl CuratorServer {
         Parameters(req): Parameters<MemoryPruneRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_prune", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
-
             if req.max_age_days <= 0 {
                 return Err(McpToolError::invalid_argument(
                     "max_age_days must be positive",
                 ));
             }
+            // The store subtracts these from now; an amount no calendar
+            // offset can hold is refused here, before it reaches the store.
+            lookback_start("max_age_days", chrono::Duration::try_days(req.max_age_days))?;
+            if let Some(days) = req.spare_recalled_within_days {
+                if days <= 0 {
+                    return Err(McpToolError::invalid_argument(
+                        "spare_recalled_within_days must be positive",
+                    ));
+                }
+                lookback_start(
+                    "spare_recalled_within_days",
+                    chrono::Duration::try_days(days),
+                )?;
+            }
+            let memory = self.db.memory()?;
 
             let all_layers = req.all_layers.unwrap_or(false);
             // Fail-closed scope: the default valve touches turn storage
@@ -1555,20 +1643,18 @@ impl CuratorServer {
     /// (entity, attribute, normalized_value), keeps highest-confidence,
     /// deletes the rest. Non-string values skipped.
     #[tool(
-        description = "Deduplicate curator h_mems by normalized string value. Groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:) skipped."
+        description = "Deduplicate curator h_mems by normalized string value. Scans the newest `limit` h_mems (default 10000), groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:) skipped. limit_reached is true when older rows may have been left unscanned."
     )]
     pub async fn curator_memory_dedup(
         &self,
         Parameters(req): Parameters<MemoryDedupRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_dedup", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
-
             let limit = req.limit.unwrap_or(10_000);
             if limit == 0 {
                 return Err(McpToolError::invalid_argument("limit must be positive"));
             }
+            let memory = self.db.memory()?;
 
             let outcome = memory
                 .dedup_by_normalized_value(limit)
@@ -1579,6 +1665,7 @@ impl CuratorServer {
             Ok(json!({
                 "deduped": true,
                 "scanned": outcome.scanned,
+                "limit_reached": outcome.scanned == limit,
                 "groups_with_dupes": outcome.groups_with_dupes,
                 "deleted_count": outcome.deleted_count,
                 "failed_count": outcome.failed_count,
@@ -1594,7 +1681,7 @@ impl CuratorServer {
     /// modified, or deleted. Turns (embedded at ingest), distillation
     /// watermarks and goal rows are excluded.
     #[tool(
-        description = "Backfill semantic embeddings across the curator's memory store. mode=missing (default) embeds h_mems whose exact canonical passage has no embedding row — eligibility is exact (entity + canonical passage), not entity-level; turns, distillation watermarks, and goal rows are excluded. mode=model_mismatch re-embeds stored rows whose recorded model matches neither the current requested embedding model nor its provider-confirmed actual form — the same two-form predicate the search gate excludes on, so a model migration's gated-out rows are restored rather than silently invisible. dry_run lists candidates without embedding."
+        description = "Backfill semantic embeddings across the curator's memory store. mode=missing (default) embeds h_mems whose exact canonical passage has no embedding row — eligibility is exact (entity + canonical passage), not entity-level; turns, distillation watermarks, and goal rows are excluded. mode=model_mismatch re-embeds stored rows whose recorded model matches neither the current requested embedding model nor its provider-confirmed actual form — the same two-form predicate the search gate excludes on, so a model migration's gated-out rows are restored rather than silently invisible. dry_run lists candidates and changes nothing; in model_mismatch mode it still makes one embedding call to learn the provider's name for the model."
     )]
     pub async fn curator_memory_backfill_embeddings(
         &self,
@@ -1606,12 +1693,13 @@ impl CuratorServer {
                 Some("model_mismatch") => backfill::BackfillMode::ModelMismatch,
                 Some(other) => {
                     return Err(McpToolError::invalid_argument(format!(
-                        "mode must be \"missing\" or \"model_mismatch\", got \"{other}\""
+                        "unknown mode '{other}' — must be one of: {}",
+                        BACKFILL_MODES.join(", ")
                     )));
                 }
             };
 
-            let memory = self.db.get().memory()?.clone();
+            let memory = self.db.memory()?;
 
             match mode {
                 backfill::BackfillMode::Missing => {
@@ -1643,22 +1731,23 @@ impl CuratorServer {
     /// This is the on-demand version of ALWAYS-mode learning — no
     /// background LLM call, no automatic insertion.
     #[tool(
-        description = "Extract candidate semantic memories from a thread's turn history. Returns turn h_mems with IDs and content. The curator reviews and inserts worth keeping via memory_insert. On-demand ALWAYS-mode learning — no background LLM, no automatic insertion."
+        description = "List one thread's stored turns as candidates for memory_insert. Takes the complete thread id and returns that thread's turn h_mems with IDs and content; each h_mem_id is valid evidence for memory_insert. Read-only: no model call, nothing inserted."
     )]
     pub async fn curator_memory_extract(
         &self,
         Parameters(req): Parameters<MemoryExtractRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_extract", async {
-            let stores = self.db.get();
-            let memory = stores.memory()?;
+            require_text("thread_id", &req.thread_id)?;
+            let memory = self.db.memory()?;
 
-            // Both storage prefixes hold the thread's turns — the
-            // curator-perspective originals and the shared copies ingest
-            // writes for every turn. The contract lives in `thread_turns`,
-            // shared with the distillation pass.
-            let h_mems = thread_turns::thread_turns(memory, &req.thread_id)
+            // The turn-discovery contract lives in `thread_turns`, shared
+            // with the distillation pass: one thread's turns, exactly.
+            let h_mems = thread_turns::thread_turns(&memory, &req.thread_id)
                 .map_err(|e| map_memory_store_error(e, "Failed to query thread turns"))?;
+            // The same provenance partition as every other read: a public
+            // call context never receives a private-marked turn.
+            let (h_mems, excluded_private) = admitted(h_mems);
 
             let candidates: Vec<serde_json::Value> = h_mems
                 .iter()
@@ -1670,19 +1759,22 @@ impl CuratorServer {
                         "value": h.value,
                         "confidence": h.confidence.value(),
                         "observed_at": h.observed_at.to_rfc3339(),
-                        "evidence_citation": h.id.to_string(),
                     })
                 })
                 .collect();
 
             RegulationSpan::Curation.emit("memory_extracted");
 
-            Ok(json!({
+            let mut result = json!({
                 "thread_id": req.thread_id,
                 "turn_count": candidates.len(),
                 "candidates": candidates,
-                "guidance": "Review the candidates and insert worth keeping via memory_insert. Each candidate's h_mem_id is the evidence_citation for memory_insert.",
-            }))
+                "guidance": "Review the candidates and insert the ones worth keeping via memory_insert, citing a candidate's h_mem_id as evidence_h_mem_id.",
+            });
+            if excluded_private > 0 {
+                result["excluded_private_rows"] = json!(excluded_private);
+            }
+            Ok(result)
         })
         .await
     }
@@ -1723,11 +1815,7 @@ async fn semantic_embedding(
         hkask_inference::model_constants::private_embedding_model(),
         curator_embedding_model(),
     )
-    .map_err(|reason| {
-        McpToolError::failed_precondition(format!(
-            "embedding failed — memory was NOT stored: {reason}"
-        ))
-    })?;
+    .map_err(|reason| model_not_configured("embedding failed — memory was NOT stored", &reason))?;
     let batch = inference_port
         .embed_with_dimensions(
             &model,
@@ -1735,20 +1823,19 @@ async fn semantic_embedding(
             Some(hkask_storage::embedding_dim() as u32),
         )
         .await
-        .map_err(|error| {
-            McpToolError::failed_precondition(format!(
-                "embedding failed — memory was NOT stored: {error}"
-            ))
-        })?;
+        // An unset model (above) is absent state; a provider that does not
+        // answer is classified by what failed: transient outages are
+        // `unavailable` (retry), a missing credential `permission_denied`.
+        .map_err(|error| embed_error(&error, "embedding failed — memory was NOT stored"))?;
     hkask_mcp_server::server::record_tool_usage(batch.usage);
     if batch.vectors.len() != 1 || batch.vectors[0].is_empty() {
-        return Err(McpToolError::failed_precondition(
+        return Err(McpToolError::internal(
             "embedding failed — expected one nonempty vector; memory was NOT stored",
         ));
     }
     let model = batch.actual_model.unwrap_or(model);
     let vector = batch.vectors.into_iter().next().ok_or_else(|| {
-        McpToolError::failed_precondition("embedding failed — no vector returned")
+        McpToolError::internal("embedding failed — no vector returned; memory was NOT stored")
     })?;
     Ok((vector, model))
 }
@@ -1891,8 +1978,9 @@ mod tests {
     }
 
     /// expect: "The curator server refuses startup without its DB
-    /// passphrase — 14 of 15 tools are DB-backed and there is no
-    /// in-memory store to fall back to, so a limping start would surface
+    /// passphrase — 13 of 15 tools fail without its stores (ping reports
+    /// them; federated search reports each source's state) and there is
+    /// no in-memory store to fall back to, so a limping start would surface
     /// permission_denied on every memory tool instead of one startup error
     /// naming HKASK_DB_PASSPHRASE." [P1] Motivating: User Sovereignty.
     /// [P2] Constraining: Transparent Imperfection — kata-kanban precedent
@@ -1928,6 +2016,68 @@ mod tool_surface_tests {
         15,
         tool_surface_is_exactly_15_registered_tools,
     );
+
+    /// mcp-tool-review CU-02 pin: every registered tool's live input schema
+    /// is closed (`additionalProperties: false`) and carries no bare boolean
+    /// in a schema position, so a caller sees before the call that an
+    /// undeclared argument is refused.
+    #[test]
+    fn live_router_schemas_are_closed_and_strict_for_all_registered_tools() {
+        let tools = CuratorServer::tool_router().list_all();
+        assert_eq!(tools.len(), 15);
+        for tool in tools {
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema serializes");
+            assert_eq!(
+                schema["additionalProperties"],
+                serde_json::json!(false),
+                "{} must refuse undeclared arguments in its schema",
+                tool.name
+            );
+            let violations = hkask_types::find_boolean_schema_positions(&schema);
+            assert!(violations.is_empty(), "{}: {violations:?}", tool.name);
+        }
+    }
+
+    /// mcp-tool-review CU-15 pin: each closed-vocabulary input names its
+    /// accepted values in the live schema, read from the list the handler
+    /// refuses against, so the two cannot drift.
+    #[test]
+    fn closed_vocabulary_inputs_enumerate_their_values_in_the_live_schema() {
+        let tools = CuratorServer::tool_router().list_all();
+        let enum_of = |tool: &str, property: &str| -> Vec<String> {
+            let schema = tools
+                .iter()
+                .find(|candidate| candidate.name == tool)
+                .map(|candidate| serde_json::to_value(&candidate.input_schema).expect("schema"))
+                .unwrap_or_else(|| panic!("{tool} is registered"));
+            let node = &schema["properties"][property];
+            let values = node
+                .get("enum")
+                .or_else(|| {
+                    node["anyOf"]
+                        .as_array()
+                        .and_then(|arms| arms.iter().find_map(|arm| arm.get("enum")))
+                })
+                .and_then(|values| values.as_array())
+                .unwrap_or_else(|| panic!("{tool}.{property} carries an enum: {node}"));
+            values
+                .iter()
+                .map(|value| value.as_str().expect("string").to_string())
+                .collect()
+        };
+        assert_eq!(
+            enum_of("curator_memory_recall", "ontology_axis"),
+            crate::types::ONTOLOGY_AXES
+        );
+        assert_eq!(
+            enum_of("memory_resolve_contradiction", "strategy"),
+            crate::types::RESOLUTION_STRATEGIES
+        );
+        assert_eq!(
+            enum_of("curator_memory_backfill_embeddings", "mode"),
+            crate::types::BACKFILL_MODES
+        );
+    }
 
     /// The retired escalation/advice tool family must not reappear — the
     /// algedonic-review board replaced it (2026-09-27). Split from the

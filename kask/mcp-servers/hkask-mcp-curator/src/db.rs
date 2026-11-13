@@ -44,20 +44,6 @@ impl CuratorStores {
             memory: None,
         }
     }
-
-    pub(crate) fn regulation_store(
-        &self,
-    ) -> Result<&Arc<hkask_storage::RegulationArchive>, McpToolError> {
-        self.regulation_store
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("RegulationArchive not available"))
-    }
-
-    pub(crate) fn memory(&self) -> Result<&Arc<hkask_memory::MemoryStore>, McpToolError> {
-        self.memory
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("MemoryStore not available"))
-    }
 }
 
 /// Self-healing handle over the curator's sovereign `curator.db` — the MCP-side
@@ -72,6 +58,10 @@ impl CuratorStores {
 /// `info!`.
 pub struct CuratorDb {
     stores: RwLock<CuratorStores>,
+    /// Why the last open left a store down, classified under the canonical
+    /// error contract. A refused tool call repeats it instead of a bare
+    /// "not available"; a successful heal clears it.
+    outage: RwLock<Option<McpToolError>>,
     db_path: Option<String>,
     pub(crate) passphrase: Option<String>,
     federated_manifest_path: PathBuf,
@@ -100,21 +90,39 @@ impl CuratorDb {
                 tracing::warn!(
                     target: "hkask.mcp.curator",
                     %error,
-                    "Curator stores stay down — DB-backed tools return permission_denied until relaunch with HKASK_DB_PASSPHRASE resolvable"
+                    "Curator stores stay down — store-backed tools return permission_denied until relaunch with HKASK_DB_PASSPHRASE resolvable"
                 );
                 None
             }
         };
+        Self::open_at(
+            db_path,
+            passphrase,
+            federated::default_manifest_path(),
+            memory_life_days_from_env(),
+        )
+    }
+
+    /// Open the stores at an explicit path — the production constructor's
+    /// body, with every environment-resolved input passed in, so a test can
+    /// drive a real open (and a failed one) without touching the process
+    /// environment or the operator's data directory.
+    #[doc(hidden)]
+    pub fn open_at(
+        db_path: String,
+        passphrase: Option<String>,
+        federated_manifest_path: PathBuf,
+        memory_life_days: f64,
+    ) -> Self {
         let heal_enabled = passphrase.is_some();
-        let memory_life_days = memory_life_days_from_env();
-        let stores = open_curator_stores(
+        let (stores, outage) = open_curator_stores(
             Some(db_path.as_str()),
             passphrase.as_deref(),
             memory_life_days,
         );
-        let federated_manifest_path = federated::default_manifest_path();
         let this = Self {
             stores: RwLock::new(stores),
+            outage: RwLock::new(outage),
             db_path: Some(db_path),
             passphrase,
             federated_manifest_path,
@@ -129,8 +137,8 @@ impl CuratorDb {
                 tracing::error!(
                     target: "hkask.mcp.curator",
                     db_path = ?this.db_path,
-                    "Curator DB unavailable — ALL curator stores (escalations, \
-                     regulation archive, memory, token registry) \
+                    "Curator DB unavailable — both curator stores (regulation \
+                     archive, memory) \
                      are down. Every tool call re-attempts the open \
                      (self-healing); check that no other process holds the \
                      SQLCipher lock and that HKASK_DB_PASSPHRASE matches the \
@@ -154,6 +162,7 @@ impl CuratorDb {
     pub fn from_stores(stores: CuratorStores) -> Self {
         Self {
             stores: RwLock::new(stores),
+            outage: RwLock::new(None),
             db_path: None,
             passphrase: None,
             federated_manifest_path: PathBuf::new(),
@@ -173,6 +182,7 @@ impl CuratorDb {
     ) -> Self {
         Self {
             stores: RwLock::new(stores),
+            outage: RwLock::new(None),
             db_path: None,
             passphrase: Some(passphrase),
             federated_manifest_path: manifest_path,
@@ -225,6 +235,42 @@ impl CuratorDb {
         }
     }
 
+    /// The curator memory store, or the typed reason it is down.
+    pub(crate) fn memory(&self) -> Result<Arc<hkask_memory::MemoryStore>, McpToolError> {
+        self.get()
+            .memory
+            .ok_or_else(|| self.store_error("curator memory store"))
+    }
+
+    /// The Regulation archive, or the typed reason it is down.
+    pub(crate) fn regulation_store(
+        &self,
+    ) -> Result<Arc<hkask_storage::RegulationArchive>, McpToolError> {
+        self.get()
+            .regulation_store
+            .ok_or_else(|| self.store_error("Regulation archive"))
+    }
+
+    /// Why a store is down, when one is: the recorded open failure.
+    pub(crate) fn outage_reason(&self) -> Option<String> {
+        self.outage
+            .read()
+            .ok()
+            .and_then(|outage| outage.as_ref().map(|error| error.message.clone()))
+    }
+
+    fn store_error(&self, store: &str) -> McpToolError {
+        match self.outage.read().ok().and_then(|outage| outage.clone()) {
+            Some(outage) => McpToolError::new(
+                outage.kind,
+                format!("{store} is not available: {}", outage.message),
+            ),
+            None => McpToolError::unavailable(format!(
+                "{store} is not available: the curator database is not open"
+            )),
+        }
+    }
+
     /// Gate heal re-open attempts to at most one per `HEAL_RETRY_INTERVAL`.
     fn heal_due(&self) -> bool {
         let now = std::time::Instant::now();
@@ -242,11 +288,14 @@ impl CuratorDb {
     }
 
     fn try_heal(&self) {
-        let fresh = open_curator_stores(
+        let (fresh, outage) = open_curator_stores(
             self.db_path.as_deref(),
             self.passphrase.as_deref(),
             self.memory_life_days,
         );
+        if let Ok(mut recorded) = self.outage.write() {
+            *recorded = outage;
+        }
         let fresh_ok = !Self::db_level_down(&fresh);
         match self.stores.write() {
             Ok(mut guard) => {
@@ -264,7 +313,7 @@ impl CuratorDb {
                         target: "hkask.mcp.curator",
                         db_path = ?self.db_path,
                         "Curator DB still unavailable after re-open attempt — \
-                         curator tools will keep returning permission_denied"
+                         store-backed curator tools keep returning the typed open failure"
                     );
                 }
             }
@@ -306,36 +355,71 @@ pub(crate) fn parse_memory_life_days_value(raw: &str) -> f64 {
     }
 }
 
+/// Classify a failed open under the canonical error contract: a passphrase
+/// that does not fit is a credential to fix (it names the variable), a held
+/// maintenance lease is transient, the rest goes through the shared mapper.
+fn open_failure(error: hkask_storage::DatabaseError) -> McpToolError {
+    match error {
+        hkask_storage::DatabaseError::PassphraseMismatch(_) => {
+            McpToolError::permission_denied(format!(
+                "the curator database did not open: {error}. HKASK_DB_PASSPHRASE (environment or \
+                 keychain) does not match this database"
+            ))
+        }
+        hkask_storage::DatabaseError::MaintenanceLease { .. } => McpToolError::unavailable(
+            format!("the curator database is under maintenance: {error}"),
+        ),
+        other => {
+            hkask_mcp_server::server::map_database_error(other, "the curator database did not open")
+        }
+    }
+}
+
 /// Open the curator's sovereign `curator.db` and construct all stores from
 /// a single shared driver. Called at construction and on every heal attempt.
+/// The second value is why a store is down, when one is.
 pub(crate) fn open_curator_stores(
     db_path: Option<&str>,
     passphrase: Option<&str>,
     memory_life_days: f64,
-) -> CuratorStores {
+) -> (CuratorStores, Option<McpToolError>) {
     let Some(db_path) = db_path else {
         tracing::warn!(target: "hkask.mcp.curator", "Curator DB path not resolved");
-        return CuratorStores::empty();
+        return (
+            CuratorStores::empty(),
+            Some(McpToolError::internal(
+                "the curator database path was not resolved",
+            )),
+        );
     };
     let Some(passphrase) = passphrase else {
         tracing::warn!(target: "hkask.mcp.curator", "HKASK_DB_PASSPHRASE not set");
-        return CuratorStores::empty();
+        return (
+            CuratorStores::empty(),
+            Some(McpToolError::permission_denied(
+                "HKASK_DB_PASSPHRASE did not resolve from the environment or the keychain; \
+                 relaunch the server with it set",
+            )),
+        );
     };
 
     let db = match hkask_storage::open_or_repair(db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator DB");
-            return CuratorStores::empty();
+            return (CuratorStores::empty(), Some(open_failure(e)));
         }
     };
     let pool = match db.sqlite_pool() {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to get SQLite pool");
-            return CuratorStores::empty();
+            return (CuratorStores::empty(), Some(open_failure(e)));
         }
     };
+    // A store that fails to initialise on an open database stays down until
+    // the server restarts (healing re-opens only when every store is down).
+    let mut fault: Option<String> = None;
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
         Arc::new(SqliteDriver::new_labeled(pool, db_path));
     let embedding_dim = hkask_storage::embedding_dim();
@@ -373,6 +457,7 @@ pub(crate) fn open_curator_stores(
         },
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore — curator recall degraded");
+            fault = Some(format!("the memory store did not initialise: {e}"));
             None
         }
     };
@@ -381,13 +466,19 @@ pub(crate) fn open_curator_stores(
         Ok(store) => Some(Arc::new(store)),
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create RegulationArchive");
+            fault.get_or_insert(format!("the Regulation archive did not initialise: {e}"));
             None
         }
     };
-    CuratorStores {
-        regulation_store,
-        memory,
-    }
+    (
+        CuratorStores {
+            regulation_store,
+            memory,
+        },
+        fault.map(|reason| {
+            McpToolError::internal(format!("{reason}; restart the server after fixing it"))
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -416,7 +507,8 @@ mod tests {
         let db_path = db_path.to_str().expect("UTF-8 path");
         hkask_storage::open_or_repair(db_path, "test-passphrase").expect("create db");
 
-        let stores = open_curator_stores(Some(db_path), Some("test-passphrase"), 30.0);
+        let (stores, outage) = open_curator_stores(Some(db_path), Some("test-passphrase"), 30.0);
+        assert!(outage.is_none(), "a clean open records no outage");
         let memory = stores.memory.expect("memory store");
         assert_eq!(
             memory.memory_life_days(),
@@ -424,7 +516,7 @@ mod tests {
             "the configured decay constant must reach the store that actually decays"
         );
 
-        let stores_default = open_curator_stores(
+        let (stores_default, _) = open_curator_stores(
             Some(db_path),
             Some("test-passphrase"),
             hkask_memory::MemoryStore::default_memory_life_days(),

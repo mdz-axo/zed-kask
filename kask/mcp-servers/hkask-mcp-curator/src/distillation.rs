@@ -481,12 +481,9 @@ pub(crate) async fn distill_store(
             continue;
         }
         let watermark_entity = format!("{WATERMARK_PREFIX}{thread_id}");
-        // PREFIX read, not exact-match: safe only because production thread
-        // ids are UUIDs (no UUID is a prefix of another). A future non-UUID
-        // thread-id source would read a sibling thread's watermark here —
-        // switch to an exact-match read before introducing one (the passage-scoped deletion
-        // prefix-collision observation, recorded 2026-09-07).
-        let watermarks = match memory.h_mems_by_entity_prefix(&watermark_entity) {
+        // Exact read: one thread's watermark, by the entity index. A thread
+        // id that begins another's never reads the other's marker.
+        let watermarks = match memory.h_mems_by_entity(&watermark_entity) {
             Ok(watermarks) => watermarks
                 .into_iter()
                 .filter(|watermark| watermark.attribute == "distilled_through")
@@ -1041,9 +1038,8 @@ fn prepare_lesson(
     // Near-duplicate formulations stay out of scope by design — no global
     // semantic-similarity threshold here; therapy condenses those.
     let already_distilled = memory
-        .h_mems_by_entity_prefix(entity)?
+        .h_mems_by_entity(entity)?
         .into_iter()
-        .filter(|existing| existing.entity == entity)
         .any(|existing| {
             existing.attribute == attribute
                 && existing

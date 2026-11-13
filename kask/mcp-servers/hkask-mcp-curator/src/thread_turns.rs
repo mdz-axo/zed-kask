@@ -19,12 +19,15 @@ use hkask_storage::HMem;
 /// The shared-copy turn prefix — every turn, the complete set.
 pub(crate) const SHARED_TURN_PREFIX: &str = "curator:thread:";
 
-/// One thread's turns as extraction presents them.
+/// One thread's turns as extraction presents them: the rows stored under
+/// exactly `curator:thread:{thread_id}`. An exact read, so a thread id that
+/// begins another thread's id (or an empty one) never returns the other
+/// thread's turns, and the lookup uses the entity index.
 pub(crate) fn thread_turns(
     memory: &MemoryStore,
     thread_id: &str,
 ) -> Result<Vec<HMem>, MemoryStoreError> {
-    memory.h_mems_by_entity_prefix(&format!("{SHARED_TURN_PREFIX}{thread_id}"))
+    memory.h_mems_by_entity(&format!("{SHARED_TURN_PREFIX}{thread_id}"))
 }
 
 /// Every thread's shared-copy turns since `since`, grouped by thread id —
@@ -78,6 +81,31 @@ mod tests {
 
         let turns = thread_turns(&store, "t1").expect("query turns");
         assert_eq!(turns.len(), 1, "got: {turns:?}");
+    }
+
+    /// mcp-tool-review CU-03 pin: the read is exact. A thread id that is a
+    /// prefix of another's, and the empty id, return none of the other
+    /// thread's turns (the prefix read returned them all).
+    #[test]
+    fn thread_turns_never_returns_a_sibling_threads_turns() {
+        let store = store();
+        let webid = hkask_types::WebID::new();
+        for entity in ["curator:thread:t1", "curator:thread:t10"] {
+            store
+                .store(HMem::new(
+                    entity,
+                    "chunk:1:0",
+                    serde_json::json!("x"),
+                    webid,
+                ))
+                .expect("seed chunk");
+        }
+
+        let turns = thread_turns(&store, "t1").expect("query turns");
+        assert_eq!(turns.len(), 1, "got: {turns:?}");
+        assert_eq!(turns[0].entity, "curator:thread:t1");
+        assert!(thread_turns(&store, "t").expect("partial id").is_empty());
+        assert!(thread_turns(&store, "").expect("empty id").is_empty());
     }
 
     /// The distillation scan reads the shared-copy prefix — the complete

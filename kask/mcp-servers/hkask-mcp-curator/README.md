@@ -8,22 +8,29 @@ MCP server exposing Regulation history, memory search and per-store liveness (`c
 
 | Tool | Description |
 | --- | --- |
-| `curator_ping` | Report per-store liveness. |
-
+| `curator_ping` | Report per-store liveness: `ok`, or `degraded` with the reason. |
 | `curator_semantic_search` | Search Curator memory by semantic similarity. |
 | `curator_federated_search` | Search Curator memory plus configured sealed corpus sources without merging stores; returns source/record provenance and per-source status. |
-| `curator_memory_recall` | Recall memory about an entity, optionally scoped to an ontology axis. |
+| `curator_memory_recall` | Recall memory by exact entity, or along an ontology axis (one of the two). |
 | `curator_consult` | Consult Curator memory with a question. |
-| `curator_algedonic_log` | Read the newest algedonic events in a time window. |
-| `reg_query` | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting. |
+| `curator_algedonic_log` | Read the newest algedonic events in a time window (at most 500; `limit_reached`). |
+| `reg_query` | Query chronological Regulation records across all namespaces, optionally filtering an exact/dot-descendant namespace prefix before limiting (`limit_reached`). |
 | `curator_report_skill_use_issue` | Record a failed or unexpected skill/tool execution with granular `failure_type` and controlled `failure_origin` ownership. |
-| `memory_insert` | Insert an evidence-cited semantic memory. |
-| `memory_update` | Bayesian-combine new confidence or value evidence into a memory. |
-| `memory_resolve_contradiction` | Resolve contradictory memories by forgetting or lowering confidence. |
-| `curator_memory_prune` | Prune old memories under the requested retention policy. |
-| `curator_memory_dedup` | Deterministically deduplicate normalized string memories. |
+| `memory_insert` | Insert an evidence-cited semantic memory; returns its id. |
+| `memory_update` | Bayesian-combine a new confidence into a memory, optionally replacing its value. |
+| `memory_resolve_contradiction` | Resolve contradictory memories by forgetting one or setting its confidence. |
+| `curator_memory_prune` | Delete h_mems older than a given age; turn storage by default, wider only by explicit scope. |
+| `curator_memory_dedup` | Deterministically deduplicate normalized string memories among the newest `limit` rows. |
 | `curator_memory_backfill_embeddings` | Backfill semantic embeddings: missing passages or model-mismatch re-embed — the write side of the search model gate. |
-| `curator_memory_extract` | Extract candidate memories from a thread's turn history. |
+| `curator_memory_extract` | List one thread's stored turns, by its complete id, as candidates for `memory_insert`. Read-only. |
+
+Every tool refuses an argument it does not declare, and every input schema
+says so (`additionalProperties: false`). Besides the tools, the server runs a
+background pass with no tool call: every
+`HKASK_MEMORY_DISTILLATION_CADENCE_SECS` (default 600; 0 disables it) it
+distils idle threads into lessons through a model call, then deletes the
+turns of threads whose distillation is older than
+`HKASK_MEMORY_FORGETTING_DAYS` (default 7; 0 disables the deletion).
 
 `curator_report_skill_use_issue` stores one controlled ownership value:
 `skill_contract`, `agent_execution`, `tool_implementation`,
@@ -42,7 +49,7 @@ and declares that ordering in its response.
 
 ## Configuration
 
-The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds.
+The server opens its sovereign `curator.db` (SQLCipher) using the `HKASK_CURATOR_DB` path and `HKASK_DB_PASSPHRASE` from the keychain. If the DB cannot be opened at startup, the server self-heals: every tool call re-attempts the open (rate-limited to once per 5s) until it succeeds. Until then each store-backed tool returns a typed error naming the cause (a passphrase that does not fit is `permission_denied` naming `HKASK_DB_PASSPHRASE`), and `curator_ping` reports `degraded`.
 
 Federated retrieval is configured by the presence of
 `$HKASK_DATA_DIR/agents/curator/federated-sources.json`; the explicit search
@@ -90,5 +97,4 @@ current sealed-corpus contract.
 
 - `hkask-mcp-server` — MCP runtime and dispatch
 - `hkask-storage` / `hkask-memory` — sovereign `curator.db` stores
-
-- `hkask-tool-port` — DelegationToken consent registry
+- `hkask-inference` — the embedding and lesson-extraction port (the editor's IPC bridge)
