@@ -4,7 +4,7 @@ use bech32::Bech32;
 use bech32::primitives::decode::CheckedHrpstring;
 use k256::schnorr::SigningKey;
 use thiserror::Error;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{ZeroizeOnDrop, Zeroizing};
 
 /// Why an `nsec` was not accepted. No variant carries any part of the text:
 /// it is, or may be, a secret key.
@@ -57,9 +57,15 @@ pub enum NsecError {
 /// println!("{key}");
 /// ```
 ///
-/// The scalar is wiped when the key is dropped: the only field is a
-/// `k256::schnorr::SigningKey`, which zeroizes its scalar in `Drop`.
+/// Both fields are wiped when the key is dropped: the bytes as entered sit in
+/// a `Zeroizing` buffer, and `k256::schnorr::SigningKey` zeroizes its scalar
+/// in `Drop`.
 pub struct SecretKey {
+    /// The 32 bytes as entered. BIP-340 signs with whichever of `d` and
+    /// `n - d` has an even-y point, and the curve library keeps only that
+    /// one, so the entered form is kept here for encryption: the encrypted
+    /// key must open to the `nsec` that was typed.
+    entered: Zeroizing<[u8; 32]>,
     signing_key: SigningKey,
 }
 
@@ -103,7 +109,10 @@ impl SecretKey {
     /// curve order.
     pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Result<Self, NsecError> {
         let signing_key = SigningKey::from_slice(bytes).map_err(|_| NsecError::InvalidKey)?;
-        Ok(Self { signing_key })
+        Ok(Self {
+            entered: Zeroizing::new(*bytes),
+            signing_key,
+        })
     }
 
     /// BIP-340 signature of `message` with the given auxiliary randomness.
@@ -116,13 +125,9 @@ impl SecretKey {
             .map(|signature| signature.to_bytes())
     }
 
-    /// The raw key bytes, in a buffer that is wiped when dropped.
+    /// The key bytes as entered, in a buffer that is wiped when dropped.
     pub(crate) fn expose_bytes(&self) -> Zeroizing<[u8; 32]> {
-        let mut field_bytes = self.signing_key.to_bytes();
-        let mut bytes = Zeroizing::new([0u8; 32]);
-        bytes.copy_from_slice(field_bytes.as_slice());
-        field_bytes.as_mut_slice().zeroize();
-        bytes
+        Zeroizing::new(*self.entered)
     }
 }
 
@@ -193,6 +198,25 @@ mod tests {
             hex::encode(key.x_only_public_key()),
             "7e7e9c42a91bfef19fa929e5fda1b72e0ebc1a4c1141673e2794234d86addf4e"
         );
+    }
+
+    /// expect: the bytes handed to NIP-49 encryption are the key that was
+    /// entered, whichever of the two keys of an identity it is.
+    /// pre: n - 3, where n is the secp256k1 order and 3 is BIP-340 vector 0's
+    /// secret key. The two share an x-only public key; BIP-340 signs with the
+    /// one whose point has even y (3), so the curve library holds 3.
+    /// post: the public key is vector 0's, and the exposed bytes are n - 3 as
+    /// entered, so another client that opens the encrypted form shows the
+    /// same `nsec` the operator typed.
+    #[test]
+    fn a_key_with_an_odd_y_point_is_exposed_as_entered() {
+        let entered = "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd036413e";
+        let key = key_from_hex(entered);
+        assert_eq!(
+            hex::encode(key.x_only_public_key()),
+            "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+        );
+        assert_eq!(hex::encode(*key.expose_bytes()), entered);
     }
 
     /// expect: text that is not a usable `nsec` is refused with a typed error
