@@ -4410,6 +4410,73 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_alg_1_reads_the_loop_reading_as_returned() {
+        let form = skill_candidate("algedonic-review", "investigate_wiring");
+        let read = |value: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"loop_reading": value}))
+                .unwrap_or_else(|error| panic!("ALG-1 failed to evaluate: {error}"))
+        };
+        assert_eq!(read(json!("homeostatic")), json!("proceed"));
+        assert_eq!(read(json!("turning")), json!("proceed"));
+        assert_eq!(read(json!("broken")), json!("investigate_wiring"));
+        assert_eq!(read(json!("wiring-closed")), json!("investigate_wiring"));
+        assert_eq!(read(json!("unobserved")), json!("unobserved"));
+        assert_eq!(read(serde_json::Value::Null), json!("unobserved"));
+    }
+
+    #[test]
+    fn scientific_gate_alg_2_names_the_open_cards_without_a_recorded_comment() {
+        let form = skill_candidate("algedonic-review", "define silent");
+        let check = |tasks: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"tasks": tasks}))
+                .unwrap_or_else(|error| panic!("ALG-2 failed to evaluate: {error}"))
+        };
+        let card = |id: &str, status: &str, commented: bool| {
+            let activity = if commented {
+                json!({"text": "observed: settled", "kind": "comment", "at": "2026-11-12T10:00:00Z"})
+            } else {
+                serde_json::Value::Null
+            };
+            json!({"task_id": id, "board_id": "b", "title": id, "status": status,
+                   "assignee": null, "criteria": [], "advances_count": 0, "activity": activity})
+        };
+
+        let mixed = check(json!([
+            card("a", "review", true),
+            card("b", "review", false),
+            card("c", "backlog", false),
+            card("d", "in_progress", true),
+            card("e", "done", false),
+        ]));
+        assert_eq!(mixed["verdict"], json!("gaps_remain"));
+        assert_eq!(mixed["review_without_observation"], json!(["b"]));
+        assert_eq!(mixed["open_without_next_action"], json!(["c"]));
+        assert_eq!(mixed["cards_read"], json!(5));
+
+        let ready_gap = check(json!([card("r", "ready", false)]));
+        assert_eq!(ready_gap["open_without_next_action"], json!(["r"]));
+
+        let clean = check(json!([
+            card("a", "review", true),
+            card("d", "in_progress", true)
+        ]));
+        assert_eq!(clean["verdict"], json!("target_met"));
+        let empty = check(json!([]));
+        assert_eq!(empty["verdict"], json!("target_met"));
+        assert_eq!(empty["cards_read"], json!(0));
+
+        // A failed read is unknown, never clear.
+        assert_eq!(
+            check(serde_json::Value::Null)["verdict"],
+            json!("board_unread")
+        );
+        assert_eq!(
+            check(json!("board not found"))["verdict"],
+            json!("board_unread")
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",
