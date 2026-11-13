@@ -1009,5 +1009,26 @@
       "admit": true,
       "attempts_used": 1
     }
+  },
+  {
+    "id": "S2-revision-digest-not-hex",
+    "group": "S2",
+    "expect_error": true,
+    "expect_stage": "raw",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"the full prompt text, not its digest\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"},\"reviewed_prompt_digest\":\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"kind\":\"escalate\",\"reviewed_prompt_digest\":\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"}}"
+  },
+  {
+    "id": "S2-run-digest-uppercase",
+    "group": "S2",
+    "expect_error": true,
+    "expect_stage": "raw",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"},\"reviewed_prompt_digest\":\"169B5B823C62B64CA7E5F8456A13C8D5D06F4ECE522A58BC2B8A784DCF3609B0\"}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"kind\":\"escalate\",\"reviewed_prompt_digest\":\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"}}"
+  },
+  {
+    "id": "S2-request-digest-truncated",
+    "group": "S2",
+    "expect_error": true,
+    "expect_stage": "raw",
+    "env": "{\"effort_tier\":\"high\",\"prompt_revisions\":[\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"],\"critique_runs\":[{\"attempt_id\":1,\"level\":1,\"reviewed_revision\":0,\"kind\":\"initial\",\"status\":\"completed\",\"outcome\":{\"ratings\":[{\"area\":\"Recall\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"},{\"area\":\"Mechanism\",\"rating\":\"Solid\",\"evidence\":\"NEW fixture observation\"}],\"findings\":[{\"area\":\"Mechanism\",\"gap\":\"NEW fixture gap\",\"severity\":\"Guardrail\",\"suggested_fix_direction\":\"Address the named gap\"}],\"verdict\":\"rewrite_needed\"},\"reviewed_prompt_digest\":\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0\"}],\"request\":{\"attempt_id\":2,\"level\":2,\"reviewed_revision\":0,\"kind\":\"escalate\",\"reviewed_prompt_digest\":\"169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b\"}}"
   }
 ]

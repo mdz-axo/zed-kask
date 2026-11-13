@@ -3002,6 +3002,23 @@ form: "(= (+ a b) 3)"
     fn prompt_enhance_state_contract_uses_authored_form() {
         smol::block_on(async {
             let form = skill_candidate("prompt-enhance", "define pe-get");
+            let skill = fs::read_to_string(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../.agents/skills/prompt-enhance/SKILL.md"),
+            )
+            .expect("prompt-enhance SKILL.md");
+            let raw_filter = skill
+                .split_once("### Raw JSON preflight")
+                .and_then(|(_, tail)| tail.split_once("```jq\n"))
+                .and_then(|(_, tail)| tail.split_once("\n```"))
+                .map(|(filter, _)| filter.to_string())
+                .expect("the preflight section carries the raw-shape filter");
+            assert!(
+                !PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../../.agents/skills/prompt-enhance/raw-shape.jq")
+                    .exists(),
+                "the filter has one copy, in SKILL.md"
+            );
             let cases: serde_json::Value = serde_json::from_str(include_str!(
                 "../../tests/fixtures/prompt_enhance_state.json"
             ))
@@ -3021,11 +3038,12 @@ form: "(= (+ a b) 3)"
                 assert!(env.is_object(), "{id}: environment must be an object");
                 // The Lisp bridge loses null/empty-array/empty-object distinctions.
                 // Exercise the SAME authored raw filter before the authored Lisp form.
-                let filter = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../../.agents/skills/prompt-enhance/raw-shape.jq");
+                // The filter's only copy is the jq fence in the SKILL.md preflight
+                // section: installed builds receive SKILL.md alone, so a companion
+                // file in the skill folder would not reach them.
                 let mut child = smol::process::Command::new("jq")
-                    .args(["-e", "-f"])
-                    .arg(filter)
+                    .arg("-e")
+                    .arg(&raw_filter)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::piped())

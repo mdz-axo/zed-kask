@@ -125,7 +125,40 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Raw JSON preflight (before every PE-State evaluation)
 
-PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. The filter is that file; this document does not repeat it. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam.
+PE-State is a two-part gate over the SAME raw env, not two state owners. First run the filter below with `jq -e` on the saved NEW review-state JSON file, using its actual discovered invocation artifact path: save the fenced text verbatim as `{run_dir}/raw-shape.jq` when the run directory is created, then `jq -e -f {run_dir}/raw-shape.jq < {run_dir}/review-state.json`. This fence is the only copy of the filter — the skill folder holds no companion file, so the skill carries its preflight wherever it is installed. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam.
+
+```jq
+# Preserve raw JSON identity before the lossy JSON -> Lisp bridge.
+# No review echo, scoring, call counter or shadow admission state.
+# Digest binding (operator ruling 2026-10-30): prompt identity crosses the
+# seam as a lowercase-hex SHA-256 digest; the full revision texts live in
+# the canonical revision files and the delivered output, never in the env.
+def digest:
+  type == "string" and test("^[0-9a-f]{64}$");
+def request_shape:
+  type == "object" and
+  keys == ["attempt_id","kind","level","reviewed_prompt_digest","reviewed_revision"] and
+  (.attempt_id | type == "number" and floor == .) and
+  (.level | type == "number" and floor == .) and
+  (.reviewed_revision | type == "number" and floor == .) and
+  (.reviewed_prompt_digest | digest) and
+  (.kind | IN("initial","escalate","reprobe","correction","retry"));
+type == "object" and has("effort_tier") and has("request") and
+(.prompt_revisions | type == "array" and all(.[]; digest)) and
+(.critique_runs | type == "array") and
+(.request == null or (.request | request_shape)) and
+all(.critique_runs[];
+  type == "object" and has("status") and has("outcome") and
+  has("reviewed_prompt_digest") and (.reviewed_prompt_digest | digest) and
+  (if .status == "pending" then .outcome == null
+   elif .status == "completed" then
+    (.outcome | type == "object") and
+    (.outcome.ratings | type == "array") and
+    (.outcome.findings | type == "array") and
+    all(.outcome.ratings[]; type == "object") and
+    all(.outcome.findings[]; type == "object")
+   else true end))
+```
 
 **The durable review ledger.** The preflighted review-state file IS the invocation's durable ledger: write it under the run directory (default `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/review-state.json`, beside the default output path; write via terminal — the built-in file tools are sandboxed outside the project) at every state mutation — initialization, pending append, settle, correction. A resumed run re-derives nothing: load the ledger, preflight it, continue from the recorded state. An admitted-but-undispatched attempt is voided explicitly under the mid-run amendment route (Local PDCA item 5), never silently orphaned.
 
@@ -285,7 +318,7 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
 
 `render_template` supplies stage instructions; the agent is the executor. These bounds come from a live run (2026-10-19) where the executor burned ~20 calls emitting an empty `context` against the classify contract before falling back to reading the templates — and misfiled its own emission failure as a tool schema defect:
 
-- **Artifact placement (Prohibition):** every working artifact of an invocation — stage outputs (`classify-out.json`, `rewrite-out.json`, `grill-*.json`), stage context files, the review ledger, and the canonical revision files — is written under the invocation's run directory in the data directory: `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/` (default; beside `output_path_resolved` when one is set). The skill folder (`.agents/skills/prompt-enhance/`) holds only the skill's own resources — `SKILL.md` and companion files such as `raw-shape.jq` — and must never receive stage outputs or scratch files. Write via terminal: the built-in file tools are sandboxed outside the project and refuse writes there anyway. A refused write is not a reason to relocate the artifact into the skill folder; it is the expected signal that the path was wrong.
+- **Artifact placement (Prohibition):** every working artifact of an invocation — stage outputs (`classify-out.json`, `rewrite-out.json`, `grill-*.json`), stage context files, the review ledger, and the canonical revision files — is written under the invocation's run directory in the data directory: `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/` (default; beside `output_path_resolved` when one is set). The skill folder (`.agents/skills/prompt-enhance/`) holds only `SKILL.md` and must never receive stage outputs or scratch files. Write via terminal: the built-in file tools are sandboxed outside the project and refuse writes there anyway. A refused write is not a reason to relocate the artifact into the skill folder; it is the expected signal that the path was wrong.
 - **Pre-send gate (Prohibition):** before any `render_template` call, verify the stage contract's required keys are present in `context` — never emit an empty `context` object. An empty context yields `missing required input field(s): ...`, which reads like a schema defect but is an empty-argument emission.
 - **Large-context rule (Prohibition):** a context payload that does not fit comfortably in one tool-call argument must not be inlined. Write the context object to a JSON file under the run directory and pass `context_path` instead of `context`; inline `context` values merge over the file's object. The model's single-response output budget is the binding limit — a truncated inline `context` fails with `expected complete JSON text: EOF while parsing ...` and is never retried. Use `context_path` for any stage context over ~2 KB, and always for the verify stage (it carries the full enhanced prompt). The file must hold one JSON object document; anything else is rejected before rendering.
 - **Fan-out / reconsolidate rule (Prohibition):** when a stage emits an `unfolded_plan`, pass it to `unfold_plan` before executing it. The tool validates the DAG and returns the fan-out waves and budgeted reconsolidate batches; execute independent tasks within a wave in parallel and merge outputs in dependency order within the byte budget. Never execute an unvalidated plan, and never merge all outputs in one call when the budget is exceeded.
