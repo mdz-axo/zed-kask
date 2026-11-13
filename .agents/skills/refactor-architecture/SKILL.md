@@ -114,8 +114,8 @@ Includes the migration-strategy phase (folded from the standalone strangler-fig 
 4. Run clippy and the test suite across the service, CLI, API, and workspace crates.
 5. Verify surface adapter thinness by ensuring CLI and API adapters contain only service calls, formatting, and error mapping.
 6. Produce a structured report with observed command outputs and file:line evidence. Missing evidence is `unmeasured`, not a pass. Compute `overall_status` (`"pass"`, `"fail"`, or `"partial"`) deterministically via `lisp_eval` `RA-2` from `target_condition_status` (`"met"`, `"unmet"`, `"unmeasured"`) and the `checklist` statuses (`"done"`, `"not_done"`, `"unmeasured"`):
-   - form: `(begin (define any-eq (lambda (v xs) (if (is_null xs) false (if (string= v (car xs)) true (any-eq v (cdr xs)))))) (define all-eq (lambda (v xs) (if (is_null xs) true (if (string= v (car xs)) (all-eq v (cdr xs)) false)))) (cond ((or (string= target_condition_status "unmet") (any-eq "not_done" checklist_statuses)) "fail") ((and (string= target_condition_status "met") (all-eq "done" checklist_statuses)) "pass") (true "partial")))`
-   - env: `{ "target_condition_status": <"met"|"unmet"|"unmeasured">, "checklist_statuses": <array of status strings from checklist> }`
+   - form: `(begin (define status-of (lambda (row) (if (listp row) (assoc "status" row) nil))) (define count-status (lambda (rows v) (if (is_null rows) 0 (+ (if (string= (status-of (car rows)) v) 1 0) (count-status (cdr rows) v))))) (define rows (if (listp checklist) checklist (list))) (define target (if (and (listp verification_report) (stringp (assoc "target_condition_status" verification_report))) (assoc "target_condition_status" verification_report) "unmeasured")) (define n (length rows)) (define done (count-status rows "done")) (define not-done (count-status rows "not_done")) (list (list "overall_status" (cond ((= n 0) "partial") ((or (string= target "unmet") (> not-done 0)) "fail") ((and (string= target "met") (= done n)) "pass") (t "partial"))) (list "target_condition_status" target) (list "checklist_items" n) (list "done" done) (list "not_done" not-done) (list "unmeasured" (- n (+ done not-done)))))`
+   - env: `{ "verification_report": <the ra-verify render's verification_report object>, "checklist": <the ra-verify render's checklist array — the item objects as rendered, each carrying status and evidence> }` — the form reads `target_condition_status` and every row's `status` itself (never a model-projected list of status strings) and returns `{overall_status, target_condition_status, checklist_items, done, not_done, unmeasured}`. An empty or absent checklist, an absent report, or a row whose status is missing or outside `done|not_done|unmeasured` is `partial`, never `pass`.
 7. Compare the result to the initial and target conditions, not only a checklist. Before a migration, pass both as top-level context to `ra-verify`; require observed evidence that the selected friction decreased while all affected surfaces still satisfy the user's behavioral expectation. A passing build with persistent friction is `continue`, not `done`. On a failing check, fix the identified cause and re-verify at most twice for this domain; a third failure stops with its evidence. When the target passes, stop this domain. Explore another only on a new user-selected target, never automatically.
 
 ## Registry Templates
@@ -141,7 +141,22 @@ Template context variables (from each template's [inference] contract):
 
 Receipts executed live through `lisp_eval` and `render_template`:
 - `RA-1` decision router (`lisp_eval`): `decision = "proceed_to_refactor"` → `["proceed_to_refactor", "ra-audit"]`; `decision = "need_more_data"` → `["need_more_data", "diagnose"]`; `decision = "defer_or_reject"` → `["defer_or_reject", "record_adr"]`; `decision = "maybe"` → `["invalid", "ask_operator"]`.
-- `RA-2` verification status (`lisp_eval`): `target_condition_status = "unmeasured"`, `checklist_statuses = ["done", "done", "unmeasured"]` → `"partial"` (a build-only pass leaves the target condition `unmeasured` and the overall status `partial`); `target_condition_status = "met"` with all `"done"` → `"pass"`; any `"unmet"` or `"not_done"` → `"fail"`.
+- `RA-2` verification status (`lisp_eval`) — receipts over the ra-verify render's real shape (`verification_report.target_condition_status` + `checklist[].status`), executed 2026-11-13 through the `hkask_lisp` evaluator and re-evaluated by `~/Documents/zk-data/skills/refactor-architecture/2026-11-13-ra2-repair/receipts.sh`:
+
+  | target_condition_status | checklist statuses | overall_status | why |
+  |---|---|---|---|
+  | met | done, done | pass | the only passing shape |
+  | met | done, not_done | fail | any not_done fails |
+  | unmeasured | done, done, unmeasured | partial | a build-only pass leaves the target unmeasured |
+  | unmeasured | done, done | partial | all done is not enough without a met target |
+  | unmet | done | fail | an unmet target fails regardless of the checklist |
+  | unmeasured | not_done | fail | not_done outranks unmeasured |
+  | met | (empty) | partial | an unrun verify render is not a pass (the old form returned pass on `[]`) |
+  | met | (one row without a status) | partial | a missing status is unmeasured |
+  | met | done, passed | partial | a status outside the vocabulary is unmeasured, never done |
+  | (report absent or without the field) | done | partial | no target status is unmeasured |
+
+  Before this repair the form took `checklist_statuses` as a model-projected list of strings; passing the render's checklist objects was a type error, and an empty list with a met target returned `pass`.
 - `render_template` `refactor-architecture/ra-verify` with a domain/migration context renders the verification checklist whose discipline is unmeasured-never-pass; the cargo commands (`cargo check`, `cargo test`, `./script/clippy`) are run at use time.
 
 ## Constraints
