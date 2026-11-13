@@ -253,16 +253,25 @@ pub(crate) async fn require_video_stream(
     operation: &str,
 ) -> Result<crate::video::ffmpeg::VideoProbeInfo, McpToolError> {
     let probe = ffmpeg.probe(path).await.map_err(|error| match error {
+        // ffprobe's reason names what it opened; when that is the private
+        // snapshot, the caller is told about the file it named instead.
         MediaError::NotMedia { reason, .. } => map_media_error(MediaError::NotMedia {
             input: source.to_string(),
-            reason,
+            reason: if path == source {
+                reason
+            } else {
+                reason.replace(path, source)
+            },
         }),
         other => map_media_error(other),
     })?;
-    // The kind the layer passes already answer with for the same case
-    // (pinned there as the named degradation kind).
+    // The caller named a file of the wrong kind: `invalid_argument`, the
+    // kind the regulation ledger leaves out of the tool's success rate
+    // (`is_not_tool_fault_kind`), like `NotMedia` and `RangeOutsideMedia`.
+    // As `failed_precondition` every audio file handed to a video tool
+    // counted as a failing tool call (operator decision 2026-11-13).
     if !probe.has_video_stream {
-        return Err(McpToolError::failed_precondition(format!(
+        return Err(McpToolError::invalid_argument(format!(
             "{operation} requires a video stream; {source} has none"
         )));
     }

@@ -360,7 +360,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Render approved redaction decisions over one recording into a durable playable gallery asset — tier 1 (cover: blur, pixelate, black, delogo) of the visual-event-tagging design §6. Takes a media_path and the REQUIRED layer_id of a researcher-authored redaction decision layer (provenance model \"user\") whose items carry the vocabulary {op: redact, status: approved, effect: blur|pixelate|black|delogo, target: {kind: box, box: {x,y,w,h} in 0..1}}. No redaction renders without an approved decision layer — the hard human gate: unknown layers fail as not_found, wrong-kind/unapproved/malformed items as failed_precondition, and machine-authored layers never render; every failure names the layer. Only the affected segments re-encode through the ffmpeg filter graph (time-ranged per item via enable=between over its range, spatial over the normalized box scaled to the probed frame dimensions), keyed to keyframe-aligned segment boundaries so the output timeline tiles the source exactly; untouched segments stream-copy. Source media bytes are never modified — the render publishes a new gallery asset with lineage. A mask_track target is reserved tier-2 vocabulary (representable now, renderable once tier 2 exists); requesting it fails as permission_denied naming the mask/removal serving path."
+        description = "Render approved redaction decisions over one recording into a durable playable gallery asset — tier 1 (cover: blur, pixelate, black, delogo) of the visual-event-tagging design §6. Takes a media_path and the REQUIRED layer_id of a researcher-authored redaction decision layer (provenance model \"user\") whose items carry the vocabulary {op: redact, status: approved, effect: blur|pixelate|black|delogo, target: {kind: box, box: {x,y,w,h} in 0..1}}. No redaction renders without an approved decision layer — the hard human gate: unknown layers fail as not_found, wrong-kind/unapproved/malformed items as failed_precondition, a layer over another recording or a source without a video stream as invalid_argument, and machine-authored layers never render; every failure names the layer. Only the affected segments re-encode through the ffmpeg filter graph (time-ranged per item via enable=between over its range, spatial over the normalized box scaled to the probed frame dimensions), keyed to keyframe-aligned segment boundaries so the output timeline tiles the source exactly; untouched segments stream-copy. Source media bytes are never modified — the render publishes a new gallery asset with lineage. A mask_track target is reserved tier-2 vocabulary (representable now, renderable once tier 2 exists); requesting it fails as permission_denied naming the mask/removal serving path."
     )]
     pub async fn layers_render_redactions(
         &self,
@@ -378,7 +378,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             if !probe.has_video_stream {
-                return Err(McpToolError::failed_precondition(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "redaction render requires a video stream; {} has none",
                     request.media_path
                 )));
@@ -411,8 +411,11 @@ impl MediaServer {
                     request.layer_id, record.provenance.model
                 )));
             }
+            // The same mistake as the other layer tools' other-recording
+            // refusal, and the same kind (the layer exists; the caller paired
+            // it with the wrong recording).
             if record.media_path != request.media_path {
-                return Err(McpToolError::not_found(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "redaction decision layer {} is not a decision layer for {} \
                      (it annotates {})",
                     request.layer_id, request.media_path, record.media_path

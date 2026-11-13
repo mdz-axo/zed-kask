@@ -387,7 +387,7 @@ async fn sample_chunk_frames(
 #[tool_router(router = layers_passes_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Detect shot boundaries in a local or URL video through ffmpeg scene detection (select filter over gt(scene,threshold) with showinfo source-PTS parsing) and store one kind=shot layer of ordered, disjoint time ranges covering the detected boundaries. Defaults: threshold 0.3 (scene score, (0.0,1.0]), min_shot_length 0.5s — the exact filter and both parameters are recorded in the layer provenance. A video with no detected cuts returns status no_shots with the exact filter parameters (a named degradation, not an error; nothing is stored); media without a video stream fails as failed_precondition naming the requirement; a missing file fails as not_found naming the path. Decodes the whole video once; source media bytes are never modified."
+        description = "Detect shot boundaries in a local or URL video through ffmpeg scene detection (select filter over gt(scene,threshold) with showinfo source-PTS parsing) and store one kind=shot layer of ordered, disjoint time ranges covering the detected boundaries. Defaults: threshold 0.3 (scene score, (0.0,1.0]), min_shot_length 0.5s — the exact filter and both parameters are recorded in the layer provenance. A video with no detected cuts returns status no_shots with the exact filter parameters (a named degradation, not an error; nothing is stored); media without a video stream fails as invalid_argument naming the requirement; a missing file fails as not_found naming the path. Decodes the whole video once; source media bytes are never modified."
     )]
     pub async fn layers_shot_pass(
         &self,
@@ -420,7 +420,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             if !probe.has_video_stream {
-                return Err(McpToolError::failed_precondition(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "shot detection requires a video stream; {} has none \
                      (probed codec {:?}, {}x{}) — no layer stored",
                     request.media_path, probe.codec, probe.width, probe.height
@@ -481,7 +481,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. grounded=true (default false) switches to the grounded template — the identical output schema with raised box density and label specificity — and resolves the model per-call, then the tagging model setting (HKASK_MEDIA_TAGGING_MODEL), then the configured analysis model; provenance records layers_semantic_pass_grounded so the modes stay distinguishable. Media without a video stream fails as failed_precondition naming the requirement; a missing file as not_found naming the path; an unknown gallery_asset_id as not_found before any frame is sampled or sent; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
+        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. grounded=true (default false) switches to the grounded template — the identical output schema with raised box density and label specificity — and resolves the model per-call, then the tagging model setting (HKASK_MEDIA_TAGGING_MODEL), then the configured analysis model; provenance records layers_semantic_pass_grounded so the modes stay distinguishable. Media without a video stream fails as invalid_argument naming the requirement; a missing file as not_found naming the path; an unknown gallery_asset_id as not_found before any frame is sampled or sent; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
     )]
     pub async fn layers_semantic_pass(
         &self,
@@ -550,7 +550,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             if !probe.has_video_stream {
-                return Err(McpToolError::failed_precondition(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "the vision pass requires a video stream; {} has none \
                      (probed codec {:?}, {}x{}) — no layer stored",
                     request.media_path, probe.codec, probe.width, probe.height
@@ -1005,7 +1005,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate labeled audio_event items over a recording's audio via the bounded audio pass — one chat_audio inference call per chunk. Bound by a source-PTS time_range (default: the full probed duration); chunks beyond max_chunks return a resume cursor. Model-produced event spans are validated (finite, inside the chunk, confidences within 0..1, nonblank labels) before storing one kind=audio_event layer whose provenance records the model and template — a violation rejects the whole pass and nothing is stored. Speech is not transcribed (that is the transcript pipeline's job); media without an audio stream fails as failed_precondition naming the requirement; an unknown gallery_asset_id fails as not_found before any audio is sent; a pass that finds no events returns a named no_events note and stores nothing. Source media bytes are never modified."
+        description = "Generate labeled audio_event items over a recording's audio via the bounded audio pass — one chat_audio inference call per chunk. Bound by a source-PTS time_range (default: the full probed duration); chunks beyond max_chunks return a resume cursor. Model-produced event spans are validated (finite, inside the chunk, confidences within 0..1, nonblank labels) before storing one kind=audio_event layer whose provenance records the model and template — a violation rejects the whole pass and nothing is stored. Speech is not transcribed (that is the transcript pipeline's job); media without an audio stream fails as invalid_argument naming the requirement; an unknown gallery_asset_id fails as not_found before any audio is sent; a pass that finds no events returns a named no_events note and stores nothing. Source media bytes are never modified."
     )]
     pub async fn layers_audio_pass(
         &self,
@@ -1046,7 +1046,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
             if !probe.has_audio_stream {
-                return Err(McpToolError::failed_precondition(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "the audio pass requires an audio stream; {} has none \
                      (probed codec {:?}, {}x{}) — no layer stored",
                     request.media_path, probe.codec, probe.width, probe.height

@@ -77,6 +77,22 @@ pub enum MediaError {
     #[error("{input} is not a media file ffprobe can read: {reason}")]
     NotMedia { input: String, reason: String },
 
+    /// A GIF span that samples no frame: the palette pass exits 0 and
+    /// writes nothing, and the second pass then failed `internal` on its
+    /// missing palette file (measured 2026-11-13: 0.2 s at 1 fps). Whether
+    /// a frame falls in the span depends on the source's frame times, so
+    /// it is known only after the first pass.
+    #[error(
+        "no frame of {input} falls in the {duration_sec} s from {start_sec} s at {fps} fps: \
+         lengthen duration_sec or raise fps"
+    )]
+    NoFrameInRange {
+        input: String,
+        start_sec: f32,
+        duration_sec: f32,
+        fps: u32,
+    },
+
     /// Clips handed to a stream-copy join do not agree, so the join would
     /// publish a file that plays wrongly or not at all.
     #[error("{clip} cannot be joined to the first clip: {reason}")]
@@ -142,9 +158,9 @@ impl From<GalleryStoreError> for MediaError {
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
 /// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (an environment gap: the
 ///   message names the binary to install; the regulation ledger does not count it)
-/// - `DurationUnavailable`, `RangeOutsideMedia`, `NotMedia`, `ClipsDiffer` →
-///   `invalid_argument` (the caller named the wrong file or range; the
-///   regulation ledger does not count it against the tool)
+/// - `DurationUnavailable`, `RangeOutsideMedia`, `NotMedia`, `NoFrameInRange`,
+///   `ClipsDiffer` → `invalid_argument` (the caller named the wrong file or
+///   range; the regulation ledger does not count it against the tool)
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
         MediaError::ImageNotFound(_) => McpToolError::not_found(e.to_string()),
@@ -164,6 +180,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         MediaError::DurationUnavailable { .. }
         | MediaError::RangeOutsideMedia { .. }
         | MediaError::NotMedia { .. }
+        | MediaError::NoFrameInRange { .. }
         | MediaError::ClipsDiffer { .. } => McpToolError::invalid_argument(e.to_string()),
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)

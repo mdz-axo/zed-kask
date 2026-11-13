@@ -8205,11 +8205,12 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// t2 AC2b: media without a video stream (an audio-only file) returns a
-    /// named degradation naming the requirement — never a raw ffmpeg
-    /// error — and stores nothing.
+    /// t2 AC2b: media without a video stream (an audio-only file) is
+    /// refused naming the requirement — never a raw ffmpeg error — and
+    /// stores nothing. The caller named a file of the wrong kind, so the
+    /// kind is `invalid_argument` (operator decision 2026-11-13).
     #[tokio::test]
-    async fn layers_shot_pass_audio_only_is_a_named_degradation()
+    async fn layers_shot_pass_audio_only_is_refused_naming_the_requirement()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
@@ -8227,10 +8228,15 @@ mod tool_behavior_tests {
             .await
             .expect_err("audio-only media must fail the stream requirement");
         let message = error.to_string();
+        // The caller's file is of the wrong kind: the kind the regulation
+        // ledger leaves out of the success rate.
         assert!(
-            message.contains("failed_precondition"),
-            "classified failed_precondition (the named degradation kind): {message}"
+            message.contains("invalid_argument"),
+            "classified invalid_argument: {message}"
         );
+        assert!(hkask_types::tool_response::is_not_tool_fault_kind(
+            &error.kind.to_string()
+        ));
         assert!(
             message.contains("video stream"),
             "names the requirement: {message}"
@@ -9766,8 +9772,9 @@ mod tool_behavior_tests {
             .await
             .expect_err("a decision layer for another recording fails");
         assert!(
-            error.to_string().contains("not_found"),
-            "classified not_found: {error}"
+            error.to_string().contains("invalid_argument"),
+            "classified invalid_argument, as the other layer tools classify a \
+             layer over another recording: {error}"
         );
         assert!(
             error.to_string().contains(&approved_on_source)
@@ -9911,7 +9918,7 @@ mod tool_behavior_tests {
             .await
             .expect_err("an audio-only source cannot be redacted");
         assert!(
-            error.to_string().contains("failed_precondition")
+            error.to_string().contains("invalid_argument")
                 && error.to_string().contains("video stream"),
             "names the video-stream requirement: {error}"
         );
@@ -11004,6 +11011,16 @@ mod tool_behavior_tests {
                 "{}",
                 error.message
             );
+            // ffprobe's reason names the file it opened. The tools that
+            // probe a private snapshot (video_extract_frames) name the
+            // caller's file there too, never the scratch path: the file is
+            // named twice, as the input and in the reason.
+            assert_eq!(
+                error.message.matches("zz-text.mp4").count(),
+                2,
+                "{}",
+                error.message
+            );
         }
         Ok(())
     }
@@ -11051,8 +11068,16 @@ mod tool_behavior_tests {
             ),
             (
                 serde_json::json!({"video_url": tone}),
-                hkask_types::McpErrorKind::FailedPrecondition,
+                hkask_types::McpErrorKind::InvalidArgument,
                 "requires a video stream",
+            ),
+            // 0.2 s at 1 fps samples no frame of a 25 fps source: palettegen
+            // exits 0 without a palette and the second pass answered
+            // `internal` on the missing file (measured, round l1).
+            (
+                serde_json::json!({"video_url": source, "duration_sec": 0.2, "fps": 1}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "no frame of",
             ),
         ] {
             let error = env
@@ -11068,6 +11093,11 @@ mod tool_behavior_tests {
             );
             assert!(
                 !error.message.contains("ffmpeg version"),
+                "{}",
+                error.message
+            );
+            assert!(
+                !error.message.contains("Error opening input"),
                 "{}",
                 error.message
             );
@@ -11588,7 +11618,7 @@ mod tool_behavior_tests {
             .video_caption(wire(serde_json::json!({"video_url": tone}))?)
             .await
             .expect_err("captioning an audio file");
-        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
         assert!(
             error.message.contains("requires a video stream"),
             "{}",
@@ -13042,10 +13072,10 @@ mod tool_behavior_tests {
         Ok(())
     }
 
-    /// Media without a video stream (audio-only) fails as a named
-    /// degradation naming the requirement — never a raw ffmpeg error.
+    /// Media without a video stream (audio-only) is refused naming the
+    /// requirement — never a raw ffmpeg error.
     #[tokio::test]
-    async fn layers_semantic_pass_audio_only_is_a_named_degradation()
+    async fn layers_semantic_pass_audio_only_is_refused_naming_the_requirement()
     -> Result<(), Box<dyn std::error::Error>> {
         let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
             media_test_env().await?;
@@ -13059,8 +13089,8 @@ mod tool_behavior_tests {
             .expect_err("audio-only media must fail the stream requirement");
         let message = error.to_string();
         assert!(
-            message.contains("failed_precondition"),
-            "classified failed_precondition: {message}"
+            message.contains("invalid_argument"),
+            "classified invalid_argument: {message}"
         );
         assert!(
             message.contains("video stream"),

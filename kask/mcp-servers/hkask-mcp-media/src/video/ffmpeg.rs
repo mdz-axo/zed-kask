@@ -1210,6 +1210,16 @@ impl FfmpegRunner {
             .arg(format!("{frames},palettegen"))
             .arg(palette.path());
         Self::run_to_completion(command, "GIF palette").await?;
+        // palettegen exits 0 and writes nothing when no frame reached it:
+        // the span is shorter than one frame period at this fps.
+        if !palette.path().is_file() {
+            return Err(crate::MediaError::NoFrameInRange {
+                input: input.to_string(),
+                start_sec,
+                duration_sec,
+                fps,
+            });
+        }
 
         let mut command = Command::new(&self.ffmpeg_path);
         command
