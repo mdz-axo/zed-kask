@@ -62,16 +62,16 @@ Task decomposition, delegation configuration, and escalation judgment are P —
 critiqued by the verification evidence tiers and the operator. The board
 operations are D (the kanban tools are the durable ledger — a task's state
 comes from the board, never from the manager's memory), and the sweep gate is
-D (`lisp_eval` over `unverified_review` and `stalled_in_progress` reconciled
-against the newly re-listed board — it checks sweep obstacles only, never
-proving the functional goal). A done task without its evidence tier recorded
+D (`KTM-3`, `lisp_eval` over the newly re-listed rows — it checks sweep
+obstacles only, never proving the functional goal). A done task without its evidence tier recorded
 is unverified, not complete.
 
 ## Instructions
 
-Step 0 (deterministic triage and preflight, **`KTM-1`** via `lisp_eval`) examines the available inputs, verifies goal-criterion `advances` readiness for decomposition, and checks column WIP limits (`count(column_tasks) < wip_limit`):
-- form: `(list (cond (has_project_description "decompose") (has_task_to_delegate "delegate") (has_board_id "operate") (t "missing_input")) (and goal_confirmed (> advances_count 0)) (< (length column_tasks) wip_limit))`
-- env: `{ "has_project_description": <bool>, "has_task_to_delegate": <bool>, "has_board_id": <bool>, "goal_confirmed": <bool>, "advances_count": <int>, "column_tasks": <array of tasks in target column>, "wip_limit": <column WIP limit> }`
+Step 0 (deterministic triage and preflight, **`KTM-1`** via `lisp_eval`) reads the inputs themselves — the request's fields, the goal as the goal tools returned it, the board's columns as `kanban_board_list` returned them and the target column's tasks as `kanban_task_list` returned them — and derives the phase, goal readiness and the WIP state:
+- form: `(begin (define nonblank (lambda (v) (and (stringp v) (> (length v) 0)))) (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define phase (cond ((nonblank project_description) "decompose") ((and (listp task_to_delegate) (not (is_null task_to_delegate))) "delegate") ((nonblank board_id) "operate") (t "missing_input"))) (define criteria (if (and (listp goal) (listp (assoc "criteria" goal))) (assoc "criteria" goal) (list))) (define goal-ready (and (listp goal) (nonblank (assoc "id" goal)) (> (length criteria) 0))) (define cols (if (listp board_columns) board_columns (list))) (define column (lambda (cs) (if (is_null cs) (list) (if (string= (text-of (car cs) "status") target_status) (car cs) (column (cdr cs)))))) (define limit (assoc "wip_limit" (column cols))) (define occupancy (if (listp column_tasks) (length column_tasks) 0)) (define wip (cond ((is_null (column cols)) "column_not_found") ((not (numberp limit)) "no_limit") ((< occupancy limit) "under_limit") (t "at_limit"))) (list (list "phase" phase) (list "goal_ready" goal-ready) (list "criteria" (length criteria)) (list "wip" wip) (list "occupancy" occupancy) (list "wip_limit" limit)))`
+- env: `{ "project_description": <the request's project description, or "">, "task_to_delegate": <the task object to delegate, or null>, "board_id": <the board id, or "">, "goal": <the goal object from kanban_goal_create/kanban_goal_get, or null>, "board_columns": <the board's columns array from kanban_board_list>, "target_status": <the status the next write targets>, "column_tasks": <kanban_task_list rows for that status> }`
+- `phase` is the first input present (`decompose`, `delegate`, `operate`, `missing_input`); `goal_ready` is true only when the goal object carries an `id` and at least one criterion — the `advances` citations come from those criteria verbatim; `wip` is `under_limit`, `at_limit` (do not add to the column), `no_limit` (the column declares none) or `column_not_found`. Nothing in the env is a count or a boolean the model typed.
 
 | Input present | Phase | Steps |
 |---|---|---|
@@ -119,7 +119,15 @@ One bounded PDCA applies to the active phase: Plan from the initial and target c
    activity since the last sweep (staleness threshold per the operator).
 2. Act per finding: render `kanban-task-management/track-deliverables` with `task` and `deliverables` to assess deliverable readiness, and render `kanban-task-management/verify-completion` with `task_id`, `task_title`, `criteria`, `deliverables`, and `evidence` to classify per-criterion oracle tiers, then reduce the oracle-tier lattice deterministically via **`KTM-2`** (`lisp_eval`). Call `kanban_task_verify` only after `KTM-2` passes and the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal and moves that task to Done. Comment on a failed/unsupported submission without calling verify, and return it for rework — render `kanban-task-management/coordinate-agents` with `board_name` and `active_tasks` (the re-listed board's active tasks) to prepare the replies. Comment to unblock stalled tasks. Escalations render `kanban-task-management/escalate` with `board_name` and `escalation_candidates` (from coordinate-agents' output).
 3. Re-list to confirm the transitions took.
-4. Reconcile the IDs in `unverified_review` and `stalled_in_progress` against the *newly re-listed board* before calling `lisp_eval` with `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))`. This gate checks sweep obstacles only; it does not prove the functional goal was achieved. On a mismatch or a surviving blocker, stop after this one sweep and escalate with the actual task IDs.
+4. Run the sweep gate **`KTM-3`** over the newly re-listed rows (full view — the compact view omits `activity`) and the stale list computed from them. Record `sweep_started_at` with `date -u +%FT%TZ` before step 1; the stale list is `jq -c --arg since <sweep_started_at> -f stale.jq` over `{"tasks": <the re-listed rows>}` with `stale.jq` saved verbatim from:
+
+   ```jq
+   [.tasks[] | select(.status == "in_progress" and .activity != null and .activity.at < $since) | .task_id]
+   ```
+
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (listp tasks) tasks (list))) (define unread (not (or (eq tasks (list)) (and (listp tasks) (not (is_null tasks)))))) (define in (lambda (status rs) (if (is_null rs) (list) (if (string= (text-of (car rs) "status") status) (cons (car rs) (in status (cdr rs))) (in status (cdr rs)))))) (define silent (lambda (rs) (if (is_null rs) (list) (if (is_null (assoc "activity" (car rs))) (cons (text-of (car rs) "task_id") (silent (cdr rs))) (silent (cdr rs)))))) (define ids (lambda (rs) (if (is_null rs) (list) (cons (text-of (car rs) "task_id") (ids (cdr rs)))))) (define keep-known (lambda (xs known) (if (is_null xs) (list) (if (member (car xs) known) (cons (car xs) (keep-known (cdr xs) known)) (keep-known (cdr xs) known))))) (define unverified (silent (in "review" rows))) (define stalled (keep-known (if (listp stale_in_progress) stale_in_progress (list)) (ids (in "in_progress" rows)))) (list (list "verdict" (cond (unread "board_unread") ((and (is_null unverified) (is_null stalled)) "sweep_clean") (t "escalate"))) (list "unverified_review" unverified) (list "stalled_in_progress" stalled) (list "cards_read" (length rows))))`
+   - env: `{ "tasks": <the re-listed rows of every column, verbatim; null when a read failed>, "stale_in_progress": <the jq output> }`
+   - `unverified_review` is every Review card with no activity at all (no evidence comment); `stalled_in_progress` is the stale list, restricted to ids still In Progress on the re-list. `sweep_clean` closes the sweep; `escalate` stops after this one sweep with the actual task IDs; `board_unread` reports the board as unknown, never clean. This gate checks sweep obstacles only; it does not prove the functional goal was achieved.
 5. Clean up (storage Cleanup rule). When every task on the board is Done and its deliverables are recorded outside the board, ask the operator to confirm closure, then call `kanban_board_delete(board_id)` and re-run `kanban_board_list` to confirm. A board with any open, Review or blocked task is kept and named in the report with its open task IDs; never delete it to make a sweep look clean.
 
 ## MCP Tools
@@ -160,11 +168,12 @@ classifies each criterion's evidence:
 
 A criterion is satisfied only by `ran-and-pasted` or `demonstrated`
 evidence; `asserted` does not satisfy — the floor tier is never the
-ceiling. Reduce the per-criterion oracle classes deterministically via `lisp_eval` gate **`KTM-2`**:
-- form: `(and (> criteria_count 0) (= criteria_count (+ ran_and_pasted_count demonstrated_count)) (= asserted_count 0) (if (> demonstrated_count 0) "demonstrated" "ran-and-pasted"))`
-- env: `{ "criteria_count": <total criteria>, "ran_and_pasted_count": <satisfied with ran-and-pasted>, "demonstrated_count": <satisfied with demonstrated>, "asserted_count": <classified as asserted> }`
+ceiling. Reduce the render's per-criterion rows deterministically via `lisp_eval` gate **`KTM-2`**, over the `verify-completion` output as returned:
+- form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (and (listp verification) (listp (assoc "criteria_results" verification))) (assoc "criteria_results" verification) (list))) (define classes (list "ran-and-pasted" "demonstrated" "asserted")) (define count-class (lambda (c rs) (if (is_null rs) 0 (+ (if (string= (text-of (car rs) "oracle_class") c) 1 0) (count-class c (cdr rs)))))) (define malformed (lambda (rs) (if (is_null rs) 0 (+ (if (member (text-of (car rs) "oracle_class") classes) 0 1) (malformed (cdr rs)))))) (define satisfied-but-asserted (lambda (rs) (if (is_null rs) 0 (+ (if (and (eq (assoc "satisfied" (car rs)) t) (string= (text-of (car rs) "oracle_class") "asserted")) 1 0) (satisfied-but-asserted (cdr rs)))))) (define unsatisfied (lambda (rs) (if (is_null rs) 0 (+ (if (eq (assoc "satisfied" (car rs)) t) 0 1) (unsatisfied (cdr rs)))))) (define n (length rows)) (define ran (count-class "ran-and-pasted" rows)) (define demo (count-class "demonstrated" rows)) (define asserted (count-class "asserted" rows)) (define bad (malformed rows)) (define tier (cond ((= n 0) "no_criteria") ((> bad 0) "malformed_rows") ((> (satisfied-but-asserted rows) 0) "asserted_marked_satisfied") ((> asserted 0) "asserted") ((> (unsatisfied rows) 0) "unsatisfied") ((> demo 0) "demonstrated") (t "ran-and-pasted"))) (define pass (member tier (list "demonstrated" "ran-and-pasted"))) (define claimed (eq (assoc "passed" verification) t)) (list (list "tier" tier) (list "pass" pass) (list "render_claim_agrees" (eq claimed pass)) (list "criteria" n) (list "ran_and_pasted" ran) (list "demonstrated" demo) (list "asserted" asserted) (list "malformed" bad)))`
+- env: `{ "verification": <the verify-completion render output, unchanged> }`
+- `tier` is `demonstrated` or `ran-and-pasted` (`pass` true) when every row is satisfied by one of those classes; otherwise `asserted`, `unsatisfied`, `asserted_marked_satisfied` (a row the render marked satisfied on asserted evidence — the render contradicts its own rule), `malformed_rows` (an `oracle_class` outside the three) or `no_criteria`, all `pass` false. `render_claim_agrees` is false when the render's `passed` disagrees with its rows; report that beside the tier.
 
-When `KTM-2` evaluates to `"ran-and-pasted"` or `"demonstrated"`, the recorded evidence string carries that tier prefix (`[oracle: demonstrated] ...`), so a board reader sees what class of verification closed the task; when `false` (any `asserted` or unsatisfied criterion), verification fails. "Tests pass" without the pasted output is asserted; the pasted command and exit code are ran-and-pasted.
+When `pass` is true, the recorded evidence string carries the tier prefix (`[oracle: demonstrated] ...`), so a board reader sees what class of verification closed the task; when false, verification fails and the work returns. "Tests pass" without the pasted output is asserted; the pasted command and exit code are ran-and-pasted.
 
 ## Registry Templates
 
@@ -182,14 +191,7 @@ To render a template, call the `render_template` tool with the template ref (e.g
 
 ## Regression case
 
-All receipts executed live through `lisp_eval`, over `KTM-1`, `KTM-2`, and the sweep gate:
-
-- `KTM-1` with `{ "has_project_description": true, "has_task_to_delegate": false, "has_board_id": false, "goal_confirmed": true, "advances_count": 2, "column_tasks": [1, 2], "wip_limit": 3 }` → `["decompose", true, true]`.
-- `KTM-2` with `{ "criteria_count": 3, "ran_and_pasted_count": 2, "demonstrated_count": 1, "asserted_count": 0 }` → `"demonstrated"` (and `false` when `asserted_count > 0`).
-- Empty unverified-review and stalled-in-progress lists → `true`.
-- One unverified review card → `false`.
-
-The skill's forms are executed at use time, never anchored in code.
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the three authored gates (`scientific_gate_ktm_`): `KTM-1` over each phase input alone and none (`missing_input`), a null task object, a goal with and without criteria, a column at and under its limit, a column with no limit and a status not on the board; `KTM-2` over two ran-and-pasted plus one demonstrated row (`demonstrated`, pass), all ran-and-pasted, an asserted row, an asserted row the render marked satisfied, an unsatisfied ran-and-pasted row, a mis-cased class and no rows; `KTM-3` over a commented and an uncommented Review card with a stale and a fresh In Progress card (`escalate` naming both), an all-clean board, an empty board and a failed read. `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib kanban_task_management_` runs the authored `stale.jq` over a stale, a fresh, a silent and a Review card.
 
 ## Constraints
 
@@ -197,7 +199,7 @@ The skill's forms are executed at use time, never anchored in code.
 - A criterion is satisfied only by `ran-and-pasted` or `demonstrated` evidence; `asserted` never satisfies (the floor tier is never the ceiling). A done task without its evidence tier recorded is unverified, not complete.
 - `kanban_task_verify` runs only after the operator confirms a Review task's observed pass evidence; its nonempty `evidence` is the pass signal. A delegate's reported outcome is evidence for Review, never operator-confirmed completion.
 - After `kanban_task_spawn`, read the spawn receipt and the delegate's report via `kanban_task_comments_since` for the same task ID; if no report has landed, leave the task open and surface the missing receipt. Never replay a spawn after an uncertain tool error, and never render a second execution prompt.
-- The sweep gate `(and (= (length unverified_review) 0) (= (length stalled_in_progress) 0))` checks sweep obstacles only — it never proves the functional goal. Goal achievement is the operator's judgment.
+- The sweep gate `KTM-3` checks sweep obstacles only — it never proves the functional goal. Goal achievement is the operator's judgment.
 - Board deletion happens only after every task is Done, deliverables are recorded outside the board, and the operator confirms closure; a board with any open task is kept and named. Never delete a board to make a sweep look clean.
 - Before Decompose, an inferred goal is only a question; board creation stops until the operator confirms the target. `kanban_goal_create` runs once, with a stable idempotency key.
 

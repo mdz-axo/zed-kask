@@ -4943,6 +4943,209 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_ktm_1_derives_phase_goal_readiness_and_wip_from_the_inputs() {
+        let form = skill_candidate("kanban-task-management", "column_not_found");
+        let columns = json!([
+            {"name": "Backlog", "status": "backlog", "wip_limit": null},
+            {"name": "In Progress", "status": "in_progress", "wip_limit": 2}
+        ]);
+        let gate = |description: &str,
+                    task: serde_json::Value,
+                    board: &str,
+                    goal: serde_json::Value,
+                    status: &str,
+                    tasks: usize| {
+            eval_sandboxed(
+                &form,
+                &json!({"project_description": description, "task_to_delegate": task, "board_id": board, "goal": goal,
+                        "board_columns": columns, "target_status": status, "column_tasks": vec![json!({}); tasks]}),
+            )
+            .unwrap_or_else(|error| panic!("KTM-1 failed to evaluate: {error}"))
+        };
+        let goal = json!({"id": "g1", "criteria": [{"description": "a"}, {"description": "b"}]});
+
+        let decompose = gate(
+            "build the thing",
+            serde_json::Value::Null,
+            "",
+            goal.clone(),
+            "in_progress",
+            2,
+        );
+        assert_eq!(decompose["phase"], json!("decompose"));
+        assert_eq!(decompose["goal_ready"], json!(true));
+        assert_eq!(decompose["criteria"], json!(2));
+        assert_eq!(decompose["wip"], json!("at_limit"));
+
+        let delegate = gate(
+            "",
+            json!({"task_id": "t"}),
+            "",
+            serde_json::Value::Null,
+            "in_progress",
+            1,
+        );
+        assert_eq!(delegate["phase"], json!("delegate"));
+        assert_eq!(delegate["goal_ready"], json!(false));
+        assert_eq!(delegate["wip"], json!("under_limit"));
+
+        let operate = gate(
+            "",
+            serde_json::Value::Null,
+            "board-1",
+            json!({"id": "g", "criteria": []}),
+            "backlog",
+            7,
+        );
+        assert_eq!(operate["phase"], json!("operate"));
+        assert_eq!(
+            operate["goal_ready"],
+            json!(false),
+            "a goal with no criteria is not ready"
+        );
+        assert_eq!(operate["wip"], json!("no_limit"));
+
+        // A null task object is not a task; an empty object is not either.
+        assert_eq!(
+            gate(
+                "",
+                serde_json::Value::Null,
+                "",
+                serde_json::Value::Null,
+                "review",
+                0
+            )["phase"],
+            json!("missing_input")
+        );
+        assert_eq!(
+            gate("", json!({}), "", serde_json::Value::Null, "review", 0)["phase"],
+            json!("missing_input")
+        );
+        // Decompose wins when several inputs are present.
+        assert_eq!(
+            gate("p", json!({"task_id": "t"}), "b", goal.clone(), "review", 0)["phase"],
+            json!("decompose")
+        );
+        assert_eq!(
+            gate("p", serde_json::Value::Null, "", goal, "review", 0)["wip"],
+            json!("column_not_found")
+        );
+    }
+
+    fn ktm_row(satisfied: bool, class: &str) -> serde_json::Value {
+        json!({"criterion": "c", "satisfied": satisfied, "oracle_class": class, "evidence": "e", "feedback": "f"})
+    }
+
+    #[test]
+    fn scientific_gate_ktm_2_reduces_the_oracle_tiers_from_the_render_rows() {
+        let form = skill_candidate("kanban-task-management", "asserted_marked_satisfied");
+        let gate = |passed: bool, rows: Vec<serde_json::Value>| {
+            eval_sandboxed(
+                &form,
+                &json!({"verification": {"passed": passed, "reasoning": "r", "verification_tier": "x", "criteria_results": rows}}),
+            )
+            .unwrap_or_else(|error| panic!("KTM-2 failed to evaluate: {error}"))
+        };
+        let documented = gate(
+            true,
+            vec![
+                ktm_row(true, "ran-and-pasted"),
+                ktm_row(true, "ran-and-pasted"),
+                ktm_row(true, "demonstrated"),
+            ],
+        );
+        assert_eq!(documented["tier"], json!("demonstrated"));
+        assert_eq!(documented["pass"], json!(true));
+        assert_eq!(documented["render_claim_agrees"], json!(true));
+        assert_eq!(documented["criteria"], json!(3));
+
+        let pasted = gate(
+            true,
+            vec![
+                ktm_row(true, "ran-and-pasted"),
+                ktm_row(true, "ran-and-pasted"),
+            ],
+        );
+        assert_eq!(pasted["tier"], json!("ran-and-pasted"));
+        assert_eq!(pasted["pass"], json!(true));
+
+        let asserted = gate(
+            false,
+            vec![ktm_row(true, "ran-and-pasted"), ktm_row(false, "asserted")],
+        );
+        assert_eq!(asserted["tier"], json!("asserted"));
+        assert_eq!(asserted["pass"], json!(false));
+        assert_eq!(asserted["render_claim_agrees"], json!(true));
+
+        let laundered = gate(true, vec![ktm_row(true, "asserted")]);
+        assert_eq!(laundered["tier"], json!("asserted_marked_satisfied"));
+        assert_eq!(laundered["pass"], json!(false));
+        assert_eq!(laundered["render_claim_agrees"], json!(false));
+
+        let unsatisfied = gate(true, vec![ktm_row(false, "ran-and-pasted")]);
+        assert_eq!(unsatisfied["tier"], json!("unsatisfied"));
+        assert_eq!(unsatisfied["pass"], json!(false));
+
+        assert_eq!(
+            gate(true, vec![ktm_row(true, "Demonstrated")])["tier"],
+            json!("malformed_rows")
+        );
+        let none = gate(true, vec![]);
+        assert_eq!(none["tier"], json!("no_criteria"));
+        assert_eq!(none["pass"], json!(false));
+    }
+
+    #[test]
+    fn scientific_gate_ktm_3_names_sweep_obstacles_from_the_relisted_rows() {
+        let form = skill_candidate("kanban-task-management", "sweep_clean");
+        let card = |id: &str, status: &str, commented: bool| {
+            let activity = if commented {
+                json!({"text": "ran: cargo test -- ok", "kind": "comment", "at": "2026-11-12T10:00:00Z"})
+            } else {
+                serde_json::Value::Null
+            };
+            json!({"task_id": id, "status": status, "activity": activity})
+        };
+        let gate = |tasks: serde_json::Value, stale: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"tasks": tasks, "stale_in_progress": stale}))
+                .unwrap_or_else(|error| panic!("KTM-3 failed to evaluate: {error}"))
+        };
+        let mixed = gate(
+            json!([
+                card("a", "review", true),
+                card("b", "review", false),
+                card("c", "in_progress", true),
+                card("e", "in_progress", true)
+            ]),
+            json!(["c", "gone"]),
+        );
+        assert_eq!(mixed["verdict"], json!("escalate"));
+        assert_eq!(mixed["unverified_review"], json!(["b"]));
+        assert_eq!(
+            mixed["stalled_in_progress"],
+            json!(["c"]),
+            "a stale id no longer In Progress is dropped"
+        );
+        assert_eq!(mixed["cards_read"], json!(4));
+
+        let clean = gate(
+            json!([card("a", "review", true), card("c", "in_progress", true)]),
+            json!([]),
+        );
+        assert_eq!(clean["verdict"], json!("sweep_clean"));
+        assert_eq!(gate(json!([]), json!([]))["verdict"], json!("sweep_clean"));
+        assert_eq!(
+            gate(serde_json::Value::Null, json!([]))["verdict"],
+            json!("board_unread")
+        );
+        // An uncommented Backlog card is not a sweep obstacle.
+        assert_eq!(
+            gate(json!([card("z", "backlog", false)]), json!([]))["verdict"],
+            json!("sweep_clean")
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

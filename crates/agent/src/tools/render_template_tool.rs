@@ -585,6 +585,19 @@ mod tests {
         section: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        authored_jq_with_args(skill, section, &[], input)
+    }
+
+    /// Run the first ```jq fence under `### {section}` of a SKILL.md over
+    /// `input`, with extra jq arguments (e.g. `--arg since …`) bound the way
+    /// the skill's documented command binds them. The fence may be indented
+    /// inside a list item; the filter is read up to its closing fence.
+    fn authored_jq_with_args(
+        skill: &str,
+        section: &str,
+        extra_args: &[&str],
+        input: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         use smol::{io::AsyncWriteExt, process::Command};
         use std::process::Stdio;
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -595,11 +608,13 @@ mod tests {
         let filter = source
             .split_once(&format!("### {section}\n"))
             .and_then(|(_, tail)| tail.split_once("```jq\n"))
-            .and_then(|(_, tail)| tail.split_once("\n```"))
-            .map(|(filter, _)| filter)
+            .and_then(|(_, tail)| tail.split_once("```"))
+            .map(|(filter, _)| filter.trim())
             .ok_or_else(|| format!("missing authored {section} filter"))?;
         let mut child = Command::new("jq")
-            .args(["-ce", filter])
+            .arg("-ce")
+            .args(extra_args)
+            .arg(filter)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1797,6 +1812,28 @@ mod tests {
                 .expect_err("ASSESS needs the learner's answer")
                 .contains("learner_answer")
         );
+    }
+
+    /// The kanban sweep's stale list is the one date comparison the lisp
+    /// gate cannot make; the authored jq filter computes it from the re-listed
+    /// rows and the recorded sweep start.
+    #[test]
+    fn kanban_task_management_stale_filter_reads_in_progress_activity_against_the_sweep_start() {
+        let rows = serde_json::json!({"tasks": [
+            {"task_id": "stale", "status": "in_progress", "activity": {"at": "2026-11-12T10:00:00Z"}},
+            {"task_id": "fresh", "status": "in_progress", "activity": {"at": "2026-11-13T09:00:00Z"}},
+            {"task_id": "silent", "status": "in_progress", "activity": null},
+            {"task_id": "review-old", "status": "review", "activity": {"at": "2026-11-01T00:00:00Z"}}
+        ]});
+        // The filter reads `$since`; bind it the way the skill's command does.
+        let stale = authored_jq_with_args(
+            "kanban-task-management",
+            "Operate-phase sweep loop",
+            &["--arg", "since", "2026-11-13T00:00:00Z"],
+            rows,
+        )
+        .expect("authored stale.jq runs");
+        assert_eq!(stale, serde_json::json!(["stale"]));
     }
 
     #[test]
