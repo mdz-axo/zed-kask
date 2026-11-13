@@ -5678,6 +5678,182 @@ async fn media_server_tools_are_absent_on_private_threads(cx: &mut TestAppContex
     fake.end_last(&model);
 }
 
+/// zed-kask: D107 — the reported bug's request shape. A local model with a
+/// small context window (a private thread on a 15 GiB CPU-only laptop) is
+/// sent the compact system prompt and only the file and search tools; a
+/// local model with a large window, and a small model that is not local,
+/// keep the full prompt and the full tool surface.
+#[gpui::test]
+async fn small_local_model_gets_the_compact_prompt_and_tools(cx: &mut TestAppContext) {
+    let public = init_test(cx);
+    let local = register_local_fake_provider(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let small_local = local.update_model("small", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+    });
+    let boundary_local = local.update_model("boundary", |model| {
+        model.max_token_count = crate::thread::COMPACT_PROFILE_MAX_CONTEXT;
+        model.max_input_tokens = crate::thread::COMPACT_PROFILE_MAX_CONTEXT;
+    });
+    let small_public = public.update_model("small-public", |model| {
+        model.max_token_count = 4_096;
+        model.max_input_tokens = 4_096;
+    });
+    assert!(crate::thread::uses_compact_profile(&small_local));
+    assert!(
+        !crate::thread::uses_compact_profile(&boundary_local),
+        "the profile applies strictly below the threshold"
+    );
+    assert!(
+        !crate::thread::uses_compact_profile(&small_public),
+        "only Zed's local providers get the profile"
+    );
+    let llama_cpp = FakeLanguageModelProvider::new(
+        LanguageModelProviderId::from("llama.cpp".to_string()),
+        LanguageModelProviderName::from("llama.cpp".to_string()),
+    );
+    let small_llama_cpp = llama_cpp.update_model("small", |model| model.max_token_count = 4_096);
+    assert!(
+        crate::thread::uses_compact_profile(&small_llama_cpp),
+        "a small llama.cpp model gets the profile too"
+    );
+    let small_cloud = local.update_model("glm-5.3:cloud", |model| model.max_token_count = 4_096);
+    assert!(
+        !crate::thread::uses_compact_profile(&small_cloud),
+        "an Ollama cloud-proxied model does not run on this machine"
+    );
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(small_local.clone()),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+    let _research_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    let system_prompt = |completion: &LanguageModelRequest| {
+        completion
+            .messages
+            .first()
+            .expect("system prompt message")
+            .string_contents()
+    };
+
+    // The reported case: a privacy-marked thread on the small local model.
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_private_inference(true, cx);
+            thread.send(ClientUserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("small-local completion");
+    let mut names = tool_names_for_completion(&completion);
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "edit_file",
+            "find_path",
+            "grep",
+            "list_directory",
+            "read_file",
+            "write_file"
+        ],
+        "a small local model is offered only the file and search tools"
+    );
+    let prompt = system_prompt(&completion);
+    assert!(
+        prompt.contains("## How to answer"),
+        "a small local model gets the compact prompt: {prompt}"
+    );
+    assert!(
+        !prompt.contains("## Fixing Diagnostics"),
+        "the full prompt is not sent to a small local model"
+    );
+    assert_eq!(
+        completion.messages.len(),
+        2,
+        "the request is the compact prompt and the user message, nothing injected"
+    );
+
+    local.end_last(&small_local);
+    cx.run_until_parked();
+
+    // The same marked thread on a local model at the threshold keeps the
+    // full prompt and the MCP surface.
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_model(boundary_local.clone(), cx);
+            thread.send(ClientUserMessageId::new(), ["hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = local
+        .pending_completions()
+        .pop()
+        .expect("boundary-local completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a local model at the threshold keeps MCP server tools: {names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name == CopyPathTool::NAME),
+        "a local model at the threshold keeps the other built-in tools: {names:?}"
+    );
+    assert!(system_prompt(&completion).contains("## Fixing Diagnostics"));
+    local.end_last(&boundary_local);
+    cx.run_until_parked();
+
+    // A small model that is not local is not given the profile.
+    thread
+        .update(cx, |thread, cx| {
+            thread.set_private_inference(false, cx);
+            thread.set_model(small_public.clone(), cx);
+            thread.send(ClientUserMessageId::new(), ["hello once more"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let completion = public
+        .pending_completions()
+        .pop()
+        .expect("small-public completion");
+    let names = tool_names_for_completion(&completion);
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a small public model keeps MCP server tools: {names:?}"
+    );
+    assert!(system_prompt(&completion).contains("## Fixing Diagnostics"));
+    public.end_last(&small_public);
+}
+
 /// zed-kask: D100 (operator ruling 2026-11-06 — the tool-query-embed design
 /// §8.2's ruling, shape 2: the perimeter) — the corpus server joins the
 /// default `private_thread_disabled_servers` set: its assisting-inference

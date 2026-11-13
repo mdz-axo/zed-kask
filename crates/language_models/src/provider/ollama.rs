@@ -32,6 +32,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::local_context::discovered_context_cap;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -255,26 +256,12 @@ impl OllamaLanguageModelProvider {
     /// Every model this provider offers, keyed by id: the fetched list when
     /// auto-discovery is on, with settings entries merged over it.
     fn ollama_models(&self, cx: &App) -> HashMap<String, ollama::Model> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         let settings = OllamaLanguageModelProvider::settings(cx);
-
-        if settings.auto_discover {
-            for model in self.state.read(cx).fetched_models.iter() {
-                let mut model = model.clone();
-                if let Some(context_window) = settings.context_window {
-                    model.max_tokens = context_window;
-                }
-                models.insert(model.name.clone(), model);
-            }
-        }
-
-        merge_settings_into_models(
-            &mut models,
-            &settings.available_models,
-            settings.context_window,
-        );
-
-        models
+        compute_effective_models(
+            &self.state.read(cx).fetched_models,
+            settings,
+            discovered_context_cap(&settings.api_url),
+        )
     }
 
     /// The current configuration of `model`, if this provider still offers it.
@@ -1112,6 +1099,45 @@ impl Render for ConfigurationView {
     }
 }
 
+/// The models `provided_models` exposes: discovery merged with the
+/// `available_models` and `context_window` overrides.
+///
+/// zed-kask: D107 — `discovered_context_cap` bounds the context window of a
+/// discovered model to what this machine can serve (see `local_context`).
+/// The window is sent to Ollama as `num_ctx`, so an uncapped trained length
+/// (`qwen3:1.7b` reports 40,960) made a CPU-only laptop evaluate a prompt it
+/// could not finish in useful time. A cloud-proxied model runs elsewhere and
+/// is not capped; neither is any value the user set in Zed.
+fn compute_effective_models(
+    fetched_models: &[ollama::Model],
+    settings: &OllamaSettings,
+    discovered_context_cap: Option<u64>,
+) -> HashMap<String, ollama::Model> {
+    let mut models: HashMap<String, ollama::Model> = HashMap::default();
+
+    if settings.auto_discover {
+        for model in fetched_models {
+            let mut model = model.clone();
+            if let Some(context_window) = settings.context_window {
+                model.max_tokens = context_window;
+            } else if let Some(cap) = discovered_context_cap
+                && !settings::is_ollama_cloud_model_name(&model.name)
+            {
+                model.max_tokens = model.max_tokens.min(cap);
+            }
+            models.insert(model.name.clone(), model);
+        }
+    }
+
+    merge_settings_into_models(
+        &mut models,
+        &settings.available_models,
+        settings.context_window,
+    );
+
+    models
+}
+
 fn merge_settings_into_models(
     models: &mut HashMap<String, ollama::Model>,
     available_models: &[AvailableModel],
@@ -1166,6 +1192,66 @@ fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// zed-kask: D107 — the reported bug: `qwen3:1.7b` discovered with its
+    /// trained 40,960 context on a 15 GiB CPU-only machine.
+    #[test]
+    fn discovered_context_is_capped_but_settings_are_not() {
+        let fetched = vec![
+            ollama::Model::new("qwen3:1.7b", Some(40_960), Some(true), None, Some(true)),
+            ollama::Model::new("tiny:latest", Some(2_048), None, None, None),
+            ollama::Model::new("glm-5.3:cloud", Some(200_000), Some(true), None, None),
+        ];
+        let discover = OllamaSettings {
+            auto_discover: true,
+            ..Default::default()
+        };
+
+        let capped = compute_effective_models(&fetched, &discover, Some(4_096));
+        assert_eq!(capped["qwen3:1.7b"].max_tokens, 4_096);
+        assert_eq!(
+            capped["tiny:latest"].max_tokens, 2_048,
+            "the cap never raises a model's own context"
+        );
+        assert_eq!(
+            capped["glm-5.3:cloud"].max_tokens, 200_000,
+            "a cloud-proxied model does not run on this machine"
+        );
+
+        let remote = compute_effective_models(&fetched, &discover, None);
+        assert_eq!(
+            remote["qwen3:1.7b"].max_tokens, 40_960,
+            "a remote server is not capped by this machine's memory"
+        );
+
+        let global_override = OllamaSettings {
+            context_window: Some(32_768),
+            ..discover.clone()
+        };
+        let overridden = compute_effective_models(&fetched, &global_override, Some(4_096));
+        assert_eq!(
+            overridden["qwen3:1.7b"].max_tokens, 32_768,
+            "the `context_window` setting wins over the cap"
+        );
+
+        let per_model = OllamaSettings {
+            available_models: vec![AvailableModel {
+                name: "qwen3:1.7b".to_string(),
+                display_name: None,
+                max_tokens: 16_384,
+                keep_alive: None,
+                supports_tools: Some(true),
+                supports_images: None,
+                supports_thinking: None,
+            }],
+            ..discover
+        };
+        let listed = compute_effective_models(&fetched, &per_model, Some(4_096));
+        assert_eq!(
+            listed["qwen3:1.7b"].max_tokens, 16_384,
+            "a per-model `max_tokens` setting wins over the cap"
+        );
+    }
 
     #[test]
     fn test_merge_settings_preserves_display_names_for_similar_models() {

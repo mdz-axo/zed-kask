@@ -201,7 +201,7 @@ architecture-beta
     agent --> lisp_eval: deterministic checks (model-coordinated)
     lisp_eval --> lisp_runtime: background decode and cooperative evaluation
 
-    thread --> tool_port: full registered surface every turn (D44 — no per-turn filtering)
+    thread --> tool_port: full registered surface every turn (D44 — no per-turn filtering; none for a small local model, D107)
     list_mcp_tools --> thread: enumerates registered surface on demand
     tool_port --> mcp_runtime: invoke(server, tool, args, agent)
     mcp_runtime --> call_cap: charge_call_metered(agent)
@@ -220,7 +220,7 @@ The two dispatch paths into `ToolPort::invoke`:
 
 | Caller | Entry point | Action | Resolves to |
 | --- | --- | --- | --- |
-| Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` (profile + delegation filters, D44 — no per-turn router) | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
+| Agent tool-use loop (LLM-decided) | `Thread::enabled_tools` (profile + delegation filters, D44 — no per-turn router; a small local model gets six file tools and no MCP tools, D107) | LLM emits a tool_use event | `ToolPort::invoke` under the agent's `WebID` |
 | Widget direct dispatch | `hkask_tool_invoker::ToolInvoker` impls | UI gesture (kanban move, scenarios rung) | `ToolPort::invoke` under the `kask-panel` persona |
 
 Both share the same metering (`CallCapManager::charge_metered`), the same

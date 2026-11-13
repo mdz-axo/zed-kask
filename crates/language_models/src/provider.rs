@@ -12,6 +12,7 @@ pub mod deepseek;
 pub mod google;
 pub mod llama_cpp;
 pub mod lmstudio;
+mod local_context;
 pub mod mistral;
 pub mod ollama;
 pub mod open_ai;

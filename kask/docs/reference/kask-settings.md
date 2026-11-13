@@ -446,6 +446,22 @@ cannot replace the built-in provider. Both providers' server URLs are
 user-editable; the models are local only while those URLs point at this
 machine.
 
+Two behaviours follow the local model itself, on marked and unmarked threads
+alike, and have no key in this section (D107):
+
+- **Context cap.** When the provider's server is on this machine, a
+  discovered model's context window is capped by total system memory: 4,096
+  tokens under 23 GiB, 32,768 from 23 GiB, 262,144 from 47 GiB. The provider
+  settings `language_models.ollama.context_window` and
+  `language_models."llama.cpp".context_window`, and a per-model `max_tokens`,
+  are never capped; neither is an Ollama cloud-proxied model.
+- **Compact profile.** A local model with a context window below 16,384
+  tokens gets a short system prompt and only the six file and search tools:
+  no MCP server tools, project rules, skills or memory recall. Setting the
+  context window to 16,384 or more restores the full agent.
+
+The user-facing description is `docs/src/ai/use-a-local-model.md`.
+
 | Field | Type | Default | Resolution |
 |-------|------|---------|------------|
 | `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus", "nostr-relay", "nostr-client"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`) | D100: MCP servers whose tool surface is disabled on privacy-marked threads — their assisting inference cannot run locally (the media server's vision/STT/OCR passes; the corpus server's embed/tag/OCR legs), so the tool is refused rather than route private content to cloud models. The two Nostr servers are in the set for a different reason: they contact public relays, and a private thread shares nothing with a public network (the relay by operator ruling 2026-11-12; the client, as a whole server, by operator ruling 2026-11-11) |

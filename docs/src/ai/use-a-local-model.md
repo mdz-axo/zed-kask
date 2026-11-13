@@ -58,7 +58,9 @@ Zed automatically discovers the served models with their context length and tool
 
 ### llama.cpp Context Length {#llama-cpp-context}
 
-Zed uses the context length the server reports (`/props`). Override it for all models with `context_window`, or per model with `max_tokens` in `available_models`:
+Zed uses the context length the server reports (`/props`). When the server runs on this machine, Zed caps that value by the machine's memory, using the same tiers as Ollama below. llama.cpp fixes its context when it loads a model, so the cap limits how much Zed plans to send; it does not change the server's memory use. To change that, start the server with `-c`/`--ctx-size`.
+
+Override the context length for all models with `context_window`, or per model with `max_tokens` in `available_models`. Neither is capped:
 
 ```json [settings]
 {
@@ -116,7 +118,17 @@ Zed automatically discovers models that Ollama has pulled. To disable autodiscov
 
 ### Ollama Context Length {#ollama-context}
 
-Zed requests to Ollama include context length as the `num_ctx` parameter. By default, Zed uses `4096` tokens.
+Zed requests to Ollama include context length as the `num_ctx` parameter. For a discovered model, Zed uses the context length Ollama reports for it: `num_ctx` from the model's parameters if set, otherwise the length the model was trained with. If Ollama reports neither, Zed uses `4096` tokens.
+
+When Ollama runs on this machine, Zed caps a discovered model's context length by the machine's total memory:
+
+| System memory  | Maximum context length |
+| -------------- | ---------------------- |
+| Under 23 GiB   | 4,096                  |
+| 23–47 GiB      | 32,768                 |
+| 47 GiB or more | 262,144                |
+
+These are Ollama's own default tiers, applied to system memory instead of GPU memory. The cap does not apply to cloud-proxied models (names ending in `cloud`), to an Ollama server at a non-local `api_url`, or to any value you set yourself below.
 
 Set a context length for all Ollama models:
 
@@ -131,6 +143,12 @@ Set a context length for all Ollama models:
 ```
 
 You can also configure context length per model with `max_tokens` in `available_models`.
+
+### Small Context Windows {#small-context}
+
+A model served by Ollama or llama.cpp with a context length below 16,384 tokens cannot hold the agent's full system prompt and tool list. For these models the agent sends a short system prompt and offers only the file tools: `read_file`, `edit_file`, `write_file`, `grep`, `find_path` and `list_directory`. Project rules, your personal `AGENTS.md`, skills, MCP server tools, the terminal and memory recall are left out.
+
+To get the full agent with a local model, set its context length to 16,384 or more with `context_window` or `max_tokens`. A larger context needs more memory and, on a CPU-only machine, much more time before the first response.
 
 If your Ollama server requires a key, enter the key in the provider UI or set `OLLAMA_API_KEY`. For remote Ollama services such as Ollama Turbo, set the API URL to the remote endpoint and provide an API key.
 

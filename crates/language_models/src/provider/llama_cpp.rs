@@ -30,6 +30,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::local_context::discovered_context_cap;
 use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
@@ -395,12 +396,31 @@ fn compute_effective_models(
     fetched_models: &[llama_cpp::Model],
     settings: &LlamaCppSettings,
 ) -> HashMap<String, llama_cpp::Model> {
+    compute_effective_models_with_cap(
+        fetched_models,
+        settings,
+        discovered_context_cap(&settings.api_url),
+    )
+}
+
+/// zed-kask: D107 — `discovered_context_cap` bounds the context window Zed
+/// assumes for a discovered model to what this machine can serve (see
+/// `local_context`). llama.cpp fixes its context when the server loads the
+/// model, so the cap does not change the server's memory use: it bounds how
+/// much Zed plans to send. A value the user set in Zed is never capped.
+fn compute_effective_models_with_cap(
+    fetched_models: &[llama_cpp::Model],
+    settings: &LlamaCppSettings,
+    discovered_context_cap: Option<u64>,
+) -> HashMap<String, llama_cpp::Model> {
     let mut models: HashMap<String, llama_cpp::Model> = HashMap::default();
     if settings.auto_discover {
         for model in fetched_models {
             let mut model = model.clone();
             if let Some(context_window) = settings.context_window {
                 model.max_tokens = context_window;
+            } else if let Some(cap) = discovered_context_cap {
+                model.max_tokens = model.max_tokens.min(cap);
             }
             models.insert(model.name.clone(), model);
         }
@@ -1586,6 +1606,62 @@ mod tests {
         assert!(model.supports_thinking);
         // Unspecified capability keeps the discovered value.
         assert!(!model.supports_images);
+    }
+
+    /// zed-kask: D107 — a discovered context is capped; Zed settings are not.
+    #[test]
+    fn discovered_context_is_capped_but_settings_are_not() {
+        let fetched = vec![
+            llama_cpp::Model::new("big", Some("big"), Some(40_960), true, false, false),
+            llama_cpp::Model::new(
+                "cold",
+                Some("cold"),
+                Some(ASSUMED_UNLOADED_CONTEXT),
+                true,
+                false,
+                false,
+            ),
+            llama_cpp::Model::new("tiny", Some("tiny"), Some(2_048), true, false, false),
+        ];
+        let discover = LlamaCppSettings {
+            auto_discover: true,
+            ..Default::default()
+        };
+
+        let capped = compute_effective_models_with_cap(&fetched, &discover, Some(4_096));
+        assert_eq!(capped["big"].max_tokens, 4_096);
+        assert_eq!(
+            capped["cold"].max_tokens, 4_096,
+            "the unloaded-model assumption is capped too"
+        );
+        assert_eq!(
+            capped["tiny"].max_tokens, 2_048,
+            "the cap never raises a model's own context"
+        );
+
+        let remote = compute_effective_models_with_cap(&fetched, &discover, None);
+        assert_eq!(remote["big"].max_tokens, 40_960);
+
+        let global_override = LlamaCppSettings {
+            context_window: Some(32_768),
+            ..discover.clone()
+        };
+        let overridden = compute_effective_models_with_cap(&fetched, &global_override, Some(4_096));
+        assert_eq!(overridden["big"].max_tokens, 32_768);
+
+        let per_model = LlamaCppSettings {
+            available_models: vec![AvailableModel {
+                name: "big".to_string(),
+                display_name: None,
+                max_tokens: 16_384,
+                supports_tools: None,
+                supports_images: None,
+                supports_thinking: None,
+            }],
+            ..discover
+        };
+        let listed = compute_effective_models_with_cap(&fetched, &per_model, Some(4_096));
+        assert_eq!(listed["big"].max_tokens, 16_384);
     }
 
     #[test]

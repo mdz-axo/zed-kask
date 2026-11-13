@@ -1,12 +1,12 @@
 use crate::{
-    ApplyCodeActionTool, AskUserTool, CodeActionStore, ContextServerRegistry, CopyPathTool,
-    CreateDirectoryTool, CreateThreadTool, DbLanguageModel, DbThread, DeletePathTool,
-    DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, FindReferencesTool, GetCodeActionsTool,
-    GoToDefinitionTool, GoalCloseTool, GoalCorrectTool, GrepTool, LeanCheckTool, LispEvalTool,
-    ListAgentsAndModelsTool, ListDirectoryTool, ListMcpToolsTool, MovePathTool, OntoAnchorTool,
-    ProjectSnapshot, ReadFileTool, RenameTool, RenderTemplateTool, SandboxedTerminalTool,
-    SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
-    ToolPermissionDecision, UnfoldPlanTool, WebSearchTool, WriteFileTool,
+    ApplyCodeActionTool, AskUserTool, CodeActionStore, CompactSystemPromptTemplate,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, CreateThreadTool, DbLanguageModel,
+    DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool,
+    FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GoalCloseTool, GoalCorrectTool,
+    GrepTool, LeanCheckTool, LispEvalTool, ListAgentsAndModelsTool, ListDirectoryTool,
+    ListMcpToolsTool, MovePathTool, OntoAnchorTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    RenderTemplateTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template,
+    Templates, TerminalTool, ToolPermissionDecision, UnfoldPlanTool, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{AgentModelId, ClientUserMessageId, MentionUri, ProcessOutput};
@@ -241,6 +241,36 @@ pub(crate) fn is_private_leg_model(model: &LanguageModel) -> bool {
 /// whose ids are `{provider}/{model}`).
 pub(crate) fn is_private_leg_model_id(provider_id: &str, model_name: &str) -> bool {
     settings::is_private_thread_local_model(provider_id, model_name)
+}
+
+/// zed-kask: D107 — a local model whose context window is below this gets
+/// the compact profile. The full request does not fit under it: the system
+/// prompt template alone is about 6,600 tokens, before rules, skills and
+/// the tool schemas.
+pub(crate) const COMPACT_PROFILE_MAX_CONTEXT: u64 = 16_384;
+
+/// zed-kask: D107 — the only tools the compact profile offers: reading,
+/// searching and editing project files. Every other built-in tool and every
+/// MCP server tool is withheld, because their schemas are the larger part
+/// of the request. This is a recorded exception to D44's "no per-turn tool
+/// filtering": the cut is fixed per model, not sampled per turn.
+const COMPACT_PROFILE_TOOLS: &[&str] = &[
+    ReadFileTool::NAME,
+    EditFileTool::NAME,
+    WriteFileTool::NAME,
+    GrepTool::NAME,
+    FindPathTool::NAME,
+    ListDirectoryTool::NAME,
+];
+
+/// zed-kask: D107 — does this model run on the compact profile (the compact
+/// system prompt and [`COMPACT_PROFILE_TOOLS`])? True for a model served by
+/// Zed's built-in Ollama or llama.cpp provider, cloud-proxied entries
+/// excluded, whose context window is below [`COMPACT_PROFILE_MAX_CONTEXT`].
+/// It keys on the model, not the thread's privacy mark: a small local model
+/// has the same budget on an unmarked thread.
+pub(crate) fn uses_compact_profile(model: &LanguageModel) -> bool {
+    is_private_leg_model(model) && model.max_token_count() < COMPACT_PROFILE_MAX_CONTEXT
 }
 
 /// D100 (operator ruling 2026-11-05) — the PI-owned private-thread
@@ -3845,10 +3875,13 @@ impl Thread {
             // them into the prompt after the system prompt, before the
             // conversation history. Only for UserPrompt and Subagent intents
             // (not for ThreadSummarization — would cause infinite recursion).
+            // zed-kask: D107 — a compact-profile model gets neither injection:
+            // its window cannot carry recalled memory or the affordance block.
             if matches!(
                 intent,
                 CompletionIntent::UserPrompt | CompletionIntent::Subagent
-            ) {
+            ) && !uses_compact_profile(&model)
+            {
                 // zed-kask: D6 — context injection dispatches by agent_id
                 let agent_id = this
                     .read_with(cx, |this, _| this.kask.agent_id().clone())
@@ -6327,6 +6360,14 @@ impl Thread {
             .filter(|(tool_name, _)| crate::tools::tool_feature_flag_enabled(tool_name, cx))
             .collect::<BTreeMap<_, _>>();
 
+        // zed-kask: D107 — the compact profile: a small local model is
+        // offered only the file and search tools, and no MCP server tools.
+        // Pinned by `small_local_model_gets_the_compact_prompt_and_tools`.
+        if uses_compact_profile(model) {
+            tools.retain(|tool_name, _| COMPACT_PROFILE_TOOLS.contains(&tool_name.as_ref()));
+            return tools;
+        }
+
         let mut context_server_tools = Vec::new();
         let mut seen_tools = tools.keys().cloned().collect::<HashSet<_>>();
         let mut duplicate_tool_names = HashSet::default();
@@ -6563,9 +6604,26 @@ impl Thread {
         available_tools: Vec<SharedString>,
         cx: &App,
     ) -> SharedString {
+        let date = Local::now().format("%Y-%m-%d").to_string();
+
+        // zed-kask: D107 — a small local model gets the compact prompt. It
+        // is rendered per request rather than cached: the template is about
+        // a kilobyte, and the render is deterministic, so the bytes are
+        // stable across requests either way.
+        if self.model().is_some_and(uses_compact_profile) {
+            return CompactSystemPromptTemplate {
+                project: self.project_context.read(cx),
+                available_tools,
+                date,
+            }
+            .render(&self.templates)
+            .context("failed to build compact system prompt")
+            .expect("Invalid template")
+            .into();
+        }
+
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let model_name = self.model().map(|m| m.name().0.to_string());
-        let date = Local::now().format("%Y-%m-%d").to_string();
         let sandboxing =
             crate::sandboxing::sandboxing_enabled_for_project(self.project.read(cx), cx);
         let is_linux = cfg!(target_os = "linux");

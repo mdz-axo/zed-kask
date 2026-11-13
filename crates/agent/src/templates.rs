@@ -82,6 +82,25 @@ impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
 }
 
+/// zed-kask: D107 — the system prompt for a local model whose context
+/// window is too small for [`SystemPromptTemplate`] (about 6,600 tokens
+/// before any rules, skills or tools). It carries the answer shape, the
+/// truthfulness rules, a short tool discipline and the system facts, and
+/// nothing else: no project rules, personal `AGENTS.md`, skills catalog,
+/// session context or goal lifecycle. `Thread::render_system_prompt`
+/// selects it; see `uses_compact_profile` for when.
+#[derive(Serialize)]
+pub struct CompactSystemPromptTemplate<'a> {
+    #[serde(flatten)]
+    pub project: &'a prompt_store::ProjectContext,
+    pub available_tools: Vec<SharedString>,
+    pub date: String,
+}
+
+impl Template for CompactSystemPromptTemplate<'_> {
+    const TEMPLATE_NAME: &'static str = "compact_system_prompt.hbs";
+}
+
 /// Handlebars helper for checking if an item is in a list
 fn contains(
     h: &handlebars::Helper,
@@ -153,6 +172,56 @@ mod tests {
                 "the retired interaction contract must stay out of the prompt: {retired}"
             );
         }
+    }
+
+    /// zed-kask: D107 — the compact prompt must stay small enough to leave
+    /// room for a conversation in a 4,096-token window, and must not grow
+    /// the sections the full prompt carries.
+    #[test]
+    fn test_compact_system_prompt_is_small_and_self_contained() {
+        let project = prompt_store::ProjectContext::default();
+        let templates = Templates::new();
+        let with_tools = CompactSystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["read_file".into()],
+            date: "2026-01-01".to_string(),
+        }
+        .render(&templates)
+        .unwrap();
+
+        assert!(with_tools.contains("## How to answer"));
+        assert!(with_tools.contains("## Truth"));
+        assert!(with_tools.contains("## Tools"));
+        assert!(with_tools.contains("Date: 2026-01-01"));
+        assert!(
+            with_tools.len() < 1_600,
+            "the compact prompt grew to {} bytes; its budget is 1,600",
+            with_tools.len()
+        );
+        for full_prompt_only in [
+            "## Agent Skills",
+            "## User's Custom Instructions",
+            "## Goal lifecycle",
+            "## Session Context",
+            "onto_anchor",
+        ] {
+            assert!(
+                !with_tools.contains(full_prompt_only),
+                "the compact prompt must not carry {full_prompt_only}"
+            );
+        }
+
+        let without_tools = CompactSystemPromptTemplate {
+            project: &project,
+            available_tools: Vec::new(),
+            date: "2026-01-01".to_string(),
+        }
+        .render(&templates)
+        .unwrap();
+        assert!(
+            !without_tools.contains("## Tools"),
+            "a model with no tools is not told about tools"
+        );
     }
 
     #[test]

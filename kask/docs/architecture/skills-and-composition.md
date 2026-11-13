@@ -42,7 +42,7 @@ adds three scoped contexts:
 
 | # | Surface | Location | Scope |
 |---|---------|----------|-------|
-| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | Every thread |
+| 1 | Base template | `crates/agent/src/templates/system_prompt.hbs` | Every thread, except one running a small local model (see below) |
 | 2 | Curator overlay | `crates/agent/src/curator_agent_server.rs` (`CURATOR_STATIC_CONTEXT`) | Curator threads |
 | 3 | Kanban Steer overlay | `crates/kanban_panel/src/kanban_panel.rs` (`steer_system_prompt`) | Kanban panel |
 | 4 | Media Steer overlay | `crates/media_panel/src/media_panel.rs:203-278` (`ensure_steer`, `steer_system_prompt`) | Media panel |
@@ -58,6 +58,22 @@ this explicitly (`curator_agent_server.rs:33-36`). Composing a specialisation on
 a stable base, rather than forking a second full prompt, is the open/closed
 principle applied to instruction text — the base is extended without being
 modified, so upstream changes to it keep flowing through[^martin-ocp].
+
+**One exception: the compact prompt (D107).** A model served by Zed's Ollama or
+llama.cpp provider (cloud-proxied models excluded) with a context window below
+16,384 tokens cannot hold the base template, which is about 6,600 tokens before
+rules, skills and tool schemas. `Thread::render_system_prompt` sends it
+`crates/agent/src/templates/compact_system_prompt.hbs` instead
+(`CompactSystemPromptTemplate`; the test is `uses_compact_profile` in
+`crates/agent/src/thread.rs`). This is a second, separate prompt, not an
+overlay. It carries the answer shape, the truthfulness rules, a short tool
+discipline and the system facts. It does not carry project rules, the personal
+`AGENTS.md`, the skills catalog, the goal lifecycle, ontology anchoring or the
+session context, so a Curator thread on such a model runs without its overlay.
+The same threads are offered only six file and search tools and no MCP server
+tools (see `kask/docs/diagrams/mcp-dispatch.md`). Pinned by
+`test_compact_system_prompt_is_small_and_self_contained` and
+`small_local_model_gets_the_compact_prompt_and_tools`.
 
 ## 3. Rendering pipeline
 
@@ -119,7 +135,7 @@ matrix over §5's divergences and the template's own headings; it decides nothin
 
 | Section | Line | Status vs. upstream |
 |---------|------|---------------------|
-| Expectation-led inquiry (kask) | `:5` | **New section** (D75 — one falsifiable expected observation before substantive inquiry; pinned by `test_system_prompt_establishes_expectation_before_substantive_inquiry`, `templates.rs:140`) |
+| Expectation-led inquiry (kask) | `:5` | **New section** (D75 — one falsifiable expected observation before substantive inquiry; pinned by `test_system_prompt_establishes_expectation_before_substantive_inquiry`, `templates.rs:228`) |
 | Communication | `:9` | Identical |
 | Formatting Responses | `:20` | **Modified** (§5.3, §5.4) |
 | Tool Use | `:42` | **Modified** (structured tool-call bullet; D44 hidden-tools marker bullet at `:62-63`) |
@@ -458,7 +474,7 @@ The model is the executor. Convergence is the model's judgment, optionally check
 
 | Tool | Location | Purpose |
 |------|----------|---------|
-| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:301@default_max_steps`, `:305@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:384@LispEvalTool::run`; `thread.rs:5043@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-244`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
+| `lisp_eval` | `crates/agent/src/tools/lisp_eval_tool.rs` | Sandboxed Lisp for skill-directed convergence, invariants and scoring; no I/O/`eval`/network. Defaults 100000 steps / depth 1024 (`lisp_eval_tool.rs:301@default_max_steps`, `:305@default_max_depth`). Native typed decode/evaluation run in the background with one cooperative cancellation flag, mandatory teardown, cleanup join and publication/weak pending-owner guards (`lisp_eval_tool.rs:384@LispEvalTool::run`; `thread.rs:5076@Thread::process_tool_result`). Raw/pure APIs are unchanged; raw-output copying/display remain foreground. H8 direct/routed corpus queries share one body; only Lisp-option work is offloaded and observes request-context cancellation, not later inference/retrieval/generation (`kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:108-244`). Explicit rmcp cancel reaches the worker; plain EOF does not immediately signal it (tested context cancellation follows service-owner teardown after drain). No immediate disconnect or service-shutdown-worker-join promise. [Bounds, transport evidence and nonpreemptible phases](../reference/lisp-eval-dialect.md#numeric-admission-and-limits); H4C measurements remain deferred, H6 native Stop validation not performed, installed live build `1c247be309` predates H7/H8. No hard time/heap/concurrency quota or new runtime/service/dependency/cache/configuration. |
 | `render_template` | `crates/agent/src/tools/render_template_tool.rs` | Renders Jinja2 templates from `kask/registry/templates/` using `minijinja`. Strips the `[inference]`-keyed header. Path traversal protection via `canonicalize` + `starts_with` check. Template base path wired via `agent::set_template_base_path()` in `crates/zed/src/main.rs:711-729`. Accepts `context_path` (a JSON file holding the context object) so large contexts cross the model boundary as a file reference rather than one tool-call argument; inline `context` merges over the file's object. |
 | `unfold_plan` | `crates/agent/src/tools/unfold_plan_tool.rs` | Decomposes an unfolded plan into fan-out waves (independent tasks that may run in parallel) and budgeted reconsolidate batches (MapReduce map/reduce, reusing the compaction pipeline's reduce-round batching). Validates the DAG — acyclic, unique IDs, known dependencies, ≤ 7 items — and reports the critical path. Deterministic; no model call. |
 
@@ -767,7 +783,7 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 | Record key | Producer |
 |---|---|
 | `reg.skill.<skill-id>.outcome` | `SkillTool::run` records successful envelope delivery and dependency/body-resolution failures, stamped with `invoker` (`Curator`, `Zed Agent`); not-found and authorization denial remain request errors (`crates/agent/src/tools/skill_tool.rs:194-310`; `crates/zed/src/main.rs:1029-1060`). |
-| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:5544@Thread::run_tool`, `:5544-5545@Thread::run_tool`, `crates/agent/src/agent.rs:5620@record_skill_tool_failure`; `crates/zed/src/main.rs:1655-1680`). |
+| `reg.skill.<skill-id>.tool_failure` | `Thread::run_tool` records a non-`skill` tool failure while that skill is the thread's active skill (authorization failures excluded) — unclassified evidence (`crates/agent/src/thread.rs:5577@Thread::run_tool`, `:5577-5578@Thread::run_tool`, `crates/agent/src/agent.rs:5620@record_skill_tool_failure`; `crates/zed/src/main.rs:1655-1680`). |
 | `reg.skill.<skill-id>.operator_feedback` | `record_skill_feedback` (Curator sessions only — the operator's evaluation during the algedonic review, separated from execution) is the only producer; it feeds the process-global recorder (applying curator advice records no verdict) (`crates/zed/src/main.rs:1726-1762`). |
 
 ---

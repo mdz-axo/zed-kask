@@ -64,6 +64,11 @@ the LazyToolRouter that once pruned it per turn was removed); tools hidden
 by the remaining filter layers (profile allowlists, server scope, curator
 gating) are named by the system-prompt visibility marker, and the
 `list_mcp_tools` meta-tool enumerates the registered surface on demand.
+One exception (D107, 2026-11-12): a thread whose model is served by Zed's
+Ollama or llama.cpp provider with a context window below 16,384 tokens is
+offered no MCP server tools at all, and only six built-in file and search
+tools (`read_file`, `edit_file`, `write_file`, `grep`, `find_path`,
+`list_directory`). The cut is fixed per model, not selected per turn.
 The enabled set reaches `McpRuntime::invoke`, which meters one call against
 the agent's per-tick runaway ceiling and dispatches — it does **not**
 authorize. The result is unwrapped from its `{"content": value}` envelope
@@ -80,7 +85,7 @@ sequenceDiagram
     participant Server as MCP server child<br/>kask/mcp-servers/hkask-mcp-*
     participant Unwrap as unwrap_tool_envelope<br/>kask/crates/hkask-types/src/tool_response.rs
 
-    Agent->>Enabled: enabled_tools (full registered MCP surface, D44 — no per-turn filtering)
+    Agent->>Enabled: enabled_tools (full registered MCP surface, D44 — no per-turn filtering; none for a small local model, D107)
     Enabled-->>Agent: enabled_tools set (profile/scope/curator-gated tools named by the visibility marker)
     Agent->>ListTools: optional — enumerate registered surface on demand (discovery by pull)
     ListTools-->>Agent: servers → tools (name + description), optional substring filter
@@ -121,7 +126,9 @@ status: VERIFIED
 The full registered surface is presented every turn (D44), tools hidden by the
 remaining filter layers (profile allowlists, server scope, curator gating)
 are named by the system-prompt visibility marker, and the `list_mcp_tools`
-meta-tool lets the model enumerate the registered surface on demand.
+meta-tool lets the model enumerate the registered surface on demand. A small
+local model is the exception (D107, above): it gets neither the MCP surface
+nor `list_mcp_tools`.
 
 Every MCP tool response is a `{"content": <value>}` envelope.
 `unwrap_tool_envelope` (`kask/crates/hkask-types/src/tool_response.rs:61`) is the single
