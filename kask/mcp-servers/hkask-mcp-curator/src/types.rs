@@ -51,6 +51,7 @@ pub struct BackfillEmbeddingsRequest {
     /// two-form predicate the search gate excludes on, so a model
     /// migration's gated-out rows are restored rather than silently
     /// invisible.
+    #[serde(default)]
     #[schemars(schema_with = "optional_backfill_mode_schema")]
     pub mode: Option<String>,
 }
@@ -115,6 +116,7 @@ pub struct MemoryRecallRequest {
     pub recall_shape: MemoryRecallType,
     /// Ontology axis to recall along instead of an entity (P5.4). Requires
     /// `ontology_value`.
+    #[serde(default)]
     #[schemars(schema_with = "optional_ontology_axis_schema")]
     pub ontology_axis: Option<String>,
     /// The term to match on `ontology_axis` (e.g. `bibo:Article` for

@@ -2182,6 +2182,61 @@ mod tool_surface_tests {
         }
     }
 
+    /// mcp-tool-review CU-32 pin. A property that accepts null is optional,
+    /// so the live schema must not list it under `required`. `schemars`
+    /// cannot see through `schema_with` that a field is an `Option`: without
+    /// `#[serde(default)]` it lists the field as required. Measured on the
+    /// binary installed 2026-11-13: `ontology_axis` and `mode` were listed
+    /// as required while the server accepted calls without them.
+    #[test]
+    fn no_nullable_property_is_listed_as_required() {
+        let accepts_null = |property: &serde_json::Value| {
+            let names_null = |node: &serde_json::Value| match &node["type"] {
+                serde_json::Value::String(kind) => kind == "null",
+                serde_json::Value::Array(kinds) => kinds.iter().any(|kind| kind == "null"),
+                _ => false,
+            };
+            names_null(property)
+                || property["anyOf"]
+                    .as_array()
+                    .is_some_and(|branches| branches.iter().any(names_null))
+        };
+        for tool in CuratorServer::tool_router().list_all() {
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema serializes");
+            let required = schema["required"].as_array().cloned().unwrap_or_default();
+            for name in required {
+                let name = name.as_str().expect("required entries are strings");
+                assert!(
+                    !accepts_null(&schema["properties"][name]),
+                    "{}: `{name}` accepts null and is listed as required",
+                    tool.name
+                );
+            }
+        }
+        // The two properties the measurement found, by name, and one that
+        // must stay required so the loop above cannot pass on empty lists.
+        let required_of = |tool_name: &str| -> Vec<String> {
+            let tools = CuratorServer::tool_router().list_all();
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .unwrap_or_else(|| panic!("tool {tool_name} present"));
+            serde_json::to_value(&tool.input_schema).expect("schema serializes")["required"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|name| name.as_str().map(str::to_string))
+                .collect()
+        };
+        assert!(required_of("curator_memory_recall").is_empty());
+        assert!(required_of("curator_memory_backfill_embeddings").is_empty());
+        assert_eq!(
+            required_of("memory_resolve_contradiction"),
+            ["h_mem_ids", "strategy", "target_h_mem_id", "reason"]
+        );
+    }
+
     /// mcp-tool-review CU-31 pin (schema half). The editor's consolidation
     /// pass deletes every h_mem at or below `kask.memory.confidence_floor`,
     /// so a low confidence written by either tool is a deferred delete. The
