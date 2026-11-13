@@ -34,20 +34,12 @@ pub struct ScenariosBlockBody {
     pub calibration: Option<CalibrationSummary>,
     #[serde(default)]
     pub event_tree: Option<EventTreeSummary>,
-    #[serde(default)]
-    pub recent_forecasts: Vec<RecentForecast>,
     /// Server-authoritative provenance for re-issuing the originating MCP tool
     /// with modified args (T3/T4). `#[serde(default)]` so bodies emitted before
     /// provenance landed parse with an empty (non-dispatchable) provenance and
     /// the widget falls back to its hardcoded dispatch.
     #[serde(default)]
     pub provenance: BlockProvenance,
-    /// Ontology concept URI emitted by the scenarios server (e.g. `pko:Procedure`,
-    /// `dcterms:Dataset`). The widget carries it so the compose-back body can
-    /// reference it and a future "explain this scenario" affordance can
-    /// dispatch on it. `None` on older blocks or when the server doesn't emit it.
-    #[serde(default)]
-    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -136,8 +128,6 @@ pub struct EventNode {
     pub sub_question_count: Option<usize>,
     #[serde(default)]
     pub has_base_rate: Option<bool>,
-    #[serde(default)]
-    pub brier_score: Option<f64>,
 }
 
 /// Parse a ```` ```scenarios ```` block body. Tolerant: missing `viz`/`nodes`
@@ -218,6 +208,25 @@ mod tests {
     #[test]
     fn non_json_fails() {
         assert!(parse_scenarios_body("not json").is_err());
+    }
+
+    /// The scenarios server stamps every response with a two-axis `ontology`
+    /// object. A `scenario_status` response emitted as a block must parse;
+    /// the older string form too.
+    #[test]
+    fn a_scenario_status_response_parses_with_its_ontology_stamp() {
+        for stamp in [
+            r#"{"pko_procedure":"process","dc_type":"state"}"#,
+            r#""tag""#,
+        ] {
+            let json = format!(
+                r#"{{"viz":"scenarios","pipeline":{{"forecast_count":1,"recent_forecasts":[{{"forecast_id":"f","event_id":"e"}}]}},"store_errors":[],"ontology":{stamp}}}"#
+            );
+            let body = parse_scenarios_body(&json).expect("the server's response shape parses");
+            assert_eq!(body.pipeline.forecast_count, 1);
+            // The recent-forecasts panel reads the list where the server puts it.
+            assert_eq!(body.pipeline.recent_forecasts.len(), 1);
+        }
     }
 
     #[test]

@@ -376,10 +376,6 @@ impl ScenariosWidget {
                     .as_ref()
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown");
-                let brier = node
-                    .brier_score
-                    .map(|b| format!("Brier={b:.3}"))
-                    .unwrap_or_default();
                 let parents = if node.parent_ids.is_empty() {
                     "root".to_string()
                 } else {
@@ -408,13 +404,6 @@ impl ScenariosWidget {
                                     .color(Color::Muted),
                             ),
                     )
-                    .when(!brier.is_empty(), |this| {
-                        this.child(
-                            Label::new(brier)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    })
                     .when_some(node.question.as_ref(), |this, q| {
                         this.child(Label::new(q).size(LabelSize::XSmall).color(Color::Muted))
                     })
@@ -453,7 +442,7 @@ impl ScenariosWidget {
 
     fn render_recent_forecasts(&self, cx: &mut Context<Self>) -> AnyElement {
         let border_color = cx.theme().colors().border;
-        let recent = &self.body.recent_forecasts;
+        let recent = &self.body.pipeline.recent_forecasts;
         if recent.is_empty() {
             return div().into_any_element();
         }

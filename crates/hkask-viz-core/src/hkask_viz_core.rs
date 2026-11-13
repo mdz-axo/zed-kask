@@ -567,16 +567,19 @@ mod tests {
         assert!(!hkask_media_widget::is_truncated_json(&malformed));
     }
 
-    // S4 sensor consistency: every viz widget's block body must parse the
-    // `ontology` field the servers emit. If a future widget adds an `ontology`
-    // field, this test will fail until the widget is covered here. Pins the
-    // `.rules` "Ontology tag field-drop trap" at the registry level.
+    // Every viz widget's block body must parse a server response that carries
+    // its `ontology` stamp. The kanban widget renders its per-task tag; the
+    // graph and scenarios widgets render nothing from the stamp, so for them
+    // the requirement is that the block still parses with the two-axis
+    // object the scenarios server emits (a string-typed field refused it).
     #[test]
-    fn all_viz_widgets_parse_ontology_field() {
-        // Graph widget
-        let graph = parse_graph_body(r#"{"viz":"event_tree","ontology":"dcterms:Dataset"}"#)
-            .expect("graph body parses");
-        assert_eq!(graph.ontology.as_deref(), Some("dcterms:Dataset"));
+    fn all_viz_widgets_parse_a_stamped_server_response() {
+        let stamp = r#"{"pko_procedure":"pko:Procedure","dc_type":"dcterms:Dataset"}"#;
+        let graph = parse_graph_body(&format!(
+            r#"{{"viz":"event_tree","nodes":[{{"id":"e0"}}],"ontology":{stamp}}}"#
+        ))
+        .expect("graph body parses");
+        assert_eq!(graph.nodes.len(), 1);
 
         // Kanban widget — ontology is per-task, not on the block body.
         let kanban = parse_kanban_body(
@@ -585,9 +588,10 @@ mod tests {
         .expect("kanban body parses");
         assert_eq!(kanban.tasks[0].ontology.as_deref(), Some("pko:Step"));
 
-        // Scenarios widget
-        let scenarios = parse_scenarios_body(r#"{"viz":"scenarios","ontology":"pko:Procedure"}"#)
-            .expect("scenarios body parses");
-        assert_eq!(scenarios.ontology.as_deref(), Some("pko:Procedure"));
+        let scenarios = parse_scenarios_body(&format!(
+            r#"{{"viz":"scenarios","pipeline":{{"forecast_count":2}},"ontology":{stamp}}}"#
+        ))
+        .expect("scenarios body parses");
+        assert_eq!(scenarios.pipeline.forecast_count, 2);
     }
 }

@@ -16,10 +16,9 @@
 //! ```text
 //! ```scenarios
 //! { "viz": "scenarios",
-//!   "pipeline": { "forecast_count": 5, "resolved_count": 2, ... },
+//!   "pipeline": { "forecast_count": 5, "resolved_count": 2, "recent_forecasts": [...], ... },
 //!   "calibration": { "overall_brier": 0.15, ... },
-//!   "event_tree": { "subject": "...", "nodes": [...] },
-//!   "recent_forecasts": [...] }
+//!   "event_tree": { "subject": "...", "nodes": [...] } }
 //! ```
 //! ```
 #![warn(clippy::let_underscore_future)]

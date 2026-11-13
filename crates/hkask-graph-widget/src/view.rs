@@ -974,7 +974,6 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes: vec![a, b],
-            ontology: None,
         }
     }
 

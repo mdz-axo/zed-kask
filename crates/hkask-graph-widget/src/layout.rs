@@ -225,7 +225,6 @@ mod tests {
                     parents: Vec::new(),
                 })
                 .collect(),
-            ontology: None,
         }
     }
 
