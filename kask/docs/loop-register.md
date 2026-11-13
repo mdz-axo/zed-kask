@@ -170,7 +170,7 @@ vocabulary is the one notable absence.
 | RegulationRecord / Span / SpanKind | `hkask-types/src/event.rs:16-28` (record: span, phase, observation, regulation, outcome, visibility), `:364-369` (`Span`), `:411-443` (`SpanKind`, 11 typed `reg.*` variants) |
 | curator memory / h_mem | `hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`; `kask_bridge/src/memory/ingest.rs`; curator tools `hkask_mcp_curator.rs` (insert/update/extract/prune/dedup) |
 | drift | `hkask-regulation/src/metacognition.rs:358+` (skill-outcome/operator-feedback drift sense) |
-| feedback | `crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`; `hkask_mcp_curator.rs:1312` `curator_report_skill_use_issue` (the companies server's `result_feedback` retired with the server, 2026-10-18) |
+| feedback | `crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`; `hkask_mcp_curator.rs:1197` `curator_report_skill_use_issue` (the companies server's `result_feedback` retired with the server, 2026-10-18) |
 | Brier / calibration | `hkask-forecast/src/hkask_forecast.rs:190/:196`; `hkask-mcp-prediction-markets/src/calibration.rs:134`; optional goal forecasts in the canonical `GOAL_INTERFACE.md`; no routine goal score |
 | toast / AlertSink | `hkask-regulation/src/metacognition.rs:61` `AlertEvent`, `:78` `AlertSink`; `crates/zed/src/main.rs` (`ToastAlertSink` and its `AlertSink` implementation), wired `:1117` |
 | loop-quality telemetry (coalesced) | `cybernetics_loop.rs:887-940` — "Coalesce only semantically identical persistent deviation/advisory cycles. Changed values, clearing, and rollout measurements always emit" |
