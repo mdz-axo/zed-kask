@@ -708,9 +708,6 @@ heck = "0.5"
 heed = { version = "0.21", default-features = false, features = ["read-txn-no-tls", "serde-bincode", "serde-json"] }
 hex = "0.4.3"
 html5ever = "0.39"
-scraper = { version = "0.23", default-features = false, features = ["deterministic"] }
-jsonpath-rust = "1"
-mediatype = { version = "0.21", features = ["serde"] }
 http = "1.1"
 http-body = "1.0"
 httparse = "1.10"
@@ -1151,7 +1148,6 @@ docx-rs = "0.4"
 calamine = "0.36"
 pptx-to-md = "0.1"
 pdf-extract = "0.12"
-feed-rs = "2.4"
 hf-hub = "1.0.0"
 # hkask-bridge-ontology build.rs: reads the vendored RDF ontology sources.
 oxrdf = "0.3"
