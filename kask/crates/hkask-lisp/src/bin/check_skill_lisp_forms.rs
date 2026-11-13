@@ -5594,6 +5594,90 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_sa_2_reads_the_harness_rows_and_the_adjudicated_surfaces() {
+        let form = skill_candidate("security-audit", "harness_version_not_pinned");
+        let run = |version: &str| {
+            json!({"row": "run", "script": "security-audit-probe-suite", "version": version, "target": "t",
+                   "surfaces": "S2,S3", "started": "x"})
+        };
+        let probe = |id: &str, surface: &str, validated: bool| {
+            json!({"row": "probe", "probe_id": id, "surface": surface, "instrument_validated": validated,
+                   "production_matches": 0, "test_scoped_matches": 0, "matches": []})
+        };
+        let surfaces = json!([
+            {"id": "S2", "status": "checked"}, {"id": "S3", "status": "checked"},
+            {"id": "S6", "status": "checked"}, {"id": "S4", "status": "not_checked"}
+        ]);
+        let gate = |rows: Vec<serde_json::Value>, classes: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"harness_rows": rows, "surfaces": surfaces, "harness_classes": classes}),
+            )
+            .unwrap_or_else(|error| panic!("SA-2 failed to evaluate: {error}"))
+        };
+        let met = gate(
+            vec![run("1.0"), probe("p1", "S2", true), probe("p2", "S3", true)],
+            serde_json::Value::Null,
+        );
+        assert_eq!(met["verdict"], json!("floor_met"));
+        assert_eq!(met["version"], json!("1.0"));
+        assert_eq!(met["probes"], json!(2));
+
+        let unvalidated = gate(
+            vec![
+                run("1.0"),
+                probe("p1", "S2", true),
+                probe("p2", "S3", false),
+            ],
+            serde_json::Value::Null,
+        );
+        assert_eq!(unvalidated["verdict"], json!("invalid"));
+        assert_eq!(
+            unvalidated["problems"],
+            json!([
+                "unvalidated_probes",
+                "checked_surfaces_without_validated_rows"
+            ])
+        );
+        assert_eq!(unvalidated["unvalidated_probes"], json!(["p2"]));
+        assert_eq!(unvalidated["unbacked_surfaces"], json!(["S3"]));
+
+        let unbacked = gate(
+            vec![run("1.0"), probe("p1", "S2", true)],
+            serde_json::Value::Null,
+        );
+        assert_eq!(
+            unbacked["problems"],
+            json!(["checked_surfaces_without_validated_rows"])
+        );
+        assert_eq!(
+            unbacked["unbacked_surfaces"],
+            json!(["S3"]),
+            "S6 is outside the harness classes"
+        );
+        // When the harness was asked only for S2, a checked S3 is not its gap.
+        assert_eq!(
+            gate(vec![run("1.0"), probe("p1", "S2", true)], json!(["S2"]))["verdict"],
+            json!("floor_met")
+        );
+
+        let drifted = gate(
+            vec![run("1.1"), probe("p1", "S2", true), probe("p2", "S3", true)],
+            serde_json::Value::Null,
+        );
+        assert_eq!(drifted["problems"], json!(["harness_version_not_pinned"]));
+        let headless = gate(
+            vec![probe("p1", "S2", true), probe("p2", "S3", true)],
+            serde_json::Value::Null,
+        );
+        assert_eq!(headless["problems"], json!(["harness_run_header_missing"]));
+        assert_eq!(
+            gate(vec![], serde_json::Value::Null)["verdict"],
+            json!("invalid")
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

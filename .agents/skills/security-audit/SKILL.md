@@ -183,16 +183,17 @@ enforcement point in the same change.
 
 Call `lisp_eval` (SA-1):
 - form:
-  `(begin (define count-uncited (lambda (fs) (if (is_null fs) 0 (+ (if (or (is_null (assoc "file_line" (car fs))) (string= "" (assoc "file_line" (car fs)))) 1 0) (count-uncited (cdr fs)))))) (define count-unverified (lambda (fs) (if (is_null fs) 0 (+ (if (assoc "verified" (car fs)) 0 1) (count-unverified (cdr fs)))))) (define count-open-surface (lambda (ss) (if (is_null ss) 0 (+ (if (or (is_null (assoc "status" (car ss))) (string= "" (assoc "status" (car ss)))) 1 0) (count-open-surface (cdr ss)))))) (define count-open-layer (lambda (ls) (if (is_null ls) 0 (+ (if (or (is_null (assoc "verdict" (car ls))) (string= "" (assoc "verdict" (car ls)))) 1 0) (count-open-layer (cdr ls)))))) (let ((u (count-uncited findings)) (v (count-unverified findings)) (s (count-open-surface surfaces)) (l (count-open-layer layers))) (list u v s l (if (= (+ u (+ v (+ s l))) 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate))))))
+  `(begin (define count-uncited (lambda (fs) (if (is_null fs) 0 (+ (if (or (is_null (assoc "file_line" (car fs))) (string= "" (assoc "file_line" (car fs)))) 1 0) (count-uncited (cdr fs)))))) (define count-unverified (lambda (fs) (if (is_null fs) 0 (+ (if (assoc "verified" (car fs)) 0 1) (count-unverified (cdr fs)))))) (define count-open-surface (lambda (ss) (if (is_null ss) 0 (+ (if (or (is_null (assoc "status" (car ss))) (string= "" (assoc "status" (car ss)))) 1 0) (count-open-surface (cdr ss)))))) (define count-open-layer (lambda (ls) (if (is_null ls) 0 (+ (if (or (is_null (assoc "verdict" (car ls))) (string= "" (assoc "verdict" (car ls)))) 1 0) (count-open-layer (cdr ls)))))) (let ((u (count-uncited findings)) (v (count-unverified findings)) (s (count-open-surface surfaces)) (l (count-open-layer layers))) (list u v s l (if (= (+ u (+ v (+ s l))) 0) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote iterate))))))`
 - env: `{ "findings": <adjudicated.findings>, "surfaces": <adjudicated.surfaces>, "layers": <adjudicated.defense_layer_coverage.layers>, "iteration": <1-based> }`
 
 `done` → step 5. `iterate` → re-enter the step owning the open count (sweeps,
 verification, or adjudication); bound: **2 re-loops** (iteration 3 reads
 `stop-and-report`). `stop-and-report` → step 5 with open items listed.
 
-Then SA-2 (the harness floor gate, D): call `lisp_eval`:
-- form: `(and (string= script_version "1.0") (= unvalidated_probes 0) (= unchecked_surfaces_with_harness_rows 0))`
-- env: `{ "script_version": <the harness run row's version>, "unvalidated_probes": <count of harness probe rows with instrument_validated false>, "unchecked_surfaces_with_harness_rows": <count of adjudicated surfaces marked checked, within the harness's S-classes, that have NO validated harness row> }`
+Then SA-2 (the harness floor gate, D): call `lisp_eval` over the harness JSONL as written (`jq -s . <harness.jsonl>`) and the adjudicated surfaces:
+- form: `(begin (define pinned "1.0") (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (listp harness_rows) harness_rows (list))) (define of-kind (lambda (kind rs) (if (is_null rs) (list) (if (string= (text-of (car rs) "row") kind) (cons (car rs) (of-kind kind (cdr rs))) (of-kind kind (cdr rs)))))) (define runs (of-kind "run" rows)) (define probes (of-kind "probe" rows)) (define version (if (is_null runs) "" (text-of (car runs) "version"))) (define unvalidated (lambda (ps) (if (is_null ps) (list) (if (eq (assoc "instrument_validated" (car ps)) t) (unvalidated (cdr ps)) (cons (text-of (car ps) "probe_id") (unvalidated (cdr ps))))))) (define validated-surfaces (lambda (ps) (if (is_null ps) (list) (if (eq (assoc "instrument_validated" (car ps)) t) (cons (text-of (car ps) "surface") (validated-surfaces (cdr ps))) (validated-surfaces (cdr ps)))))) (define covered (validated-surfaces probes)) (define classes (if (and (listp harness_classes) (not (is_null harness_classes))) harness_classes (list "S2" "S3" "S4" "S5" "S7" "S8"))) (define ss (if (listp surfaces) surfaces (list))) (define unbacked (lambda (xs) (if (is_null xs) (list) (let ((s (car xs))) (if (and (string= (text-of s "status") "checked") (member (text-of s "id") classes) (not (member (text-of s "id") covered))) (cons (text-of s "id") (unbacked (cdr xs))) (unbacked (cdr xs))))))) (define problems (append (if (is_null runs) (list "harness_run_header_missing") (list)) (if (or (is_null runs) (string= version pinned)) (list) (list "harness_version_not_pinned")) (if (is_null (unvalidated probes)) (list) (list "unvalidated_probes")) (if (is_null (unbacked ss)) (list) (list "checked_surfaces_without_validated_rows")))) (list (list "verdict" (if (is_null problems) "floor_met" "invalid")) (list "problems" problems) (list "version" version) (list "unvalidated_probes" (unvalidated probes)) (list "unbacked_surfaces" (unbacked ss)) (list "probes" (length probes))))`
+- env: `{ "harness_rows": <every row of the harness JSONL, slurped>, "surfaces": <adjudicated.surfaces>, "harness_classes": <the S-classes the harness was asked for, as a list; null for its full set S2,S3,S4,S5,S7,S8> }`
+- `floor_met`, or `invalid` with `problems`: `harness_run_header_missing`; `harness_version_not_pinned` when the run row's version is not 1.0; `unvalidated_probes`, with the probe ids; `checked_surfaces_without_validated_rows`, with the ids of surfaces adjudicated checked within the harness classes that have no probe row whose instrument_validated is true. The pin and the counts are the form's; nothing is retyped from the JSONL.
 
 SA-2 false → the run is INVALID: re-run the harness for the missing surface classes or correct the adjudication. A superficial or theatrical run cannot pass SA-2 — the evidence floor is machine-stamped, not agent-attested.
 
@@ -247,9 +248,11 @@ cited and verified, all surfaces statused, all layers verdicted, iteration 1)
 → `done` with zero counts; one uncited finding → `iterate` with `[1 0 0 0]`;
 iteration 3 with any open count → `stop-and-report`. Verify each of the four
 open-count paths independently (uncited, unverified, open surface, open layer).
-SA-2 receipts: a harness run whose version differs from the pin, an
-unvalidated probe row, or a checked surface without harness rows → false; a
-complete validated set → true. `bash
+SA-2 receipts (`scientific_gate_sa_2_` in `check-skill-lisp-forms.sh`, over
+the authored form and harness-shaped rows): a run row at `1.1`, an
+unvalidated probe row, a `checked` S3 with no validated S3 row, a missing
+run header → `invalid` naming each; a `checked` S6 (outside the harness
+classes) is not a problem; a complete validated set → `floor_met`. `bash
 kask/scripts/security-audit-probe-suite.sh --selftest` must exit 0 (all
 probes detect their planted fixtures).
 
