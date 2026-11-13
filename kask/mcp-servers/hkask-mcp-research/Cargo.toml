@@ -48,6 +48,9 @@ regex.workspace = true
 pdf-extract.workspace = true
 # HTML parsing for the keyless extractor's page text (research/page_text.rs).
 html5ever.workspace = true
+# Charset decoding of a fetched body (raw_fetch.rs reads the body itself to
+# bound its size, so it decodes it itself).
+encoding_rs.workspace = true
 
 [dev-dependencies]
 # tool_behavior.rs drives the real tool surface through Parameters<T>:

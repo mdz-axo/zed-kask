@@ -17,6 +17,9 @@ const MAX_REDIRECTS: usize = 10;
 
 pub(crate) struct RawFetchProvider {
     client: reqwest::Client,
+    /// Largest response body read, in bytes: the server-wide read cap
+    /// (`resolve_max_read_bytes`: 32 MiB, or `HKASK_MCP_MAX_READ_BYTES`).
+    max_body_bytes: u64,
 }
 
 /// Build the validated fetch HTTP client — the RawFetch transport.
@@ -149,8 +152,57 @@ impl RawFetchProvider {
     pub fn new() -> Result<Self, WebError> {
         Ok(Self {
             client: validated_fetch_client()?,
+            max_body_bytes: hkask_mcp_server::server::resolve_max_read_bytes(),
         })
     }
+}
+
+/// Read a response body, refusing one larger than `cap` bytes.
+///
+/// The body used to be read whole, bounded only by the 30-second request
+/// timeout, for any URL a caller names. A declared length over the cap is
+/// refused before reading; an undeclared or understated one is refused as
+/// soon as the bytes received pass the cap.
+async fn read_body_capped(mut response: reqwest::Response, cap: u64) -> Result<Vec<u8>, WebError> {
+    let too_large = || {
+        WebError::ProviderError(format!(
+            "RawFetch refused the response: its body is larger than the {cap}-byte read cap"
+        ))
+    };
+    if response.content_length().is_some_and(|length| length > cap) {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| WebError::ProviderError(format!("RawFetch read error: {e}")))?
+    {
+        if (body.len() + chunk.len()) as u64 > cap {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Decode a body to text: by the `charset` of its Content-Type when that
+/// names a known encoding, otherwise as UTF-8; a byte-order mark wins over
+/// both, and malformed sequences become U+FFFD. The same rule
+/// `reqwest::Response::text` applies.
+fn decode_body(bytes: &[u8], content_type: Option<&str>) -> String {
+    let encoding = content_type
+        .and_then(|value| {
+            value.split(';').skip(1).find_map(|parameter| {
+                let (name, label) = parameter.split_once('=')?;
+                name.trim()
+                    .eq_ignore_ascii_case("charset")
+                    .then(|| label.trim().trim_matches('"'))
+            })
+        })
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::UTF_8);
+    encoding.decode(bytes).0.into_owned()
 }
 
 /// Metadata key naming what the returned text was taken from. RawFetch
@@ -265,39 +317,33 @@ impl WebExtractProvider for RawFetchProvider {
         // Report where the content actually came from: with a permitted
         // (validated) redirect, the final URL is the truthful provenance.
         let final_url = resp.url().clone();
-        let media_type = resp
+        let content_type = resp
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let media_type = content_type
+            .as_deref()
             .and_then(|value| value.split(';').next())
             .map(|mime| mime.trim().to_ascii_lowercase())
             .filter(|mime| !mime.is_empty());
-        let pdf_content_type = media_type.as_deref() == Some("application/pdf");
-        if status.is_success() && pdf_content_type {
-            let bytes = resp
-                .bytes()
-                .await
-                .map_err(|e| WebError::ProviderError(format!("RawFetch read error: {e}")))?;
-            return extract_pdf_content(&final_url, &bytes);
-        }
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderError(format!("RawFetch read error: {e}")))?;
+        let bytes = read_body_capped(resp, self.max_body_bytes).await?;
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "RawFetch error {status}: {}",
-                hkask_inference::openai_compat::sanitize_error_body(&body)
+                hkask_inference::openai_compat::sanitize_error_body(&decode_body(
+                    &bytes,
+                    content_type.as_deref()
+                ))
             )));
         }
-        if body.starts_with("%PDF-") {
-            // Magic fallback: the origin served PDF bytes without the
-            // application/pdf content type. `body` went through lossy text
-            // decode, so binary streams may be mangled — extraction can then
-            // fail honestly rather than return a shell, and the chain falls
-            // through to the next provider.
-            return extract_pdf_content(&final_url, body.as_bytes());
+        // A PDF by its declared type, or by its first bytes when the origin
+        // served it under another type. The bytes are the ones received:
+        // before, the second case went through a text decode first.
+        if media_type.as_deref() == Some("application/pdf") || bytes.starts_with(b"%PDF-") {
+            return extract_pdf_content(&final_url, &bytes);
         }
+        let body = decode_body(&bytes, content_type.as_deref());
         match body_kind(media_type.as_deref(), &body) {
             BodyKind::Html => {
                 let page =
@@ -508,6 +554,78 @@ mod tests {
         assert!(error.to_string().contains("image/png"), "{error}");
     }
 
+    /// expect: a body larger than the read cap is refused, whether the
+    /// origin declares its length or not; a body at the cap is read. The
+    /// body used to be read whole.
+    #[tokio::test]
+    async fn raw_fetch_refuses_a_body_over_the_read_cap() {
+        let body = "x".repeat(4096);
+        let declared = typed_response("text/plain", &body);
+        // No Content-Length: the body ends when the connection closes.
+        let undeclared = Arc::new(
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}"
+            )
+            .into_bytes(),
+        );
+        let mut provider = RawFetchProvider::new().expect("provider");
+        assert_eq!(
+            provider.max_body_bytes,
+            hkask_mcp_server::server::resolve_max_read_bytes(),
+            "the cap is the server-wide read cap"
+        );
+        provider.max_body_bytes = 4095;
+        for response in [declared.clone(), undeclared] {
+            let (url, _) = http_fixture(response).await;
+            let error = provider
+                .extract(&url, &extract_options())
+                .await
+                .expect_err("over the cap");
+            assert!(
+                error
+                    .to_string()
+                    .contains("larger than the 4095-byte read cap"),
+                "{error}"
+            );
+        }
+        provider.max_body_bytes = 4096;
+        let (url, _) = http_fixture(declared).await;
+        let extracted = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect("at the cap");
+        assert_eq!(extracted.content.len(), 4096);
+    }
+
+    /// expect: a body is decoded by the charset its Content-Type names,
+    /// as UTF-8 when it names none or an unknown one, and a byte-order
+    /// mark wins.
+    #[test]
+    fn decode_body_follows_the_declared_charset() {
+        let latin1 = [b'c', b'a', b'f', 0xE9];
+        assert_eq!(
+            decode_body(&latin1, Some("text/html; charset=ISO-8859-1")),
+            "café"
+        );
+        assert_eq!(
+            decode_body(&latin1, Some("text/html; Charset=\"windows-1252\"")),
+            "café"
+        );
+        assert_eq!(decode_body("café".as_bytes(), Some("text/html")), "café");
+        assert_eq!(decode_body("café".as_bytes(), None), "café");
+        assert_eq!(
+            decode_body("café".as_bytes(), Some("text/html; charset=no-such")),
+            "café"
+        );
+        assert_eq!(decode_body(&latin1, None), "caf\u{fffd}");
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice("café".as_bytes());
+        assert_eq!(
+            decode_body(&with_bom, Some("text/html; charset=ISO-8859-1")),
+            "café"
+        );
+    }
+
     /// expect: with no declared type, a body that begins with markup is
     /// read as HTML and anything else as text.
     #[test]
@@ -596,6 +714,23 @@ mod tests {
             Some(serde_json::json!({"extracted_from": "pdf_text_layer"}))
         );
         assert!(extraction_is_complete(extracted.metadata.as_ref()));
+
+        // The same PDF served under a generic binary type is recognised by
+        // its first bytes and read from the bytes as received.
+        let mut response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nConnection: close\r\n\r\n"
+                .to_vec();
+        response.extend_from_slice(&pdf);
+        let (url, _) = http_fixture(Arc::new(response)).await;
+        let extracted = provider
+            .extract(&url, &extract_options())
+            .await
+            .expect("a PDF under a generic type extracts");
+        assert!(
+            extracted.content.contains("Hello Extracted World"),
+            "content: {}",
+            extracted.content
+        );
         assert!(!extraction_is_complete(Some(
             &serde_json::json!({"extracted_from": "html"})
         )));

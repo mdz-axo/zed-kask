@@ -424,9 +424,22 @@ left out of the cache. A short `html` extraction still carries the note.
 An extraction that came from Firecrawl carries Firecrawl's own metadata
 and no `extracted_from`.
 
-Not changed: the size of a fetched body is bounded only by the 30-second
-request timeout, and a page that needs script to render still yields
-little text, reported by the existing under-500-characters note.
+A fetched body larger than the read cap is refused with a typed error
+naming the cap (2026-11-12). The cap is the server-wide one, 32 MiB
+(`resolve_max_read_bytes`). Before, the body of any URL a caller named was
+read whole, bounded only by the 30-second request timeout. A declared
+length over the cap is refused before reading; an undeclared one as soon
+as the bytes received pass it. The cap can be set with
+`HKASK_MCP_MAX_READ_BYTES` in the server's environment; the editor's
+launch code holds no reference to that variable (grep over
+`kask/crates/kask_bridge/src`: 0), so a server it starts runs on 32 MiB.
+
+A PDF served under a non-PDF content type is recognised by its first
+bytes and read from the bytes as received. Before, those bytes went
+through a text decode first, which could damage the file.
+
+Not changed: a page that needs script to render still yields little
+text, reported by the existing under-500-characters note.
 
 ## Citation — APA 7 (2026-11-12)
 
