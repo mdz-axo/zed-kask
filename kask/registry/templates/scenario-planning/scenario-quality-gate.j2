@@ -78,7 +78,7 @@ Do the four scenarios collectively span the uncertainty space defined by the foc
 
 ## Thresholds
 
-- `gate_pass` is computed deterministically by the caller via `lisp_eval` `SP-2`: `(and (= scenario_count 4) (not parametric_variation_flag) (>= divergence_score 0.6) (>= consistency_score 0.6) (>= coverage_score 0.6))`.
+- `gate_pass` is computed deterministically by the caller via `lisp_eval` `SP-2` over this output and the scenarios array: exactly four scenarios, `parametric_variation_flag` false, and every score at or above 0.60.
 - If the set does not contain exactly four scenarios, `parametric_variation_flag` is `true`, or any score < 0.60, the corresponding `gate_findings` entry must set `status` to `"fail"` and explain what failed and how to fix it.
 - An individual finding entry must include `check` (divergence/consistency/coverage), `status` (pass/fail), and `note`.
 

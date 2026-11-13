@@ -5146,6 +5146,141 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_sp_2_reads_the_quality_render_and_the_scenario_set() {
+        let form = skill_candidate("scenario-planning", "scenario_count_not_four");
+        let four = json!([{"name": "a"}, {"name": "b"}, {"name": "c"}, {"name": "d"}]);
+        let quality = |status: &str,
+                       div: serde_json::Value,
+                       con: f64,
+                       cov: f64,
+                       flag: serde_json::Value| {
+            json!({"gate_findings": [{"criterion": "divergence", "status": status, "note": "n"}],
+                   "divergence_score": div, "consistency_score": con, "coverage_score": cov,
+                   "parametric_variation_flag": flag})
+        };
+        let gate = |scenarios: serde_json::Value, quality: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"scenarios": scenarios, "quality": quality}))
+                .unwrap_or_else(|error| panic!("SP-2 failed to evaluate: {error}"))
+        };
+        let pass = gate(
+            four.clone(),
+            quality("pass", json!(0.8), 0.7, 0.6, json!(false)),
+        );
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["gate_pass"], json!(true));
+        assert_eq!(pass["render_findings_agree"], json!(true));
+
+        let low = gate(
+            four.clone(),
+            quality("fail", json!(0.59), 0.8, 0.8, json!(false)),
+        );
+        assert_eq!(low["verdict"], json!("revise"));
+        assert_eq!(low["reasons"], json!(["divergence_below_0.6"]));
+        assert_eq!(low["render_findings_agree"], json!(true));
+        let silent_fail = gate(
+            four.clone(),
+            quality("pass", json!(0.5), 0.8, 0.8, json!(false)),
+        );
+        assert_eq!(silent_fail["verdict"], json!("revise"));
+        assert_eq!(silent_fail["render_findings_agree"], json!(false));
+
+        let three = gate(
+            json!([{}, {}, {}]),
+            quality("fail", json!(0.8), 0.8, 0.8, json!(false)),
+        );
+        assert_eq!(three["reasons"], json!(["scenario_count_not_four"]));
+        let parametric = gate(
+            four.clone(),
+            quality("fail", json!(0.8), 0.8, 0.8, json!(true)),
+        );
+        assert_eq!(parametric["reasons"], json!(["parametric_variation"]));
+        let several = gate(
+            json!([{}, {}, {}, {}, {}]),
+            quality("fail", json!(0.8), 0.5, 0.5, json!(true)),
+        );
+        assert_eq!(
+            several["reasons"],
+            json!([
+                "scenario_count_not_four",
+                "parametric_variation",
+                "consistency_below_0.6",
+                "coverage_below_0.6"
+            ])
+        );
+
+        assert_eq!(
+            gate(
+                four.clone(),
+                quality("pass", json!("high"), 0.8, 0.8, json!(false))
+            )["verdict"],
+            json!("malformed_render")
+        );
+        assert_eq!(
+            gate(
+                four.clone(),
+                quality("pass", json!(1.2), 0.8, 0.8, json!(false))
+            )["verdict"],
+            json!("malformed_render")
+        );
+        assert_eq!(
+            gate(four, quality("pass", json!(0.8), 0.8, 0.8, json!("no")))["verdict"],
+            json!("malformed_render")
+        );
+    }
+
+    #[test]
+    fn scientific_gate_sp_3_completes_only_when_every_due_event_is_scored() {
+        let form = skill_candidate("scenario-planning", "unresolved_past_deadline");
+        let per_event = |id: &str, outcome: bool| json!({"event_id": id, "forecast_probability": 0.6, "outcome": outcome, "brier_score": 0.16, "scoring_status": "scored"});
+        let score = |scored: u64, events: Vec<serde_json::Value>, unmatched: Vec<&str>| {
+            json!({"forecast_id": "f", "event_count": events.len(), "scored_count": scored, "per_event": events,
+                   "unmatched_outcome_ids": unmatched})
+        };
+        let gate = |score: serde_json::Value, due: Vec<&str>| {
+            eval_sandboxed(&form, &json!({"score": score, "past_deadline_ids": due}))
+                .unwrap_or_else(|error| panic!("SP-3 failed to evaluate: {error}"))
+        };
+        let two = score(
+            2,
+            vec![per_event("e1", true), per_event("e3", false)],
+            vec![],
+        );
+        let complete = gate(two.clone(), vec!["e1", "e3"]);
+        assert_eq!(complete["verdict"], json!("complete"));
+        assert_eq!(complete["scored_count"], json!(2));
+        assert_eq!(complete["calibration_claimable"], json!(false));
+        assert_eq!(complete["resolved_events"], json!(["e1", "e3"]));
+
+        let open = gate(two.clone(), vec!["e1", "e3", "e4"]);
+        assert_eq!(open["verdict"], json!("unresolved_past_deadline"));
+        assert_eq!(open["unresolved_past_deadline"], json!(["e4"]));
+        // A future-dated event does not block completion.
+        assert_eq!(gate(two, vec!["e1"])["verdict"], json!("complete"));
+
+        let unmatched = gate(score(2, vec![per_event("e1", true)], vec!["zz"]), vec![]);
+        assert_eq!(unmatched["verdict"], json!("outcomes_unmatched"));
+        assert_eq!(
+            gate(score(0, vec![], vec![]), vec![])["verdict"],
+            json!("nothing_scored")
+        );
+        assert_eq!(
+            gate(serde_json::Value::Null, vec![])["verdict"],
+            json!("score_missing")
+        );
+        assert_eq!(
+            gate(json!("error"), vec![])["verdict"],
+            json!("score_missing")
+        );
+        let many = gate(score(12, vec![per_event("e1", true)], vec![]), vec!["e1"]);
+        assert_eq!(many["calibration_claimable"], json!(true));
+        let nine = gate(
+            score(9, vec![per_event("e1", true)], vec!["e1"]),
+            vec!["e1"],
+        );
+        assert_eq!(nine["calibration_claimable"], json!(false));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

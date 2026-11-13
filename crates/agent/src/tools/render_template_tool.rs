@@ -1836,6 +1836,27 @@ mod tests {
         assert_eq!(stale, serde_json::json!(["stale"]));
     }
 
+    /// The scenario convergence gate's past-deadline list is a date
+    /// comparison the lisp gate cannot make; the authored jq filter computes
+    /// it from the declared events and today's date.
+    #[test]
+    fn scenario_planning_due_filter_lists_events_whose_deadline_has_passed() {
+        let events = serde_json::json!({"events": [
+            {"id": "past", "deadline": "2026-10-01"},
+            {"id": "today", "deadline": "2026-11-13"},
+            {"id": "future", "deadline": "2027-01-01"}
+        ]});
+        let due = authored_jq_with_args(
+            "scenario-planning",
+            "Convergence",
+            &["--arg", "today", "2026-11-13"],
+            events,
+        )
+        .expect("authored due.jq runs");
+        // A deadline equal to today has not passed.
+        assert_eq!(due, serde_json::json!(["past"]));
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(

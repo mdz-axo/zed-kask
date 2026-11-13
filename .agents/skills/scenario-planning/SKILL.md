@@ -120,9 +120,11 @@ quantified backbone.
    `axis_2`) — the gate's axis-span coverage criterion is checked against the
    actual axes, not inferred from narratives. A separate render, it scores
    divergence, consistency and coverage (0–1) and flags parametric variation.
-   Compute `gate_pass` deterministically via `lisp_eval` `SP-2`:
-   - form: `(and (= scenario_count 4) (not parametric_variation_flag) (>= divergence_score 0.6) (>= consistency_score 0.6) (>= coverage_score 0.6))`
-   - env: `{ "scenario_count": <length of scenarios>, "parametric_variation_flag": <bool>, "divergence_score": <num>, "consistency_score": <num>, "coverage_score": <num> }`
+   Compute `gate_pass` deterministically via `lisp_eval` `SP-2` over the two
+   renders as returned:
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define score (lambda (key) (let ((v (assoc key quality))) (if (and (numberp v) (>= v 0) (<= v 1)) v nil)))) (define div (score "divergence_score")) (define con (score "consistency_score")) (define cov (score "coverage_score")) (define flag (assoc "parametric_variation_flag" quality)) (define n (if (listp scenarios) (length scenarios) 0)) (define findings (if (listp (assoc "gate_findings" quality)) (assoc "gate_findings" quality) (list))) (define any-fail (lambda (fs) (if (is_null fs) (not t) (if (string= (text-of (car fs) "status") "fail") t (any-fail (cdr fs)))))) (define malformed (or (is_null div) (is_null con) (is_null cov) (not (or (eq flag t) (eq flag (not t)))))) (define reasons (if malformed (list) (append (if (= n 4) (list) (list "scenario_count_not_four")) (if (eq flag t) (list "parametric_variation") (list)) (if (>= div 0.6) (list) (list "divergence_below_0.6")) (if (>= con 0.6) (list) (list "consistency_below_0.6")) (if (>= cov 0.6) (list) (list "coverage_below_0.6"))))) (define pass (and (not malformed) (is_null reasons))) (list (list "gate_pass" pass) (list "verdict" (cond (malformed "malformed_render") (pass "pass") (t "revise"))) (list "reasons" reasons) (list "render_findings_agree" (if malformed (not t) (eq (any-fail findings) (not pass)))) (list "scenario_count" n) (list "divergence" div) (list "consistency" con) (list "coverage" cov)))`
+   - env: `{ "scenarios": <the axes-and-narratives render's scenarios array>, "quality": <the scenario-quality-gate render output, unchanged> }`
+   - `pass`, or `revise` with `reasons` (`scenario_count_not_four`, `parametric_variation`, `divergence_below_0.6`, `consistency_below_0.6`, `coverage_below_0.6`), or `malformed_render` (a score missing, non-numeric or outside 0–1, or a flag that is not a boolean). `render_findings_agree` is false when the quality render's `gate_findings` carry no `fail` for a failing gate (or a `fail` for a passing one) — report it; the computed verdict governs.
    A failing gate revises the narratives its fix notes name and re-runs once
    (max 2 cycles); a second failure delivers the scenarios with the fix notes
    shown.
@@ -196,16 +198,22 @@ declarations remain unscored history; never repair them by post-outcome admissio
 
 ### Convergence
 
-21. Gate — call `lisp_eval` with:
-    - form: `(and (> resolved_forecasts 0) (= unresolved_critical 0))`
-    - env: `{ "resolved_forecasts": <count from scenario_score>,
-              "unresolved_critical": <events past deadline without outcomes> }`
-    A project is complete when every event with a passed deadline has a
-    recorded outcome and the assessment is reported. Calibration signal
-    is only claimed at ≥10 resolved forecasts — below that, say the
-    curve is thin.
+21. Gate `SP-3` — over the `scenario_score` response and the declared
+    events. First compute the events past their deadline with `terminal`:
+    `jq -c --arg today $(date -u +%F) -f due.jq` over `{"events": <the declared events>}`, with `due.jq` saved verbatim from:
+
+    ```jq
+    [.events[] | select(.deadline < $today) | .id]
+    ```
+
+    Then call `lisp_eval`:
+    - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (and (listp score) (listp (assoc "per_event" score))) (assoc "per_event" score) (list))) (define scored (if (numberp (assoc "scored_count" score)) (assoc "scored_count" score) 0)) (define resolved-ids (lambda (rs) (if (is_null rs) (list) (if (or (eq (assoc "outcome" (car rs)) t) (eq (assoc "outcome" (car rs)) (not t))) (cons (text-of (car rs) "event_id") (resolved-ids (cdr rs))) (resolved-ids (cdr rs)))))) (define done (resolved-ids rows)) (define due (if (listp past_deadline_ids) past_deadline_ids (list))) (define missing (lambda (xs) (if (is_null xs) (list) (if (member (car xs) done) (missing (cdr xs)) (cons (car xs) (missing (cdr xs))))))) (define unresolved (missing due)) (define unmatched (if (listp (assoc "unmatched_outcome_ids" score)) (assoc "unmatched_outcome_ids" score) (list))) (list (list "verdict" (cond ((or (is_null score) (not (listp score)) (not (numberp (assoc "scored_count" score)))) "score_missing") ((not (is_null unmatched)) "outcomes_unmatched") ((not (is_null unresolved)) "unresolved_past_deadline") ((= scored 0) "nothing_scored") (t "complete"))) (list "scored_count" scored) (list "resolved_events" done) (list "unresolved_past_deadline" unresolved) (list "unmatched_outcome_ids" unmatched) (list "calibration_claimable" (>= scored 10))))`
+    - env: `{ "score": <the scenario_score response, unchanged; null if the call failed>, "past_deadline_ids": <the jq output> }`
+    - `complete`: every past-deadline event has a recorded outcome in `per_event` and at least one event was scored. `unresolved_past_deadline` names the events still open; `outcomes_unmatched` echoes the server's `unmatched_outcome_ids`; `nothing_scored` and `score_missing` are not completion. `calibration_claimable` is true only at `scored_count` ≥ 10 — below that, say the curve is thin.
 
 ## Regression case
+
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the authored `SP-2` and `SP-3` (`scientific_gate_sp_`): `SP-2` over four divergent scenarios at 0.8/0.7/0.6 (pass), divergence 0.59 and 0.5 (revise, named), three scenarios, the parametric flag set, a render whose findings disagree with the computed verdict, a textual score and a score above 1 (malformed); `SP-3` over two past-deadline events both scored (complete), a third past-deadline event unscored (unresolved, named), an unmatched outcome id, zero scored, a null response, and twelve scored (calibration claimable). `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib scenario_planning_` runs the authored `due.jq` over events before, on and after today.
 
 Render `scenario-planning/type-framing` once per MAIA type
 (company_update, company_analysis, emerging_economic,
@@ -215,12 +223,7 @@ subject semantics, and event question patterns. Render
 divergent set (one per quadrant — the exactly-four threshold is part of
 what the gate enforces; it must score divergence, consistency and
 coverage) and with a near-duplicate pair (the divergence score must fall
-and the parametric-variation flag must fire). Run the Convergence gate
-form through `lisp_eval` three ways: `{resolved_forecasts: 12,
-unresolved_critical: 0}` passes; `{resolved_forecasts: 12,
-unresolved_critical: 0.0}` (a float zero — the binding that broke the
-former type-strict `eq` form) must ALSO pass — this is the pin for the
-`=` fix; and a nonzero `unresolved_critical` fails. The `scenario_*`
+and the parametric-variation flag must fire). The `scenario_*`
 MCP seams need live server state; they are a recorded scope boundary, not
 run here.
 
