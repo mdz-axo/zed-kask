@@ -1,0 +1,39 @@
+[package]
+name = "hkask-mcp-nostr-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nostr client MCP server — reports the Nostr identity configured in settings. It receives no credential, holds no key and cannot sign: it depends on hkask-nostr-core (public operations) and never on hkask-nostr-signer"
+
+[lib]
+name = "hkask_mcp_nostr_client"
+path = "src/hkask_mcp_nostr_client.rs"
+
+[[bin]]
+name = "hkask-mcp-nostr-client"
+path = "src/main.rs"
+
+[dependencies]
+hkask-bridge-ontology.workspace = true
+hkask-mcp-server.workspace = true
+# Public Nostr operations only. This server parses untrusted relay text, so it
+# must never depend on hkask-nostr-signer; `pin hkask-mcp-nostr-client
+# hkask-nostr-signer` (plan, "Tested commands") checks that.
+hkask-nostr-core.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+hkask-mcp-test-support.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

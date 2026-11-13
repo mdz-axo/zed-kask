@@ -390,6 +390,23 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_NOSTR_RELAY_SYNC_RELAYS",
         ],
     },
+    BuiltinMcpServer {
+        id: "nostr-client",
+        binary: "hkask-mcp-nostr-client",
+        description: "Nostr client — reports the Nostr identity configured in settings; holds no key and cannot sign",
+        // No credentials, by design, and pinned by
+        // `nostr_client_registration_entry_is_pinned`: this server parses
+        // untrusted relay text, and a Nostr key cannot be rotated or
+        // recovered. The identity key never enters an MCP child; signing
+        // belongs to the editor process.
+        credentials: &[],
+        config_env: &[
+            // The public identity and the seed relays, read once at startup
+            // by `Config::from_env`. Public data; no tool can change them.
+            "HKASK_NOSTR_CLIENT_NPUB",
+            "HKASK_NOSTR_CLIENT_SEED_RELAYS",
+        ],
+    },
 ];
 
 /// Just the server IDs, derived from [`BUILT_IN_MCP_SERVERS`].
@@ -1132,6 +1149,48 @@ mod tests {
         assert!(
             BUILT_IN_MCP_SERVERS.iter().any(|s| s.id == "nostr-relay"),
             "the disabled-set entry must name a registered server"
+        );
+    }
+
+    /// The Nostr client parses untrusted relay text, and a Nostr key cannot
+    /// be rotated or recovered. So the client receives no credential at all:
+    /// a credential added to its entry is a design change and must fail here
+    /// first. Its config allowlist is pinned to the two public values
+    /// `Config::from_env` reads.
+    #[test]
+    fn nostr_client_registration_entry_is_pinned() {
+        let server = BUILT_IN_MCP_SERVERS
+            .iter()
+            .find(|s| s.id == "nostr-client")
+            .expect("nostr-client server registered");
+        assert_eq!(server.binary, "hkask-mcp-nostr-client");
+        assert!(
+            server.credentials.is_empty(),
+            "the Nostr client holds no key and cannot sign; it receives no credential"
+        );
+        let expected_config: &[&str] =
+            &["HKASK_NOSTR_CLIENT_NPUB", "HKASK_NOSTR_CLIENT_SEED_RELAYS"];
+        assert_eq!(server.config_env, expected_config);
+    }
+
+    /// Whatever credentials exist, none reaches the Nostr client: the
+    /// per-server filter gives it nothing, including the database passphrase
+    /// every other stateful server receives.
+    #[test]
+    fn nostr_client_receives_no_credential_from_the_filter() {
+        let offered: Vec<(String, String)> = BUILT_IN_MCP_SERVERS
+            .iter()
+            .flat_map(|server| server.credentials.iter())
+            .chain(["NOSTR_NSEC", "HKASK_NOSTR_NSEC"].iter())
+            .map(|env| (env.to_string(), "url".to_string()))
+            .collect();
+        assert!(
+            offered.iter().any(|(env, _)| env == "HKASK_DB_PASSPHRASE"),
+            "the control: real credentials are on offer"
+        );
+        assert_eq!(
+            filter_credentials_for_server("nostr-client", &offered),
+            Vec::<(String, String)>::new()
         );
     }
 

@@ -316,6 +316,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-experimentation",
     "kask/mcp-servers/hkask-mcp-nostr-relay",
+    "kask/mcp-servers/hkask-mcp-nostr-client",
 ]
 default-members = ["crates/zed"]
 

@@ -16,3 +16,4 @@ hkask-mcp-prediction-markets
 hkask-mcp-media
 hkask-mcp-experimentation
 hkask-mcp-nostr-relay
+hkask-mcp-nostr-client
