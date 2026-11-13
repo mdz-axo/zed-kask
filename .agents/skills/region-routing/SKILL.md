@@ -101,14 +101,17 @@ skill ad hoc.
 ## Convergence
 
 The improvement signal is external: steps routed as-planned versus
-re-routed or overridden, counted from observed outcomes at task end. After
-each use, check in `lisp_eval`:
-- form: `(if (>= ratio 0.7) (quote done) (if (>= iteration 2) (quote stop-and-report) (quote iterate)))`
-- env: `{ "ratio": <as-planned steps / total steps, observed>, "iteration": <1-based> }`
-
-`done` requires at least 70% as-planned; `iterate` re-enters Step 2 for the
-task class; `stop-and-report` delivers the deviation record. The count comes
-from observed outcomes, never from the model scoring its own plan.
+re-routed or overridden, counted from observed outcomes at task end. Keep
+the run's `outcomes.jsonl` under
+`~/Documents/zk-data/skills/region-routing/{date}-{run}/`: one line per
+plan step as it finished, `{"step": <the plan's step number>, "region":
+<the region the step was actually executed in>, "overridden": <true when
+the operator overrode the route>}`, and `iterations.jsonl` with one line
+per re-entry at Step 2. After each use, check in `lisp_eval` (`RR-2`):
+- form: `(begin (define max-iterations 2) (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define num-of (lambda (row key) (if (numberp (assoc key row)) (assoc key row) nil))) (define plan (if (listp routing_plan) routing_plan (list))) (define outs (if (listp outcomes) outcomes (list))) (define region-planned (lambda (step rs) (if (is_null rs) "" (if (eq (num-of (car rs) "step") step) (text-of (car rs) "region") (region-planned step (cdr rs)))))) (define outcome-of (lambda (step os) (if (is_null os) (list) (if (eq (num-of (car os) "step") step) (car os) (outcome-of step (cdr os)))))) (define classify (lambda (p) (let ((o (outcome-of (num-of p "step") outs))) (cond ((is_null o) "unrecorded") ((eq (assoc "overridden" o) t) "overridden") ((string= (text-of o "region") (text-of p "region")) "as_planned") (t "re_routed"))))) (define tally (lambda (ps label) (if (is_null ps) 0 (+ (if (string= (classify (car ps)) label) 1 0) (tally (cdr ps) label))))) (define total (length plan)) (define as-planned (tally plan "as_planned")) (define unrecorded (tally plan "unrecorded")) (define ratio (if (= total 0) nil (/ as-planned total))) (define log (if (listp iterations) iterations (list))) (define iteration (+ (length log) 1)) (list (list "verdict" (cond ((= total 0) "no_plan") ((> unrecorded 0) "outcomes_incomplete") ((>= ratio 0.7) "done") ((>= iteration max-iterations) "stop-and-report") (t "iterate"))) (list "ratio" ratio) (list "as_planned" as-planned) (list "re_routed" (tally plan "re_routed")) (list "overridden" (tally plan "overridden")) (list "unrecorded" unrecorded) (list "total" total) (list "iteration" iteration)))`
+- env: `{ "routing_plan": <the route output's row array>, "outcomes": <jq -s . outcomes.jsonl>, "iterations": <jq -s . iterations.jsonl, [] on the first pass> }`
+- the form matches each plan step to its outcome by step number and classes it `as_planned` (same region, not overridden), `re_routed` or `overridden`; `ratio` is as-planned over the plan's steps. `done` requires at least 70% as-planned; `iterate` appends an iteration line and re-enters Step 2 for the task class; `stop-and-report` (the second iteration already logged) delivers the deviation record; `outcomes_incomplete` names how many plan steps have no outcome yet — record them before judging; `no_plan` when the plan is empty. The count comes
+from the recorded outcomes, never from the model scoring its own plan.
 
 ## D/P labelling
 
@@ -142,9 +145,7 @@ All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit):
   `bad_steps: [1,2,3]`.
 - Derived shape: an empty `provided_steps` input accepts a 3–7 item
   `step_model`; a nonempty input requires exact length parity.
-- Convergence, done: `{ratio: 0.75, iteration: 1}` → `done` (≥ 70% as-planned).
-- Convergence, iterate: `{ratio: 0.5, iteration: 1}` → `iterate`.
-- Convergence, stop-and-report: `{ratio: 0.5, iteration: 2}` → `stop-and-report`.
+- Convergence `RR-2` (`scientific_gate_rr_2_` in `check-skill-lisp-forms.sh`, over the authored form): a four-step plan with three outcomes in the planned region and one re-routed → `done`, ratio 0.75; one as-planned, two re-routed, one overridden → `iterate`, ratio 0.25; the same with one iteration logged → `stop-and-report`; one outcome recorded of four → `outcomes_incomplete` (3); an empty plan → `no_plan`.
 
 The skill's forms are executed at use time, never anchored in code.
 

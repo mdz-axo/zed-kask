@@ -5880,6 +5880,129 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_rr_2_counts_as_planned_steps_from_the_recorded_outcomes() {
+        let form = skill_candidate("region-routing", "outcomes_incomplete");
+        let plan = json!([
+            {"step": 1, "region": "SD"}, {"step": 2, "region": "Sem-P"},
+            {"step": 3, "region": "SP"}, {"step": 4, "region": "Sem-D"}
+        ]);
+        let outcome = |step: u64, region: &str, overridden: bool| json!({"step": step, "region": region, "overridden": overridden});
+        let gate = |plan: serde_json::Value,
+                    outcomes: Vec<serde_json::Value>,
+                    iterations: Vec<serde_json::Value>| {
+            eval_sandboxed(
+                &form,
+                &json!({"routing_plan": plan, "outcomes": outcomes, "iterations": iterations}),
+            )
+            .unwrap_or_else(|error| panic!("RR-2 failed to evaluate: {error}"))
+        };
+        let done = gate(
+            plan.clone(),
+            vec![
+                outcome(1, "SD", false),
+                outcome(2, "Sem-P", false),
+                outcome(3, "SP", false),
+                outcome(4, "Sem-P", false),
+            ],
+            vec![],
+        );
+        assert_eq!(done["verdict"], json!("done"));
+        assert_eq!(done["ratio"], json!(0.75));
+        assert_eq!(done["re_routed"], json!(1));
+
+        let poor = vec![
+            outcome(1, "SD", false),
+            outcome(2, "SD", false),
+            outcome(3, "SP", true),
+            outcome(4, "Sem-P", false),
+        ];
+        let iterate = gate(plan.clone(), poor.clone(), vec![]);
+        assert_eq!(iterate["verdict"], json!("iterate"));
+        assert_eq!(iterate["ratio"], json!(0.25));
+        assert_eq!(
+            iterate["overridden"],
+            json!(1),
+            "an overridden step is not as-planned even in its region"
+        );
+        assert_eq!(iterate["iteration"], json!(1));
+        let stop = gate(plan.clone(), poor, vec![json!({"step": 2})]);
+        assert_eq!(stop["verdict"], json!("stop-and-report"));
+        assert_eq!(stop["iteration"], json!(2));
+
+        // Exactly 70% is done: 7 of 10.
+        let ten: Vec<serde_json::Value> = (1..=10)
+            .map(|i| json!({"step": i, "region": "SD"}))
+            .collect();
+        let seven_ok: Vec<serde_json::Value> = (1..=10)
+            .map(|i| outcome(i, if i <= 7 { "SD" } else { "SP" }, false))
+            .collect();
+        assert_eq!(
+            gate(json!(&ten), seven_ok, vec![])["verdict"],
+            json!("done")
+        );
+        let six_ok: Vec<serde_json::Value> = (1..=10)
+            .map(|i| outcome(i, if i <= 6 { "SD" } else { "SP" }, false))
+            .collect();
+        assert_eq!(
+            gate(json!(&ten), six_ok, vec![])["verdict"],
+            json!("iterate")
+        );
+
+        let partial = gate(plan, vec![outcome(1, "SD", false)], vec![]);
+        assert_eq!(partial["verdict"], json!("outcomes_incomplete"));
+        assert_eq!(partial["unrecorded"], json!(3));
+        assert_eq!(gate(json!([]), vec![], vec![])["verdict"], json!("no_plan"));
+    }
+
+    #[test]
+    fn scientific_gate_sym_1_reconciles_measured_bytes_and_counts_passes_from_the_log() {
+        let form = skill_candidate("system-maintenance", "not_measured");
+        let gb: u64 = 1_073_741_824;
+        let gate =
+            |exit: serde_json::Value, before: u64, after: u64, ledger: u64, passes: usize| {
+                eval_sandboxed(
+                    &form,
+                    &json!({"health_exit": exit, "df_before_bytes": before, "df_after_bytes": after,
+                        "ledger_bytes": ledger, "passes": vec![json!({}); passes]}),
+                )
+                .unwrap_or_else(|error| panic!("SYM-1 failed to evaluate: {error}"))
+            };
+        let done = gate(json!(0), 100 * gb, 95 * gb, 5 * gb - gb / 2, 0);
+        assert_eq!(done["verdict"], json!("done"));
+        assert_eq!(done["unexplained_gb"], json!(0.5));
+        assert_eq!(done["freed_gb"], json!(5.0));
+        // Exactly one gigabyte unexplained is still done; just over is not.
+        assert_eq!(
+            gate(json!(0), 100 * gb, 95 * gb, 4 * gb, 0)["verdict"],
+            json!("done")
+        );
+        assert_eq!(
+            gate(json!(0), 100 * gb, 95 * gb, 4 * gb - 1, 0)["verdict"],
+            json!("reenter-triage")
+        );
+        // The gap is absolute: a ledger larger than the freed bytes is also unexplained.
+        assert_eq!(
+            gate(json!(0), 100 * gb, 99 * gb, 3 * gb, 0)["verdict"],
+            json!("reenter-triage")
+        );
+        assert_eq!(
+            gate(json!(1), 100 * gb, 100 * gb, 0, 0)["verdict"],
+            json!("reenter-triage")
+        );
+        let third = gate(json!(0), 100 * gb, 96 * gb, 0, 2);
+        assert_eq!(third["verdict"], json!("stop-and-report"));
+        assert_eq!(third["iteration"], json!(3));
+        assert_eq!(
+            gate(json!(0), 100 * gb, 96 * gb, 0, 0)["verdict"],
+            json!("reenter-triage")
+        );
+        assert_eq!(
+            gate(json!("0"), gb, gb, 0, 0)["verdict"],
+            json!("not_measured")
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

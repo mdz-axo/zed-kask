@@ -76,11 +76,10 @@ The skill manages the script fleet at `~/system-maintenance/` (this machine's co
 
 ### Convergence
 
-After step 8, check in `lisp_eval`:
-- form: `(if (and (= exit 0) (<= unexplained_gb 1)) (quote done) (if (>= iteration 3) (quote stop-and-report) (quote reenter-triage)))`
-- env: `{ "exit": <health-check exit>, "unexplained_gb": < |df delta − ledger bytes| in GB >, "iteration": <1-based> }`
-
-`done` → report (step 9). `reenter-triage` → step 2 with the named gap. `stop-and-report` → deliver with open items listed. The counts come from tools, never the model's own score.
+After step 8, check in `lisp_eval` (`SYM-1`) over measured bytes. Capture them with `terminal`: the health check as `bash ~/system-maintenance/system-health-check.sh; echo "health_exit=$?"`; the root filesystem's used bytes before step 1 and after step 8 with `df -B1 --output=used / | tail -1`; the ledger's bytes as the sum of its freed-bytes column (`awk '{s+=$N} END{print s}'` over the ledger, N the bytes column); and `passes.jsonl` under the run directory with one line appended per re-entry at step 2:
+- form: `(begin (define max-passes 3) (define log (if (listp passes) passes (list))) (define iteration (+ (length log) 1)) (define gb (lambda (bytes) (/ bytes 1073741824))) (define measured (and (numberp health_exit) (numberp df_before_bytes) (numberp df_after_bytes) (numberp ledger_bytes))) (define freed (if measured (- df_before_bytes df_after_bytes) nil)) (define unexplained (if measured (gb (abs (- freed ledger_bytes))) nil)) (list (list "verdict" (cond ((not measured) "not_measured") ((and (= health_exit 0) (<= unexplained 1)) "done") ((>= iteration max-passes) "stop-and-report") (t "reenter-triage"))) (list "health_exit" health_exit) (list "freed_gb" (if measured (gb freed) nil)) (list "ledger_gb" (if measured (gb ledger_bytes) nil)) (list "unexplained_gb" unexplained) (list "iteration" iteration)))`
+- env: `{ "health_exit": <the printed exit>, "df_before_bytes": <used bytes before>, "df_after_bytes": <used bytes after>, "ledger_bytes": <the ledger sum>, "passes": <jq -s . passes.jsonl, [] on the first pass> }`
+- the form computes the freed, ledger and unexplained gigabytes itself. `done` (health exit 0 and under 1 GB unexplained) → report (step 9). `reenter-triage` → append a pass line and re-enter step 2 with the gap named. `stop-and-report` (this is the third pass) → deliver with open items listed. `not_measured` → one of the four values is not a number: capture it, do not estimate it.
 
 ## D/P labelling
 
@@ -103,5 +102,5 @@ After step 8, check in `lisp_eval`:
 
 ## Regression case
 
-- The convergence form: `{exit 0, unexplained_gb 0.5, iteration 1}` → `done`; `{exit 1, unexplained_gb 0, iteration 1}` → `reenter-triage`; `{exit 0, unexplained_gb 4, iteration 3}` → `stop-and-report`.
+- The convergence form `SYM-1` (`scientific_gate_sym_1_` in `check-skill-lisp-forms.sh`, over the authored form): 5 GB freed against a 4.5 GB ledger with exit 0 → `done`, unexplained 0.5; exit 1 with nothing freed → `reenter-triage`; 4 GB freed against an empty ledger on the third pass → `stop-and-report`, on the first pass → `reenter-triage`; a textual exit → `not_measured`.
 - The class assignment is total: every dry-run line lands in exactly one of disposable/manual-review/sudo-gated/protected — a line in two classes is a triage defect.
