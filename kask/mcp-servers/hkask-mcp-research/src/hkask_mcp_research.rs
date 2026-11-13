@@ -1941,6 +1941,66 @@ mod search_order_tests {
         );
     }
 
+    /// expect: each recommendation on a tool-selected search carries what
+    /// is specific to the call and the provider's kind, and `web_ping`
+    /// serves the static profile once under the same kind. Before, the
+    /// profile was repeated in every recommendation of every such search.
+    #[tokio::test]
+    async fn recommendations_carry_no_static_profile_and_web_ping_serves_it() {
+        let server = server(vec![Box::new(FixedProvider {
+            kind: "brave",
+            results: oldest_first(),
+        })]);
+        let request: SearchRequest =
+            serde_json::from_value(serde_json::json!({"query": "q", "strategy": "quick"}))
+                .expect("arguments decode");
+        let response = server
+            .web_search(Parameters(request))
+            .await
+            .expect("search succeeds");
+        let body = hkask_mcp_test_support::parse_envelope(&response);
+        let recommendations = body["provider_recommendations"]
+            .as_array()
+            .unwrap_or_else(|| panic!("recommendations: {body}"));
+        assert!(!recommendations.is_empty(), "{body}");
+        for recommendation in recommendations {
+            let mut keys: Vec<&str> = recommendation
+                .as_object()
+                .expect("object")
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(
+                keys,
+                ["configured", "kind", "rationale", "score"],
+                "{recommendation}"
+            );
+        }
+        let brave = recommendations
+            .iter()
+            .find(|recommendation| recommendation["kind"] == "brave")
+            .unwrap_or_else(|| panic!("brave is ranked: {body}"));
+        assert_eq!(brave["configured"], true);
+
+        let ping = hkask_mcp_test_support::parse_envelope(
+            &server.web_ping().await.expect("ping succeeds"),
+        );
+        let profile = ping["provider_profiles"]
+            .as_array()
+            .and_then(|profiles| profiles.iter().find(|profile| profile["kind"] == "brave"))
+            .unwrap_or_else(|| panic!("web_ping serves the brave profile: {ping}"));
+        for field in [
+            "cost_per_call_usd",
+            "latency_tier",
+            "strengths",
+            "weaknesses",
+            "best_for",
+        ] {
+            assert!(profile.get(field).is_some(), "{field}: {profile}");
+        }
+    }
+
     /// expect: in a fused search a result two providers rank first stays
     /// above newer results one provider returned, and results with equal
     /// fusion scores come newer first.

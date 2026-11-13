@@ -30,9 +30,9 @@ use hkask_mcp_research::research::providers::{
 use hkask_mcp_research::research::types::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, CompoundSearchResult, EvaluateArtifact,
     EvaluateEvidenceRequest, ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest,
-    FinishResearchRunRequest, GetResearchRunRequest, LatencyTier, ProviderFailureRecord,
-    ProviderHealthEntry, ProviderInfo, ProviderRecommendation, ProviderSkipRecord, RankedResult,
-    RateLimiter, ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
+    FinishResearchRunRequest, GetResearchRunRequest, ProviderFailureRecord, ProviderHealthEntry,
+    ProviderInfo, ProviderRecommendation, ProviderSkipRecord, RankedResult, RateLimiter,
+    ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_test_support::{invoke_tool, parse_envelope};
@@ -2000,11 +2000,6 @@ stub_web_search_port! {
                 kind: "arxiv".to_string(),
                 score: 1.0,
                 rationale: format!("best for {} intent", _intent.unwrap_or("general")),
-                cost_per_call_usd: 0.0,
-                latency_tier: LatencyTier::Fast,
-                strengths: Vec::new(),
-                weaknesses: Vec::new(),
-                best_for: Vec::new(),
                 configured: true,
                 live_success_rate: None,
                 live_p50_latency_ms: None,
@@ -2015,11 +2010,6 @@ stub_web_search_port! {
                 kind: "tavily".to_string(),
                 score: 5.0,
                 rationale: "not configured".to_string(),
-                cost_per_call_usd: 0.01,
-                latency_tier: LatencyTier::Fast,
-                strengths: Vec::new(),
-                weaknesses: Vec::new(),
-                best_for: Vec::new(),
                 configured: false,
                 live_success_rate: None,
                 live_p50_latency_ms: None,

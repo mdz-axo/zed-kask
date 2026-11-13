@@ -175,8 +175,15 @@ pub fn provider_profile(kind: &str) -> Option<&'static ProviderProfile> {
 
 // ── Provider recommendation (metacognitive scoring) ──
 
-/// A single provider's recommendation: score, rationale, and profile.
+/// A single provider's recommendation for one search: its score, the
+/// reason for it, whether it is configured, and its live statistics.
 /// Lower `score` is better (mirrors `score_static`: cost + latency penalty).
+///
+/// The provider's static profile (cost, latency tier, strengths,
+/// weaknesses, best-for intents) is not repeated here: it is the same on
+/// every call and is served once by `web_ping` as `provider_profiles`,
+/// keyed by the same `kind`. It was 1,800 of the 2,576 bytes of this list
+/// on every tool-selected search (measured 2026-11-12).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderRecommendation {
     pub kind: String,
@@ -186,11 +193,6 @@ pub struct ProviderRecommendation {
     pub score: f64,
     /// Human-readable rationale for the score (which factors won/lost).
     pub rationale: String,
-    pub cost_per_call_usd: f64,
-    pub latency_tier: LatencyTier,
-    pub strengths: Vec<String>,
-    pub weaknesses: Vec<String>,
-    pub best_for: Vec<String>,
     /// Whether this provider is currently configured (has an API key).
     /// `false` for providers in the static table but not wired in `build_provider_pool`.
     pub configured: bool,

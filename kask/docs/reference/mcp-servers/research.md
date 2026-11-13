@@ -587,6 +587,18 @@ Three changes from the zk-reference retrieval sweep's lessons:
   (two retries; a persistent 429 surfaces with the attempt count), and
   the compound-provider timeout is 20s (raised from 10s — SerpAPI
   consistently exceeded the old bound and never participated).
+- That move was incomplete until 2026-11-12: each entry of
+  `provider_recommendations` still repeated the same static fields
+  (`cost_per_call_usd`, `latency_tier`, `strengths`, `weaknesses`,
+  `best_for`). Measured on three tool-selected searches: 1,800 of the
+  list's 2,576 bytes, 35 % of a quick response and 14 % of a fused one.
+  A recommendation now carries `kind`, `score`, `rationale`, `configured`
+  and the live statistics when present; the profile is looked up in
+  `web_ping`'s `provider_profiles` by `kind`. Two limits: `web_ping` lists
+  the profiles of configured providers only, so the profile of an
+  unconfigured provider is no longer returned anywhere; and `web_ping`
+  runs every provider's health check, which on a fully keyed server is
+  nine paid requests (source read, not executed with keys).
 
 ## Provider selection & closed-vocabulary boundary (2026-10-09)
 
