@@ -1749,6 +1749,56 @@ mod tests {
         );
     }
 
+    /// The coaching ASSESS renders emit `coach_assessment` in exactly the
+    /// vocabulary the `KI-2` gate compares against; the gate reads those
+    /// renders, so the words must stay in the templates.
+    #[test]
+    fn kata_improvement_coaching_renders_carry_the_assessment_vocabulary() {
+        let context = serde_json::json!({
+            "context": {}, "learner_bot": "agent-a", "previous_steps": [],
+            "learner_answer": "Reach 95% pass rate within 3 experiments, measured by the test runner."
+        });
+        for (stem, pass, fail) in [
+            ("coaching-q1-target", "clear", "vague"),
+            ("coaching-q2-actual", "data-driven", "assumption-based"),
+            ("coaching-q3-obstacles", "focused", "scattered"),
+            ("coaching-q4-experiment", "testable", "untestable"),
+            ("coaching-q5-learn", "tight-loop", "open-loop"),
+        ] {
+            let rendered =
+                render_template_for_test(&format!("kata-improvement/{stem}"), context.clone())
+                    .unwrap_or_else(|error| {
+                        panic!("{stem} renders with a learner answer: {error}")
+                    });
+            assert!(
+                rendered.contains("coach_assessment"),
+                "{stem} names the field"
+            );
+            assert!(
+                rendered.contains(&format!("\"{pass}\"")),
+                "{stem} carries {pass}"
+            );
+            assert!(
+                rendered.contains(&format!("\"{fail}\"")),
+                "{stem} carries {fail}"
+            );
+            assert!(
+                rendered.contains("measured by the test runner"),
+                "{stem} shows the answer"
+            );
+        }
+        let mut unanswered = context;
+        unanswered
+            .as_object_mut()
+            .expect("context object")
+            .remove("learner_answer");
+        assert!(
+            render_template_for_test("kata-improvement/coaching-q1-target", unanswered)
+                .expect_err("ASSESS needs the learner's answer")
+                .contains("learner_answer")
+        );
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(
