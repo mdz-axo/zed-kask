@@ -5525,6 +5525,75 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_cr_2_computes_open_blockers_from_the_rows_and_the_verdict_from_them() {
+        let form = skill_candidate("code-review", "health_assessment_missing");
+        let finding = |id: &str, severity: &str, waived: bool| {
+            let waiver = if waived {
+                json!({"reason": "r", "by": "operator", "date": "d"})
+            } else {
+                serde_json::Value::Null
+            };
+            json!({"id": id, "severity": severity, "waiver": waiver})
+        };
+        let gate = |findings: Vec<serde_json::Value>,
+                    rejected: usize,
+                    fixed: Vec<&str>,
+                    health: &str| {
+            eval_sandboxed(
+                &form,
+                &json!({"adjudicated_findings": findings, "rejected_findings": vec![json!({}); rejected],
+                        "prior_blockers": 0, "predicted_findings": 3, "predicted_blockers": 1,
+                        "fixed_ids": fixed, "health_assessment": health}),
+            )
+            .unwrap_or_else(|error| panic!("CR-2 failed to evaluate: {error}"))
+        };
+        let mixed = vec![
+            finding("CR-1", "Blocker", false),
+            finding("CR-2", "Blocker", true),
+            finding("CR-3", "Nit", false),
+        ];
+        let open = gate(mixed.clone(), 1, vec![], "improves");
+        assert_eq!(open["verdict"], json!("Request changes"));
+        assert_eq!(open["open_blockers"], json!(["CR-1"]));
+        assert_eq!(open["waived_blockers"], json!(["CR-2"]));
+        assert_eq!(open["severity_counts"]["blockers"], json!(2));
+        assert_eq!(open["prediction_gap"], json!([1, 1]));
+        assert_eq!(open["blocker_delta"], json!(2));
+
+        let fixed = gate(mixed, 1, vec!["CR-1"], "improves");
+        assert_eq!(fixed["verdict"], json!("Approve"));
+        assert_eq!(fixed["open_blockers"], json!([]));
+        // A fix id does not clear a waived Blocker's count, only its openness.
+        assert_eq!(fixed["severity_counts"]["blockers"], json!(2));
+
+        assert_eq!(
+            gate(vec![finding("CR-3", "Nit", false)], 0, vec![], "neutral")["verdict"],
+            json!("Comment")
+        );
+        assert_eq!(
+            gate(vec![], 0, vec![], "regresses")["verdict"],
+            json!("Request changes")
+        );
+        assert_eq!(
+            gate(vec![], 0, vec![], "improves")["verdict"],
+            json!("Approve")
+        );
+        assert_eq!(
+            gate(vec![], 0, vec![], "Improves")["verdict"],
+            json!("health_assessment_missing")
+        );
+        // A Should-fix is never an open Blocker.
+        let should_fix = gate(
+            vec![finding("CR-9", "Should-fix", false)],
+            0,
+            vec![],
+            "improves",
+        );
+        assert_eq!(should_fix["open_blockers"], json!([]));
+        assert_eq!(should_fix["verdict"], json!("Approve"));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",
