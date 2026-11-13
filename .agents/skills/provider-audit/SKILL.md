@@ -20,13 +20,13 @@ Two-directional provider contract audit over kask-adopted vendors — inbound (d
 
 | Step | Type | Oracle / critique |
 |------|------|-------------------|
-| Enumerate (derive) | D | `bash kask/scripts/check-provider-profiles.sh` and `lisp_eval` gate `PA-1` — the adopted set derived from tree anchors, never memory |
+| Enumerate (derive) | D | `bash kask/scripts/check-provider-profiles.sh` — the adopted set derived from tree anchors, never memory; its exit code is the gate (`PA-1`) |
 | Inbound B1–B6 | P | the operator; every verdict cites dated evidence (doc URL + extraction date, probe receipt, or tree file:line) |
-| Outbound O1–O4 | P (O1 grep receipts are D-assisted; `PA-2` `lisp_eval` gate) | the operator; grep receipts pinned to file:line |
-| Calibration | D | `lisp_eval` gate over the retrodiction receipts |
+| Outbound O1–O4 | P (O1 grep receipts are D-assisted) | the operator; grep receipts pinned to file:line; `PA-2` reads both renders' `checks` |
+| Calibration | D | `lisp_eval` gate `PA-3` over the two retrodiction renders |
 | Findings routing | P | the operator accepts/rejects/overrides |
 | Adoption recommendation | P | the operator decides; contested merits route to `mcda` |
-| Convergence | D | `lisp_eval` form over unresolved counts |
+| Convergence | D | `lisp_eval` gate `PA-4` over the renders and the re-entry log |
 
 ## Initial and target condition
 
@@ -57,10 +57,7 @@ Fix the trigger (adoption | drift | scheduled | announcement | retirement) and t
 ### Step 2 — Enumerate (D)
 
 1. Run `bash kask/scripts/check-provider-profiles.sh` via `terminal`. It derives the adopted set from four tree anchors — inference descriptor ids (`INFERENCE_PROVIDERS`), media provider structs, research provider modules, and `DATA_SERVICES` credential keys — and pins the structural contract: a profile per adopted vendor, required keys present, id/status consistency, no zombie retirements, no active orphans.
-2. Run deterministic `lisp_eval` gate `PA-1` over the script's exit code, the enumerated profiles, and any unmapped crates:
-   - form: `(and (= check_script_exit_code 0) (> (length profiles_enumerated) 0) (= (length unmapped_crates) 0))`
-   - env: `{ "check_script_exit_code": <0|nonzero>, "profiles_enumerated": <list of profile ids>, "unmapped_crates": <list of unmapped crates> }`
-   A gate violation is a finding before any semantic reading begins.
+2. `PA-1` is the script's own exit: run it as `bash kask/scripts/check-provider-profiles.sh; echo "exit=$?"` and keep the output verbatim in the run directory (`~/Documents/zk-data/skills/provider-audit/{date}-{run}/enumerate.txt`). The script refuses an empty derived set, a missing profile, a zombie retirement and an active orphan by name; a nonzero exit is a finding before any semantic reading begins, and its `OK:` line carries the derived vendor count. No count or list is retyped from it.
 
 ### Step 3 — Load profiles
 
@@ -88,10 +85,11 @@ Render `provider-audit/outbound` with the vendor, its profile, and the capabilit
 - **O3 churn:** deprecation/retirement waves vs our constants (`kask/crates/hkask-inference/src/model_constants.rs`, the descriptor tables).
 - **O4 degradation honesty:** missing capabilities surface loudly, never silently fall back (the `.rules` failure-signals class).
 
-After completing `outbound` and before composing `findings`, run deterministic `lisp_eval` gate `PA-2`:
+After completing `outbound` and before composing `findings`, run deterministic `lisp_eval` gate `PA-2` over the two renders as returned:
 
-- form: `(and (= (length uncited_outbound_findings) 0) (if retire_recommended (> (length replacement_providers) 0) true))`
-- env: `{ "uncited_outbound_findings": <list of outbound findings lacking file:line or URL+date>, "retire_recommended": <true|false>, "replacement_providers": <list of replacement provider ids> }`
+- form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (lambda (r) (if (listp (assoc "checks" r)) (assoc "checks" r) (list)))) (define checks (append (rows inbound) (rows outbound))) (define pick (lambda (pred xs) (if (is_null xs) (list) (if (pred (car xs)) (cons (text-of (car xs) "id") (pick pred (cdr xs))) (pick pred (cdr xs)))))) (define known (list "pass" "fail" "unverified")) (define uncited (pick (lambda (c) (and (string= (text-of c "verdict") "fail") (= (length (text-of c "evidence")) 0))) checks)) (define unverified (pick (lambda (c) (string= (text-of c "verdict") "unverified")) checks)) (define malformed (pick (lambda (c) (or (= (length (text-of c "id")) 0) (not (member (text-of c "verdict") known)))) checks)) (define failed (pick (lambda (c) (string= (text-of c "verdict") "fail")) checks)) (define replacements (if (listp replacement_providers) (length replacement_providers) 0)) (define retiring (and (stringp trigger) (string= trigger "retirement"))) (define problems (append (if (is_null checks) (list "no_checks") (list)) (if (is_null malformed) (list) (list "malformed_checks")) (if (is_null uncited) (list) (list "uncited_failures")) (if (and retiring (= replacements 0)) (list "retirement_without_replacement") (list)))) (list (list "verdict" (if (is_null problems) "pass" "blocked")) (list "problems" problems) (list "uncited" uncited) (list "malformed" malformed) (list "failed" failed) (list "unverified" unverified) (list "checks" (length checks))))`
+- env: `{ "inbound": <the inbound render output>, "outbound": <the outbound render output>, "trigger": <Step 1's trigger>, "replacement_providers": <the replacement provider ids named in the outbound render's notes on a retirement run, else []> }`
+- `pass` or `blocked` with `problems`: `no_checks`, `malformed_checks` (an id missing or a verdict outside `pass|fail|unverified`), `uncited_failures` (a `fail` whose `evidence` is blank — an evidence-less finding is not a finding), `retirement_without_replacement`. `failed` and `unverified` list the check ids for the report; an `unverified` check is reported as such, never as a pass.
 
 ### Step 6 — Calibration (Check, D)
 
@@ -100,10 +98,11 @@ Before a clean report is trusted, retrodict both directions:
 - one **known-good** vendor must PASS (OpenRouter B1: slot `https://openrouter.ai/api/v1` + allowlist alignment pinned in-tree);
 - one **known-bad** instance from the `.rules` record must FLAG (the SERPAPI pre-normalization key — a vendor key no allowlist carried, `kask/crates/kask_bridge/src/mcp_servers.rs` comment; KiloCode's 503-not-402 payment masquerade under B2).
 
-Check via `lisp_eval`:
+Each retrodiction is an `inbound` render over that vendor's profile (OpenRouter as adopted; the SERPAPI pre-normalization or KiloCode instance as recorded). Check via `lisp_eval` (`PA-3`) over the two renders as returned:
 
-- form: `(if (and (= known_good_pass 1) (= known_bad_flag 1)) (quote calibrated) (quote uncalibrated))`
-- env: `{ "known_good_pass": <0|1>, "known_bad_flag": <0|1> }`
+- form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (lambda (r) (if (listp (assoc "checks" r)) (assoc "checks" r) (list)))) (define verdict-of (lambda (id xs) (if (is_null xs) "" (if (string= (text-of (car xs) "id") id) (text-of (car xs) "verdict") (verdict-of id (cdr xs)))))) (define good-b1 (verdict-of "B1" (rows known_good))) (define bad-b1 (verdict-of "B1" (rows known_bad))) (define bad-b2 (verdict-of "B2" (rows known_bad))) (define good-pass (string= good-b1 "pass")) (define bad-flag (or (string= bad-b1 "fail") (string= bad-b2 "fail"))) (list (list "verdict" (if (and good-pass bad-flag) "calibrated" "uncalibrated")) (list "known_good_b1" good-b1) (list "known_bad_b1" bad-b1) (list "known_bad_b2" bad-b2)))`
+- env: `{ "known_good": <the OpenRouter inbound render output>, "known_bad": <the known-bad instance's inbound render output> }`
+- `calibrated` when the known-good render's B1 is `pass` and the known-bad render's B1 or B2 is `fail`; the three verdicts it read are returned beside the result.
 
 `uncalibrated` → the report is not trusted; re-enter Step 4/5 for the miscalibrated class before delivering anything.
 
@@ -125,18 +124,18 @@ Profile → `status: retired` (archived in place); keychain slot and settings UI
 
 ### Step 10 — Convergence (D)
 
-Call `lisp_eval`:
+Call `lisp_eval` (`PA-4`) over the renders and the run's re-entry log (`<run_dir>/reentries.jsonl`, one line appended per re-entry: `jq -n -c --arg step <step> --arg item <open item> '$ARGS.named' >> <run_dir>/reentries.jsonl`):
 
-- form: `(cond ((and (= blocking_unrouted 0) (string= calibration "calibrated")) (quote done)) ((>= reentries 2) (quote stop-and-report)) (t (quote iterate)))`
-- env: `{ "blocking_unrouted": <count>, "calibration": <"calibrated"|"uncalibrated">, "reentries": <0-based count> }`
-
-`done` → deliver the report; `iterate` → re-enter the step owning the open item; `stop-and-report` → deliver with the open items listed. Max 2 re-entries; a third open outcome is reported honestly — the decision is the operator's, never the loop's.
+- form: `(begin (define max-reentries 2) (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define ids (lambda (xs) (if (is_null xs) (list) (cons (if (stringp (car xs)) (car xs) (text-of (car xs) "id")) (ids (cdr xs)))))) (define declared (lambda (rs) (if (is_null rs) (list) (append (ids (if (listp (assoc "blocking_failures" (car rs))) (assoc "blocking_failures" (car rs)) (list))) (declared (cdr rs)))))) (define routed (ids (if (and (listp (assoc "routed" findings)) (listp (assoc "blocking" (assoc "routed" findings)))) (assoc "blocking" (assoc "routed" findings)) (list)))) (define unrouted (lambda (xs) (if (is_null xs) (list) (if (member (car xs) routed) (unrouted (cdr xs)) (cons (car xs) (unrouted (cdr xs))))))) (define open (unrouted (declared inbound_renders))) (define reentries (if (listp log) (length log) 0)) (define calibrated (and (listp calibration) (string= (text-of calibration "verdict") "calibrated"))) (list (list "verdict" (cond ((and (is_null open) calibrated) "done") ((>= reentries max-reentries) "stop-and-report") (t "iterate"))) (list "blocking_unrouted" open) (list "calibrated" calibrated) (list "reentries" reentries)))`
+- env: `{ "inbound_renders": <every vendor's inbound render output, as a list>, "findings": <the findings render output>, "calibration": <the PA-3 result>, "log": <jq -s . <run_dir>/reentries.jsonl, [] before the first re-entry> }`
+- `blocking_unrouted` is every id in any inbound render's `blocking_failures` that is absent from the findings render's `routed.blocking`. `done` → deliver the report; `iterate` → append a log line and re-enter the step owning the open item; `stop-and-report` (two re-entries already logged) → deliver with the open items listed — the decision is the operator's, never the loop's.
 
 ## Regression case
 
 - Gate: `bash kask/scripts/check-provider-profiles.sh` passes on the seeded tree; delete any profile → it fails naming the vendor; restore.
 - Selftest: `bash kask/scripts/check-provider-profiles-selftest.sh` proves the gate fails on a synthetic missing profile, a zombie retirement, and an active orphan, and passes on a clean synthetic tree.
 - Calibration retrodiction: OpenRouter passes B1 (slot + in-tree allowlist pins); the SERPAPI pre-normalization instance flags under B1; KiloCode's 503-not-402 flags under B2.
+- `bash kask/scripts/check-skill-lisp-forms.sh` evaluates the three authored gates (`scientific_gate_pa_`): `PA-2` over cited and uncited failures, an `unverified` check, a mis-cased verdict, empty renders, and a retirement run with and without a replacement; `PA-3` over B1-pass/B1-fail, B1-pass/B2-fail, both passing, the known-good failing, and empty renders; `PA-4` over all blocking routed (done), one unrouted (iterate), one unrouted after two logged re-entries (stop-and-report), and an uncalibrated run (iterate).
 
 ## Registry Templates
 

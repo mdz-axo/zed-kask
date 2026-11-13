@@ -4779,6 +4779,169 @@ form: "(= (+ a b) 3)"
         assert_eq!(empty["problems"], json!(["empty_inventory"]));
     }
 
+    fn pa_check(id: &str, verdict: &str, evidence: &str) -> serde_json::Value {
+        json!({"id": id, "verdict": verdict, "evidence": evidence, "note": ""})
+    }
+
+    #[test]
+    fn scientific_gate_pa_2_reads_the_inbound_and_outbound_checks_as_rendered() {
+        let form = skill_candidate("provider-audit", "uncited_failures");
+        let gate = |inbound: serde_json::Value,
+                    outbound: serde_json::Value,
+                    trigger: &str,
+                    replacements: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"inbound": inbound, "outbound": outbound, "trigger": trigger,
+                        "replacement_providers": replacements}),
+            )
+            .unwrap_or_else(|error| panic!("PA-2 failed to evaluate: {error}"))
+        };
+        let cited = gate(
+            json!({"checks": [pa_check("B1", "pass", "mcp_servers.rs:12"), pa_check("B3", "fail", "https://v/terms 2026-11-13")]}),
+            json!({"checks": [pa_check("O1", "pass", "providers.rs:40"), pa_check("O2", "unverified", "")]}),
+            "scheduled",
+            json!([]),
+        );
+        assert_eq!(cited["verdict"], json!("pass"));
+        assert_eq!(cited["failed"], json!(["B3"]));
+        assert_eq!(cited["unverified"], json!(["O2"]));
+        assert_eq!(cited["checks"], json!(4));
+
+        let uncited = gate(
+            json!({"checks": [pa_check("B3", "fail", "")]}),
+            json!({"checks": []}),
+            "scheduled",
+            json!([]),
+        );
+        assert_eq!(uncited["verdict"], json!("blocked"));
+        assert_eq!(uncited["problems"], json!(["uncited_failures"]));
+        assert_eq!(uncited["uncited"], json!(["B3"]));
+
+        let cased = gate(
+            json!({"checks": [pa_check("B1", "PASS", "x")]}),
+            json!({}),
+            "drift",
+            json!([]),
+        );
+        assert_eq!(cased["problems"], json!(["malformed_checks"]));
+        assert_eq!(cased["malformed"], json!(["B1"]));
+
+        let empty = gate(json!({}), json!({}), "drift", json!([]));
+        assert_eq!(empty["problems"], json!(["no_checks"]));
+
+        let ok = json!({"checks": [pa_check("B1", "pass", "x")]});
+        let retire_bare = gate(ok.clone(), json!({"checks": []}), "retirement", json!([]));
+        assert_eq!(
+            retire_bare["problems"],
+            json!(["retirement_without_replacement"])
+        );
+        let retire_ok = gate(
+            ok.clone(),
+            json!({"checks": []}),
+            "retirement",
+            json!(["openrouter"]),
+        );
+        assert_eq!(retire_ok["verdict"], json!("pass"));
+        // Replacements are only required on the retirement trigger.
+        let adoption = gate(ok, json!({"checks": []}), "adoption", json!([]));
+        assert_eq!(adoption["verdict"], json!("pass"));
+    }
+
+    #[test]
+    fn scientific_gate_pa_3_calibrates_from_the_two_retrodiction_renders() {
+        let form = skill_candidate("provider-audit", "define good-b1");
+        let gate = |good: serde_json::Value, bad: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"known_good": good, "known_bad": bad}))
+                .unwrap_or_else(|error| panic!("PA-3 failed to evaluate: {error}"))
+        };
+        let good = json!({"checks": [pa_check("B1", "pass", "x")]});
+        let b1_fail = json!({"checks": [pa_check("B1", "fail", "y"), pa_check("B2", "pass", "z")]});
+        let b2_fail = json!({"checks": [pa_check("B1", "pass", "y"), pa_check("B2", "fail", "z")]});
+        let clean = json!({"checks": [pa_check("B1", "pass", "y"), pa_check("B2", "pass", "z")]});
+        assert_eq!(
+            gate(good.clone(), b1_fail.clone())["verdict"],
+            json!("calibrated")
+        );
+        assert_eq!(gate(good.clone(), b2_fail)["verdict"], json!("calibrated"));
+        let missed = gate(good.clone(), clean);
+        assert_eq!(missed["verdict"], json!("uncalibrated"));
+        assert_eq!(missed["known_bad_b1"], json!("pass"));
+        let good_fails = gate(json!({"checks": [pa_check("B1", "fail", "x")]}), b1_fail);
+        assert_eq!(good_fails["verdict"], json!("uncalibrated"));
+        let empty = gate(json!({}), json!({}));
+        assert_eq!(empty["verdict"], json!("uncalibrated"));
+        assert_eq!(empty["known_good_b1"], json!(""));
+        // Only B1 of the known-good counts: a B2 pass there is not calibration,
+        // and a passing B1 listed after a failing B2 still is.
+        let wrong_check = gate(json!({"checks": [pa_check("B2", "pass", "x")]}), good);
+        assert_eq!(wrong_check["verdict"], json!("uncalibrated"));
+        let b1_second = gate(
+            json!({"checks": [pa_check("B2", "fail", "x"), pa_check("B1", "pass", "x")]}),
+            json!({"checks": [pa_check("B1", "fail", "y")]}),
+        );
+        assert_eq!(b1_second["verdict"], json!("calibrated"));
+    }
+
+    #[test]
+    fn scientific_gate_pa_4_converges_on_routed_blockers_calibration_and_the_log() {
+        let form = skill_candidate("provider-audit", "define max-reentries");
+        let calibrated = json!({"verdict": "calibrated"});
+        let gate = |blocking: serde_json::Value,
+                    routed: serde_json::Value,
+                    calibration: serde_json::Value,
+                    log: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"inbound_renders": [{"blocking_failures": blocking}],
+                        "findings": {"routed": {"blocking": routed}}, "calibration": calibration, "log": log}),
+            )
+            .unwrap_or_else(|error| panic!("PA-4 failed to evaluate: {error}"))
+        };
+        let done = gate(
+            json!(["B1"]),
+            json!([{"id": "B1", "evidence": "e"}]),
+            calibrated.clone(),
+            json!([]),
+        );
+        assert_eq!(done["verdict"], json!("done"));
+        assert_eq!(done["blocking_unrouted"], json!([]));
+        let open = gate(
+            json!(["B1", "B3"]),
+            json!([{"id": "B1"}]),
+            calibrated.clone(),
+            json!([]),
+        );
+        assert_eq!(open["verdict"], json!("iterate"));
+        assert_eq!(open["blocking_unrouted"], json!(["B3"]));
+        let once = gate(
+            json!(["B1", "B3"]),
+            json!([{"id": "B1"}]),
+            calibrated.clone(),
+            json!([{}]),
+        );
+        assert_eq!(once["verdict"], json!("iterate"));
+        let twice = gate(
+            json!(["B1", "B3"]),
+            json!([{"id": "B1"}]),
+            calibrated.clone(),
+            json!([{}, {}]),
+        );
+        assert_eq!(twice["verdict"], json!("stop-and-report"));
+        assert_eq!(twice["reentries"], json!(2));
+        let uncalibrated = gate(
+            json!([]),
+            json!([]),
+            json!({"verdict": "uncalibrated"}),
+            json!([]),
+        );
+        assert_eq!(uncalibrated["verdict"], json!("iterate"));
+        assert_eq!(uncalibrated["calibrated"], json!(false));
+        // Nothing blocking and calibrated is done even with a log.
+        let quiet = gate(json!([]), json!([]), calibrated, json!([{}]));
+        assert_eq!(quiet["verdict"], json!("done"));
+    }
+
     #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
