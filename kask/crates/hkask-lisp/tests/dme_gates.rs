@@ -25,13 +25,15 @@ fn gates_dir() -> PathBuf {
 fn skill_md() -> PathBuf {
     match std::env::var_os("DME_SKILL_MD") {
         Some(path) => PathBuf::from(path),
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../.agents/skills/direct-model-edit/SKILL.md"),
+        None => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.agents/skills/direct-model-edit/SKILL.md"),
     }
 }
 
 fn read(name: &str) -> String {
     let path = gates_dir().join(name);
-    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
 }
 
 /// The inline route form in SKILL.md whose text contains `needle`.
@@ -43,7 +45,11 @@ fn inline_form(needle: &str) -> String {
         .filter_map(|rest| rest.trim_end().strip_suffix('`'))
         .filter(|form| form.contains(needle))
         .collect();
-    assert_eq!(forms.len(), 1, "expected one inline form containing {needle:?}");
+    assert_eq!(
+        forms.len(),
+        1,
+        "expected one inline form containing {needle:?}"
+    );
     forms[0].to_string()
 }
 
@@ -69,7 +75,11 @@ fn declared_cases() -> Vec<Value> {
             .output(),
     )
     .expect("jq must be installed: the gates' measuring half is a jq module");
-    assert!(output.status.success(), "jq failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "jq failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).expect("the generator prints one JSON array")
 }
 
@@ -94,12 +104,19 @@ fn meets(got: &Value, expect: &Value) -> bool {
         && expect
             .get("contains")
             .and_then(Value::as_array)
-            .is_none_or(|needles| needles.iter().all(|n| n.as_str().is_some_and(|n| text.contains(n))))
-        && expect.get("at").and_then(Value::as_array).is_none_or(|pairs| {
-            pairs
-                .iter()
-                .all(|pair| pair[0].as_u64().and_then(|i| got.get(i as usize)) == Some(&pair[1]))
-        })
+            .is_none_or(|needles| {
+                needles
+                    .iter()
+                    .all(|n| n.as_str().is_some_and(|n| text.contains(n)))
+            })
+        && expect
+            .get("at")
+            .and_then(Value::as_array)
+            .is_none_or(|pairs| {
+                pairs.iter().all(|pair| {
+                    pair[0].as_u64().and_then(|i| got.get(i as usize)) == Some(&pair[1])
+                })
+            })
 }
 
 #[test]
@@ -111,11 +128,24 @@ fn every_declared_case_returns_its_declared_verdict() {
         let gate = case["gate"].as_str().expect("case gate");
         let got = eval(&form_for(gate), &case["env"]);
         if !meets(&got, &case["expect"]) {
-            failures.push(format!("{id} ({gate}): got {got}, declared {}", case["expect"]));
+            failures.push(format!(
+                "{id} ({gate}): got {got}, declared {}",
+                case["expect"]
+            ));
         }
     }
-    assert!(cases.len() >= 200, "expected at least 200 declared cases, found {}", cases.len());
-    assert!(failures.is_empty(), "{} of {} cases failed:\n{}", failures.len(), cases.len(), failures.join("\n"));
+    assert!(
+        cases.len() >= 200,
+        "expected at least 200 declared cases, found {}",
+        cases.len()
+    );
+    assert!(
+        failures.is_empty(),
+        "{} of {} cases failed:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
 }
 
 /// The gates' sign test in exact integer arithmetic: two-sided p < 0.05 over
@@ -140,9 +170,17 @@ fn the_float_sign_test_agrees_with_exact_arithmetic_up_to_100_changed_answers() 
     let gate = read("dme-3.lisp");
     let defs: Vec<&str> = gate
         .lines()
-        .filter(|line| [" (define hp ", " (define tl ", " (define sig "].iter().any(|p| line.starts_with(p)))
+        .filter(|line| {
+            [" (define hp ", " (define tl ", " (define sig "]
+                .iter()
+                .any(|p| line.starts_with(p))
+        })
         .collect();
-    assert_eq!(defs.len(), 3, "the three sign-test definitions are one line each");
+    assert_eq!(
+        defs.len(),
+        3,
+        "the three sign-test definitions are one line each"
+    );
     let form = format!("(begin {} (sig b c))", defs.join("\n"));
     for b in 0..=100u32 {
         for c in 0..=(100 - b) {
@@ -170,17 +208,33 @@ fn lean_attribute_gain(net: i64, fin: i64, unb: i64, band: bool) -> &'static str
 #[test]
 fn the_attribution_rule_in_the_gate_file_is_the_table_the_lean_pin_proves() {
     let gate = read("dme-3.lisp");
-    let start = gate.find("(cond ((= net 0)").expect("the attribution cond starts as pinned");
+    let start = gate
+        .find("(cond ((= net 0)")
+        .expect("the attribution cond starts as pinned");
     let last = "(t (quote unblocking-with-unresolved-change-on-finished-answers)))";
-    let end = start + gate[start..].find(last).expect("the attribution cond ends as pinned") + last.len();
-    let form = format!("(let ((net n) (fin f) (unb u) (band k)) {})", &gate[start..end]);
+    let end = start
+        + gate[start..]
+            .find(last)
+            .expect("the attribution cond ends as pinned")
+        + last.len();
+    let form = format!(
+        "(let ((net n) (fin f) (unb u) (band k)) {})",
+        &gate[start..end]
+    );
     for net in -1..=1i64 {
         for fin in -1..=1i64 {
             for unb in -1..=1i64 {
                 for band in [false, true] {
-                    let got = eval(&form, &serde_json::json!({ "n": net, "f": fin, "u": unb, "k": band }));
+                    let got = eval(
+                        &form,
+                        &serde_json::json!({ "n": net, "f": fin, "u": unb, "k": band }),
+                    );
                     let want = lean_attribute_gain(net, fin, unb, band);
-                    assert_eq!(got, Value::String(want.into()), "net={net} fin={fin} unb={unb} band={band}");
+                    assert_eq!(
+                        got,
+                        Value::String(want.into()),
+                        "net={net} fin={fin} unb={unb} band={band}"
+                    );
                 }
             }
         }
@@ -209,10 +263,17 @@ fn shared_definitions_are_identical_across_gate_files() {
             }
         }
         for block in blocks {
-            let name = block[" (define ".len()..].split_whitespace().next().expect("definition name").to_string();
+            let name = block[" (define ".len()..]
+                .split_whitespace()
+                .next()
+                .expect("definition name")
+                .to_string();
             match seen.get(&name) {
                 Some((first_gate, first_block)) => {
-                    assert_eq!(first_block, &block, "`{name}` differs between {first_gate}.lisp and {gate}.lisp");
+                    assert_eq!(
+                        first_block, &block,
+                        "`{name}` differs between {first_gate}.lisp and {gate}.lisp"
+                    );
                     shared += 1;
                 }
                 None => {
@@ -221,7 +282,10 @@ fn shared_definitions_are_identical_across_gate_files() {
             }
         }
     }
-    assert!(shared >= 40, "expected the shared helpers to repeat across files, found {shared} repeats");
+    assert!(
+        shared >= 40,
+        "expected the shared helpers to repeat across files, found {shared} repeats"
+    );
 }
 
 fn lean_dir() -> PathBuf {
@@ -235,7 +299,8 @@ fn lean_dir() -> PathBuf {
 /// This keeps the copy honest: the pin must contain exactly these arms.
 #[test]
 fn the_rust_copy_of_the_lean_table_is_the_lean_table() {
-    let pin = std::fs::read_to_string(lean_dir().join("dme_gates.lean")).expect("read dme_gates.lean");
+    let pin =
+        std::fs::read_to_string(lean_dir().join("dme_gates.lean")).expect("read dme_gates.lean");
     let arms = "  match net, fin, unb, band with
   | .flat, _, _, _ => .netChangeNotEstablished
   | .down, _, _, _ => .netLossEstablished
@@ -245,7 +310,10 @@ fn the_rust_copy_of_the_lean_table_is_the_lean_table() {
   | .up, .flat, .up, false => .unblockingWithUnresolvedChangeOnFinishedAnswers
   | .up, _, _, _ => .netGainSourceUnresolved
 ";
-    assert!(pin.contains(arms), "attributeGain's match arms changed; update lean_attribute_gain with them");
+    assert!(
+        pin.contains(arms),
+        "attributeGain's match arms changed; update lean_attribute_gain with them"
+    );
 }
 
 /// The negative control is checked as a file on its own, so it repeats the
@@ -255,9 +323,12 @@ fn the_rust_copy_of_the_lean_table_is_the_lean_table() {
 fn the_negative_control_repeats_the_pin_verbatim() {
     let dir = lean_dir();
     let pin = std::fs::read_to_string(dir.join("dme_gates.lean")).expect("read dme_gates.lean");
-    let control =
-        std::fs::read_to_string(dir.join("dme_gates_negative_control.lean")).expect("read the negative control");
-    let body = control.split_once("-/\n").expect("the control opens with a doc comment").1;
+    let control = std::fs::read_to_string(dir.join("dme_gates_negative_control.lean"))
+        .expect("read the negative control");
+    let body = control
+        .split_once("-/\n")
+        .expect("the control opens with a doc comment")
+        .1;
     let definitions: Vec<&str> = body
         .split("\n\n")
         .map(str::trim)
@@ -265,7 +336,14 @@ fn the_negative_control_repeats_the_pin_verbatim() {
         .collect();
     assert_eq!(definitions.len(), 4, "the control repeats four definitions");
     for definition in definitions {
-        assert!(pin.contains(definition), "not in the pin verbatim:\n{definition}");
+        assert!(
+            pin.contains(definition),
+            "not in the pin verbatim:\n{definition}"
+        );
     }
-    assert_eq!(body.matches("\nexample : ").count(), 4, "the control makes four false claims");
+    assert_eq!(
+        body.matches("\nexample : ").count(),
+        4,
+        "the control makes four false claims"
+    );
 }
