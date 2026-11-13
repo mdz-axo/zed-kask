@@ -16,13 +16,10 @@
 //!   ledger — readings over prior executions; cite_sources is a
 //!   deterministic formatting step; resolve_paper resolves a
 //!   bibliographic identity to a typed identity; evaluate_evidence
-//!   adjudicates retrieved evidence; the RSS tools manage feed
-//!   subscriptions and read feed entries; the synthetic-feed tools
-//!   create, list, fetch, and delete non-feed extractions.
+//!   adjudicates retrieved evidence.
 //! - **State axis (DC+BIBO)** — write responses are datasets (a stored
-//!   or modified measurement — a ledger row, a subscription, a stored
-//!   extraction); read responses are compiled readings over stored
-//!   records — reports.
+//!   or modified measurement — a ledger row); read responses are compiled
+//!   readings over stored records — reports.
 //!
 //! The vocabulary itself lives in the shared `hkask-bridge-ontology`
 //! crate; this module holds only the research-specific tool→concept
@@ -69,26 +66,6 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         // Citation generation: deterministic formatting of retrieved
         // sources — a step.
         "cite_sources" => Some(STEP_EXECUTION),
-        // RSS subscription management: subscribe/import mutate the
-        // subscription store; list/read-count/search observe entries.
-        "rss_subscribe" | "rss_import_opml" => Some(STEP_EXECUTION),
-        "rss_list_subscriptions" | "rss_get_unread_count" | "rss_search" => {
-            Some(PROCEDURE_EXECUTION)
-        }
-        // RSS feed operations: discover probes a site for feeds; fetch
-        // syncs entries; entries read out; tag edits mutate entry state;
-        // mark-all-read mutates; export renders a reading.
-        "rss_discover_feeds" | "rss_fetch" => Some(STEP_EXECUTION),
-        "rss_get_entries" => Some(PROCEDURE_EXECUTION),
-        "rss_edit_tag" | "rss_mark_all_read" => Some(STEP_EXECUTION),
-        "rss_export_opml" => Some(PROCEDURE_EXECUTION),
-        "rss_unsubscribe" => Some(STEP_EXECUTION),
-        // Synthetic feeds: create/list/fetch/delete non-feed-site
-        // extractions — creation is a step; list observes stored
-        // extractions.
-        "rss_synthesize" => Some(STEP_EXECUTION),
-        "rss_list_synthetic" => Some(PROCEDURE_EXECUTION),
-        "rss_delete_synthetic" => Some(STEP_EXECUTION),
         _ => None,
     }
 }
@@ -96,42 +73,16 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
 /// The state-axis (DC+BIBO) concept a research tool's response occupies.
 ///
 /// Write responses are datasets (a stored or modified measurement — a
-/// ledger row, a subscription, a stored extraction); read responses are
-/// compiled readings over stored records — reports.
+/// ledger row); read responses are compiled readings over stored records
+/// — reports.
 pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     match tool_name {
         // Reads: run manifests, searches, extractions, readings,
-        // liveness, listings, entry reads, searches, exports — reports.
-        "get_research_run"
-        | "web_search"
-        | "web_extract"
-        | "web_browse"
-        | "web_find_similar"
-        | "web_ping"
-        | "resolve_paper"
-        | "evaluate_evidence"
-        | "cite_sources"
-        | "rss_list_subscriptions"
-        | "rss_get_unread_count"
-        | "rss_search"
-        | "rss_get_entries"
-        | "rss_export_opml"
-        | "rss_list_synthetic" => Some(REPORT),
-        // Writes and mutations: run lifecycle events, annotations,
-        // subscriptions, syncs, tag edits, synthetic extractions —
-        // datasets.
-        "begin_research_run"
-        | "finish_research_run"
-        | "annotate_research_run"
-        | "rss_subscribe"
-        | "rss_import_opml"
-        | "rss_discover_feeds"
-        | "rss_fetch"
-        | "rss_edit_tag"
-        | "rss_mark_all_read"
-        | "rss_unsubscribe"
-        | "rss_synthesize"
-        | "rss_delete_synthetic" => Some(DATASET),
+        // liveness — reports.
+        "get_research_run" | "web_search" | "web_extract" | "web_browse" | "web_find_similar"
+        | "web_ping" | "resolve_paper" | "evaluate_evidence" | "cite_sources" => Some(REPORT),
+        // Writes: run lifecycle events and annotations — datasets.
+        "begin_research_run" | "finish_research_run" | "annotate_research_run" => Some(DATASET),
         _ => None,
     }
 }
@@ -148,7 +99,6 @@ hkask_mcp_server::dual_axis_annotate!(
     DcConcept,
     &[
         "web_",
-        "rss_",
         "begin_",
         "finish_",
         "get_",
@@ -274,8 +224,6 @@ mod tests {
             Arc::new(ResponseCache::new(0, Duration::from_secs(1))),
             RateLimiter::new(30, 60),
             None,
-            reqwest::Client::new(),
-            reqwest::Client::new(),
             Arc::new(NoopInference),
             None,
             None,

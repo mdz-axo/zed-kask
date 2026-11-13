@@ -1,21 +1,19 @@
-//! hkask-mcp-research — Web search, extraction, browsing, and RSS feed management.
+//! hkask-mcp-research — Web search, extraction, browsing, evidence scoring,
+//! paper identity, and the research-run ledger.
 //!
 //! MCP server crate containing the research tool surface and business logic:
 //! provider pool with RRF fusion, content extraction, headless browsing,
-//! RSS feed management, response caching, and rate limiting.
+//! response caching, and rate limiting.
 
 pub(crate) mod breaker;
 pub mod cache;
 pub mod db;
 pub(crate) mod evidence;
-pub(crate) mod feed;
 pub mod paper_id;
 pub(crate) mod performance;
 pub mod providers;
-pub mod rss_types;
 pub(crate) mod runs;
 pub(crate) mod strip_html;
-pub(crate) mod synthetic;
 pub mod types;
 
 use std::collections::HashMap;
@@ -32,13 +30,7 @@ pub(crate) use cache::{ResponseCache, cache_key};
 pub(crate) use evidence::{
     ArtifactScore, DEFAULT_PROFILE, EvidenceReport, SensitivityStatus, score_evidence_set,
 };
-pub(crate) use feed::{discover_feeds, fetch_feed};
-pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort, validated_fetch_client};
-pub(crate) use rss_types::{
-    Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
-    GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest, MarkReadRequest,
-    SubscribeRequest, SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
-};
+pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
 pub(crate) use runs::{NewResearchRun, RunSourceRecord};
 pub(crate) use types::RateLimiter;
 pub(crate) use types::{

@@ -11,9 +11,8 @@
 //!   not a silent fallback or empty result.
 //! - `web_extract` / `web_browse` invalid-argument paths (oversized URL,
 //!   oversized json_prompt / instruction) — checked before URL validation.
-//! - RSS tools without a DB → `permission_denied` (the `require_research_db!` gate).
-//! - RSS tools with an in-memory DB → happy path (empty list, zero unread)
-//!   and invalid-argument (malformed continuation token).
+//! - Research-run tools without a DB → `permission_denied` (the
+//!   `require_research_db!` gate), and their ledger paths on an in-memory DB.
 //!
 //! Tools return `Result<String, McpToolError>`: Ok-path tests unwrap the
 //! envelope string; error-path tests assert on the typed `McpToolError`
@@ -27,10 +26,7 @@ use hkask_mcp_research::research::db::RESEARCH_SCHEMA_DDL;
 use hkask_mcp_research::research::providers::{
     CrossrefCandidate, ProviderSearchOutput, WebSearchPort,
 };
-use hkask_mcp_research::research::rss_types::{
-    DiscoverRequest, GetEntriesRequest, ListSubscriptionsRequest, MarkReadRequest,
-    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest,
-};
+
 use hkask_mcp_research::research::types::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult, CiteSource,
     CiteSourcesRequest, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
@@ -669,12 +665,6 @@ fn test_server(
         Arc::new(ResponseCache::new(cache_capacity, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         database,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
         inference_port.unwrap_or_else(|| Arc::new(FailingInferencePort)),
         rerank_model.map(str::to_string),
         embedding_model.map(str::to_string),
@@ -700,12 +690,6 @@ fn test_server_with_private_rerank(
         Arc::new(ResponseCache::new(10, Duration::from_secs(60))),
         RateLimiter::new(10000, 60),
         None,
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
-        reqwest::Client::builder()
-            .build()
-            .expect("reqwest client build"),
         inference_port,
         rerank_model.map(str::to_string),
         None,
@@ -1419,131 +1403,6 @@ async fn web_browse_rejects_unspecified_destination() {
     assert!(
         error.message.contains("Unspecified"),
         "error must name the unspecified rejection: {}",
-        error.message
-    );
-}
-
-/// Pins the strict destination gate for the discover tool: its initial URL is
-/// user-supplied (unlike user-curated RSS feeds), so it goes through the same
-/// strict validation as `web_extract` — including the unspecified-address
-/// class that connects to loopback on Linux.
-#[tokio::test]
-async fn rss_discover_feeds_rejects_unspecified_destination() {
-    let server = make_server_without_db();
-    let error = err(server
-        .rss_discover_feeds(Parameters(DiscoverRequest {
-            url: "http://0.0.0.0:6379/".to_string(),
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-    assert!(
-        error.message.contains("Unspecified"),
-        "error must name the unspecified rejection: {}",
-        error.message
-    );
-}
-
-// ── RSS tools without DB (permission_denied) ───────────────────────────────
-
-#[tokio::test]
-async fn rss_list_subscriptions_without_db_returns_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server
-        .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-#[tokio::test]
-async fn rss_get_unread_count_without_db_returns_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server
-        .rss_get_unread_count(Parameters(UnreadCountRequest {
-            stream_id: "feed/test".to_string(),
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-#[tokio::test]
-async fn rss_export_opml_without_db_returns_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server.rss_export_opml().await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-#[tokio::test]
-async fn rss_unsubscribe_without_db_returns_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server
-        .rss_unsubscribe(Parameters(UnsubscribeRequest {
-            stream_id: "feed/test".to_string(),
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-#[tokio::test]
-async fn rss_mark_all_read_without_db_returns_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server
-        .rss_mark_all_read(Parameters(MarkReadRequest {
-            stream_id: "feed/test".to_string(),
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-// ── RSS tools with DB (happy path) ─────────────────────────────────────────
-
-#[tokio::test]
-async fn rss_list_subscriptions_with_empty_db_returns_zero_count() {
-    let server = make_server_with_research_db();
-    let out = ok(server
-        .rss_list_subscriptions(Parameters(ListSubscriptionsRequest { folder: None }))
-        .await);
-    let json = parse_envelope(&out);
-    assert_eq!(
-        json.get("count").and_then(|count| count.as_u64()),
-        Some(0),
-        "empty DB should have 0 subscriptions; got: {json}"
-    );
-}
-
-#[tokio::test]
-async fn rss_get_unread_count_with_empty_db_returns_zero() {
-    let server = make_server_with_research_db();
-    let out = ok(server
-        .rss_get_unread_count(Parameters(UnreadCountRequest {
-            stream_id: "feed/test".to_string(),
-        }))
-        .await);
-    let json = parse_envelope(&out);
-    assert_eq!(
-        json.get("unread_count").and_then(|count| count.as_u64()),
-        Some(0),
-        "empty DB should have 0 unread; got: {json}"
-    );
-}
-
-// ── RSS tools with DB (invalid argument) ───────────────────────────────────
-
-#[tokio::test]
-async fn rss_get_entries_rejects_non_base64_continuation_token() {
-    let server = make_server_with_research_db();
-    let error = err(server
-        .rss_get_entries(Parameters(GetEntriesRequest {
-            stream_id: "feed/test".to_string(),
-            unread_only: None,
-            starred_only: None,
-            count: None,
-            continuation_token: Some("!!!not-base64!!!".to_string()),
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-    assert!(
-        error.message.contains("base64"),
-        "error should mention base64; got: {}",
         error.message
     );
 }
@@ -2449,9 +2308,8 @@ async fn evaluate_evidence_syndication_visible_in_clusters() {
 
 #[test]
 fn research_schema_creates_run_tables() {
-    // The run ledger lives in the same encrypted DB as the feed substrate
-    // — one DB, one passphrase, one pool (essentialist G3). The run tables
-    // must exist after the schema DDL runs.
+    // The run tables must exist after the schema DDL runs, and the feed
+    // tables the server created until 2026-11-12 must not be created.
     let manager = hkask_storage::SqliteConnectionManager::memory();
     let pool = r2d2::Pool::builder()
         .max_size(1)
@@ -2472,6 +2330,15 @@ fn research_schema_creates_run_tables() {
             .expect("sqlite_master query");
         assert_eq!(count, 1, "table {table} must exist after the DDL");
     }
+    let feed_objects: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN \
+             ('feeds','subscriptions','entries','entry_states','entries_fts','synthetic_feeds')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("sqlite_master query");
+    assert_eq!(feed_objects, 0, "the schema must not create feed tables");
 
     // run_sources carries the audit copy (excerpt — what the server
     // actually returned, capped) and the corpus composition seam
@@ -2908,9 +2775,9 @@ async fn annotate_rejects_unknown_verification_state() {
 // ── Closed-vocabulary boundary: sibling fields ──────────────────────────────
 // The shared parse contract (normalize_closed_vocab + parse_closed_vocab*)
 // covers every closed-vocabulary field in the server, not just web_search's:
-// finish status, annotate verification_state, cite style, evidence
-// duplication, and the synthetic extractor kind all accept quoted/padded
-// case-variant emissions, and unknown values teach the accepted spellings.
+// finish status, annotate verification_state, cite style and evidence
+// duplication all accept quoted/padded case-variant emissions, and unknown
+// values teach the accepted spellings.
 
 #[tokio::test]
 async fn finish_research_run_accepts_quoted_status() {
@@ -3014,57 +2881,6 @@ async fn cite_sources_unknown_style_teaches_the_vocabulary() {
     assert!(
         error.message.contains("apa, bibtex, chicago, json"),
         "teaches the accepted styles: {}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn rss_synthesize_rejects_unknown_extractor_kind_with_teaching() {
-    let server = make_server_with_research_db();
-    let error = err(server
-        .rss_synthesize(Parameters(SynthesizeRequest {
-            source_url: "https://a.example/feed".to_string(),
-            extractor_kind: "regex".to_string(),
-            extractor_spec: "{}".to_string(),
-            title: None,
-            description: None,
-            cadence_hint_secs: None,
-            label: None,
-            folder: None,
-            subscribe: None,
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-    assert!(
-        error
-            .message
-            .contains("css, json_path, diff_hash, llm_schema, pdf_ocr"),
-        "teaches the accepted kinds: {}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn rss_synthesize_quoted_extractor_kind_parses() {
-    // A quoted kind gets PAST the closed-set parse — the failure moves
-    // downstream (here: the spec), proving the boundary accepted it.
-    let server = make_server_with_research_db();
-    let error = err(server
-        .rss_synthesize(Parameters(SynthesizeRequest {
-            source_url: "https://a.example/feed".to_string(),
-            extractor_kind: "\"css\"".to_string(),
-            extractor_spec: "not json".to_string(),
-            title: None,
-            description: None,
-            cadence_hint_secs: None,
-            label: None,
-            folder: None,
-            subscribe: None,
-        }))
-        .await);
-    assert!(
-        !error.message.contains("extractor kind"),
-        "quoted kind must pass the parse; the error should be about the spec: {}",
         error.message
     );
 }

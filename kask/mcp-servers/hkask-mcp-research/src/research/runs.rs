@@ -6,8 +6,7 @@
 //! anything; this design cannot be lied to about the server's own output:
 //! rows with `recorded_by='server'` are written only by the server's tools,
 //! from the results those tools actually returned (C2, the zed-kask
-//! strengthening). The ledger shares the feed substrate's DB — one DB, one
-//! passphrase, one pool (essentialist G3).
+//! strengthening). The ledger is the research database's only content.
 
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;

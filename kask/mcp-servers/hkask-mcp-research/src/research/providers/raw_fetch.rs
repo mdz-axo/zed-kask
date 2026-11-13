@@ -19,8 +19,7 @@ pub(crate) struct RawFetchProvider {
     client: reqwest::Client,
 }
 
-/// Build the validated fetch HTTP client — shared by the RawFetch transport
-/// and the research server's strict-policy fetch paths (`rss_discover_feeds`).
+/// Build the validated fetch HTTP client — the RawFetch transport.
 ///
 /// Unlike the provider-API client (`provider_http_client`), every connection
 /// this client makes is gated at the transport itself:
@@ -154,10 +153,9 @@ impl RawFetchProvider {
     }
 }
 
-/// Extract a PDF's text layer via the crate's shared `extract_pdf_text`
-/// (the same `pdf-extract` path the synthetic-feed `pdf_ocr` extractor
-/// uses). This replaces the former refusal "RawFetch cannot extract PDF
-/// content; use a PDF extraction provider" — that message advertised a PDF
+/// Extract a PDF's text layer with `pdf-extract` (text layer only, no OCR).
+/// This replaces the former refusal "RawFetch cannot extract PDF content;
+/// use a PDF extraction provider" — that message advertised a PDF
 /// extraction provider that did not exist; this is it (2026-11-01: a Locke
 /// & Latham PDF produced a 153-char scraper shell and a typed refusal from
 /// this leg — the chain had no working PDF route at all).
@@ -165,26 +163,25 @@ fn extract_pdf_content(
     final_url: &reqwest::Url,
     bytes: &[u8],
 ) -> Result<ExtractedContent, WebError> {
-    match crate::research::synthetic::extract_pdf_text(bytes) {
-        Ok((text, true)) => Ok(ExtractedContent {
-            url: final_url.to_string(),
-            content: text,
-            format: "markdown".to_string(),
-            metadata: None,
-        }),
-        // No text layer: a scanned PDF. OCR lives in the corpus server
-        // (`corpus_ocr`) — name the route instead of returning an empty
-        // "success" (the empty-success defect class this server forbids).
-        Ok((_, false)) => Err(WebError::ProviderUnavailable(
+    let text = pdf_extract::extract_text_from_mem(bytes)
+        .map_err(|e| WebError::ProviderError(format!("PDF text extraction failed: {e}")))?;
+    // No text layer: a scanned PDF. OCR lives in the corpus server
+    // (`corpus_ocr`) — name the route instead of returning an empty
+    // "success" (the empty-success defect class this server forbids).
+    if text.trim().is_empty() {
+        return Err(WebError::ProviderUnavailable(
             "PDF has no text layer (scanned images) — download the file and run it \
              through the corpus server's corpus_ocr pipeline, which handles \
              scanned PDFs"
                 .to_string(),
-        )),
-        Err(e) => Err(WebError::ProviderError(format!(
-            "PDF text extraction failed: {e}"
-        ))),
+        ));
     }
+    Ok(ExtractedContent {
+        url: final_url.to_string(),
+        content: text,
+        format: "markdown".to_string(),
+        metadata: None,
+    })
 }
 
 #[async_trait]

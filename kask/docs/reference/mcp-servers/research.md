@@ -1,7 +1,7 @@
 ---
 title: "Research MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-09
+last_updated: 2026-11-12
 version: "0.40.2"
 status: "Active"
 domain: "Inference"
@@ -11,15 +11,15 @@ mds_categories: [domain, composition, lifecycle]
 # Research MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-research`
-**Tools:** 27 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 15 RSS tools (subscribe/unsubscribe/list/fetch/entries/mark-read/unread-count/search/export/import/discover/edit-tag and the synthetic-feed family), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 5 research-run/paper tools (`begin_research_run`, `get_research_run`, `finish_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`; `rss_fetch_synthetic` removed — `rss_fetch` already dispatches `synthetic://` streams.)
-**Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted RSS and research-run persistence require `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:211-253`).
+**Tools:** 12 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 5 research-run/paper tools (`begin_research_run`, `get_research_run`, `finish_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`. 2026-11-12: the 15 `rss_` feed tools were removed by operator decision — see [Feed tools removed](#feed-tools-removed-2026-11-12).)
+**Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted research-run persistence requires `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:211-253`).
 
 The research server is the web-research surface: a provider pool
 (Exa/Tavily/Brave/SerpAPI/Firecrawl plus free Semantic Scholar/arXiv/OpenAlex/RawFetch)
 with RRF fusion. The SerpAPI key also registers two explicit-only engines,
 `google_scholar` and `google_books`, that run only when named with
 `web_search(provider=...)` and never join fused, `quick` or intent-routed
-searches (`src/research/providers/serapi.rs`), content extraction, headless browsing, RSS feed management,
+searches (`src/research/providers/serapi.rs`), content extraction, headless browsing,
 response caching, and rate limiting.
 
 ## Architecture
@@ -69,9 +69,10 @@ Redirect content is labeled with the final URL it actually came from.
    destinations (`0.0.0.0/8`, `::` — connecting to `0.0.0.0` routes to
    loopback on Linux) are all refused under the strict config.
 
-**Permissive policy unchanged:** RSS subscribe/fetch/synthesize use the
-   permissive config (user-curated feeds may live on local networks) — that
-   policy is untouched, including for the new address classes.
+**No permissive path:** every fetch this server makes goes through the
+   strict config. The permissive config (loopback and private addresses
+   allowed) served the feed tools only and left this server with them on
+   2026-11-12.
 
 **Operator-visible proxy behavior:** raw fetches deliberately ignore
    `HTTP(S)_PROXY`/`ALL_PROXY` (warned at client build); a proxied destination
@@ -92,15 +93,6 @@ end-to-end fixture is not constructible on loopback under the strict gate —
 the follow decision is pinned by the redirect-policy unit tests, and the
 enforcement tests prove the policy runs on every hop.
 
-**Discover path (T02b, verified 2026-09-07):** `rss_discover_feeds` validates
-its user-supplied URL with the strict gate and fetches through its own
-`discover_client` field — the same validated client construction as RawFetch
-(`validated_fetch_client`: per-hop redirect gate, connect-time resolver,
-no-proxy), wired through `ResearchServer::new`. Its reqwest cause chain is
-rendered in full, so a rejected hop names its reason. The permissive
-`rss_client` remains deliberately separate: `rss_subscribe`/`rss_fetch`/
-`rss_synthesize` are user-curated by ratified policy and keep default redirect
-following — do not pass that client to strict-policy fetches.
 
 ## Deep-search rerank — decision record
 
@@ -159,7 +151,7 @@ leg's LOCAL model ONLY — the setting `kask.private_inference.rerank_model`
 (default `ollama/qwen3-reranker-4b:latest` per `DEFAULT_PRIVATE_RERANK_MODEL`,
 emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL`, admitted by the
 research server's allowlist), resolved at the construction seam
-(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:436-456`).
+(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:412-432`).
 Unset/empty is the operator's explicit opt-out → the surfaced skip: the
 heuristic RRF order stands, the reason naming the boundary, the refused
 cloud setting, and the private setting that routes locally. The configured
@@ -229,28 +221,39 @@ output's `rerank` field — never a silent fallback:
 | `HKASK_BRAVE_API_KEY` | Brave search API key |
 | `HKASK_SERPAPI_API_KEY` | SerpAPI key (Google search, YouTube transcripts, and the explicit-only `google_scholar` and `google_books` engines) |
 | `HKASK_FIRECRAWL_API_KEY` | Firecrawl extraction API key |
-| `HKASK_RESEARCH_DB` | Research SQLite DB path (feed substrate + run ledger; defaults to `<data-dir>/mcp/research/research.db`) |
-| `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS and research-run tools) |
+| `HKASK_RESEARCH_DB` | Research SQLite DB path (the run ledger; defaults to `<data-dir>/mcp/research/research.db`) |
+| `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for the research-run tools) |
 | `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default 300) |
 | `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default 50) |
 | `HKASK_RERANK_MODEL` | Rerank model (settings default `OpenRouter/qwen/qwen3-reranker-8b` — repaired 2026-11-06: the previous `deepinfra/…` default was unroutable by the native path, so every default-configured deep search degraded to heuristic mode; the default keeps the ruled Qwen3-Reranker-8B on the servable OpenRouter path). An `ollama/`-prefixed value serves through the local judge-protocol arm |
 | `HKASK_PRIVATE_RERANK_MODEL` | The private leg's LOCAL rerank model for private-provenance deep-search rerank (`kask.private_inference.rerank_model`, default `ollama/qwen3-reranker-4b:latest`; emitted unconditionally — an empty value is the explicit opt-out, the surfaced heuristic skip) |
 | `HKASK_EMBEDDING_MODEL` | Embedding model for the semantic duplication tier (emitted unconditionally by the settings chain; unset is a legitimate degraded mode — the deterministic shingle floor runs with a surfaced reason) |
 
-## One-time data migration — `rss.db` → `research.db`
+## Feed tools removed (2026-11-12)
 
-The default DB filename changed with the research-run ledger landing in
-the same database. **Before first launch of the renamed build, move the
-file**: `mv <data-dir>/mcp/research/rss.db <data-dir>/mcp/research/research.db`
-(keep the same `HKASK_DB_PASSPHRASE`). The renamed build never reads the
-old path — an unmoved file is not an error, but the feed substrate and run
-ledger start empty. The passphrase-rotation layout and the maintenance
-inventory cover the new path; the inventory will flag the old `rss.db` path
-as stale until reconciled — **that flag is the system working, not a
-failure** (Magna Carta P1: an existing encrypted DB is operator-owned and
-is never silently orphaned). Operators who set `HKASK_RESEARCH_DB` to an
-explicit path are unaffected (the env var continues to point wherever it
-pointed; only the default filename changed).
+The 15 `rss_` tools (subscribe, unsubscribe, list, fetch, entries,
+mark-read, unread-count, search, OPML export and import, discover, edit-tag,
+and the three synthetic-feed tools) were removed by operator decision during
+the mcp-tool-review of this server. No code called them; their one
+documented consumer, the superforecasting skill's LEAP step, now reads the
+source page with `web_extract`.
+
+What this means for stored data:
+
+- **`research.db`** keeps every table it already has. The server no longer
+  creates the feed tables (`feeds`, `subscriptions`, `entries`,
+  `entry_states`, `entries_fts`, `synthetic_feeds`) and no code reads or
+  writes them; no statement drops them. Measured on one temporary database
+  with the 27-tool and the 12-tool binary: a run written by the 27-tool
+  binary is read and finished by the 12-tool binary, a run written by the
+  12-tool binary is read by the 27-tool binary, and feed rows written by
+  the 27-tool binary are unchanged after the 12-tool binary has opened and
+  written the same file.
+- **`rss.db`**, the default filename before the run ledger landed, is not
+  read: the server source holds no reference to that filename. It is
+  operator-owned and is left where it is.
+- A subscription list held in either file is no longer reachable through
+  this server. A build before the removal can still export it as OPML.
 
 ## Evidence evaluation — the signal model (2026-09-09)
 
@@ -412,8 +415,8 @@ trim) then `parse_closed_vocab` (a spelling→value table) or
 ownership, no duplicated tables). Covered fields: `web_search`
 strategy/intent/provider/freshness, `web_extract` format,
 `evaluate_evidence` duplication, `cite_sources` style,
-`finish_research_run` status, `annotate_research_run`
-verification_state, and `rss_synthesize` extractor_kind. Matching is
+`finish_research_run` status and `annotate_research_run`
+verification_state. Matching is
 case-insensitive; quoted, padded, and case-variant emissions parse to the
 canonical spelling, and quoted and bare forms share one cache entry
 (normalization precedes the cache key). Unknown values reject with a

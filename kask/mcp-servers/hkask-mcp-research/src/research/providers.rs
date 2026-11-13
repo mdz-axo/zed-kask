@@ -25,7 +25,7 @@ pub(crate) use crossref::title_matches_exactly;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use openalex::OpenAlexProvider;
-pub(crate) use raw_fetch::{RawFetchProvider, truncate_str, validated_fetch_client};
+pub(crate) use raw_fetch::{RawFetchProvider, truncate_str};
 pub(crate) use semantic_scholar::SemanticScholarProvider;
 pub(crate) use serapi::{SerapiProvider, SerpEngine};
 pub(crate) use tavily::TavilyProvider;
@@ -135,18 +135,6 @@ pub(crate) trait WebSearchProvider: Send + Sync {
 pub(crate) async fn validate_provider_url(url: &str) -> Result<(), WebError> {
     validate_tool_url_with_dns(url)
         .await
-        .map_err(|e| WebError::BadArgs(e.message))
-}
-
-/// Validate a URL with permissive SSRF config (allows private IPs and loopback).
-///
-/// Used by RSS tools (`rss_fetch`, `import_opml`) where the user has
-/// explicitly subscribed to a feed that may be on a local network (e.g.,
-/// a self-hosted RSS aggregator at `http://localhost:4000/feed.xml`).
-/// The strict variant (`validate_provider_url`) is used for arbitrary
-/// user-supplied URLs (`web_extract`, `web_browse`, `discover_feeds`).
-pub(crate) fn validate_provider_url_permissive(url: &str) -> Result<(), WebError> {
-    hkask_mcp_server::server::validate_tool_url_permissive(url)
         .map_err(|e| WebError::BadArgs(e.message))
 }
 

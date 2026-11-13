@@ -3,7 +3,7 @@ name = "hkask-mcp-research"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Web search, extraction, and feed-based research MCP server"
+description = "Web search, extraction, evidence scoring, and research-run ledger MCP server"
 
 [lib]
 name = "hkask_mcp_research"
@@ -34,7 +34,6 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 anyhow.workspace = true
-base64.workspace = true
 rusqlite.workspace = true
 r2d2.workspace = true
 
@@ -46,18 +45,13 @@ async-trait.workspace = true
 blake3.workspace = true
 futures-util.workspace = true
 regex.workspace = true
-feed-rs.workspace = true
-scraper.workspace = true
-jsonpath-rust.workspace = true
-mediatype.workspace = true
 pdf-extract.workspace = true
 
 [dev-dependencies]
 # tool_behavior.rs drives the real tool surface through Parameters<T>:
 # web_ping happy path, web_* invalid-argument and credential-missing error
-# paths, and RSS DB in-process paths.
+# paths, and the research-run ledger on an in-memory database.
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-tempfile.workspace = true
 # Unit tests exercise the shared NoopInferencePort seam; enable the
 # test-fixture gate on the server crate for this crate's test builds.
 hkask-mcp-test-support.workspace = true

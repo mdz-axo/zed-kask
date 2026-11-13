@@ -4,7 +4,6 @@
 pub(crate) mod evidence_service;
 pub(crate) mod ontology;
 pub mod research;
-pub(crate) mod synthetic_service;
 
 // Shared cfg(test) fixtures — `src/test_support.rs` (the media crate's
 // test_support precedent).
@@ -17,13 +16,10 @@ pub use crate::research::db;
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine;
-
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
     resolve_db_passphrase, validate_tool_url_with_dns,
 };
-use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use rusqlite::Connection;
 
@@ -31,37 +27,25 @@ use crate::evidence_service::{
     run_source_record, search_url_in_domains, sensitivity_json, supporting_evidence_note,
     validate_extraction,
 };
-use crate::research::db::*;
-use crate::synthetic_service::items_synthetic_feed;
-
 use crate::research::{
     AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
-    CiteSourcesRequest, CiteStyle, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    DEFAULT_PROFILE, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest,
-    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest,
+    CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
+    DEFAULT_PROFILE, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest,
-    GetEntriesRequest, GetResearchRunRequest, ImportOpmlRequest, ListSubscriptionsRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, NewResearchRun,
-    PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter, RerankInfo,
-    RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
-    SynthesizeRequest, UnreadCountRequest, UnsubscribeRequest, WebError, WebSearchPort,
-    build_provider_pool, cache_key, discover_feeds, fetch_feed, llm_rerank, normalize_closed_vocab,
+    GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH,
+    NewResearchRun, PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter,
+    RerankInfo, RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
+    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, WebError,
+    WebSearchPort, build_provider_pool, cache_key, llm_rerank, normalize_closed_vocab,
     parse_closed_vocab, parse_closed_vocab_const, provider_profile, score_evidence_set,
-    validated_fetch_client,
 };
 
 // ── Constants ──
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_PAGE_SIZE: usize = 20;
-const MAX_PAGE_SIZE: usize = 100;
 const RATE_LIMIT_MAX_REQUESTS: u32 = 30;
 const RATE_LIMIT_WINDOW_SECS: u64 = 60;
-/// Maximum response body size for feed/synthetic fetches (64 MiB). Prevents
-/// OOM from malicious or misconfigured feeds that serve unbounded content.
-pub(crate) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 // ── ResearchServer ──
 
@@ -71,14 +55,6 @@ hkask_mcp_server::mcp_server!(
         pub cache: Arc<ResponseCache>,
         pub rate_limiter: RateLimiter,
         pub research_db: Option<r2d2::Pool<hkask_storage::SqliteConnectionManager>>,
-        pub rss_client: Client,
-        /// Strict-policy fetch client for `rss_discover_feeds`: every redirect
-        /// hop re-validated, every connect-time DNS resolution gated, proxies
-        /// disabled (`validated_fetch_client`). The permissive `rss_client`
-        /// above is deliberately different — user-curated RSS fetches may live
-        /// on local networks by ratified policy, so they keep default redirect
-        /// following. Do not use `rss_client` for arbitrary user URLs.
-        pub discover_client: Client,
         /// Inference port for the deep strategy's templated LLM rerank.
         /// Resolved via `hkask_inference::resolve_inference_port()` — a
         /// `LazyInferencePort` that bridges to zed's LanguageModelRegistry
@@ -125,7 +101,7 @@ hkask_mcp_server::mcp_server!(
     } = crate::ontology::annotate;
 );
 
-// ── RSS helpers ──
+// ── Database helpers ──
 
 pub(crate) fn spawn_db<F, T>(
     pool: r2d2::Pool<hkask_storage::SqliteConnectionManager>,
@@ -955,568 +931,6 @@ impl ResearchServer {
         .await
     }
 
-    // ═══════════════════ RSS tools ═══════════════════
-
-    #[tool(description = "Subscribe to an RSS/Atom feed (Google Reader stream model)")]
-    pub async fn rss_subscribe(
-        &self,
-        Parameters(SubscribeRequest { url, label, folder }): Parameters<SubscribeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_subscribe", async {
-            self.rate_limiter.check("rss_subscribe")?;
-            let db = require_research_db!(self);
-
-            // Use permissive SSRF config: RSS feeds may be self-hosted on
-            // local networks (e.g., http://localhost:4000/feed.xml). The user
-            // is explicitly subscribing to this URL by choice.
-            hkask_mcp_server::server::validate_tool_url_permissive(&url)?;
-            let fetch_result = fetch_feed(&self.rss_client, &url, None, None).await
-                .map_err(|e| McpToolError::unavailable(format!("Fetch failed: {}", e)))?;
-            let stream_id = format!("feed/{url}");
-            let (url_c, label_c, folder_c) = (url, label, folder);
-            let etag = fetch_result.etag.clone();
-            let lm = fetch_result.last_modified.clone();
-            let feed_title = fetch_result
-                .feed
-                .title
-                .as_ref()
-                .map(|t| t.content.clone())
-                .unwrap_or_default();
-            let entry_count = fetch_result.feed.entries.len();
-            let result = spawn_db(db, move |conn| {
-                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
-                // between BEGIN and COMMIT automatically rolls back.
-                let tx = rusqlite::Transaction::new_unchecked(
-                    conn,
-                    rusqlite::TransactionBehavior::Deferred,
-                )?;
-                let feed_id = upsert_feed(&tx, &url_c, &fetch_result.feed)?;
-                insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
-                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
-                let exists: bool = tx.query_row("SELECT COUNT(*) FROM subscriptions WHERE stream_id = ?1", [&stream_id], |row| row.get::<_, i64>(0)).map(|c| c > 0)?;
-                let result = if exists {
-                    serde_json::json!({"stream_id": stream_id, "url": url_c, "subscribed": true, "note": "Already subscribed, feed refreshed"})
-                } else {
-                    tx.execute("INSERT INTO subscriptions (feed_id, stream_id, title, label, folder) VALUES (?1, ?2, ?3, ?4, ?5)", rusqlite::params![feed_id, stream_id, feed_title, label_c, folder_c])?;
-                    serde_json::json!({"stream_id": stream_id, "url": url_c, "label": label_c, "folder": folder_c, "subscribed": true, "entry_count": entry_count})
-                };
-                tx.commit()?;
-                Ok::<serde_json::Value, anyhow::Error>(result)
-            }).await;
-            handle_db_result!(result, |v| v)
-        }).await
-    }
-
-    #[tool(description = "Unsubscribe from a feed (stream_id e.g. 'feed/http://...')")]
-    pub async fn rss_unsubscribe(
-        &self,
-        Parameters(UnsubscribeRequest { stream_id }): Parameters<UnsubscribeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_unsubscribe", async {
-            let db = require_research_db!(self);
-
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| {
-                conn.execute("DELETE FROM subscriptions WHERE stream_id = ?1", [&sid])
-                    .map_err(|e| anyhow::anyhow!(e))
-            })
-            .await;
-            handle_db_result!(
-                result,
-                |removed| serde_json::json!({"stream_id": stream_id, "unsubscribed": removed > 0, "removed": removed})
-            )
-        }).await
-    }
-
-    #[tool(description = "List subscriptions, optionally filtered by folder")]
-    pub async fn rss_list_subscriptions(
-        &self,
-        Parameters(ListSubscriptionsRequest { folder }): Parameters<ListSubscriptionsRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_list_subscriptions", async {
-            let db = require_research_db!(self);
-            let result = spawn_db(db, move |conn| list_subscriptions(conn, folder.as_deref())).await;
-            handle_db_result!(
-                result,
-                |subs: Vec<serde_json::Value>| serde_json::json!({"count": subs.len(), "subscriptions": subs})
-            )
-        }).await
-    }
-
-    #[tool(description = "Fetch/sync new entries from a feed (supports ETag/Last-Modified)")]
-    pub async fn rss_fetch(
-        &self,
-        Parameters(FetchRequest { stream_id }): Parameters<FetchRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_fetch", async {
-            self.rate_limiter.check("rss_fetch")?;
-            let db = require_research_db!(self);
-            let sid = stream_id.clone();
-            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
-
-            let (feed_url, cached_etag, cached_lm) = match lookup {
-                Ok(Ok(v)) => v,
-                Ok(Err(e)) => {
-                    return Err(McpToolError::not_found(e.to_string()));
-                }
-                Err(e) => {
-                    return Err(map_join_error(e, "rss fetch task failed"));
-                }
-            };
-
-            // Dispatch: synthetic feeds (url starts with synthetic://) are
-            // re-extracted via the synthetic fetch path rather than fetched as RSS.
-            if feed_url.starts_with("synthetic://") {
-                return self
-                    .fetch_synthetic_inner(&stream_id, feed_url)
-                    .await;
-            }
-
-            // Stored-SSRF defense: validate the DB-stored feed URL before
-            // fetching. The URL was originally user-supplied via rss_subscribe
-            // or rss_import_opml; re-validate at fetch time to catch URLs that
-            // were inserted before validation was added, or that a compromised
-            // DB could have altered. Use permissive config (allows localhost/
-            // private IPs) because RSS feeds may be self-hosted on local
-            // networks — the user explicitly subscribed to them.
-            hkask_mcp_server::server::validate_tool_url_permissive(&feed_url)?;
-
-            let db = require_research_db!(self);
-            let fetch_result = fetch_feed(
-                &self.rss_client,
-                &feed_url,
-                cached_etag.as_deref(),
-                cached_lm.as_deref(),
-            )
-            .await
-            .map_err(|e| McpToolError::unavailable(format!("Fetch failed: {}", e)))?;
-
-            if fetch_result.status == 304 {
-                return Ok(serde_json::json!({
-                    "stream_id": stream_id,
-                    "new_entries": 0,
-                    "fetched": true,
-                    "not_modified": true,
-                }));
-            }
-
-            let sid2 = stream_id.clone();
-            let etag = fetch_result.etag.clone();
-            let lm = fetch_result.last_modified.clone();
-
-            let result = spawn_db(db, move |conn| {
-                // N3 (panic-safe): use rusqlite's Transaction guard so a panic
-                // between BEGIN and COMMIT automatically rolls back.
-                let tx = rusqlite::Transaction::new_unchecked(
-                    conn,
-                    rusqlite::TransactionBehavior::Deferred,
-                )?;
-                let feed_id = upsert_feed(&tx, &feed_url, &fetch_result.feed)?;
-                let new_count = insert_entries(&tx, feed_id, &fetch_result.feed.entries)?;
-                update_feed_cache_headers(&tx, feed_id, etag.as_deref(), lm.as_deref())?;
-                tx.commit()?;
-                Ok::<usize, anyhow::Error>(new_count)
-            })
-            .await;
-
-            handle_db_result!(
-                result,
-                |new_count| serde_json::json!({"stream_id": sid2, "new_entries": new_count, "fetched": true})
-            )
-        }).await
-    }
-
-    #[tool(
-        description = "Get entries from a stream (Google Reader stream IDs: feed/*, user/-/state/*, user/-/label/*)"
-    )]
-    pub async fn rss_get_entries(
-        &self,
-        Parameters(GetEntriesRequest {
-            stream_id,
-            unread_only,
-            starred_only,
-            count,
-            continuation_token,
-        }): Parameters<GetEntriesRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_get_entries", async {
-            let db = require_research_db!(self);
-            let limit = (count.unwrap_or(DEFAULT_PAGE_SIZE as u32) as usize).min(MAX_PAGE_SIZE);
-            let offset = match continuation_token.as_ref() {
-                None => 0,
-                Some(t) => {
-                    // A malformed continuation token must surface as an
-                    // explicit error, not silently reset to offset 0 —
-                    // otherwise a corrupted token is indistinguishable from
-                    // "no token" and the client silently re-reads the first
-                    // page (`.rules` broken-feedback-loop trap).
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(t)
-                        .map_err(|e| {
-                            McpToolError::invalid_argument(format!(
-                                "continuation_token is not valid base64: {e}"
-                            ))
-                        })?;
-                    let cont: Continuation = serde_json::from_slice(&bytes)
-                        .map_err(|e| {
-                            McpToolError::invalid_argument(format!(
-                                "continuation_token is not a valid continuation payload: {e}"
-                            ))
-                        })?;
-                    cont.offset
-                }
-            };
-
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| {
-                query_entries(
-                    conn,
-                    &sid,
-                    unread_only.unwrap_or(false),
-                    starred_only.unwrap_or(false),
-                    offset,
-                    limit + 1,
-                )
-            })
-            .await;
-
-            handle_db_result!(result, |mut entries: Vec<serde_json::Value>| {
-                let has_more = entries.len() > limit;
-                if has_more {
-                    entries.truncate(limit);
-                }
-                let next_token = has_more.then(|| {
-                    let cont = Continuation {
-                        offset: offset + limit,
-                        stream_id: stream_id.clone(),
-                    };
-                    base64::engine::general_purpose::STANDARD
-                        .encode(serde_json::to_vec(&cont).unwrap_or_default())
-                });
-                serde_json::json!({"stream_id": stream_id, "entries": entries, "count": entries.len(), "continuation_token": next_token})
-            })
-        }).await
-    }
-
-    #[tool(description = "Mark all entries in a stream as read")]
-    pub async fn rss_mark_all_read(
-        &self,
-        Parameters(MarkReadRequest { stream_id }): Parameters<MarkReadRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_mark_all_read", async {
-            let db = require_research_db!(self);
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| mark_stream_read(conn, &sid)).await;
-            handle_db_result!(
-                result,
-                |marked| serde_json::json!({"stream_id": stream_id, "marked_read": marked})
-            )
-        })
-        .await
-    }
-
-    #[tool(description = "Get unread count for a stream")]
-    pub async fn rss_get_unread_count(
-        &self,
-        Parameters(UnreadCountRequest { stream_id }): Parameters<UnreadCountRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_get_unread_count", async {
-            let db = require_research_db!(self);
-            let sid = stream_id.clone();
-            let result = spawn_db(db, move |conn| count_entries(conn, &sid, true)).await;
-            handle_db_result!(
-                result,
-                |count| serde_json::json!({"stream_id": stream_id, "unread_count": count})
-            )
-        })
-        .await
-    }
-
-    #[tool(description = "Full-text search across feed entries")]
-    pub async fn rss_search(
-        &self,
-        Parameters(crate::research::rss_types::SearchRequest { query, limit }): Parameters<
-            crate::research::rss_types::SearchRequest,
-        >,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_search", async {
-            let db = require_research_db!(self);
-            let limit = (limit.unwrap_or(10) as usize).min(MAX_PAGE_SIZE);
-            let q = query.clone();
-            let result = spawn_db(db, move |conn| search_entries(conn, &q, limit)).await;
-            handle_db_result!(
-                result,
-                |results: Vec<serde_json::Value>| serde_json::json!({"query": query, "results": results, "count": results.len()})
-            )
-        }).await
-    }
-
-    #[tool(description = "Export subscriptions as OPML 2.0")]
-    pub async fn rss_export_opml(&self) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_export_opml", async {
-            let db = require_research_db!(self);
-            let result = spawn_db(db, export_opml).await;
-            handle_db_result!(result, |opml| serde_json::json!({"opml": opml}))
-        })
-        .await
-    }
-
-    #[tool(description = "Import subscriptions from OPML content")]
-    pub async fn rss_import_opml(
-        &self,
-        Parameters(ImportOpmlRequest { opml_content }): Parameters<ImportOpmlRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_import_opml", async {
-            let db = require_research_db!(self);
-            let result = spawn_db(db, move |conn| import_opml(conn, &opml_content)).await;
-            handle_db_result!(result, |v| v)
-        })
-        .await
-    }
-
-    #[tool(description = "Discover RSS/Atom feeds from a URL via HTML link autodiscovery")]
-    pub async fn rss_discover_feeds(
-        &self,
-        Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_discover_feeds", async {
-            self.rate_limiter.check("rss_discover_feeds")?;
-            validate_tool_url_with_dns(&url).await?;
-            match discover_feeds(&self.discover_client, &url).await {
-                Ok(feeds) => {
-                    Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))
-                }
-                Err(e) => Err(McpToolError::unavailable(e.to_string())),
-            }
-        })
-        .await
-    }
-
-    #[tool(description = "Edit tags on entries: mark read/unread, star/unstar, add/remove labels")]
-    pub async fn rss_edit_tag(
-        &self,
-        Parameters(req): Parameters<EditTagRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_edit_tag", async {
-            let db = require_research_db!(self);
-            let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
-            handle_db_result!(result, |v| v)
-        })
-        .await
-    }
-
-    // ═══════════════════ Synthetic feed tools ═══════════════════
-
-    #[tool(
-        description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
-    )]
-    pub async fn rss_synthesize(
-        &self,
-        Parameters(req): Parameters<SynthesizeRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_synthesize", async {
-            self.rate_limiter.check("rss_synthesize")?;
-            let db = require_research_db!(self);
-
-            // Parse the extractor kind.
-            let kind: crate::research::synthetic::ExtractorKind =
-                req.extractor_kind.parse().map_err(McpToolError::from)?;
-
-            // Parse the extractor spec JSON.
-            let spec: crate::research::synthetic::ExtractorSpec =
-                serde_json::from_str(&req.extractor_spec).map_err(|e| {
-                    McpToolError::invalid_argument(format!("invalid extractor_spec JSON: {e}"))
-                })?;
-
-            let body = self
-                .fetch_synthetic_source_bytes(&req.source_url)
-                .await
-                .map_err(|(_, e)| e)?;
-
-            let title = req.title.clone().unwrap_or_else(|| req.source_url.clone());
-            let description = req.description.clone().unwrap_or_default();
-            let source_url = req.source_url.clone();
-            let extractor_kind_str = req.extractor_kind.clone();
-            let extractor_spec_str = req.extractor_spec.clone();
-            let cadence = req.cadence_hint_secs;
-            let label = req.label.clone();
-            let folder = req.folder.clone();
-            let want_subscribe = req.subscribe.unwrap_or(true);
-
-            let (feed, _entry_count, extract_hash) =
-                if kind == crate::research::synthetic::ExtractorKind::DiffHash {
-                    let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
-                        &body,
-                        &source_url,
-                        &title,
-                    );
-                    let count = feed.entries.len();
-                    (feed, count, Some(hash))
-                } else {
-                    let items = self
-                        .extract_synthetic_items(kind, &spec, &source_url, &body)
-                        .await?;
-                    if kind == crate::research::synthetic::ExtractorKind::PdfOcr && items.is_empty()
-                    {
-                        let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
-                            &body,
-                            &source_url,
-                            &title,
-                        );
-                        let count = feed.entries.len();
-                        (feed, count, Some(hash))
-                    } else {
-                        let (feed, count) =
-                            items_synthetic_feed(items, &source_url, &title, &description);
-                        (feed, count, None)
-                    }
-                };
-
-            // Insert into DB: create feeds row, synthetic_feeds row, entries.
-            let feed_title = feed
-                .title
-                .as_ref()
-                .map(|t| t.content.clone())
-                .unwrap_or_else(|| source_url.clone());
-            let feed_for_upsert = feed;
-            let result = spawn_db(db, move |conn| {
-                let tx = rusqlite::Transaction::new_unchecked(
-                    conn,
-                    rusqlite::TransactionBehavior::Deferred,
-                )?;
-
-                // Insert the feed with a placeholder synthetic:// URL.
-                // We insert with a temporary URL, get the feed_id, then update
-                // the URL to synthetic://<feed_id>.
-                let temp_url = "synthetic://pending".to_string();
-                let feed_id = upsert_feed(&tx, &temp_url, &feed_for_upsert)?;
-
-                // Update the URL to the canonical synthetic:// form.
-                tx.execute(
-                    "UPDATE feeds SET url = ?1 WHERE id = ?2",
-                    rusqlite::params![format!("synthetic://{feed_id}"), feed_id],
-                )?;
-
-                // Insert entries.
-                let new_entries = insert_entries(&tx, feed_id, &feed_for_upsert.entries)?;
-
-                // Insert synthetic_feeds binding.
-                insert_synthetic_feed(
-                    &tx,
-                    feed_id,
-                    &source_url,
-                    &extractor_kind_str,
-                    &extractor_spec_str,
-                    cadence,
-                )?;
-
-                // Update extraction status.
-                update_synthetic_status(
-                    &tx,
-                    feed_id,
-                    new_entries,
-                    extract_hash.as_deref(),
-                    None,
-                )?;
-
-                // Optionally subscribe.
-                let stream_id = format!("feed/synthetic://{feed_id}");
-                let sub_note = if want_subscribe {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO subscriptions (feed_id, stream_id, title, label, folder)
-                         VALUES (?1, ?2, ?3, ?4, ?5)",
-                        rusqlite::params![feed_id, &stream_id, &feed_title, label, folder],
-                    )?;
-                    "subscribed"
-                } else {
-                    "not_subscribed"
-                };
-
-                tx.commit()?;
-
-                Ok::<serde_json::Value, anyhow::Error>(serde_json::json!({
-                    "feed_id": feed_id,
-                    "stream_id": stream_id,
-                    "source_url": source_url,
-                    "extractor_kind": extractor_kind_str,
-                    "new_entries": new_entries,
-                    "subscribed": want_subscribe,
-                    "subscription_status": sub_note,
-                }))
-            })
-            .await;
-            handle_db_result!(result, |v| v)
-        })
-        .await
-    }
-
-    #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
-    pub async fn rss_list_synthetic(&self) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_list_synthetic", async {
-            let db = require_research_db!(self);
-            let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
-            handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
-                "count": feeds.len(),
-                "synthetic_feeds": feeds
-            }))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Delete a synthetic feed and all its entries (stream_id e.g. 'feed/synthetic://123')"
-    )]
-    pub async fn rss_delete_synthetic(
-        &self,
-        Parameters(req): Parameters<DeleteSyntheticRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "rss_delete_synthetic", async {
-            let db = require_research_db!(self);
-
-            // Resolve feed_url from stream_id.
-            let sid = req.stream_id.clone();
-            let feed_url_result = spawn_db(db.clone(), move |conn| {
-                // resolve_feed_url returns Option<String>, wrap in Ok for the
-                // spawn_db Result<Result<_, anyhow>, JoinError> shape.
-                Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
-            })
-            .await;
-
-            let feed_url = match feed_url_result {
-                Ok(Ok(Some(url))) => url,
-                Ok(Ok(None)) => {
-                    return Err(McpToolError::not_found("stream_id not found"));
-                }
-                Ok(Err(e)) => return Err(map_db_error(e)),
-                Err(e) => return Err(map_join_error(e, "db lookup failed")),
-            };
-
-            if !feed_url.starts_with("synthetic://") {
-                return Err(McpToolError::invalid_argument(
-                    "not a synthetic feed; use rss_unsubscribe instead",
-                ));
-            }
-
-            let feed_id: i64 = feed_url
-                .strip_prefix("synthetic://")
-                .ok_or_else(|| {
-                    McpToolError::internal(
-                        "feed_url missing synthetic:// prefix despite starts_with check",
-                    )
-                })?
-                .parse()
-                .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
-
-            let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
-            handle_db_result!(result, |removed| serde_json::json!({
-                "stream_id": req.stream_id,
-                "deleted": removed > 0,
-                "removed": removed
-            }))
-        })
-        .await
-    }
-
     // ═══════════════════ Research-run ledger ═══════════════════
 
     #[tool(
@@ -2283,7 +1697,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         tracing::warn!(
                             target = "hkask.research.init",
                             %error,
-                            "Falling back to no research database. RSS and research-run tools will be unavailable."
+                            "Falling back to no research database. Research-run tools will be unavailable."
                         );
                         None
                     }
@@ -2307,7 +1721,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                         error = %e,
                                         path = %research_db_path,
                                         "Research database opened but pool extraction failed — \
-                                         RSS and research-run tools will be unavailable"
+                                         research-run tools will be unavailable"
                                     );
                                     e
                                 })
@@ -2317,7 +1731,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                     target = "hkask.research.init",
                                     error = %e,
                                     path = %research_db_path,
-                                    "Failed to open research database — RSS and research-run tools will be \
+                                    "Failed to open research database — research-run tools will be \
                                      unavailable. Check HKASK_RESEARCH_DB path and \
                                      HKASK_DB_PASSPHRASE."
                                 );
@@ -2328,23 +1742,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     None => None,
                 }
             };
-
-            let rss_client = Client::builder()
-                .user_agent(format!("hkask-mcp-research/{}", SERVER_VERSION))
-                .build()
-                .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
-                    context: "research rss client build".into(),
-                    detail: e.to_string(),
-                })?;
-
-            // Strict-policy fetch client for `rss_discover_feeds` — every
-            // redirect hop and every connect-time resolution gated.
-            let discover_client = validated_fetch_client().map_err(|e| {
-                hkask_mcp_server::McpError::UnexpectedResponse {
-                    context: "research discover client build".into(),
-                    detail: e.to_string(),
-                }
-            })?;
 
             // Resolve the inference port for the deep strategy's LLM rerank.
             // Resolved above (before the sync construction closure); the lazy
@@ -2359,8 +1756,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 )),
                 RateLimiter::new(RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECS),
                 research_db,
-                rss_client,
-                discover_client,
                 inference_port.clone(),
                 // The visible settings chain, resolved once at the
                 // construction seam (no hidden constant — the operator's
@@ -2402,7 +1797,7 @@ pub(crate) fn credential_requirements() -> Vec<CredentialRequirement> {
             "Semantic Scholar API key (optional — the provider runs keyless on the free tier's shared ~1 req/s limit; the free key from semanticscholar.org/product/api lifts it)",
         ),
         hkask_mcp_server::db_passphrase_requirement_optional_with(
-            "SQLCipher passphrase for the research DB — RSS and research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",
+            "SQLCipher passphrase for the research DB — research-run tools are unavailable without it (the DB opens at its default path; HKASK_RESEARCH_DB only overrides the location)",
         ),
     ]
 }
@@ -2469,9 +1864,25 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         ResearchServer::tool_router(),
         "tool_router",
-        27,
-        tool_surface_is_exactly_27_registered_tools,
+        12,
+        tool_surface_is_exactly_12_registered_tools,
     );
+
+    /// expect: the feed tools removed on 2026-11-12 (operator decision) are
+    /// not served: no registered tool name starts with `rss_`.
+    #[test]
+    fn no_feed_tool_is_registered() {
+        let feed_tools: Vec<String> = ResearchServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| tool.name.to_string())
+            .filter(|name| name.starts_with("rss_"))
+            .collect();
+        assert!(
+            feed_tools.is_empty(),
+            "feed tools are registered: {feed_tools:?}"
+        );
+    }
 
     /// expect: every registered tool's live input schema is strict — no
     /// bare boolean in any schema-valued position — so strict-schema-decoding
@@ -2481,8 +1892,8 @@ mod tool_surface_tests {
         let tools = ResearchServer::tool_router().list_all();
         assert_eq!(
             tools.len(),
-            27,
-            "approved surface: 27 registered tools (pinned by tool_surface_is_exactly_27_registered_tools)"
+            12,
+            "approved surface: 12 registered tools (pinned by tool_surface_is_exactly_12_registered_tools)"
         );
         for tool in tools {
             let schema =

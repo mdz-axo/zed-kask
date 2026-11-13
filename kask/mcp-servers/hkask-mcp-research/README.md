@@ -1,78 +1,61 @@
 # hkask-mcp-research
 
-Web search, extraction, and feed-based research MCP server.
+Web search, extraction, evidence scoring, paper identity, and the research-run ledger.
 
-## Tools (26)
+## Tools (12)
 
 | Tool                     | Description                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `web_ping`               | Liveness and provider health check                                                                                                                       |
-| `web_search`             | Search the web with RRF fusion. Set `provider` for a single-provider call (no fusion), or `intent` to have the tool pick the top-scored provider. Strategy: quick (best-scored single), web (all), news, deep (all + rerank) |
+| `web_search`             | Search the web with RRF fusion. Set `provider` for a single-provider call (no fusion), or `intent` to have the tool pick the top-scored provider. Strategy: quick (best-scored single), web (all), news, deep (all, twice the results, content from the top three, rerank) |
 | `web_find_similar`       | Find pages similar to a given URL using Exa findSimilar                                                                                                  |
 | `web_extract`            | Extract content from a URL into markdown or structured JSON                                                                                              |
 | `web_browse`             | Browse a URL via Firecrawl (JS-heavy), Tavily `/extract`, or Exa `/contents` — fallback across all configured browse providers                           |
-| `rss_subscribe`          | Subscribe to an RSS/Atom feed (Google Reader stream model)                                                                                               |
-| `rss_unsubscribe`        | Unsubscribe from a feed (stream_id e.g. 'feed/http://...')                                                                                               |
-| `rss_list_subscriptions` | List subscriptions, optionally filtered by folder                                                                                                        |
-| `rss_fetch`              | Fetch/sync new entries from a feed (supports ETag/Last-Modified)                                                                                         |
-| `rss_get_entries`        | Get entries from a stream (Google Reader stream IDs: feed/_, user/-/state/_, user/-/label/*)                                                             |
-| `rss_mark_all_read`      | Mark all entries in a stream as read                                                                                                                     |
-| `rss_get_unread_count`   | Get unread count for a stream                                                                                                                            |
-| `rss_search`             | Full-text search across feed entries                                                                                                                     |
-| `rss_export_opml`        | Export subscriptions as OPML 2.0                                                                                                                         |
-| `rss_import_opml`        | Import subscriptions from OPML content                                                                                                                   |
-| `rss_discover_feeds`     | Discover RSS/Atom feeds from a URL via HTML link autodiscovery                                                                                           |
-| `rss_edit_tag`           | Edit tags on entries: mark read/unread, star/unstar, add/remove labels                                                                                   |
-| `rss_synthesize`         | Create a synthetic feed from a non-feed website or JSON API (css, json_path, diff_hash, llm_schema, pdf_ocr extractors)                                  |
-| `rss_list_synthetic`     | List all synthetic feeds with their specs and last-extraction stats                                                                                      |
-| `rss_delete_synthetic`   | Delete a synthetic feed and all its entries                                                                                                              |
 | `begin_research_run`     | Begin a research run: opens a server-side ledger recording what the research tools actually return under the run                                          |
 | `get_research_run`       | Get a run's manifest: sources, verification states, server-side recomputed confidence, and the validation block                                          |
+| `finish_research_run`    | Mark a run finished (completed, partial, blocked, failed); completed and partial require at least one server-recorded source                             |
 | `annotate_research_run`  | Annotate a run's source with an agent-declared verification state; `verified` requires a server-recorded source and a basis (fail-closed)                |
-| `resolve_paper`          | Resolve a paper reference (DOI, arXiv, PMID, PMCID, OpenAlex) to a typed identity with canonical URL and OpenAlex metadata enrichment                     |
+| `resolve_paper`          | Resolve a paper reference (DOI, arXiv, PMID, PMCID, OpenAlex, or a title via Crossref) to a typed identity with canonical URL and OpenAlex metadata      |
 | `evaluate_evidence`      | Score evidence against a question: per-component signals with basis strings, syndication-aware corroboration, sensitivity, duplication mode              |
 | `cite_sources`           | Generate citations from retrieved sources (apa, bibtex, chicago, json)                                                                                   |
 
-`web_extract` accepts `markdown` or `json`. RawFetch cannot produce structured JSON or extract PDFs: it returns a typed error instead of presenting PDF bytes as Markdown. Responses (including cache hits) must match the requested format; this does not add PDF OCR or guarantee a PDF-capable extraction provider is configured.
+The 15 `rss_` feed tools were removed on 2026-11-12 by operator decision. What that means for an existing database is in `kask/docs/reference/mcp-servers/research.md`, section "Feed tools removed".
 
-The `web_search.strategy` input schema advertises `quick`, `web` (`semantic` alias), `news`, and `deep` (`research` alias). `evaluate_evidence.duplication` advertises `semantic` or omission. The string-wire runtime still returns a typed invalid-argument error for unsupported values.
+`web_extract` accepts `markdown` or `json`. RawFetch, the keyless extractor, cannot produce structured JSON: a `json` request needs Firecrawl. For a PDF it returns the text layer; a scanned PDF with no text layer is a typed error naming the corpus server's OCR route. Responses (including cache hits) must match the requested format.
+
+The `web_search.strategy` input schema advertises `quick`, `web` (`semantic` alias), `news`, and `deep` (`research` alias). `evaluate_evidence.duplication` advertises `semantic` or omission. An unsupported value is a typed invalid-argument error naming the accepted values.
 
 ## Configuration
 
-| Variable                      | Description                                       |
-| ----------------------------- | ------------------------------------------------- |
-| `HKASK_EXA_API_KEY`           | Exa search API key                                |
-| `HKASK_TAVILY_API_KEY`        | Tavily search API key                             |
-| `HKASK_BRAVE_API_KEY`         | Brave search API key                              |
-| `HKASK_SERPAPI_API_KEY`       | SerpAPI key (Google search, YouTube transcripts, explicit-only `google_scholar` and `google_books`) |
-| `HKASK_FIRECRAWL_API_KEY`     | Firecrawl extraction API key                      |
-| `HKASK_RESEARCH_DB`                | Research SQLite DB path (optional — defaults to `<data-dir>/mcp/research/research.db`) |
-| `HKASK_DB_PASSPHRASE`         | DB encryption passphrase (required for RSS and research-run tools) |
-| `HKASK_WEB_CACHE_TTL_SECS`    | Response cache TTL (default: 300)                 |
-| `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 50)          |
-| `HKASK_RERANK_MODEL`          | Model for the deep strategy's rerank stage (default: `OpenRouter/qwen/qwen3-reranker-8b`, served via the provider's native rerank endpoint through the inference bridge) |
-| `HKASK_EMBEDDING_MODEL`       | Embedding model for the semantic duplication tier (unset = the deterministic shingle floor runs with a surfaced reason) |
-| `HKASK_RERANK_MAX_CONCURRENCY` | Max concurrent rerank scoring calls per deep search (default: 8; the stage fans out one scoring call per candidate up to this cap) |
+| Variable                         | Description                                       |
+| -------------------------------- | ------------------------------------------------- |
+| `HKASK_EXA_API_KEY`              | Exa search API key                                |
+| `HKASK_TAVILY_API_KEY`           | Tavily search API key                             |
+| `HKASK_BRAVE_API_KEY`            | Brave search API key                              |
+| `HKASK_SERPAPI_API_KEY`          | SerpAPI key (Google search, YouTube transcripts, explicit-only `google_scholar` and `google_books`) |
+| `HKASK_FIRECRAWL_API_KEY`        | Firecrawl extraction API key                      |
+| `HKASK_SEMANTIC_SCHOLAR_API_KEY` | Optional. Semantic Scholar runs keyless on the shared free tier; a key lifts its rate limit |
+| `HKASK_RESEARCH_DB`              | Research SQLite DB path (optional — defaults to `<data-dir>/mcp/research/research.db`) |
+| `HKASK_DB_PASSPHRASE`            | DB encryption passphrase (required for the research-run tools) |
+| `HKASK_WEB_CACHE_TTL_SECS`       | Response cache TTL (default: 300)                 |
+| `HKASK_WEB_CACHE_MAX_ENTRIES`    | Response cache max entries (default: 50)          |
+| `HKASK_RERANK_MODEL`             | Model for the deep strategy's rerank stage: one rerank call carrying every candidate, through the inference bridge. Unset: the heuristic order is kept and the response says why |
+| `HKASK_PRIVATE_RERANK_MODEL`     | Local rerank model for a private-provenance deep search. Unset: the rerank stage is skipped for private calls and the response says why |
+| `HKASK_EMBEDDING_MODEL`          | Embedding model for the semantic duplication tier (unset = the deterministic shingle floor runs with a surfaced reason) |
+| `HKASK_PRIVATE_EMBEDDING_MODEL`  | Local embedding model for a private-provenance semantic duplication tier. Unset: the shingle floor runs for private calls with a surfaced reason |
 
-Free providers (Semantic Scholar, arXiv) are always available — no API key
-required for basic web search. RSS and research-run tools require
-`HKASK_DB_PASSPHRASE`; the DB path defaults to
-`<data-dir>/mcp/research/research.db` (databases are
-infrastructure and stay in the internal data dir — artifact files and
-outputs go to the visible artifacts dir under `{server}-mcp/`).
-
-**One-time data migration:** the default filename changed from
-`mcp/research/rss.db` to `mcp/research/research.db`. Before first launch of
-the renamed build, move the file
-(`mv <data-dir>/mcp/research/rss.db <data-dir>/mcp/research/research.db`);
-the renamed build never reads the old path, and the maintenance inventory
-will flag the stale old path until reconciled — that flag is the system
-working (the DB is operator-owned and is never silently orphaned).
+Free providers (Semantic Scholar, arXiv, OpenAlex for search; Crossref for
+title resolution; RawFetch for extraction) are always registered — no API key
+is required for scholarly search, paper resolution or plain-page extraction.
+The research-run tools require `HKASK_DB_PASSPHRASE`; the DB path defaults to
+`<data-dir>/mcp/research/research.db` (databases are infrastructure and stay
+in the internal data dir — artifact files and outputs go to the visible
+artifacts dir under `{server}-mcp/`).
 
 ## Quick Start
 
 ```bash
-# No API keys required for web search (uses free providers with fallback)
+# No API keys required for scholarly search (free providers)
 # The server starts automatically with kask
 the zed-kask editor
 # Or standalone:
@@ -83,7 +66,7 @@ hkask-mcp-research
 
 ```
 "Search for latest AI research papers"   → web_search
-"Browse this URL and summarize it"        → web_browse
-"Subscribe to the Rust blog RSS feed"     → rss_subscribe
-"What's new in my feeds?"                → rss_get_entries
+"Extract this page as markdown"          → web_extract
+"Which paper is this DOI?"               → resolve_paper
+"Record what this search returned"       → begin_research_run, then run_id on web_search
 ```
