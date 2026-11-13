@@ -1,8 +1,10 @@
-{# goal: Assess actual learner answers with explicit evidence IDs, leaving unanswered areas Unassessed and prioritizing study recommendations. #}
+{# goal: Assess actual answers with explicit evidence IDs over the computed area skeleton, leaving unanswered areas Unassessed and prioritizing recommendations. #}
 [inference]
 contract:
   input:
     topic: string
+    respondent: string
+    areas: array
     question_bank: array
     answers: array
     calibrated_level: integer|null
@@ -12,22 +14,31 @@ contract:
     overall_assessment: string
 ---
 Synthesize a final knowledge assessment for **{{ topic }}**.
+Areas, computed from the ledger — each with its graded answer IDs and their latest ratings:
+{{ areas | tojson }}
 Question bank, including unanswered areas:
 {{ question_bank | tojson }}
 Actual answer ledger, with latest grades (failed is historical bookkeeping):
 {{ answers | tojson }}
 Initial calibrated level: {{ calibrated_level | tojson }}.
 
-Cover each asked area once. Grade it Solid, Partial or Gap only with actual graded
-answer_ids from that area. Without graded evidence use Unassessed and answer_ids:[];
-an unanswered question is not evidence of a Gap. Compare the final evidence with
+Return one summary entry for each area above, in that order. For an area with
+`assessable: true`, judge Solid, Partial or Gap from its graded answers and cite
+`answer_ids` drawn from its `graded_answer_ids`. For an area with
+`assessable: false` write `"rating":"Unassessed"` and `"answer_ids":[]`; an
+unanswered question is not evidence of a Gap. Compare the final evidence with
 the initial calibrated level; null means calibration was unassessed.
+{% if respondent == "agent" %}
+The respondent is an AI agent. Recommendations name what the agent must check
+or change in its work before it is relied on, each tied to the answer that
+exposed it; they are not study advice.
+{% endif %}
 
 Return:
 ```json
 {
   "summary": [{"area":"area","rating":"Solid","answer_ids":[1],"notes":"answer-specific evidence"}],
-  "recommendations": ["Specific study recommendation"],
+  "recommendations": ["Specific recommendation"],
   "overall_assessment": "Brief narrative"
 }
 ```

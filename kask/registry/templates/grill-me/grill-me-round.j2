@@ -1,8 +1,9 @@
-{# goal: Draft questions or grade actual identified answers, with deterministic feedback between executions and no generated bookkeeping. #}
+{# goal: Draft questions or grade actual identified answers, with deterministic feedback between executions and no generated bookkeeping; for an agent respondent, grade each answer against the evidence it cites. #}
 [inference]
 contract:
   input:
     topic: string
+    respondent: string
     phase: string
     mode: string
     current_level: integer
@@ -19,10 +20,13 @@ contract:
 Examine **{{ topic }}**, batch {{ round_number }}, level {{ current_level }}, mode {{ mode }}.
 Local ladder: 1 Recall; 2 Mechanism; 3 Rationale/tradeoffs; 4 Edge cases; 5 Synthesis.
 This adapts Bloom; it is not the revised taxonomy's six categories.
+{% if respondent == "agent" %}
+The respondent is an AI agent answering about work it produced. You are the
+examiner: you did not produce that work, and you do not defend it.
+{% endif %}
 
-
-{% if phase not in ["ask", "grade"] or mode not in ["calibrate", "interrogate"] %}
-invalid_phase_or_mode — stop.
+{% if phase not in ["ask", "grade"] or mode not in ["calibrate", "interrogate"] or respondent not in ["human", "agent"] %}
+invalid_phase_mode_or_respondent — stop.
 {% elif phase == "grade" %}
 ## Grade Identified Answers Only
 Selected actual answers (a regrade keeps the same answer ID):
@@ -31,6 +35,13 @@ Selected actual answers (a regrade keeps the same answer ID):
 {{ {"answer": answer, "question": question} | tojson }}
 {% endfor %}
 Grade each selected answer Solid, Partial or Gap, with an answer-specific reason.
+{% if respondent == "agent" %}
+Each answer carries `evidence`: locators for what it claims. Open them. Grade the
+answer against what the evidence shows, not against how fluent it reads: an
+answer whose evidence does not show what it claims is Gap, and one that is
+right but only partly supported is Partial. Name in the reason which locator
+supports or fails the answer.
+{% endif %}
 Return `{"evaluations":[{"answer_id":7,"rating":"Solid","note":"reason"}]}`;
 the example ID is schematic: use only the supplied IDs, in any order.
 Do not generate questions, answers, counters or a running assessment.
@@ -48,6 +59,11 @@ Question bank: {{ question_bank | tojson }}
 Feedback: {{ feedback.direction }}; retired IDs: {{ feedback.retired_ids | tojson }}.
 Draft 2–3 questions at the supplied level. Hold probes deeper; reprobe changes angle;
 escalate uses the already-raised level. Calibration asks baseline questions, not grades.
+{% if respondent == "agent" %}
+Ask what the work's own text does not already answer: what it rests on, what
+would show it wrong, what it leaves out. Each question must be answerable with
+a locator into the work or its sources; do not ask for opinion.
+{% endif %}
 Return `question_drafts`: new `{retry_id:null,question,area}` records, or
 `{retry_id:<original bank ID>,question:null,area:null}` for a legitimate retry.
 The caller's delivery filter assigns new IDs and restores original retry records.

@@ -154,7 +154,11 @@ quantified backbone.
    `scenario_synthesize` (dragonfly-eye, explicitly equal weights; historical losses are not comparable reliability weights).
 16. Call `scenario_cross_validate` comparing your estimate against
     the server-computed one. If divergence exceeds 0.15, activate the
-    `grill-me` skill on the diverging sub-questions before proceeding.
+    `grill-me` skill on the diverging sub-questions before proceeding,
+    with `respondent: agent` (your own estimate is the work examined:
+    a separate examiner session where one can be spawned, and every
+    answer cites its evidence). The tool's `grill_me_questions` are
+    offered to the examiner as candidate drafts, not asked verbatim.
     Bound: one grill-me pass per diverging sub-question set;
     divergence > 0.15 that persists after one pass is recorded with
     both estimates and flagged for operator adjudication.
