@@ -44,7 +44,7 @@ model-list scoping (`crates/agent/src/agent.rs:3288-3350`), the picker
 (`crates/agent_ui/src/model_selector.rs`, `ui/model_selector_components.rs`),
 the tool perimeter (`crates/agent/src/thread.rs:6375-6388`, `:6450-6455`), the
 settings page (`crates/settings_ui/src/pages/kask_page/private_inference.rs`),
-and the persistence surfaces (`thread.rs:2162-2187`, `:1569-1571`,
+and the persistence surfaces (`crates/agent/src/thread.rs:2162-2187`, `:1569-1571`,
 `db.rs`). Findings are falsifiable statements; every file:line verified this
 session.
 
@@ -61,7 +61,7 @@ session.
   (`thread_view.rs:14117`, idle-guarded there only).
 - On a privacy-marked thread, cycling onto a public favorite calls
   `NativeAgentModelSelector::select_model` (`agent.rs:3352-3419`):
-  `Thread::set_model` refuses silently (`thread.rs:2513-2524` — log +
+  `Thread::set_model` refuses silently (`crates/agent/src/thread.rs:2513-2524` — log +
   `cx.notify()`, `()`-returning, no error surfaced), yet
   `update_settings_file` runs unconditionally (`agent.rs:3400-3419`) and
   rewrites the **global agent default model** to the refused public model;
@@ -81,16 +81,16 @@ session.
 
 - The toggle is clickable mid-turn (no status guard,
   `thread_view.rs:6477-6489`; `set_private_inference` checks no running
-  state, `thread.rs:2562-2605`).
+  state, `crates/agent/src/thread.rs:2562-2605`).
 - What the gates see on a mid-turn MARK: `set_private_inference` clears the
   held public model (`:2532-2553`); the request gate re-reads
-  `this.model()` per request iteration (`thread.rs:3836-3860`) — the
+  `this.model()` per request iteration (`crates/agent/src/thread.rs:3836-3860`) — the
   in-flight request completes (its content already crossed), the next
   iteration fails typed `PrivateModelUnavailableError` (`:3816-3818`).
   Surfaced, but: **no pin covers any mid-turn flip** (the D100 pin set is
   steady-state only).
 - The tool perimeter re-evaluates **per request iteration**, not per turn
-  (`refresh_turn_tools` called at `thread.rs:3863-3867`, rebuilding
+  (`refresh_turn_tools` called at `crates/agent/src/thread.rs:3863-3867`, rebuilding
   `running_turn.tools` via `enabled_tools` at `:6459-6464`) — tighter than
   the D100 row's "re-evaluated per turn" (the register under-claims; both
   true). Residual window: tool calls the model emits in the same iteration
@@ -110,12 +110,12 @@ session.
 
 **Axis:** module depth (comment hygiene). **Severity: low.**
 
-`thread.rs:2556-2559` cites
+`crates/agent/src/thread.rs:2556-2559` cites
 `marking_a_thread_clears_a_held_public_model` and
 `unmark_restores_public_model_selection`; neither exists anywhere in the tree
 (repo-wide sweep: the only hits are the comment itself). The real pin is
 `private_thread_refuses_a_public_model_at_the_storage_gate`
-(`thread.rs:15702`, whose unmark leg is "unmark restores" — gate
+(`crates/agent/src/thread.rs:15702`, whose unmark leg is "unmark restores" — gate
 permissibility, not automatic model restore). An agent grepping the cited
 names would wrongly conclude the behavior is unpinned. Same class as the
 "stale comments are active misinformation" rule.
@@ -147,7 +147,7 @@ worth it if the PI will ever change them (today: defaults serve).
 Models are listed-refused-never-vanished (`disable_non_local_models` carries
 the boundary reason, `agent.rs:3298-3308`); the perimeter-refused servers'
 tools simply never enter the marked thread's tool map
-(`thread.rs:6385-6388`) — the model is not told and neither is the PI. A
+(`crates/agent/src/thread.rs:6385-6388`) — the model is not told and neither is the PI. A
 private thread's habituated `transcribe`-class call fails as an unknown tool.
 Proposal: surface the disabled-server set in the toggle's tooltip (or a
 header hint) — the perimeter is a PI-owned policy; its decision text belongs
@@ -158,8 +158,8 @@ next to the lock.
 **Axis:** module depth. **Positive record.** One mark home
 (`KaskThreadState`), readers concentrated (thread.rs 18, kask_thread_state.rs
 3, thread_view.rs 2, agent.rs 1), production write path exactly the toggle +
-`from_db` restore (`thread.rs:2172-2173`). The restore sanitize covers
-`Ready` (`thread.rs:2175-2187`); the `Unresolved` case is covered by the
+`from_db` restore (`crates/agent/src/thread.rs:2172-2173`). The restore sanitize covers
+`Ready` (`crates/agent/src/thread.rs:2175-2187`); the `Unresolved` case is covered by the
 request gate belt (`:3810-3815`). No wrapper/indirection fails deletion.
 
 ### Duplication axis
@@ -175,7 +175,7 @@ upstream-derived files). The panel surfaces are not the ratchet's debt.
 
 1. **The boundary-reason one-home:** the disabled-reason string
    (`agent.rs:3301-3305`) and `PrivateRoutingError`'s text
-   (`thread.rs:323-331`) are two spellings of the same boundary that can
+   (`crates/agent/src/thread.rs:323-331`) are two spellings of the same boundary that can
    drift; one shared home (the `META_INFERENCE_PROVENANCE` discipline
    applied to the reason text).
 2. **The select-path fail-fast ordering:** `select_model` writes three
@@ -189,14 +189,14 @@ Machine checks: §0, all green. Doc claims adjudicated:
 
 | Claim (M5 §9 step-1 record / D100 write side) | Verdict | Ground |
 |---|---|---|
-| Captured at BOTH production constructor sites, D68 discipline (host-derived, never from input) | **IS** | `thread.rs:5594` (`run_tool`), `thread.rs:2052` (`replay_tool_call`) — both read `self.kask.is_private_inference()` inside the thread update |
-| Un-tied test streams default `PublicProvider` | **IS** | pinned `thread.rs:11178-11249`; pin green |
+| Captured at BOTH production constructor sites, D68 discipline (host-derived, never from input) | **IS** | `crates/agent/src/thread.rs:5594` (`run_tool`), `crates/agent/src/thread.rs:2052` (`replay_tool_call`) — both read `self.kask.is_private_inference()` inside the thread update |
+| Un-tied test streams default `PublicProvider` | **IS** | pinned `crates/agent/src/thread.rs:11178-11249`; pin green |
 | `KaskToolSource::invoke` carries it as an explicit host-set parameter | **IS** | trait `context_server_registry.rs:77-81`; read at `:719`, passed at `:734`; dispatch pin (incl. the input-spoof falsifier — the observable is the source-RECORDED provenance, not a struct field) green |
 | Routed by `main.rs`'s `ZedKaskToolSource` to the provenance-stamping entry | **IS** (tree), **unpinned** | `main.rs:3667-3698`, the routing line `:3692-3693` — no test covers it (finding F7) |
 | `_meta.inference_provenance` under the one-home key `META_INFERENCE_PROVENANCE`; child re-exports it | **IS** | parent `runtime.rs:1935-1982` (pin green); child re-export `call_provenance.rs:25`, parser `:54-68` |
 | The plain `ToolPort::invoke` path stays un-stamped | **IS** | `runtime.rs:1501-1515` → `invoke_governed(..., None)`; the wire pin asserts actual `_meta` key ABSENCE (`:1976-1981`) — not a vacuous observable |
 | FR-4 falsifier (b) tool legs compose end-to-end at the wire | **IS** | parent wire pin + child wire pin parse the same serialized form; curator `call_admits` pins both sides green (`hkask-mcp-curator` tool_behavior, 4 passed) |
-| The `:NNNN@sym` citations re-anchored in skills-and-composition.md + lisp-eval-dialect.md | **IS** (fresh) | every cited line spot-checked at HEAD this session: `thread.rs:4982/5483/7923/8073/8095/3412/8174/8601/6103/2900`, `agent.rs:5501`, `lisp_eval_tool.rs:291/295/326/374/418`, `corpus storage.rs:108/243` — all land exactly |
+| The `:NNNN@sym` citations re-anchored in skills-and-composition.md + lisp-eval-dialect.md | **IS** (fresh) | every cited line spot-checked at HEAD this session: `crates/agent/src/thread.rs:4982/5483/7923/8073/8095/3412/8174/8601/6103/2900`, `agent.rs:5501`, `lisp_eval_tool.rs:291/295/326/374/418`, `corpus storage.rs:108/243` — all land exactly |
 | M5 §9: "the interim strictest-default period closed: a private-marked thread's curator tool calls now read its private rows" | **IS with caveat** | the wire + child pins compose; caveat: the child's store is the PUBLIC store (§4) — the claim holds for private-marked rows the child can see (the belt rows), and the bridge-side federated recall is the production path for the split store |
 
 **F7 — the source→runtime link is unpinned (the one chain link).** The
