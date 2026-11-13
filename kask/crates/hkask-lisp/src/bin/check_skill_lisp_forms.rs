@@ -5421,6 +5421,110 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_eur_1_reconciles_funding_sections_and_the_registry_readback() {
+        let form = skill_candidate("eureka-cycle", "funded_without_section");
+        let readback = json!({"count": 2, "experiments": [
+            {"id": "exp-a", "prediction": {"claim": "c", "confidence": 0.7}},
+            {"id": "exp-b", "prediction": {"claim": "d", "confidence": 0.4}}
+        ]});
+        let gate = |funded: Vec<&str>, sections: serde_json::Value, readback: serde_json::Value| {
+            let funded: Vec<serde_json::Value> = funded
+                .into_iter()
+                .map(|id| json!({"candidate_id": id}))
+                .collect();
+            eval_sandboxed(
+                &form,
+                &json!({"funded_candidates": funded, "candidate_sections": sections, "readback": readback}),
+            )
+            .unwrap_or_else(|error| panic!("EUR-1 failed to evaluate: {error}"))
+        };
+        let two = json!([
+            {"candidate_id": "c1", "experiment_id": "exp-a"},
+            {"candidate_id": "c2", "experiment_id": "exp-b"}
+        ]);
+        let ok = gate(vec!["c1", "c2"], two.clone(), readback.clone());
+        assert_eq!(ok["verdict"], json!("reconciled"));
+        assert_eq!(ok["funded"], json!(2));
+        assert_eq!(ok["sections"], json!(2));
+
+        let missing = gate(
+            vec!["c1", "c2"],
+            json!([{"candidate_id": "c1", "experiment_id": "exp-a"}]),
+            readback.clone(),
+        );
+        assert_eq!(missing["problems"], json!(["funded_without_section"]));
+        assert_eq!(missing["funded_without_section"], json!(["c2"]));
+        let extra = gate(vec!["c1"], two, readback.clone());
+        assert_eq!(extra["problems"], json!(["section_without_funding"]));
+        assert_eq!(extra["section_without_funding"], json!(["c2"]));
+
+        let unresolved = gate(
+            vec!["c1"],
+            json!([{"candidate_id": "c1", "experiment_id": "exp-z"}]),
+            readback.clone(),
+        );
+        assert_eq!(unresolved["problems"], json!(["experiment_ids_unresolved"]));
+        assert_eq!(unresolved["unresolved_experiment_ids"], json!(["exp-z"]));
+
+        let unsealed = gate(
+            vec!["c1"],
+            json!([{"candidate_id": "c1", "experiment_id": "exp-a"}]),
+            json!({"experiments": [{"id": "exp-a", "prediction": {"claim": "c"}}]}),
+        );
+        assert_eq!(unsealed["problems"], json!(["confidence_not_recorded"]));
+        assert_eq!(unsealed["confidence_not_recorded"], json!(["exp-a"]));
+
+        // A research-run resolution has a section but no experiment id.
+        let research = gate(
+            vec!["c1"],
+            json!([{"candidate_id": "c1"}]),
+            readback.clone(),
+        );
+        assert_eq!(research["verdict"], json!("reconciled"));
+        assert_eq!(
+            gate(vec![], json!([]), readback)["problems"],
+            json!(["no_funded_candidates"])
+        );
+    }
+
+    #[test]
+    fn scientific_gate_eur_2_scores_resolved_predictions_and_leaves_open_ones_unscored() {
+        let form = skill_candidate("eureka-cycle", "cycle_mean_brier");
+        let score = |predictions: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"predictions": predictions}))
+                .unwrap_or_else(|error| panic!("EUR-2 failed to evaluate: {error}"))
+        };
+        let mixed = score(json!([
+            {"claim": "a", "confidence": 0.7, "outcome": true},
+            {"claim": "b", "confidence": 0.4, "outcome": false},
+            {"claim": "c", "confidence": 0.9, "outcome": null}
+        ]));
+        let per = mixed["per_prediction"]
+            .as_array()
+            .expect("per prediction list");
+        assert!((per[0].as_f64().expect("held") - 0.09).abs() < 1e-9);
+        assert!((per[1].as_f64().expect("refuted") - 0.16).abs() < 1e-9);
+        assert!(per[2].is_null());
+        assert_eq!(mixed["scored"], json!(2));
+        assert_eq!(mixed["unscored"], json!(1));
+        assert!((mixed["cycle_mean_brier"].as_f64().expect("mean") - 0.125).abs() < 1e-9);
+
+        let out_of_range = score(json!([{"confidence": 1.2, "outcome": true}]));
+        assert_eq!(out_of_range["scored"], json!(0));
+        assert!(out_of_range["cycle_mean_brier"].is_null());
+        let textual = score(json!([{"confidence": "0.7", "outcome": true}]));
+        assert_eq!(textual["unscored"], json!(1));
+        let none = score(json!([]));
+        assert_eq!(none["scored"], json!(0));
+        assert!(none["cycle_mean_brier"].is_null());
+        // A certain claim that held scores zero; one that was refuted scores one.
+        let extremes = score(
+            json!([{"confidence": 1.0, "outcome": true}, {"confidence": 1.0, "outcome": false}]),
+        );
+        assert_eq!(extremes["per_prediction"], json!([0.0, 1.0]));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

@@ -168,18 +168,29 @@ itself; it routes to the owners and carries the cycle's memory.
     `lisp_eval` first — the engine owns the counts and the arithmetic; the
     report renders around them and never re-types them.
 
-    **`EUR-1` (reconciliation receipt)** — run over the assembled report fields
-    and the `population_query` readback before posting the report:
-    form: `(and (= funded_count section_count) (= unresolved_ids 0) (= missing_pre_seal_confidences 0))`
-    env: `{ "funded_count": <the cycle's funded candidate count>, "section_count": <the report's candidate-section count>, "unresolved_ids": <count of section experiment ids absent from the population_query readback>, "missing_pre_seal_confidences": <count of predictions whose recorded confidence is absent from the sealed declaration> }`
-    The study report's reconciliation field states the EUR-1 receipt verbatim
-    (its four inputs and the returned boolean) — the model never counts.
+    **`EUR-1` (reconciliation receipt)** — run over the PI's recorded funding
+    decision (the card comment from step 4, as `[{candidate_id}]`), the
+    rendered report's `candidate_sections` (each carrying its `candidate_id`
+    and `experiment_id`) and the `population_query` readback, before posting:
+    form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (lambda (v) (if (listp v) v (list)))) (define funded-ids (lambda (cs) (if (is_null cs) (list) (cons (text-of (car cs) "candidate_id") (funded-ids (cdr cs)))))) (define section-ids (lambda (ss) (if (is_null ss) (list) (cons (text-of (car ss) "candidate_id") (section-ids (cdr ss)))))) (define experiment-ids (lambda (ss) (if (is_null ss) (list) (let ((e (text-of (car ss) "experiment_id"))) (if (> (length e) 0) (cons e (experiment-ids (cdr ss))) (experiment-ids (cdr ss))))))) (define known (lambda (es) (if (is_null es) (list) (cons (text-of (car es) "id") (known (cdr es)))))) (define not-in (lambda (xs ys) (if (is_null xs) (list) (if (member (car xs) ys) (not-in (cdr xs) ys) (cons (car xs) (not-in (cdr xs) ys)))))) (define has-confidence (lambda (e) (let ((p (assoc "prediction" e))) (and (listp p) (numberp (assoc "confidence" p)))))) (define unconfident (lambda (es ids) (if (is_null es) (list) (if (and (member (text-of (car es) "id") ids) (not (has-confidence (car es)))) (cons (text-of (car es) "id") (unconfident (cdr es) ids)) (unconfident (cdr es) ids))))) (define funded (funded-ids (rows funded_candidates))) (define sections (section-ids (rows candidate_sections))) (define cited (experiment-ids (rows candidate_sections))) (define population (rows (assoc "experiments" readback))) (define resolvable (known population)) (define problems (append (if (is_null funded) (list "no_funded_candidates") (list)) (if (is_null (not-in funded sections)) (list) (list "funded_without_section")) (if (is_null (not-in sections funded)) (list) (list "section_without_funding")) (if (is_null (not-in cited resolvable)) (list) (list "experiment_ids_unresolved")) (if (is_null (unconfident population cited)) (list) (list "confidence_not_recorded")))) (list (list "verdict" (if (is_null problems) "reconciled" "unreconciled")) (list "problems" problems) (list "funded" (length funded)) (list "sections" (length sections)) (list "funded_without_section" (not-in funded sections)) (list "section_without_funding" (not-in sections funded)) (list "unresolved_experiment_ids" (not-in cited resolvable)) (list "confidence_not_recorded" (unconfident population cited))))`
+    env: `{ "funded_candidates": <the funded list from the step-4 card comment>, "candidate_sections": <the report render's candidate_sections>, "readback": <the population_query response, unchanged> }`
+    `reconciled`, or `unreconciled` with `problems` and the ids behind each:
+    `funded_without_section`, `section_without_funding`,
+    `experiment_ids_unresolved` (a section's experiment id absent from the
+    readback), `confidence_not_recorded` (a cited experiment whose stored
+    `prediction.confidence` is not a number — the seal records it, so its
+    absence means the declaration was not sealed as stated), `no_funded_candidates`.
+    The study report's reconciliation field states the EUR-1 result verbatim.
 
-    **`EUR-2` (per-prediction Brier)** — for each resolved binary claim
-    (outcome 1 = held, 0 = refuted):
-    form: `(* (- probability outcome) (- probability outcome))`
-    env: `{ "probability": <the prediction's recorded pre-seal confidence>, "outcome": <1 or 0> }`
-    The cycle mean Brier is the arithmetic mean of the EUR-2 outputs.
+    **`EUR-2` (prediction Brier)** — over the cycle's resolved claims, each
+    `{claim, confidence, outcome}` with `outcome` true (held), false
+    (refuted) or null (open):
+    form: `(begin (define sq (lambda (x) (* x x))) (define rows (if (listp predictions) predictions (list))) (define one (lambda (p) (let ((pr (assoc "confidence" p)) (o (assoc "outcome" p))) (if (and (numberp pr) (>= pr 0) (<= pr 1) (or (eq o t) (eq o (not t)))) (sq (- pr (if (eq o t) 1 0))) nil)))) (define scores (lambda (ps) (if (is_null ps) (list) (cons (one (car ps)) (scores (cdr ps)))))) (define numeric (lambda (xs) (if (is_null xs) (list) (if (numberp (car xs)) (cons (car xs) (numeric (cdr xs))) (numeric (cdr xs)))))) (define sum (lambda (xs) (if (is_null xs) 0 (+ (car xs) (sum (cdr xs)))))) (define briers (scores rows)) (define scored (numeric briers)) (list (list "per_prediction" briers) (list "scored" (length scored)) (list "unscored" (- (length briers) (length scored))) (list "cycle_mean_brier" (if (is_null scored) nil (/ (sum scored) (length scored))))))`
+    env: `{ "predictions": <the cycle's prediction records, confidence from the sealed declaration, outcome from the selection record> }`
+    Returns `per_prediction` (a Brier per record, null for an open or
+    malformed one), `scored`, `unscored` and `cycle_mean_brier` (null when
+    nothing is scored). The report's `brier_readback` carries this output as
+    returned; the mean is never recomputed by hand.
 
     Render `eureka-cycle/eureka-study-report` with the copyable context below:
     per-candidate sections reference the delegated lifecycle's own report output,
@@ -200,7 +211,7 @@ itself; it routes to the owners and carries the cycle's memory.
     {
       "question": "<the funded question verbatim>",
       "cycle": {"candidates": ["<id, resolution path, registry/experiment id, verdict, prediction (claim + confidence), outcome>"], "question_id": "<the board card id>", "routing": "<the routing summary>"},
-      "brier_readback": {"predictions": ["<claim, confidence, experiment, outcome, single_brier (from EUR-2)>"], "cycle_mean_brier": "<mean of the EUR-2 outputs>"},
+      "brier_readback": {"predictions": ["<the EUR-2 env records, with each per_prediction value beside its record>"], "cycle_mean_brier": "<EUR-2's cycle_mean_brier as returned>"},
       "evaluator_hardening": []
     }
     ```
@@ -237,6 +248,16 @@ rehearsal forced into this text: (1) the seal ordering — the baseline's pre-se
 `fitness_record` (`seal_id: null`) must precede `experiment_seal` (the server's
 typed `failed_precondition` taught the order); (2) `kanban_task_list` does not
 surface card labels — the description is the provenance carrier.
+
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the authored `EUR-1`
+and `EUR-2` (`scientific_gate_eur_`): `EUR-1` over two funded candidates
+with two sections resolving to two sealed experiments (reconciled), a
+funded candidate with no section, a section citing an experiment absent
+from the readback, a cited experiment with no recorded confidence, a
+section with no experiment id (allowed — a research-run resolution), and
+no funded candidates; `EUR-2` over held 0.7, refuted 0.4 and an open claim
+(0.09, 0.16, null; mean 0.125 over the two scored), a confidence above 1
+(unscored) and no predictions (null mean).
 
 ## Constraints
 
