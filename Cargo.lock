@@ -8234,6 +8234,7 @@ dependencies = [
  "hkask-mcp-test-support",
  "hkask-nostr-core",
  "hkask-types",
+ "nostr-sdk",
  "regex",
  "rmcp",
  "schemars 1.0.4",

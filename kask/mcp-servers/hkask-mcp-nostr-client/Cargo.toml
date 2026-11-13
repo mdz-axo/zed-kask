@@ -13,6 +13,11 @@ path = "src/hkask_mcp_nostr_client.rs"
 name = "hkask-mcp-nostr-client"
 path = "src/main.rs"
 
+[features]
+# The local test relays in `src/test_support.rs`. Never enabled by the
+# installer: a build with this feature can be pointed at loopback relays.
+test-fixture = ["dep:nostr-sdk", "nostr-sdk/local-relay", "tokio/net"]
+
 [dependencies]
 hkask-bridge-ontology.workspace = true
 hkask-mcp-server.workspace = true
@@ -27,6 +32,11 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 tracing.workspace = true
+# The relay client and, under `test-fixture`, the test relay. The same exact
+# pin and TLS provider the relay server uses (operator ruling 2026-11-12).
+# Optional until the first tool that contacts a relay lands: today only the
+# test relays use it.
+nostr-sdk = { workspace = true, optional = true, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
 
 [build-dependencies]
 regex.workspace = true
@@ -36,7 +46,7 @@ regex.workspace = true
 # value in the `npub` field, for one), so no key is written into a test file.
 bech32.workspace = true
 hkask-mcp-test-support.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 
 [lints]
 workspace = true
