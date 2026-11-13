@@ -794,7 +794,7 @@ impl ScenariosServer {
                         "2. Fermi-ize: break into tractable sub-questions",
                         "3. Balance inside and outside views",
                         "4. Incremental belief updating",
-                        "5. Look for the clashing causal forces at work in each problem",
+                        "5. Dragonfly-eye: synthesize multiple perspectives",
                         "6. Distinguish degrees of doubt (use full 0-100% scale)",
                         "7. Balance under/overconfidence",
                         "8. Postmortem successes and failures",
