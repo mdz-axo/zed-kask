@@ -20,6 +20,14 @@ The body is kept as written; where it disagrees with these, these hold.
   reading that the Curator publishes without a prompt. With the password
   saved, this approval is what stands between untrusted relay text and the
   key. Not built: no tool drafts, signs or publishes.
+- **Autopublish.** Ruled later on 2026-11-13: "actually there should be an
+  autopublish setting in the nostr settings - and it should be unselected by
+  default -- so the defaulr setting is for the user to preview and approve
+  all publications, but if the autopublish is turned on then that preview
+  and approval step is removed." So the approval above is the default, and
+  publishing without it is the operator's opt-in through a `kask.nostr`
+  setting that is off until they turn it on. Not built: no such setting
+  exists.
 - **Local relay.** "client is assumed to connect to the local relay as well
   as other relays. the local relay is intended to offere redundancy and
   should be a way for us to get to understand nostr better." Built: the
