@@ -62,14 +62,14 @@ impl InferencePort for CountingPort {
 }
 
 /// One served corpus server behind the production stdio-shaped transport.
-struct Wire {
+pub(crate) struct Wire {
     read: BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
     write: tokio::io::WriteHalf<tokio::io::DuplexStream>,
     next_id: u64,
 }
 
 impl Wire {
-    async fn start(server: CorpusServer) -> Self {
+    pub(crate) async fn start(server: CorpusServer) -> Self {
         use rmcp::ServiceExt;
         let (server_io, client_io) = tokio::io::duplex(1 << 20);
         let (read, write) = tokio::io::split(server_io);
@@ -125,7 +125,7 @@ impl Wire {
     }
 
     /// The `result` object of one `tools/call`.
-    async fn call(&mut self, name: &str, arguments: Value) -> Value {
+    pub(crate) async fn call(&mut self, name: &str, arguments: Value) -> Value {
         let id = self.next_id;
         self.next_id += 1;
         self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call",
@@ -140,7 +140,7 @@ impl Wire {
 }
 
 /// `(kind, message)` of a refused call, as the consumer reads them.
-fn refusal(tool: &str, result: &Value) -> (String, String) {
+pub(crate) fn refusal(tool: &str, result: &Value) -> (String, String) {
     assert_eq!(result["isError"], true, "{tool} must refuse: {result}");
     (
         result["structuredContent"]["kind"]
@@ -155,7 +155,7 @@ fn refusal(tool: &str, result: &Value) -> (String, String) {
 }
 
 /// The `content` object of a successful call.
-fn content(tool: &str, result: &Value) -> Value {
+pub(crate) fn content(tool: &str, result: &Value) -> Value {
     assert_eq!(result["isError"], false, "{tool} must succeed: {result}");
     let envelope: Value = serde_json::from_str(
         result["content"][0]["text"]
@@ -167,7 +167,7 @@ fn content(tool: &str, result: &Value) -> Value {
 }
 
 /// A fixture directory inside an allowed root (the crate's ignored target dir).
-fn inside() -> tempfile::TempDir {
+pub(crate) fn inside() -> tempfile::TempDir {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/containment-test");
     std::fs::create_dir_all(&root).expect("fixture root");
     tempfile::tempdir_in(root).expect("inside fixture")

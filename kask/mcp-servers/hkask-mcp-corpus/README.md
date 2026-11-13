@@ -110,7 +110,7 @@ returns routing counts and examples instead of every page. OCR uses the configur
 image-capable model through the page pipeline. PDFs are decimated into pages;
 zero text is an error. Results expose verification, empty/quality-failed pages,
 error counts and breaker state. Review them before accepting text or expanding a
-probe into a bulk run (`src/tools/document.rs:103–167`). There is no alternate
+probe into a bulk run (`src/tools/document.rs:103–166`). There is no alternate
 OCR backend to silently accept on endpoint failure.
 
 All text, document and directory chunk modes use **one shared structural/sentence

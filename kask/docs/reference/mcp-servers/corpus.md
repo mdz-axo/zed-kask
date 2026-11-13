@@ -75,7 +75,7 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 
 ## Pipeline parameters
 
-Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
+Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:1034-1135`,
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:562-579`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:570-702`,
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:516-581`, and
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
@@ -353,7 +353,7 @@ and publishes single-tier JSONL with `entity_ref`, original `source`, `text`,
 `word_count`. Source components are reversible fixed-width UTF-8 hex, avoiding
 punctuation collisions. `zero_chunk_files` surfaces coverage loss. Directory
 multi-tier is rejected; per-file/text tiers default 2048/512/128 and share the
-same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:929–1107`;
+same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:929–1104`;
 `kask/mcp-servers/hkask-mcp-corpus/src/text.rs:7-16` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:300-346`).
 
 ### Classification and prompt context

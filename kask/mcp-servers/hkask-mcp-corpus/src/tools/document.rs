@@ -140,8 +140,7 @@ impl CorpusServer {
                 // `output` entirely — observed when a full-book OCR result
                 // returned inline with no file written).
                 if let Some(output_path) = output.as_deref() {
-                    hkask_mcp_server::validate_path("output", output_path, 4096)
-                        .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+                    hkask_mcp_server::validate_path("output", output_path, 4096)?;
                     let destination = crate::path_safety::contain_for_write(output_path)?;
                     if let Some(parent) = destination.parent() {
                         std::fs::create_dir_all(parent).map_err(|e| {
@@ -222,7 +221,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "OCR a PDF or image through the page pipeline (per-page OCR via the configured dedicated OCR model, with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var or the kask.models.ocr_model setting); there is no built-in default — unset fails with visible guidance. The resolved model must accept image input (the call goes through the vision transport)."
+        description = "OCR a PDF or image through the page pipeline (per-page OCR via the configured dedicated OCR model, with a verification report). PDFs are decimated to page images; a zero-text result is an error, never a silent success. The model is the request's explicit model parameter, else the configured OCR model (HKASK_OCR_MODEL env var, else the kask.models.ocr_model setting, else the code default RunPod/kask-ocr). The resolved model must be listed as vision-capable by the inference registry, which requires the zed inference bridge; without it the call fails before any file is read. A path that is neither a PDF nor an image is refused before model resolution."
     )]
     pub async fn corpus_ocr(
         &self,
@@ -231,6 +230,15 @@ impl CorpusServer {
         execute_tool(self, "corpus_ocr", async {
             let resolved = crate::path_safety::contain_for_read(&path)?;
             let (format, _, _) = convert::detect_format(&path);
+            // Input shape before model resolution: a text or office document
+            // has no OCR path, and refusing it must not cost a registry
+            // round-trip or report a model problem it does not have.
+            if format != "pdf" && !is_decodable_image_path(&path) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "corpus_ocr supports PDFs and decodable images (by extension: {}); '{path}' has no OCR pipeline path",
+                    decodable_image_extensions().join(", ")
+                )));
+            }
 
             let service = ConvertService::from_corpus(self);
             let model = match service.resolve_ocr_model(model.as_deref()).await {
@@ -445,8 +453,7 @@ impl CorpusServer {
         } else {
             None
         };
-        hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
-            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)?;
         if let Some(input_dir) = input_dir {
             return execute_tool(self, "corpus_chunk", async {
                 // Loud rejection, not silent ignoring: directory mode writes a
@@ -493,8 +500,7 @@ impl CorpusServer {
                     "entity_ref_prefix must not be empty",
                 ));
             }
-            hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)
-                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            hkask_mcp_server::validate_identifier("entity_ref_prefix", &entity_ref_prefix, 256)?;
 
             let service = ConvertService::from_corpus(self);
 
@@ -586,6 +592,17 @@ impl CorpusServer {
             let processed = sanitize_links(&processed);
             let processed = crate::convert::decode_html_entities(&processed);
             let processed = crate::convert::strip_html_comments(&processed);
+            // A source that yields no words is data loss presented as progress
+            // (the directory arm reports it per file as `zero_chunk_files`;
+            // the single-source arm has one source, so it is the outcome). The
+            // common cause is a scanned PDF with no OCR model configured.
+            if processed.split_whitespace().next().is_none() {
+                return Err(McpToolError::failed_precondition(format!(
+                    "'{source_label}' yielded no words to chunk after extraction and cleaning — \
+                     for a scanned PDF, configure the OCR model (kask.models.ocr_model, injected \
+                     as HKASK_OCR_MODEL) and run under the zed inference bridge"
+                )));
+            }
 
             let boundary = ".!? ";
             let source_ref = if has_path {
@@ -637,9 +654,9 @@ impl CorpusServer {
 
                 let mut result = result;
                 result["indexed"] = json!(indexed);
-                if let Some(ref err) = index_error {
-                    result["index_error"] = json!(err);
-                }
+                // Same shape as the single-tier arm: the field is always
+                // present, null when indexing succeeded or was not requested.
+                result["index_error"] = json!(index_error);
                 Ok(result)
             } else {
                 // Single-tier
@@ -700,16 +717,14 @@ impl CorpusServer {
         force_ocr: bool,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_convert", async {
-            hkask_mcp_server::validate_path("path", path, 4096)
-                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            hkask_mcp_server::validate_path("path", path, 4096)?;
             let path = crate::path_safety::contain_for_read(path)?;
             let output = output.ok_or_else(|| {
                 McpToolError::invalid_argument(
                     "'output' directory is required when 'path' is a directory",
                 )
             })?;
-            hkask_mcp_server::validate_path("output", output, 4096)
-                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            hkask_mcp_server::validate_path("output", output, 4096)?;
             let output = crate::path_safety::contain_for_write(output)?;
 
             let output_dir = output.as_path();
@@ -837,9 +852,13 @@ impl CorpusServer {
                 {
                     Ok(response) => response,
                     Err(e) => {
+                        // The per-file refusal as the consumer reads a tool
+                        // error: its kind and message as fields, not a JSON
+                        // string to parse out of a string.
                         failures.push(json!({
                             "path": source,
-                            "error": e.to_json_string(),
+                            "kind": e.kind.to_string(),
+                            "error": e.message,
                         }));
                         continue;
                     }
@@ -947,6 +966,25 @@ impl CorpusServer {
         })
         .await
     }
+}
+
+/// The image extensions the compiled `image` decoder reads — the same
+/// codec set `ocr_via_pipeline`'s `load_from_memory` dispatches on, so the
+/// pre-model refusal and the decoder cannot disagree.
+fn decodable_image_extensions() -> Vec<&'static str> {
+    image::ImageFormat::all()
+        .filter(image::ImageFormat::reading_enabled)
+        .flat_map(image::ImageFormat::extensions_str)
+        .copied()
+        .collect()
+}
+
+fn is_decodable_image_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(image::ImageFormat::from_extension)
+        .is_some_and(|format| format.reading_enabled())
 }
 
 fn is_supported_document(path: &std::path::Path) -> bool {

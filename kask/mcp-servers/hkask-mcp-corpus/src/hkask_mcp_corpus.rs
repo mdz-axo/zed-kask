@@ -35,6 +35,8 @@ mod containment_tests;
 pub(crate) mod convert;
 mod helpers;
 mod index;
+#[cfg(test)]
+mod intake_tests;
 
 pub(crate) mod ocr;
 pub(crate) mod ontology;

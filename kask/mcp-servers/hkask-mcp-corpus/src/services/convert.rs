@@ -992,16 +992,13 @@ impl<'a> ConvertService<'a> {
         index: bool,
     ) -> Result<Value, McpToolError> {
         let bounds = chunk_word_bounds(max_tokens, overlap_tokens)?;
-        hkask_mcp_server::validate_identifier("entity_ref_prefix", entity_ref_prefix, 256)
-            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
-        hkask_mcp_server::validate_path("input_dir", input_dir, 4096)
-            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        hkask_mcp_server::validate_identifier("entity_ref_prefix", entity_ref_prefix, 256)?;
+        hkask_mcp_server::validate_path("input_dir", input_dir, 4096)?;
         let input_dir = contain_for_read(input_dir)?;
         let output = output.ok_or_else(|| {
             McpToolError::invalid_argument("'output' is required with 'input_dir'")
         })?;
-        hkask_mcp_server::validate_path("output", output, 4096)
-            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        hkask_mcp_server::validate_path("output", output, 4096)?;
         let output_path = contain_for_write(output)?;
 
         let entries = std::fs::read_dir(&input_dir)
