@@ -148,7 +148,7 @@ pre-check verdict, and Brier computation are D.
 
 The outer Kata uses the `kata-improvement` step templates directly; this skill supplies the self-improvement framing in `context`, and never restates the procedure.
 
-1. Render `kata-improvement/improvement-step1-direction`, `kata-improvement/improvement-step2-current`, and `kata-improvement/improvement-step3-target` in order, passing each step's output in `previous_steps`.
+1. Render `kata-improvement/improvement-step1-direction`, `kata-improvement/improvement-step2-current`, and `kata-improvement/improvement-step3-target` in order, each with `{ "context": <the framing object below>, "learner_bot": <the agent whose scaffold is being improved — its configured name>, "previous_steps": <the prior steps' outputs, [] for step 1> }` (step 1 also accepts `prior_kanban` and `prior_boards`, null when none).
 2. In `context`, state the self-improvement framing (Ren et al., 2026, arXiv:2607.13104): the agent configuration 𝒜_t = (θ_t, Σ_t), where θ_t is the foundation model and Σ_t = (p_t, m_t, 𝒯_t, g_t) is the scaffold (prompts, memory, tools, control logic); the challenge is the capability gap the update operator 𝒰 should close.
 3. Step 2 (current condition) must describe the current θ_t and Σ_t and include cost metrics (compute, tokens, wall-clock time, human input) and safety metrics (regression rate, safety violations, goal-drift indicators) alongside performance metrics; record `metric_before`.
 4. Step 3 (target) counts its horizon in this session's bounded PDCA experiments (at most 5 per Kata step), not calendar time (operator ruling 2026-09-24); record `metrics_target`.

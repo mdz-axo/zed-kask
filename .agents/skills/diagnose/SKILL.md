@@ -112,7 +112,12 @@ admitted target for root-cause elimination.
 | `diagnose-instrument.j2` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `diagnose/diagnose-spec-anchor`) and a context object with the required variables.
+To render a template, call the `render_template` tool with the template ref (e.g., `diagnose/diagnose-spec-anchor`) and a context object with the required variables. Every render carries the same `bug_description` (the user's report, verbatim) and, where asked, the same `crate_scope` (the crate under diagnosis):
+
+- `diagnose/diagnose-spec-anchor`: `{ "bug_description", "symptom": <the observed misbehavior>, "target_file": <the file the Phase 0 grep located>, "symbol_name": <the affected symbol>, "blast_radius": <the Phase 0 call-site survey, or null> }`
+- `diagnose/diagnose-loop`: `{ "bug_description", "crate_scope", "symptom", "code_context": <the anchored call chain from step 1> }`
+- `diagnose/diagnose-instrument`: `{ "bug_description", "hypotheses": <step 3's ranked candidates>, "selected_hypothesis": <the one under test>, "crate_scope" }`
+- `diagnose/diagnose-fix`: `{ "bug_description", "hypothesis": <the confirmed one>, "fix_description": <the intended change>, "crate_scope", "has_correct_seam": <true when a regression test can be written at the failing boundary, false when step 6 found none> }`
 
 ## Regression case
 

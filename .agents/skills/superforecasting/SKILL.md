@@ -286,7 +286,7 @@ iteration's forecast, the invoking agent should:
 
 1. Score the prior iteration's rationale (stage_7_record output) with the
    `eqm` skill's measure phases (Karvetski et al. 2026): `market_score_rationale`,
-   then the `eqm/eqm-aggregate` render.
+   then the `eqm/eqm-aggregate` render with `{ "per_rationale_scores": <the eqm measure phase's records — one per scored rationale, each holding the tool's EqmResult whole plus the rationale's index, question and forecast probability, built as the eqm skill's step 2 states> }`.
 2. Read `overconfidence_bias` from that render's output; it is computed there,
    never estimated by hand. The signal is signed: positive = overconfident,
    negative = underconfident. A render whose `status` is not `complete` has no
