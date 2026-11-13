@@ -11,10 +11,13 @@
 use std::sync::Arc;
 
 use hkask_mcp_nostr_client::config::{Config, Identity};
-use hkask_mcp_nostr_client::server::{AccountRequest, NostrClientServer};
+use hkask_mcp_nostr_client::server::{
+    AccountRequest, AuthorRelaysRequest, DecodeRequest, FetchEventsRequest, NostrClientServer,
+    NotificationsRequest, ProfileRequest, ThreadRequest,
+};
 use hkask_mcp_test_support::{Parameters, invoke_tool, parse_envelope};
 use hkask_nostr_core::encode_npub;
-use hkask_types::WebID;
+use hkask_types::{McpErrorKind, WebID};
 
 /// A throwaway 32-byte key: the bytes 1 to 32. Not anyone's account.
 fn throwaway_key() -> [u8; 32] {
@@ -218,4 +221,72 @@ fn config_cleans_the_relay_list_and_canonicalizes_the_npub() {
             public_key: throwaway_key(),
         }
     );
+}
+
+/// expect: a limit over the stated maximum is refused by name before any
+/// relay is contacted, and never clamped in silence (mcp-tool-review NC-02).
+/// pre: an identity, no relay (so a request that got past the limit check
+/// would fail later with `failed_precondition`, not `invalid_argument`).
+#[tokio::test]
+async fn a_limit_over_the_maximum_is_refused_not_clamped() {
+    let npub = throwaway_npub();
+    let server = server(Some(&npub), None);
+    let fetch = server
+        .nostr_fetch_events(Parameters(FetchEventsRequest {
+            authors: Some(vec![npub.clone()]),
+            limit: Some(100_000),
+            ..FetchEventsRequest::default()
+        }))
+        .await
+        .expect_err("100000 is over the maximum");
+    assert_eq!(fetch.kind, McpErrorKind::InvalidArgument, "{fetch}");
+    assert!(
+        fetch.to_string().contains("100000") && fetch.to_string().contains("100"),
+        "{fetch}"
+    );
+    let notifications = server
+        .nostr_notifications(Parameters(NotificationsRequest {
+            limit: Some(101),
+            ..NotificationsRequest::default()
+        }))
+        .await
+        .expect_err("101 is over the maximum");
+    assert_eq!(notifications.kind, McpErrorKind::InvalidArgument);
+    // The maximum itself passes the limit check and fails only for want of a relay.
+    let at_most = server
+        .nostr_notifications(Parameters(NotificationsRequest {
+            limit: Some(100),
+            ..NotificationsRequest::default()
+        }))
+        .await
+        .expect_err("no relay to read");
+    assert_eq!(at_most.kind, McpErrorKind::FailedPrecondition, "{at_most}");
+}
+
+/// expect: an argument no tool declares is refused at decode, so `author`
+/// for `authors` never reads as "no author named" (NC-01).
+#[test]
+fn undeclared_arguments_are_refused_at_decode() {
+    fn refuses_unknown<T: serde::de::DeserializeOwned + std::fmt::Debug>(
+        name: &str,
+        mut valid: serde_json::Value,
+    ) {
+        serde_json::from_value::<T>(valid.clone())
+            .unwrap_or_else(|error| panic!("{name}: the valid form must decode: {error}"));
+        valid["zz_undeclared"] = serde_json::json!(1);
+        let error = serde_json::from_value::<T>(valid).expect_err(name);
+        assert!(
+            error.to_string().contains("unknown field"),
+            "{name}: {error}"
+        );
+    }
+    refuses_unknown::<AccountRequest>("AccountRequest", serde_json::json!({}));
+    refuses_unknown::<DecodeRequest>("DecodeRequest", serde_json::json!({"identifier": "x"}));
+    refuses_unknown::<FetchEventsRequest>("FetchEventsRequest", serde_json::json!({"kinds": [1]}));
+    refuses_unknown::<ThreadRequest>("ThreadRequest", serde_json::json!({"event": "x"}));
+    refuses_unknown::<ProfileRequest>("ProfileRequest", serde_json::json!({"authors": []}));
+    refuses_unknown::<AuthorRelaysRequest>("AuthorRelaysRequest", serde_json::json!({}));
+    refuses_unknown::<NotificationsRequest>("NotificationsRequest", serde_json::json!({}));
+    serde_json::from_value::<FetchEventsRequest>(serde_json::json!({"author": ["x"]}))
+        .expect_err("a singular `author` is not the `authors` filter");
 }
