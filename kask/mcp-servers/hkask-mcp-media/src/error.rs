@@ -71,6 +71,17 @@ pub enum MediaError {
         duration_secs: f32,
     },
 
+    /// A local file exists and ffprobe finds no media in it: the caller
+    /// named the wrong file. Before this variant the same case surfaced as
+    /// `internal` carrying ffprobe's or ffmpeg's text.
+    #[error("{input} is not a media file ffprobe can read: {reason}")]
+    NotMedia { input: String, reason: String },
+
+    /// Clips handed to a stream-copy join do not agree, so the join would
+    /// publish a file that plays wrongly or not at all.
+    #[error("{clip} cannot be joined to the first clip: {reason}")]
+    ClipsDiffer { clip: String, reason: String },
+
     /// Vision LLM API errors.
     #[error("{0}")]
     VisionApi(String),
@@ -131,7 +142,9 @@ impl From<GalleryStoreError> for MediaError {
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
 /// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (an environment gap: the
 ///   message names the binary to install; the regulation ledger does not count it)
-/// - `DurationUnavailable`, `RangeOutsideMedia` → `invalid_argument`
+/// - `DurationUnavailable`, `RangeOutsideMedia`, `NotMedia`, `ClipsDiffer` →
+///   `invalid_argument` (the caller named the wrong file or range; the
+///   regulation ledger does not count it against the tool)
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
         MediaError::ImageNotFound(_) => McpToolError::not_found(e.to_string()),
@@ -148,9 +161,10 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         MediaError::YtDlpVideoUnavailable(_) => McpToolError::not_found(e.to_string()),
         MediaError::YtDlpExtractor(_) => McpToolError::unavailable(e.to_string()),
         MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()),
-        MediaError::DurationUnavailable { .. } | MediaError::RangeOutsideMedia { .. } => {
-            McpToolError::invalid_argument(e.to_string())
-        }
+        MediaError::DurationUnavailable { .. }
+        | MediaError::RangeOutsideMedia { .. }
+        | MediaError::NotMedia { .. }
+        | MediaError::ClipsDiffer { .. } => McpToolError::invalid_argument(e.to_string()),
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)

@@ -89,6 +89,42 @@ pub fn live_input_schema(tool: &str) -> serde_json::Value {
     serde_json::to_value(&entry.input_schema).expect("input schema serializes")
 }
 
+/// Write a real one-second recording with ffmpeg: a tone for `.wav`, a
+/// 64x48 h264 video with no audio otherwise. Extra ffmpeg output options
+/// go in `options`. The video and audio tools probe a source before they
+/// touch it, so a test that hands them placeholder bytes is refused as
+/// "not a media file" before the code under test runs.
+pub async fn media_fixture(
+    path: &std::path::Path,
+    options: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source: &[&str] = if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
+        &["-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
+    } else {
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x48:rate=5",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+        ]
+    };
+    let output = tokio::process::Command::new("ffmpeg")
+        .args(["-y", "-v", "error"])
+        .args(source)
+        .args(options)
+        .arg(path)
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+    }
+    Ok(())
+}
+
 /// The read-only organize request the gallery lifecycle tests share —
 /// each test rebuilt the same closure (or inline block) to capture its
 /// directory before the helper (2026-10-09 ratchet pass).

@@ -99,6 +99,9 @@ fn optional_speaker_source_schema(_: &mut schemars::SchemaGenerator) -> schemars
 fn export_format_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     string_enum(&crate::transcript_export::EXPORT_FORMATS)
 }
+fn optional_caption_position_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&crate::video::ffmpeg::CAPTION_POSITIONS)
+}
 
 /// Decode a structured argument sent as JSON text (the form the schema
 /// declares, which every model provider can emit) or as the JSON value
@@ -630,19 +633,31 @@ pub struct VideoClipRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoToGifRequest {
+    /// Local path or URL of the video.
     pub video_url: String,
+    /// Where the GIF starts, in seconds (default 0).
     pub start_sec: Option<f32>,
+    /// How long the GIF runs, in seconds (default 5).
     pub duration_sec: Option<f32>,
+    /// Width in pixels, 1 to 8192 (default 480); height keeps the aspect ratio.
     pub width: Option<u32>,
+    /// Frames per second, 1 to 100 (default 10).
     pub fps: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoAddCaptionRequest {
+    /// Local path or URL of the video.
     pub video_url: String,
+    /// The caption, drawn exactly as written.
     pub text: String,
+    /// Where the caption sits: "top", "center" or "bottom" (default).
+    #[schemars(schema_with = "optional_caption_position_schema")]
     pub position: Option<String>,
+    /// Font size in pixels (default 24).
     pub font_size: Option<u32>,
 }
 
@@ -653,6 +668,7 @@ pub struct VideoConcatRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoExtractFramesRequest {
     /// URL of the video to extract frames from.
     pub video_url: String,
@@ -1003,6 +1019,7 @@ pub struct GalleryListAlbumMembersRequest {
 
 /// Request to probe a video file for metadata (duration, dimensions, codec, fps).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoInfoRequest {
     /// URL or path of the video to probe.
     pub video_url: String,
@@ -1045,6 +1062,7 @@ pub struct YoutubeSearchRequest {
 /// Request to download a video from a URL (YouTube, Vimeo, direct file, etc.)
 /// to local storage and index it in the gallery.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoFetchRequest {
     /// URL of the video to download (YouTube, Vimeo, direct file URL, etc.).
     pub url: String,
@@ -1055,6 +1073,7 @@ pub struct VideoFetchRequest {
 /// Provenance for a layer being stored: which model, which prompt
 /// template. `created_at` is stamped server-side at store time.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersProvenanceRequest {
     /// The model that produced the layer (e.g. an inference-catalog label,
     /// or "user" for researcher-authored annotations).
@@ -1067,6 +1086,7 @@ pub struct LayersProvenanceRequest {
 /// One item of a layer being stored — the wire form. `payload` is arbitrary
 /// JSON in the `AnyJsonValue` JSON-text transport.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersStoreItemRequest {
     /// Range start in source-PTS seconds.
     pub start_sec: f64,
@@ -1083,6 +1103,7 @@ pub struct LayersStoreItemRequest {
 
 /// Request to store one media layer over a media file.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersStoreRequest {
     /// Absolute local path (or URL) of the source media the layer annotates.
     pub media_path: String,
@@ -1103,17 +1124,19 @@ pub struct LayersStoreRequest {
 
 /// Request to list stored media layers.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersListRequest {
     /// Filter by the annotated media's path.
     pub media_path: Option<String>,
     /// Filter by layer kind (same closed set as layers_store).
     pub kind: Option<crate::layer_store::MediaLayerKind>,
-    /// Maximum layers to return (default 50, capped at 500).
+    /// Maximum layers to return (default 50, at least 1, capped at 500).
     pub limit: Option<u32>,
 }
 
 /// Request to load one stored media layer with its full items.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersGetRequest {
     /// The layer ID returned by layers_store.
     pub layer_id: String,
@@ -1122,6 +1145,7 @@ pub struct LayersGetRequest {
 /// Request to detect shot boundaries as a deterministic layer over a video
 /// file.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersShotPassRequest {
     /// Absolute local path (or URL) of the source video to analyze.
     pub media_path: String,
@@ -1137,6 +1161,7 @@ pub struct LayersShotPassRequest {
 
 /// A bounded source-PTS time range for the vision pass.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersTimeRangeRequest {
     /// Range start in source-PTS seconds (>= 0).
     pub start_sec: f64,
@@ -1148,6 +1173,7 @@ pub struct LayersTimeRangeRequest {
 /// Request to generate semantic, object and OCR layers over a video's
 /// sampled frames via the bounded vision pass.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersSemanticPassRequest {
     /// Absolute local path (or URL) of the source video to analyze.
     pub media_path: String,
@@ -1192,6 +1218,7 @@ pub struct LayersSemanticPassRequest {
 
 /// Request to export media layer items as corpus passages.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersExportRequest {
     /// Absolute local path (or URL) of the annotated media.
     pub media_path: String,
@@ -1202,6 +1229,7 @@ pub struct LayersExportRequest {
 /// Request to read a recording's visual transcript: every stored layer
 /// item as one time-ordered event list across layer kinds (S1).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersTranscriptRequest {
     /// Absolute local path (or URL) of the annotated media.
     pub media_path: String,
@@ -1221,6 +1249,7 @@ pub struct LayersTranscriptRequest {
 
 /// Request to compose researcher selections into a media EDL layer (t8).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersEdlComposeRequest {
     /// Absolute local path (or URL) of the source media.
     pub media_path: String,
@@ -1237,6 +1266,7 @@ pub struct LayersEdlComposeRequest {
 /// Request to generate labeled audio_event items over a recording's audio
 /// via the bounded audio pass (t5).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersAudioPassRequest {
     /// Absolute local path (or URL) of the source media to analyze.
     pub media_path: String,
@@ -1270,6 +1300,7 @@ pub struct LayersAudioPassRequest {
 
 /// Request to render a media EDL layer into a durable reel asset (t9).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersRenderEdlRequest {
     /// Absolute local path (or URL) of the source media.
     pub media_path: String,
@@ -1284,6 +1315,7 @@ pub struct LayersRenderEdlRequest {
 /// researcher-authored decision layer, never free parameters (the hard
 /// human gate: no redaction renders without one).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersRenderRedactionsRequest {
     /// Absolute local path (or URL) of the source media. Never modified:
     /// the render publishes a new gallery asset; layers are database rows.
@@ -1298,6 +1330,7 @@ pub struct LayersRenderRedactionsRequest {
 /// Request to stitch an object layer's detections into deterministic
 /// tracks (S2, design §4 delta 3) — a derived object-kind layer.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersStitchTracksRequest {
     /// Absolute local path (or URL) of the source media the layer
     /// annotates (duration anchor for validation).
@@ -1321,6 +1354,7 @@ pub struct LayersStitchTracksRequest {
 /// Request for the unified lexical search over media layers plus
 /// transcript working text (Media layers v1 t6).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LayersSearchRequest {
     /// Literal substring; ASCII case-insensitive, non-ASCII text is exact.
     pub query: String,

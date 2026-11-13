@@ -238,15 +238,21 @@ impl ResearchJob {
                 LocalMediaFormat::Wav,
                 serde_json::json!({"sources": request.audio_urls}),
             ),
-            Self::VideoClip(request) => (
-                ffmpeg()?
-                    .clip(&request.video_url, request.start_sec, request.end_sec)
-                    .await,
-                LocalMediaFormat::Mp4,
-                serde_json::json!({"source": request.video_url, "start_sec": request.start_sec, "end_sec": request.end_sec, "duration_sec": request.end_sec - request.start_sec}),
-            ),
+            Self::VideoClip(request) => {
+                // The same cut, and the same account of it, as the direct
+                // video_clip tool: the end reported is the end that was cut.
+                let (output, end_sec) = ffmpeg()?
+                    .clip_bounded(&request.video_url, request.start_sec, request.end_sec)
+                    .await
+                    .map_err(map_media_error)?;
+                (
+                    Ok(output),
+                    LocalMediaFormat::Mp4,
+                    serde_json::json!({"source": request.video_url, "start_sec": request.start_sec, "end_sec": end_sec, "duration_sec": end_sec - request.start_sec}),
+                )
+            }
             Self::VideoConcat(request) => (
-                ffmpeg()?.concat(&request.video_urls).await,
+                ffmpeg()?.concat_clips(&request.video_urls).await,
                 LocalMediaFormat::Mp4,
                 serde_json::json!({"sources": request.video_urls}),
             ),
@@ -948,6 +954,86 @@ mod tests {
         Ok(())
     }
 
+    /// expect: a queued clip or join does what the direct tool does: the
+    /// same refusals and the same account of what was cut.
+    /// [P1] The queued operations call the runner themselves. Measured on
+    /// the installed server (round l2) for the direct tools; the queue ran
+    /// the same code and is pinned so the two cannot part.
+    #[tokio::test]
+    async fn a_queued_clip_or_join_answers_as_the_direct_tool_does()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let root = tempfile::tempdir()?;
+        // The staged clip is written under the artifacts directory: this
+        // test's own, restored on every exit.
+        struct EnvGuard(Option<std::ffi::OsString>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match self.0.take() {
+                    Some(value) => unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", value) },
+                    None => unsafe { std::env::remove_var("HKASK_ARTIFACTS_DIR") },
+                }
+            }
+        }
+        let _env = EnvGuard(std::env::var_os("HKASK_ARTIFACTS_DIR"));
+        unsafe { std::env::set_var("HKASK_ARTIFACTS_DIR", root.path()) };
+        let video = root.path().join("zz.mp4");
+        crate::test_support::media_fixture(&video, &[]).await?;
+        let tone = root.path().join("zz.wav");
+        crate::test_support::media_fixture(&tone, &[]).await?;
+        let server = server(stt())?;
+        let runner = FfmpegRunner::detect();
+        for (op, params, names) in [
+            (
+                "video_concat",
+                serde_json::json!({"video_urls": [tone, tone]}),
+                "holds no video stream",
+            ),
+            (
+                "video_concat",
+                serde_json::json!({"video_urls": [video, tone]}),
+                "holds no video stream",
+            ),
+            (
+                "video_clip",
+                serde_json::json!({"video_url": video, "start_sec": 50.0, "end_sec": 60.0}),
+                "at or past the end",
+            ),
+        ] {
+            let operation = ResearchJob::parse(op, &params.to_string())?;
+            operation.validate().await?;
+            let Err(error) = operation.run(&server.vision_port, Some(&runner)).await else {
+                panic!("{op} {params} was run");
+            };
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{params}"
+            );
+            assert!(error.message.contains(names), "{}", error.message);
+        }
+        let operation = ResearchJob::parse(
+            "video_clip",
+            &serde_json::json!({"video_url": video, "start_sec": 0.5, "end_sec": 60.0}).to_string(),
+        )?;
+        let ResearchOutput::Media {
+            mut publication,
+            args,
+            ..
+        } = operation.run(&server.vision_port, Some(&runner)).await?
+        else {
+            panic!("a clip stages a media publication");
+        };
+        assert_eq!(
+            args["end_sec"],
+            serde_json::json!(1.0),
+            "the source is 1 s long"
+        );
+        assert_eq!(args["duration_sec"], serde_json::json!(0.5));
+        publication.rollback()?;
+        Ok(())
+    }
+
     /// expect: Source edits retain their effective sources and format through
     /// durable publication, while cancellation rolls back files and gallery rows.
     #[cfg(unix)]
@@ -979,8 +1065,14 @@ mod tests {
             root.path().join("scratch"),
         );
         let server = server(stt())?;
+        // Real recordings: the editing operations probe a source before
+        // the (fake) ffmpeg runs, and video_concat joins video clips only.
         let input = root.path().join("source.wav");
-        std::fs::write(&input, b"immutable source")?;
+        crate::test_support::media_fixture(&input, &[]).await?;
+        let video = root.path().join("source.mp4");
+        crate::test_support::media_fixture(&video, &[]).await?;
+        let input_bytes = std::fs::read(&input)?;
+        let video_bytes = std::fs::read(&video)?;
         for (op, params) in [
             (
                 "audio_trim",
@@ -993,9 +1085,10 @@ mod tests {
             ),
             (
                 "video_concat",
-                serde_json::json!({"video_urls": [input, input]}),
+                serde_json::json!({"video_urls": [video, video]}),
             ),
         ] {
+            let input = if op == "video_concat" { &video } else { &input };
             let operation = ResearchJob::parse(op, &params.to_string())?;
             operation.validate().await?;
             let ResearchOutput::Media {
@@ -1060,7 +1153,16 @@ mod tests {
             lease.finish(crate::jobs::JobOutcome::Cancelled)?;
             assert!(!output.exists());
             assert!(server.gallery_store.get_generation(&asset_id)?.is_none());
-            assert_eq!(std::fs::read(&input)?, b"immutable source");
+            let unchanged = if op == "video_concat" {
+                &video_bytes
+            } else {
+                &input_bytes
+            };
+            assert_eq!(
+                &std::fs::read(input)?,
+                unchanged,
+                "{op} left its source as it was"
+            );
         }
         Ok(())
     }

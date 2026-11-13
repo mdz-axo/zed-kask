@@ -253,16 +253,23 @@ pub(crate) fn lexical_citations(
                 .zip(last)
                 .map(|(first, last)| WordRange::new(first, last))
         });
-        let times = range.zip(working.words.as_deref()).map(|(range, words)| {
-            (
-                words[range.start_word].start_ms,
-                words[range.end_word].end_ms,
-            )
-        });
+        // The one index-to-time mapping every other consumer uses, so a hit
+        // over out-of-order stored timings carries no range and says why,
+        // instead of a range that ends before it starts. The hit itself is
+        // still returned: the text matched.
+        let times = range
+            .zip(working.words.as_deref())
+            .map(|(range, words)| word_range_to_time_range(words, range));
+        let time_range_error = match &times {
+            Some(Err(error)) => Some(error.to_string()),
+            _ => None,
+        };
+        let times = times.and_then(Result::ok);
         hits.push((start, serde_json::json!({
             "matched_text": matched, "start_byte": start, "end_byte": end,
             "word_range": range,
             "time_range_ms": times.map(|(start_ms, end_ms)| serde_json::json!({"start_ms": start_ms, "end_ms": end_ms})),
+            "time_range_error": time_range_error,
             "alignment": working.alignment, "alignment_error": working.alignment_error,
             "correction_layer_id": working.correction_layer_id,
             "realignment_layer_id": working.realignment_layer_id,

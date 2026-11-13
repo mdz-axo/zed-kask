@@ -10,14 +10,14 @@ use super::*;
 #[tool_router(router = layers_edl_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Compose researcher selections into a media EDL layer with union-merged ordered Keep ops validated against media duration. Takes a media_path plus either a layer_id (of a researcher-authored selection layer) or a label query (searched via layers_search). Overlapping selections merge into one Keep op; duplicates collapse. Ops outside the probed media duration reject with a typed error naming the bounds. The composed EDL is stored as a new kind=edl layer whose provenance records the source (layer id or query)."
+        description = "Compose researcher selections into a media EDL layer with union-merged ordered Keep ops validated against media duration. Takes a media_path plus either a layer_id (of a researcher-authored selection layer over that recording) or query, the exact label of the recording's researcher layers to compose from. Overlapping selections merge into one Keep op; duplicates collapse; a selection with no duration (a point-in-time item) keeps nothing and is left out, counted in point_selections_skipped. Ops outside the probed media duration reject with a typed error naming the bounds. The composed EDL is stored as a new kind=edl layer whose provenance records the source (layer id or query)."
     )]
     pub async fn layers_edl_compose(
         &self,
         Parameters(request): Parameters<LayersEdlComposeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_edl_compose", async {
-            ensure_local_input_exists(&request.media_path)?;
+            admit_media_source(&request.media_path).await?;
             let ffmpeg = self.require_ffmpeg()?;
             let probe = ffmpeg
                 .probe(&request.media_path)
@@ -47,6 +47,15 @@ impl MediaServer {
                         return Err(McpToolError::invalid_argument(format!(
                             "layer_id must reference a researcher-authored layer, got kind {}",
                             record.kind.as_str()
+                        )));
+                    }
+                    // Seconds on one recording mean nothing on another: the
+                    // composed layer would cut this recording at the other's
+                    // moments.
+                    if record.media_path != request.media_path {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "layer {layer_id} annotates {}, not {}",
+                            record.media_path, request.media_path
                         )));
                     }
                     let ranges: Vec<(f64, f64)> = record
@@ -104,8 +113,20 @@ impl MediaServer {
                 )));
             }
 
-            // Union-merge overlapping ranges into ordered Keep ops.
-            let mut sorted = ranges.clone();
+            // Union-merge overlapping ranges into ordered Keep ops. A point
+            // selection has no duration to keep: as a Keep op it rendered a
+            // container with no stream, reported as a finished reel.
+            let mut sorted: Vec<(f64, f64)> = ranges
+                .iter()
+                .copied()
+                .filter(|(start, end)| end > start)
+                .collect();
+            let point_selections_skipped = ranges.len() - sorted.len();
+            if sorted.is_empty() {
+                return Err(McpToolError::invalid_argument(format!(
+                    "the {point_selections_skipped} selections of {source_description} are points in time with no duration; there is nothing to keep"
+                )));
+            }
             sorted.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
             let mut merged: Vec<(f64, f64)> = Vec::new();
             for &(start, end) in &sorted {
@@ -163,6 +184,7 @@ impl MediaServer {
                 "layer": summary,
                 "ops": merged.len(),
                 "input_ranges": ranges.len(),
+                "point_selections_skipped": point_selections_skipped,
                 "source": source_description,
             }))
         })
@@ -170,66 +192,106 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Render a media EDL layer into a durable playable gallery asset. Takes a media_path and an optional layer_id (of a kind=edl layer produced by layers_edl_compose). Each Keep op is clipped from the source media via ffmpeg and joined: audio sources publish a PCM WAV cut on the sample, video sources an MP4 stream-copied where the cut falls on keyframes. The composed reel is published as a gallery asset whose OMC lineage records the EDL layer and contributing item ids. Rendering an unknown or empty EDL returns not_found naming the layer."
+        description = "Render a media EDL layer into a durable playable gallery asset. Takes a media_path and an optional layer_id (a kind=edl layer over that recording; the newest when omitted). The layer's ranges are merged where they overlap and each is clipped from the source media via ffmpeg and joined: audio sources publish a PCM WAV cut on the sample, video sources an MP4 stream-copied where the cut falls on keyframes. The reel is published as a gallery asset whose lineage records the EDL layer and the clip plan that was rendered. An unknown layer_id, or a recording with no EDL layer, is not_found; a layer of another kind or over another recording is invalid_argument; a layer whose ranges have no duration is failed_precondition."
     )]
     pub async fn layers_render_edl(
         &self,
         Parameters(request): Parameters<LayersRenderEdlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_render_edl", async {
+            let _admission = self.admit_heavy_operation()?;
             admit_media_source(&request.media_path).await?;
             let ffmpeg = self.require_ffmpeg()?;
             let driver = &**self.gallery_store.driver();
-            let filter = MediaLayerFilter {
-                media_path: Some(request.media_path.clone()),
-                kind: Some(MediaLayerKind::Edl),
-                limit: MAX_LAYERS_PER_RECORDING,
-            };
-            let summaries =
-                layer_store::list_layers(driver, &filter).map_err(map_layer_store_error)?;
+            // A named layer is looked up by its id, so each way it can be
+            // wrong is told apart; the listing this replaced answered every
+            // one of them "no EDL layer found for <path>".
             let record = match &request.layer_id {
-                Some(id) => summaries.iter().find(|s| &s.id == id),
-                None => summaries.first(),
+                Some(layer_id) => {
+                    let Some(record) =
+                        layer_store::get_layer(driver, layer_id).map_err(map_layer_store_error)?
+                    else {
+                        return Err(McpToolError::not_found(format!(
+                            "layer {layer_id} not found"
+                        )));
+                    };
+                    if record.kind != MediaLayerKind::Edl {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "layer {layer_id} has kind {}; a reel renders from a kind=edl layer",
+                            record.kind.as_str()
+                        )));
+                    }
+                    if record.media_path != request.media_path {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "layer {layer_id} annotates {}, not {}",
+                            record.media_path, request.media_path
+                        )));
+                    }
+                    record
+                }
+                None => {
+                    let filter = MediaLayerFilter {
+                        media_path: Some(request.media_path.clone()),
+                        kind: Some(MediaLayerKind::Edl),
+                        limit: 1,
+                    };
+                    let newest =
+                        layer_store::list_layers(driver, &filter).map_err(map_layer_store_error)?;
+                    let Some(summary) = newest.first() else {
+                        return Err(McpToolError::not_found(format!(
+                            "no EDL layer found for {}",
+                            request.media_path
+                        )));
+                    };
+                    let Some(record) = layer_store::get_layer(driver, &summary.id)
+                        .map_err(map_layer_store_error)?
+                    else {
+                        return Err(McpToolError::not_found(format!(
+                            "layer {} disappeared during render",
+                            summary.id
+                        )));
+                    };
+                    record
+                }
             };
-            let Some(record_summary) = record else {
-                return Err(McpToolError::not_found(format!(
-                    "no EDL layer found for {}",
-                    request.media_path
-                )));
-            };
-            let Some(record) = layer_store::get_layer(driver, &record_summary.id)
-                .map_err(map_layer_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "layer {} disappeared during render",
-                    record_summary.id
-                )));
-            };
-            if record.items.is_empty() {
-                return Err(McpToolError::not_found(format!(
-                    "EDL layer {} is empty — nothing to render",
+            // The plan that is rendered: ranges with a duration, in order,
+            // merged where they overlap. layers_store accepts a hand-built
+            // edl layer, so the stored items are not yet a plan: overlapping
+            // ranges played their shared seconds twice and a point range
+            // rendered a container with no stream.
+            let mut ranges: Vec<(f64, f64)> = record
+                .items
+                .iter()
+                .filter_map(|item| {
+                    let end = item.item.end_sec?;
+                    (end > item.item.start_sec).then_some((item.item.start_sec, end))
+                })
+                .collect();
+            ranges.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+            let mut plan: Vec<(f64, f64)> = Vec::with_capacity(ranges.len());
+            for (start, end) in ranges {
+                match plan.last_mut() {
+                    Some(last) if start <= last.1 + 1e-9 => last.1 = last.1.max(end),
+                    _ => plan.push((start, end)),
+                }
+            }
+            if plan.is_empty() {
+                return Err(McpToolError::failed_precondition(format!(
+                    "EDL layer {} holds no range with a duration — nothing to render",
                     record.id
                 )));
             }
             let audio = source_is_audio_only(ffmpeg, &request.media_path).await?;
             let mut intermediates = crate::assets::ScratchIntermediates::new("layers_render_edl");
-            let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(record.items.len());
-            for item in &record.items {
+            let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(plan.len());
+            for &(start_sec, end_sec) in &plan {
                 let clipped = if audio {
                     ffmpeg
-                        .audio_trim(
-                            &request.media_path,
-                            item.item.start_sec as f32,
-                            item.item.end_sec.unwrap_or(item.item.start_sec) as f32,
-                        )
+                        .audio_trim(&request.media_path, start_sec as f32, end_sec as f32)
                         .await
                 } else {
                     ffmpeg
-                        .clip(
-                            &request.media_path,
-                            item.item.start_sec as f32,
-                            item.item.end_sec.unwrap_or(item.item.start_sec) as f32,
-                        )
+                        .clip(&request.media_path, start_sec as f32, end_sec as f32)
                         .await
                 }
                 .map_err(map_media_error)?;
@@ -261,12 +323,10 @@ impl MediaServer {
                 "media_path": &request.media_path,
                 "edl_layer_id": &record.id,
                 "source": &request.media_path,
-                "clip_plan": record.items.iter().map(|item| {
-                    serde_json::json!([
-                        item.item.start_sec,
-                        item.item.end_sec.unwrap_or(item.item.start_sec),
-                    ])
-                }).collect::<Vec<_>>(),
+                "clip_plan": plan
+                    .iter()
+                    .map(|&(start_sec, end_sec)| serde_json::json!([start_sec, end_sec]))
+                    .collect::<Vec<_>>(),
                 "clips": clip_paths.len(),
             });
             // A media-layer EDL is not a transcript render: record_render

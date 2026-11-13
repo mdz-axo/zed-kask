@@ -1349,8 +1349,10 @@ mod tool_behavior_tests {
             gallery_root.path().to_str().ok_or("gallery root UTF-8")?,
             GalleryMode::ReadOnly,
         )?;
+        // A real video: the tool probes the source before the (fake)
+        // extractor runs.
         let source = gallery_root.path().join("source.mp4");
-        std::fs::write(&source, b"fake video")?;
+        crate::test_support::media_fixture(&source, &[]).await?;
         let server = MediaServer::new(
             hkask_types::WebID::new(),
             Arc::new(NoopInferencePort),
@@ -9773,14 +9775,25 @@ mod tool_behavior_tests {
             "names the layer and the requested recording: {error}"
         );
 
+        // layers_store refuses a layer with no items, so the empty decision
+        // layer is made by removing a stored layer's items underneath it.
         let empty = store_layer(
             &server,
             &media_path,
             crate::layer_store::MediaLayerKind::Researcher,
             "user",
-            vec![],
+            vec![redaction_item(
+                1.0,
+                2.0,
+                serde_json::json!({"op": "redact"}),
+            )],
         )
         .await?;
+        hkask_storage::database::driver::DatabaseDriver::execute(
+            &**server.gallery_store.driver(),
+            "DELETE FROM media_layer_items WHERE layer_id = ?1",
+            &[hkask_storage::database::value::DbValue::Text(empty.clone())],
+        )?;
         let error = server
             .layers_render_redactions(render_redactions(&media_path, &empty))
             .await
@@ -10655,6 +10668,1030 @@ mod tool_behavior_tests {
             fetched["layer"]["provenance"]["parameters"]["source"],
             serde_json::json!(format!("layer:{layer_id}")),
             "provenance records the source layer"
+        );
+        Ok(())
+    }
+
+    // ── Session-4 pins (mcp-tool-review 2026-11-13): layers and video ───
+
+    /// Run ffmpeg to write a generated fixture; `args` are everything
+    /// between `-y -v error` and the output path.
+    async fn lavfi_fixture(
+        path: &std::path::Path,
+        args: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error"])
+            .args(args)
+            .arg(path)
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        Ok(())
+    }
+
+    const WHITE_VIDEO: [&str; 8] = [
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=white:s=320x240:r=5:d=1",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+    ];
+
+    /// The first frame of a 320x240 video as 8-bit luma, row-major.
+    async fn first_frame_luma(path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-i",
+                path,
+                "-frames:v",
+                "1",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "-",
+            ])
+            .output()
+            .await?;
+        if output.stdout.len() != 320 * 240 {
+            return Err(format!(
+                "frame is {} bytes: {}",
+                output.stdout.len(),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        Ok(output.stdout)
+    }
+
+    fn mean_luma(
+        frame: &[u8],
+        rows: std::ops::Range<usize>,
+        columns: std::ops::Range<usize>,
+    ) -> f64 {
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        for row in rows {
+            for column in columns.clone() {
+                sum += u64::from(frame[row * 320 + column]);
+                count += 1;
+            }
+        }
+        sum as f64 / count as f64
+    }
+
+    /// The codec names of a file's streams, as `type:codec` in stream order.
+    async fn stream_codecs(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+        let output = tokio::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,codec_name",
+                "-of",
+                "csv=p=0",
+                path,
+            ])
+            .output()
+            .await?;
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| {
+                let mut fields = line.split(',');
+                let codec = fields.next().unwrap_or_default();
+                format!("{}:{codec}", fields.next().unwrap_or_default())
+            })
+            .collect())
+    }
+
+    /// expect: a caption is drawn where it is asked for and exactly as it is
+    /// written; it is never read as filter syntax.
+    /// [P1] Measured on the installed server (rounds l1, l3): "top" drew at
+    /// the bottom and the default "bottom" at the top; an unknown position
+    /// drew at the top; a caption holding `, ; [ ]` failed `internal` with
+    /// ffmpeg's banner; and a caption that closed its own quote and named a
+    /// file with `drawtext=textfile=` was published with that file's content
+    /// drawn into the video.
+    #[tokio::test]
+    async fn a_caption_is_drawn_where_asked_and_never_parsed_as_a_filter()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let env = video_server_env().await?;
+        let root = tempfile::tempdir()?;
+        let video = root.path().join("white.mp4");
+        lavfi_fixture(&video, &WHITE_VIDEO).await?;
+        let video = video.to_string_lossy().into_owned();
+
+        for (position, dark_band) in [("top", 0..60), ("bottom", 180..240), ("center", 90..150)] {
+            let captioned = content_of(
+                &env.server
+                    .video_add_caption(wire(serde_json::json!({
+                        "video_url": video, "text": "zz zz zz", "position": position,
+                    }))?)
+                    .await?,
+            );
+            let frame = first_frame_luma(captioned["output"].as_str().ok_or("output")?).await?;
+            let here = mean_luma(&frame, dark_band.clone(), 100..220);
+            let far = mean_luma(
+                &frame,
+                if position == "top" { 180..240 } else { 0..60 },
+                100..220,
+            );
+            assert!(
+                here < far - 5.0,
+                "{position}: the caption band is {here}, the far band {far}"
+            );
+        }
+        // The default is the bottom.
+        let captioned = content_of(
+            &env.server
+                .video_add_caption(wire(
+                    serde_json::json!({"video_url": video, "text": "zz zz zz"}),
+                )?)
+                .await?,
+        );
+        assert_eq!(captioned["position"], "bottom");
+        let frame = first_frame_luma(captioned["output"].as_str().ok_or("output")?).await?;
+        assert!(mean_luma(&frame, 180..240, 100..220) < mean_luma(&frame, 0..60, 100..220) - 5.0);
+
+        // Filter syntax in the caption is caption.
+        let secret = root.path().join("zz-file.txt");
+        std::fs::write(&secret, "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ")?;
+        for text in [
+            "it's 50%: a, b; [c] = d \\ e %{pts}".to_string(),
+            format!("zz',drawtext=textfile={},drawtext=text='", secret.display()),
+            "line one\nline two".to_string(),
+        ] {
+            let captioned = content_of(
+                &env.server
+                    .video_add_caption(wire(serde_json::json!({"video_url": video, "text": text}))?)
+                    .await?,
+            );
+            assert_eq!(captioned["text"], serde_json::json!(text));
+            let frame = first_frame_luma(captioned["output"].as_str().ok_or("output")?).await?;
+            // A second drawtext would draw the file in black at the top left.
+            assert!(
+                mean_luma(&frame, 0..16, 0..150) > 250.0,
+                "{text}: something was drawn at the top left"
+            );
+        }
+
+        for (arguments, names) in [
+            (
+                serde_json::json!({"video_url": video, "text": "zz", "position": "zz-bogus"}),
+                "position",
+            ),
+            (
+                serde_json::json!({"video_url": video, "text": "  "}),
+                "text is blank",
+            ),
+        ] {
+            let error = env
+                .server
+                .video_add_caption(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{arguments}"
+            );
+            assert!(error.message.contains(names), "{}", error.message);
+        }
+        assert_eq!(
+            crate::test_support::live_input_schema("video_add_caption")["properties"]["position"]["anyOf"]
+                [0]["enum"],
+            serde_json::json!(crate::video::ffmpeg::CAPTION_POSITIONS)
+        );
+        Ok(())
+    }
+
+    /// expect: a clip is cut by what the file holds and reports what was
+    /// cut; a range outside the recording and a file that is not media are
+    /// the caller's errors.
+    /// [P1] Measured on the installed server (rounds l1, l2): 50–60 s of a
+    /// 6 s video was published as a clip with no stream, `duration_sec` 10;
+    /// 5–60 s reported `duration_sec` 55 for a one-second clip; a 24-bit WAV
+    /// came back 16-bit; AAC alone in an `.mp4` was published as a video
+    /// with no picture; a text file named `.mp4` answered `internal` with
+    /// ffmpeg's banner.
+    #[tokio::test]
+    async fn a_clip_follows_the_streams_and_reports_what_was_cut()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let env = video_server_env().await?;
+        let root = tempfile::tempdir()?;
+        let source = env.source.to_string_lossy().into_owned();
+
+        let error = env
+            .server
+            .video_clip(wire(
+                serde_json::json!({"video_url": source, "start_sec": 50.0, "end_sec": 60.0}),
+            )?)
+            .await
+            .expect_err("a range past the end cuts nothing");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains("at or past the end"),
+            "{}",
+            error.message
+        );
+
+        let clipped = content_of(
+            &env.server
+                .video_clip(wire(
+                    serde_json::json!({"video_url": source, "start_sec": 1.5, "end_sec": 60.0}),
+                )?)
+                .await?,
+        );
+        assert_eq!(
+            clipped["end_sec"],
+            serde_json::json!(2.0),
+            "the source is 2 s long"
+        );
+        assert_eq!(clipped["duration_sec"], serde_json::json!(0.5));
+        assert_eq!(
+            clipped["effective_params"]["duration_sec"],
+            serde_json::json!(0.5)
+        );
+
+        let wav24 = root.path().join("zz-24.wav");
+        lavfi_fixture(
+            &wav24,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:a",
+                "pcm_s24le",
+            ],
+        )
+        .await?;
+        let aac = root.path().join("zz-audio-only.mp4");
+        lavfi_fixture(
+            &aac,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:a",
+                "aac",
+            ],
+        )
+        .await?;
+        for (input, codec) in [(&wav24, "audio:pcm_s24le"), (&aac, "audio:pcm_s16le")] {
+            let clipped = content_of(
+                &env.server
+                    .video_clip(wire(
+                        serde_json::json!({"video_url": input, "start_sec": 0.5, "end_sec": 1.5}),
+                    )?)
+                    .await?,
+            );
+            assert_eq!(clipped["format"], "wav", "{}", input.display());
+            assert_eq!(
+                stream_codecs(clipped["output"].as_str().ok_or("output")?).await?,
+                vec![codec.to_string()],
+                "{}",
+                input.display()
+            );
+        }
+
+        let text = root.path().join("zz-text.mp4");
+        std::fs::write(&text, "this is not media\n")?;
+        for outcome in [
+            env.server
+                .video_clip(wire(
+                    serde_json::json!({"video_url": text, "start_sec": 0.0, "end_sec": 1.0}),
+                )?)
+                .await,
+            env.server
+                .video_info(wire(serde_json::json!({"video_url": text}))?)
+                .await,
+            env.server
+                .video_extract_frames(wire(serde_json::json!({"video_url": text}))?)
+                .await,
+            env.server
+                .audio_trim(wire(
+                    serde_json::json!({"audio_url": text, "start_sec": 0.0, "end_sec": 1.0}),
+                )?)
+                .await,
+        ] {
+            let error = outcome.expect_err("a text file is not media");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{}",
+                error.message
+            );
+            assert!(
+                error.message.contains("is not a media file"),
+                "{}",
+                error.message
+            );
+            assert!(error.message.contains("zz-text.mp4"), "{}", error.message);
+            assert!(
+                !error.message.contains("ffmpeg version"),
+                "{}",
+                error.message
+            );
+        }
+        Ok(())
+    }
+
+    /// expect: a GIF request that cannot be made is refused before ffmpeg
+    /// runs, and one that can is made.
+    /// [P1] Measured on the installed server (round l1): duration 1e39,
+    /// width 4000 on a small source, a start past the end and an audio file
+    /// each answered `internal` with two to four kilobytes of ffmpeg output;
+    /// fps 100000 was accepted.
+    #[tokio::test]
+    async fn a_gif_request_is_bounded_before_ffmpeg_runs() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::test_support::wire;
+        let env = video_server_env().await?;
+        let root = tempfile::tempdir()?;
+        let source = env.source.to_string_lossy().into_owned();
+        let tone = root.path().join("zz-tone.wav");
+        crate::test_support::media_fixture(&tone, &[]).await?;
+        for (arguments, kind, names) in [
+            (
+                serde_json::json!({"video_url": source, "duration_sec": 1e39}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "duration_sec must be finite",
+            ),
+            (
+                serde_json::json!({"video_url": source, "width": 100000}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "width must be between 1 and 8192",
+            ),
+            (
+                serde_json::json!({"video_url": source, "width": 0}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "width must be between 1 and 8192",
+            ),
+            (
+                serde_json::json!({"video_url": source, "fps": 100000}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "fps must be between 1 and 100",
+            ),
+            (
+                serde_json::json!({"video_url": source, "start_sec": 50.0}),
+                hkask_types::McpErrorKind::InvalidArgument,
+                "at or past the end",
+            ),
+            (
+                serde_json::json!({"video_url": tone}),
+                hkask_types::McpErrorKind::FailedPrecondition,
+                "requires a video stream",
+            ),
+        ] {
+            let error = env
+                .server
+                .video_to_gif(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(error.kind, kind, "{arguments}: {}", error.message);
+            assert!(
+                error.message.contains(names),
+                "{arguments}: {}",
+                error.message
+            );
+            assert!(
+                !error.message.contains("ffmpeg version"),
+                "{}",
+                error.message
+            );
+        }
+        let gif = content_of(
+            &env.server
+                .video_to_gif(wire(serde_json::json!({"video_url": source, "duration_sec": 1.0, "width": 32, "fps": 5}))?)
+                .await?,
+        );
+        assert_eq!(
+            stream_codecs(gif["output"].as_str().ok_or("output")?).await?,
+            vec!["video:gif".to_string()]
+        );
+        Ok(())
+    }
+
+    /// expect: clips that cannot be joined by stream copy are refused naming
+    /// the clip and the difference; clips that agree are joined.
+    /// [P1] Measured on the installed server (rounds l1, l2): two WAV files
+    /// were published as an MP4 "video" holding PCM audio and no picture; a
+    /// silent clip followed by one with sound was published without the
+    /// sound; both reported `concatenated`.
+    #[tokio::test]
+    async fn clips_that_differ_are_not_joined() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let env = video_server_env().await?;
+        let root = tempfile::tempdir()?;
+        let silent = root.path().join("silent.mp4");
+        lavfi_fixture(&silent, &WHITE_VIDEO).await?;
+        let sound = root.path().join("sound.mp4");
+        lavfi_fixture(
+            &sound,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:s=320x240:r=5:d=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+            ],
+        )
+        .await?;
+        let tone = root.path().join("tone.wav");
+        crate::test_support::media_fixture(&tone, &[]).await?;
+        for (clips, names) in [
+            (serde_json::json!([tone, tone]), "holds no video stream"),
+            (
+                serde_json::json!([silent, sound]),
+                "it holds audio and the first clip does not",
+            ),
+            (
+                serde_json::json!([sound, silent]),
+                "it holds no audio and the first clip does",
+            ),
+            (
+                serde_json::json!([silent, env.source]),
+                "its video codec is mpeg4, the first clip's is h264",
+            ),
+        ] {
+            let error = env
+                .server
+                .video_concat(wire(serde_json::json!({"video_urls": clips}))?)
+                .await
+                .expect_err("clips that differ are refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{clips}"
+            );
+            assert!(error.message.contains(names), "{clips}: {}", error.message);
+        }
+        let joined = content_of(
+            &env.server
+                .video_concat(wire(serde_json::json!({"video_urls": [sound, sound]}))?)
+                .await?,
+        );
+        assert_eq!(
+            stream_codecs(joined["output"].as_str().ok_or("output")?).await?,
+            vec!["video:h264".to_string(), "audio:aac".to_string()]
+        );
+        Ok(())
+    }
+
+    /// expect: the layer tools refuse what they cannot mean, each naming
+    /// which argument is wrong.
+    /// [P1] Measured on the installed server (rounds l1, l2): a layer with
+    /// no items and one with blank provenance were stored; `layers_list`
+    /// limit 0 answered an empty list; `layers_transcript` limit 0 returned
+    /// one event and limit 4,000,000,000 returned a page; a loopback URL
+    /// reached ffprobe from `layers_edl_compose`; composing, and stitching,
+    /// one recording's layer onto another stored a layer under the other
+    /// recording; a point selection composed into an EDL that rendered a
+    /// file with no stream; and `layers_render_edl` answered "no EDL layer
+    /// found for <path>" for an unknown id, a wrong kind and another
+    /// recording's layer alike.
+    #[tokio::test]
+    async fn the_layer_tools_refuse_what_they_cannot_mean() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::test_support::wire;
+        use hkask_types::McpErrorKind::{FailedPrecondition, InvalidArgument, NotFound};
+        let env = video_server_env().await?;
+        let server = &env.server;
+        let media = env.source.to_string_lossy().into_owned();
+        let other = env.source.with_file_name("other.mp4");
+        create_real_video(&other).await?;
+        let other = other.to_string_lossy().into_owned();
+        let user = serde_json::json!({"model": "user", "prompt_template": "zz-pin"});
+        let item = |start: f64, end: Option<f64>| serde_json::json!({"start_sec": start, "end_sec": end, "searchable_text": "zz", "payload": "{}"});
+        let store = |media: &str, kind: &str, items: serde_json::Value| serde_json::json!({"media_path": media, "kind": kind, "label": "zz-sel", "provenance": user, "items": items});
+        let stored = |value: String| {
+            content_of(&value)["id"]
+                .as_str()
+                .expect("layer id")
+                .to_string()
+        };
+
+        for (arguments, names) in [
+            (
+                store(&media, "researcher", serde_json::json!([])),
+                "items is empty",
+            ),
+            (
+                serde_json::json!({"media_path": media, "kind": "researcher", "provenance": {"model": " ", "prompt_template": "zz"}, "items": [item(0.0, Some(1.0))]}),
+                "provenance.model",
+            ),
+            (
+                store(
+                    "http://127.0.0.1:9/zz.mp4",
+                    "researcher",
+                    serde_json::json!([item(0.0, Some(1.0))]),
+                ),
+                "Loopback",
+            ),
+        ] {
+            let error = server
+                .layers_store(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(
+                error.kind, InvalidArgument,
+                "{arguments}: {}",
+                error.message
+            );
+            assert!(error.message.contains(names), "{}", error.message);
+        }
+        let selections = stored(
+            server
+                .layers_store(wire(store(
+                    &media,
+                    "researcher",
+                    serde_json::json!([
+                        item(0.2, Some(0.8)),
+                        item(0.5, Some(1.2)),
+                        item(1.5, None)
+                    ]),
+                ))?)
+                .await?,
+        );
+        let points = stored(
+            server
+                .layers_store(wire(store(
+                    &media,
+                    "researcher",
+                    serde_json::json!([item(1.0, None)]),
+                ))?)
+                .await?,
+        );
+        let hand_edl = stored(
+            server
+                .layers_store(wire(store(
+                    &media,
+                    "edl",
+                    serde_json::json!([
+                        item(0.2, Some(0.8)),
+                        item(0.5, Some(1.2)),
+                        item(1.5, None)
+                    ]),
+                ))?)
+                .await?,
+        );
+        let point_edl = stored(
+            server
+                .layers_store(wire(store(
+                    &media,
+                    "edl",
+                    serde_json::json!([item(1.0, None)]),
+                ))?)
+                .await?,
+        );
+        let object = stored(
+            server
+                .layers_store(wire(store(
+                    &media,
+                    "object",
+                    serde_json::json!([item(0.0, Some(1.0))]),
+                ))?)
+                .await?,
+        );
+
+        let error = server
+            .layers_list(wire(serde_json::json!({"limit": 0}))?)
+            .await
+            .expect_err("limit 0");
+        assert_eq!(error.kind, InvalidArgument);
+        for limit in [0u64, 5001, 4_000_000_000] {
+            let error = server
+                .layers_transcript(wire(
+                    serde_json::json!({"media_path": media, "limit": limit}),
+                )?)
+                .await
+                .expect_err("a limit outside 1..=5000");
+            assert_eq!(error.kind, InvalidArgument, "limit {limit}");
+            assert!(
+                error.message.contains("between 1 and 5000"),
+                "{}",
+                error.message
+            );
+        }
+        let page = content_of(
+            &server
+                .layers_transcript(wire(
+                    serde_json::json!({"media_path": media, "limit": 5000}),
+                )?)
+                .await?,
+        );
+        assert_eq!(page["events_page"], page["events_total"]);
+
+        // Compose.
+        for (arguments, kind, names) in [
+            (
+                serde_json::json!({"media_path": other, "layer_id": selections}),
+                InvalidArgument,
+                "source.mp4, not ",
+            ),
+            (
+                serde_json::json!({"media_path": media, "layer_id": points}),
+                InvalidArgument,
+                "points in time",
+            ),
+            (
+                serde_json::json!({"media_path": "http://127.0.0.1:9/zz.mp4", "query": "zz-sel"}),
+                InvalidArgument,
+                "Loopback",
+            ),
+        ] {
+            let error = server
+                .layers_edl_compose(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(error.kind, kind, "{arguments}: {}", error.message);
+            assert!(
+                error.message.contains(names),
+                "{arguments}: {}",
+                error.message
+            );
+        }
+        let composed = content_of(
+            &server
+                .layers_edl_compose(wire(
+                    serde_json::json!({"media_path": media, "layer_id": selections}),
+                )?)
+                .await?,
+        );
+        assert_eq!(composed["ops"], 1, "the two overlapping selections merge");
+        assert_eq!(composed["point_selections_skipped"], 1);
+        assert_eq!(composed["layer"]["items_count"], 1);
+
+        // Render.
+        for (arguments, kind, names) in [
+            (
+                serde_json::json!({"media_path": media, "layer_id": "zz-none"}),
+                NotFound,
+                "layer zz-none not found",
+            ),
+            (
+                serde_json::json!({"media_path": media, "layer_id": selections}),
+                InvalidArgument,
+                "has kind researcher",
+            ),
+            (
+                serde_json::json!({"media_path": other, "layer_id": hand_edl}),
+                InvalidArgument,
+                "source.mp4, not ",
+            ),
+            (
+                serde_json::json!({"media_path": media, "layer_id": point_edl}),
+                FailedPrecondition,
+                "no range with a duration",
+            ),
+            (
+                serde_json::json!({"media_path": other}),
+                NotFound,
+                "no EDL layer found",
+            ),
+        ] {
+            let error = server
+                .layers_render_edl(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(error.kind, kind, "{arguments}: {}", error.message);
+            assert!(
+                error.message.contains(names),
+                "{arguments}: {}",
+                error.message
+            );
+        }
+        let reel = content_of(
+            &server
+                .layers_render_edl(wire(
+                    serde_json::json!({"media_path": media, "layer_id": hand_edl}),
+                )?)
+                .await?,
+        );
+        assert_eq!(
+            reel["result"]["clip_plan"],
+            serde_json::json!([[0.2, 1.2]]),
+            "overlap merged, point dropped"
+        );
+        assert_eq!(reel["result"]["clips"], 1);
+
+        // Stitch.
+        let error = server
+            .layers_stitch_tracks(wire(
+                serde_json::json!({"media_path": other, "layer_id": object}),
+            )?)
+            .await
+            .expect_err("another recording's layer");
+        assert_eq!(error.kind, InvalidArgument);
+        assert!(
+            error.message.contains("source.mp4, not "),
+            "{}",
+            error.message
+        );
+        let listed = content_of(
+            &server
+                .layers_list(wire(serde_json::json!({"media_path": other}))?)
+                .await?,
+        );
+        assert_eq!(
+            listed["count"], 0,
+            "nothing was stored under the other recording"
+        );
+
+        // A reel render is heavy work and takes a slot like every other render.
+        let permits = (0..crate::jobs::MAX_CONCURRENT_HEAVY_OPERATIONS)
+            .map(|_| server.job_store.admit_direct())
+            .collect::<Result<Vec<_>, _>>()?;
+        let error = server
+            .layers_render_edl(wire(
+                serde_json::json!({"media_path": media, "layer_id": hand_edl}),
+            )?)
+            .await
+            .expect_err("no slot is free");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::RateLimited);
+        drop(permits);
+        Ok(())
+    }
+
+    /// expect: the unified search answers on a database no transcript tool
+    /// has touched, and a hit over out-of-order word timings carries no time
+    /// range and says why.
+    /// [P1] Measured on the installed server (round l1): `layers_search` on a
+    /// fresh database answered `internal ... no such table: transcripts`.
+    /// MD-33: both searches built a hit's `time_range_ms` from the first
+    /// word's start and the last word's end without the check every other
+    /// consumer of a time range makes.
+    #[tokio::test]
+    async fn the_searches_answer_on_an_empty_store_and_over_backwards_timings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let empty = content_of(
+            &make_server()
+                .layers_search(wire(serde_json::json!({"query": "zz", "mode": "lexical"}))?)
+                .await?,
+        );
+        assert_eq!(empty["count"], 0);
+        assert_eq!(empty["search_complete"], true);
+
+        let server = make_pass_server("{}".to_string());
+        let bundle = serde_json::json!({
+            "format": "hkask-transcript-v1", "audio_path": "/tmp/zz-backwards.wav", "audio_duration_secs": 8.0,
+            "full_text": "zz late early",
+            "words": [
+                {"word": "zz", "start_ms": 5000, "end_ms": 6000},
+                {"word": "late", "start_ms": 900000, "end_ms": 900500},
+                {"word": "early", "start_ms": 10, "end_ms": 20}
+            ],
+        });
+        server
+            .educt_store_transcript(wire(serde_json::json!({"transcript": bundle.to_string()}))?)
+            .await?;
+        for (query, range, names) in [
+            ("late early", serde_json::Value::Null, Some("out of order")),
+            (
+                "zz",
+                serde_json::json!({"start_ms": 5000, "end_ms": 6000}),
+                None,
+            ),
+        ] {
+            let arguments = serde_json::json!({"query": query, "mode": "lexical"});
+            for found in [
+                content_of(
+                    &server
+                        .educt_search_transcripts(wire(arguments.clone())?)
+                        .await?,
+                ),
+                content_of(&server.layers_search(wire(arguments.clone())?).await?),
+            ] {
+                assert_eq!(found["count"], 1, "{query}: the text matched");
+                let hit = &found["hits"][0];
+                assert_eq!(hit["time_range_ms"], range, "{query}");
+                match names {
+                    Some(names) => assert!(
+                        hit["time_range_error"]
+                            .as_str()
+                            .is_some_and(|error| error.contains(names)),
+                        "{query}: {}",
+                        hit["time_range_error"]
+                    ),
+                    None => assert!(hit["time_range_error"].is_null(), "{query}"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// A port that fails the test if a pass reaches the provider.
+    struct ProviderMustNotBeCalled;
+    crate::test_support::media_inference_stub! {
+        ProviderMustNotBeCalled,
+        generate(self, _prompt): {
+            Box::pin(async { panic!("a refused call reached the provider (generate)") })
+        },
+        generate_vision(self, _prompt, _images): {
+            Box::pin(async { panic!("a refused call reached the provider (generate_vision)") })
+        },
+        media_generate(self, _op, _params): {
+            Box::pin(async { panic!("a refused call reached the provider (media_generate)") })
+        },
+    }
+
+    /// expect: what a paid tool can refuse from its arguments it refuses
+    /// before a frame is sampled or a provider is called.
+    /// [P1] Read from source (paid; not probed): `layers_semantic_pass` and
+    /// `layers_audio_pass` learned that `gallery_asset_id` names no asset
+    /// only from the layer store, after every chunk had been sent; and
+    /// `video_caption` sent a prompt with no instruction for any style its
+    /// template has no branch for.
+    #[tokio::test]
+    async fn the_paid_tools_refuse_bad_arguments_before_the_provider()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let _artifacts = IsolatedArtifacts::new().await;
+        let root = tempfile::tempdir()?;
+        let video = root.path().join("zz.mp4");
+        create_real_video(&video).await?;
+        let tone = root.path().join("zz.wav");
+        crate::test_support::media_fixture(&tone, &[]).await?;
+        let server = make_server_with_port(Arc::new(ProviderMustNotBeCalled));
+        for outcome in [
+            server
+                .layers_semantic_pass(wire(serde_json::json!({
+                    "media_path": video, "gallery_asset_id": "zz-none", "model": "zz/model",
+                    "time_range": {"start_sec": 0.0, "end_sec": 1.0},
+                }))?)
+                .await,
+            server
+                .layers_audio_pass(wire(serde_json::json!({
+                    "media_path": tone, "gallery_asset_id": "zz-none", "model": "zz/model",
+                }))?)
+                .await,
+            server
+                .layers_shot_pass(wire(
+                    serde_json::json!({"media_path": video, "gallery_asset_id": "zz-none"}),
+                )?)
+                .await,
+        ] {
+            let error = outcome.expect_err("an unknown recording id is refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::NotFound,
+                "{}",
+                error.message
+            );
+            assert_eq!(error.message, "gallery asset zz-none not found");
+        }
+        let generated = crate::assets::generated_assets_dir();
+        assert_eq!(
+            std::fs::read_dir(&generated)
+                .map(|entries| entries.count())
+                .unwrap_or(0),
+            0,
+            "no frame was published before the refusal"
+        );
+
+        let error = server
+            .video_caption(wire(
+                serde_json::json!({"video_url": video, "style": "zz-bogus"}),
+            )?)
+            .await
+            .expect_err("a style with no template branch");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains("descriptive, summary, hashtags"),
+            "{}",
+            error.message
+        );
+        let error = server
+            .video_caption(wire(serde_json::json!({"video_url": tone}))?)
+            .await
+            .expect_err("captioning an audio file");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(
+            error.message.contains("requires a video stream"),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            crate::test_support::live_input_schema("video_caption")["properties"]["style"]["anyOf"]
+                [0]["enum"],
+            serde_json::json!(crate::tools::processing::VIDEO_CAPTION_STYLES)
+        );
+        // Every enumerated style has a branch in the prompt template.
+        for style in crate::tools::processing::VIDEO_CAPTION_STYLES {
+            let mut vars = HashMap::new();
+            vars.insert("style", style);
+            let with_style = server.render_prompt("video_caption", &vars)?;
+            vars.insert("style", "zz-bogus");
+            assert_ne!(
+                with_style,
+                server.render_prompt("video_caption", &vars)?,
+                "{style}"
+            );
+        }
+        Ok(())
+    }
+
+    /// expect: every one of the 90 tools refuses an argument it does not
+    /// declare, at every level of its arguments.
+    /// [P1] Measured on the installed server: an unknown or misspelled
+    /// argument was dropped without a word by all 90. The review closed the
+    /// schemas family by family; this is the count that says none is left.
+    #[test]
+    fn every_tool_schema_is_closed_at_every_level() {
+        fn open_objects(path: &str, schema: &serde_json::Value, open: &mut Vec<String>) {
+            match schema {
+                serde_json::Value::Object(object) => {
+                    if object.contains_key("properties")
+                        && object.get("additionalProperties")
+                            != Some(&serde_json::Value::Bool(false))
+                    {
+                        open.push(path.to_string());
+                    }
+                    for (key, value) in object {
+                        open_objects(&format!("{path}/{key}"), value, open);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for (index, value) in values.iter().enumerate() {
+                        open_objects(&format!("{path}/{index}"), value, open);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let tools = crate::MediaServer::combined_router().list_all();
+        assert_eq!(tools.len(), 90);
+        let mut open = Vec::new();
+        for tool in &tools {
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema");
+            open_objects(&tool.name, &schema, &mut open);
+        }
+        assert!(
+            open.is_empty(),
+            "schemas that accept undeclared arguments: {open:?}"
+        );
+    }
+
+    /// expect: an exported passage writes a confidence as a number, or not
+    /// at all.
+    /// [P1] Measured on the installed server (round l1): every passage ended
+    /// `confidence=None` or `confidence=Some(0.9)`.
+    #[tokio::test]
+    async fn an_exported_passage_carries_no_debug_notation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let env = video_server_env().await?;
+        let media = env.source.to_string_lossy().into_owned();
+        env.server
+            .layers_store(wire(serde_json::json!({
+                "media_path": media, "kind": "researcher", "label": "zz",
+                "provenance": {"model": "user", "prompt_template": "zz-pin"},
+                "items": [
+                    {"start_sec": 0.0, "end_sec": 0.5, "searchable_text": "zz with", "payload": {"confidence": 0.9}},
+                    {"start_sec": 1.0, "end_sec": 1.5, "searchable_text": "zz without", "payload": {}},
+                ],
+            }))?)
+            .await?;
+        let exported = content_of(
+            &env.server
+                .layers_export(wire(serde_json::json!({"media_path": media}))?)
+                .await?,
+        );
+        let passages = exported["passages"].as_str().ok_or("passages")?;
+        assert!(
+            passages.contains("label=\"zz\" confidence=0.9\nzz with\n"),
+            "{passages}"
+        );
+        assert!(
+            passages.contains("label=\"zz\"\nzz without\n"),
+            "{passages}"
+        );
+        assert!(
+            !passages.contains("Some(") && !passages.contains("None"),
+            "{passages}"
         );
         Ok(())
     }
@@ -12095,6 +13132,22 @@ mod tool_behavior_tests {
             .to_string();
         assert_eq!(shot_layer["layer"]["items_count"].as_u64(), Some(2));
 
+        // The shots of one recording are not the shots of another.
+        let mut request = semantic_pass_request(media_path.clone());
+        request.time_range = None;
+        request.shot_layer_id = Some(shot_layer_id.clone());
+        let error = server
+            .layers_semantic_pass(Parameters(request))
+            .await
+            .expect_err("another recording's shot layer is refused");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains("hard-cut.mp4, not "),
+            "{}",
+            error.message
+        );
+
+        let media_path = hard_cut.to_string_lossy().into_owned();
         let mut request = semantic_pass_request(media_path.clone());
         request.time_range = None;
         request.shot_layer_id = Some(shot_layer_id.clone());
@@ -12122,11 +13175,21 @@ mod tool_behavior_tests {
                         model: "user".to_string(),
                         prompt_template: "researcher_annotation".to_string(),
                     },
-                    items: vec![],
+                    items: vec![wire_item(0.0, Some(1.0))],
                 }))
                 .await?,
         );
         let empty_shot_layer_id = stored["id"].as_str().ok_or("stored layer id")?.to_string();
+        // layers_store refuses a layer with no items; a shot layer can
+        // still lose its items outside the tools, so the pass keeps its
+        // answer for one.
+        hkask_storage::database::driver::DatabaseDriver::execute(
+            &**server.gallery_store.driver(),
+            "DELETE FROM media_layer_items WHERE layer_id = ?1",
+            &[hkask_storage::database::value::DbValue::Text(
+                empty_shot_layer_id.clone(),
+            )],
+        )?;
         let mut request = semantic_pass_request(media_path.clone());
         request.time_range = None;
         request.shot_layer_id = Some(empty_shot_layer_id.clone());
@@ -12353,30 +13416,7 @@ mod gallery_lifecycle_tests {
     /// A real one-second video or tone (ffmpeg lavfi), chosen by extension:
     /// gallery_add_media checks the declared kind against the file's streams.
     async fn media_fixture(path: &Path) -> TestResult {
-        let source = if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
-            vec!["-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
-        } else {
-            vec![
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=duration=1:size=64x48:rate=5",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-            ]
-        };
-        let output = tokio::process::Command::new("ffmpeg")
-            .args(["-y", "-v", "error"])
-            .args(source)
-            .arg(path)
-            .output()
-            .await?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-        }
-        Ok(())
+        crate::test_support::media_fixture(path, &[]).await
     }
 
     fn png(path: &Path, color: u8) {

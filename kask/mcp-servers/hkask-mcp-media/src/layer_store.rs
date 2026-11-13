@@ -275,7 +275,6 @@ pub struct DeleteLayerCounts {
 /// the same stable-order discipline as the transcript pages).
 pub struct UnifiedRecording {
     pub media_path: String,
-    pub latest_at: String,
 }
 
 /// Page the unified recording corpus: the union of the transcripts
@@ -290,37 +289,40 @@ pub fn list_unified_recordings(
     offset: usize,
 ) -> Result<Vec<UnifiedRecording>, LayerStoreError> {
     ensure_schema(driver)?;
-    let (sql, params): (&str, Vec<DbValue>) = match media_path {
+    // The transcripts table is the transcript store's and exists only once
+    // a transcript tool has run. On a database that has seen none, the
+    // search answered `internal ... no such table: transcripts`; such a
+    // database has no transcripts, so the corpus is its layers.
+    let (filter, mut params): (&str, Vec<DbValue>) = match media_path {
         Some(path) => (
-            "SELECT media_path, MAX(latest_at) AS latest FROM ( \
-             SELECT media_path, created_at AS latest_at FROM transcripts WHERE media_path = ?1 \
-             UNION ALL \
-             SELECT media_path, created_at FROM media_layers WHERE media_path = ?1 \
-             ) GROUP BY media_path ORDER BY latest DESC, media_path ASC LIMIT ?2 OFFSET ?3",
-            vec![
-                DbValue::Text(path.to_string()),
-                DbValue::Integer(limit as i64),
-                DbValue::Integer(offset as i64),
-            ],
+            " WHERE media_path = ?1",
+            vec![DbValue::Text(path.to_string())],
         ),
-        None => (
-            "SELECT media_path, MAX(latest_at) AS latest FROM ( \
-             SELECT media_path, created_at AS latest_at FROM transcripts \
-             UNION ALL \
-             SELECT media_path, created_at FROM media_layers \
-             ) GROUP BY media_path ORDER BY latest DESC, media_path ASC LIMIT ?1 OFFSET ?2",
-            vec![
-                DbValue::Integer(limit as i64),
-                DbValue::Integer(offset as i64),
-            ],
-        ),
+        None => ("", Vec::new()),
     };
-    let rows = driver.query(sql, &params)?;
+    let mut legs = Vec::with_capacity(2);
+    if table_exists(driver, "transcripts")? {
+        legs.push(format!(
+            "SELECT media_path, created_at AS latest_at FROM transcripts{filter}"
+        ));
+    }
+    legs.push(format!(
+        "SELECT media_path, created_at AS latest_at FROM media_layers{filter}"
+    ));
+    params.push(DbValue::Integer(limit as i64));
+    params.push(DbValue::Integer(offset as i64));
+    let sql = format!(
+        "SELECT media_path, MAX(latest_at) AS latest FROM ( {} ) \
+         GROUP BY media_path ORDER BY latest DESC, media_path ASC LIMIT ?{} OFFSET ?{}",
+        legs.join(" UNION ALL "),
+        params.len() - 1,
+        params.len(),
+    );
+    let rows = driver.query(&sql, &params)?;
     let mut recordings = Vec::with_capacity(rows.len());
     for row in rows.iter() {
         recordings.push(UnifiedRecording {
             media_path: row.get_named("media_path")?.as_text()?.to_string(),
-            latest_at: row.get_named("latest")?.as_text()?.to_string(),
         });
     }
     Ok(recordings)

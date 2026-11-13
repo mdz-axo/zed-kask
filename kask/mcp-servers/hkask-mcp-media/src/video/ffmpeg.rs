@@ -379,6 +379,48 @@ fn wav_pcm_codec(source_audio_codec: Option<&str>) -> &'static str {
     }
 }
 
+/// What ffmpeg said about a failure, without its startup banner. The
+/// banner (version, build configuration, library versions) is two to
+/// three kilobytes printed before any work; the cause is in the lines
+/// after it.
+fn failure_text(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .filter(|line| {
+            !(line.starts_with("ffmpeg version ")
+                || line.starts_with("  built with ")
+                || line.starts_with("  configuration: ")
+                || line.starts_with("  lib"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A value for one option of one filter, escaped at both levels ffmpeg
+/// parses: the option list (`\`, `'`, `:`) and then the filter graph
+/// (`\`, `'`, `[`, `]`, `,`, `;`).
+fn filter_option_value(value: &str) -> String {
+    let mut option = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '\\' | '\'' | ':') {
+            option.push('\\');
+        }
+        option.push(character);
+    }
+    let mut graph = String::with_capacity(option.len());
+    for character in option.chars() {
+        if matches!(character, '\\' | '\'' | '[' | ']' | ',' | ';') {
+            graph.push('\\');
+        }
+        graph.push(character);
+    }
+    graph
+}
+
+/// Where a caption is drawn, as the `y` expression of the drawtext filter
+/// (y grows downward from the top edge).
+pub const CAPTION_POSITIONS: [&str; 3] = ["top", "center", "bottom"];
+
 /// ffmpeg runner with availability detection.
 #[derive(Debug, Clone)]
 pub struct FfmpegRunner {
@@ -505,18 +547,22 @@ impl FfmpegRunner {
     /// with an empty output directory on every video render. `output()`
     /// drains the pipes instead, and its captured stderr becomes the
     /// failure reason.
+    ///
+    /// The child is killed when this future is dropped: a cancelled job or
+    /// an abandoned call otherwise leaves ffmpeg encoding for nobody, and
+    /// it outlived the server itself.
     async fn run_to_completion(
         mut command: Command,
         what: &'static str,
     ) -> Result<(), crate::MediaError> {
-        let output = command.output().await.map_err(|e| {
+        let output = command.kill_on_drop(true).output().await.map_err(|e| {
             crate::MediaError::FfmpegFailed(format!("ffmpeg {what} spawn failed: {e}"))
         })?;
         if !output.status.success() {
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "ffmpeg {what} failed with status {}: {}",
                 output.status,
-                String::from_utf8_lossy(&output.stderr)
+                failure_text(&output.stderr)
             )));
         }
         Ok(())
@@ -564,14 +610,25 @@ impl FfmpegRunner {
             .arg("-show_format")
             .arg("-show_streams")
             .arg(input)
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(|e| crate::MediaError::Io(format!("ffprobe failed: {e}")))?;
         if !output.status.success() {
+            let said = String::from_utf8_lossy(&output.stderr);
+            // A local file that exists and that ffprobe cannot read is not
+            // media: the caller named the wrong file. A missing file and
+            // an unreachable URL keep ffprobe's own account.
+            let local = input.strip_prefix("file://").unwrap_or(input);
+            if crate::is_local_media_path(input) && std::path::Path::new(local).is_file() {
+                return Err(crate::MediaError::NotMedia {
+                    input: input.to_string(),
+                    reason: said.lines().last().unwrap_or("no stream found").to_string(),
+                });
+            }
             return Err(crate::MediaError::Io(format!(
-                "ffprobe exited with status {}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
+                "ffprobe exited with status {}: {said}",
+                output.status
             )));
         }
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -675,23 +732,10 @@ impl FfmpegRunner {
             })
     }
 
-    /// Audio-only container inputs for [`FfmpegRunner::clip`]: these trim by
-    /// decoding to 16-bit PCM wav (stream copy cannot land compressed audio in
-    /// a wav container — ffmpeg has no wav tag for mp3 frames); every other
-    /// input trims by lossless stream copy into mp4.
-    fn clip_input_is_audio(input: &str) -> bool {
-        matches!(
-            std::path::Path::new(input)
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(str::to_ascii_lowercase)
-                .as_deref(),
-            Some("mp3" | "wav" | "m4a" | "aac" | "flac" | "ogg" | "opus" | "wma")
-        )
-    }
-
     /// Trim media to specified start/end times, half-open in frame display
-    /// time. Audio-only container inputs decode to 16-bit PCM wav; every
+    /// time. The route follows the streams the file holds, never its name:
+    /// a recording without a video stream is cut by [`FfmpegRunner::audio_trim`]
+    /// (PCM wav, on the sample, in the source's own sample format); every
     /// other input publishes an mp4 through the S3 segment plan — the
     /// keyframe-aligned interior GOPs stream-copy through the segment muxer
     /// (bit-stable video), only the boundary spans that need a frame-exact
@@ -710,34 +754,56 @@ impl FfmpegRunner {
         start_sec: f32,
         end_sec: f32,
     ) -> Result<PathBuf, crate::MediaError> {
+        self.clip_bounded(input, start_sec, end_sec)
+            .await
+            .map(|(output, _end_sec)| output)
+    }
+
+    /// [`FfmpegRunner::clip`], also returning the end of the range that was
+    /// cut: the requested end, or the end of the media when the request ran
+    /// past it. A caller that reports the clip's length needs it — a 5 s to
+    /// 60 s request on a 6 s recording is a one-second clip, not 55.
+    pub async fn clip_bounded(
+        &self,
+        input: &str,
+        start_sec: f32,
+        end_sec: f32,
+    ) -> Result<(PathBuf, f32), crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
-        self.ensure_temp_dir()?;
-
-        let audio_input = Self::clip_input_is_audio(input);
-        if !audio_input {
-            return self.clip_video(input, start_sec, end_sec).await;
+        match self.probe(input).await {
+            // The caller named a file that is not media.
+            Err(error @ crate::MediaError::NotMedia { .. }) => Err(error),
+            // A range that starts past the end cuts nothing: ffmpeg exits 0
+            // and writes a container with no stream, which was published
+            // as a finished clip.
+            Ok(probe) if start_sec >= probe.duration_secs => {
+                Err(crate::MediaError::RangeOutsideMedia {
+                    input: input.to_string(),
+                    start_sec,
+                    duration_secs: probe.duration_secs,
+                })
+            }
+            Ok(probe) => {
+                let end_sec = end_sec.min(probe.duration_secs);
+                let output = if probe.has_video_stream {
+                    self.ensure_temp_dir()?;
+                    self.clip_video(input, start_sec, end_sec, Ok(probe))
+                        .await?
+                } else {
+                    self.audio_trim_probed(input, start_sec, end_sec, Some(&probe))
+                        .await?
+                };
+                Ok((output, end_sec))
+            }
+            // The probe is best-effort (see `clip_video`).
+            probe @ Err(_) => {
+                self.ensure_temp_dir()?;
+                let output = self.clip_video(input, start_sec, end_sec, probe).await?;
+                Ok((output, end_sec))
+            }
         }
-        let output = RollbackOwnedOutput::new(self.output_path("wav"));
-        let duration = end_sec - start_sec;
-
-        let mut command = Command::new(&self.ffmpeg_path);
-        command
-            .arg("-ss")
-            .arg(format!("{:.3}", start_sec))
-            .arg("-to")
-            .arg(format!("{:.3}", end_sec))
-            .arg("-i")
-            .arg(input)
-            .arg("-c:a")
-            .arg("pcm_s16le")
-            .arg(output.path());
-        Self::run_to_completion(command, "clip").await?;
-
-        let output = output.commit();
-        tracing::info!(target: "hkask.mcp.media.ffmpeg", input = %input, duration = %duration, audio_input, output = %output.display(), "Media clipped");
-        Ok(output)
     }
 
     /// The video clip: resolve the segment plan, then produce its segments
@@ -753,16 +819,11 @@ impl FfmpegRunner {
         input: &str,
         start_sec: f32,
         end_sec: f32,
+        probe: Result<VideoProbeInfo, crate::MediaError>,
     ) -> Result<PathBuf, crate::MediaError> {
         let start = f64::from(start_sec).max(0.0);
         let end = f64::from(end_sec);
-        let probe = self.probe(input).await;
         let route = match probe.as_ref() {
-            // A video-less container has no keyframe domain: audio packets
-            // carry no reorder depth, so the trim is a container copy.
-            Ok(probe) if !probe.has_video_stream => {
-                return self.clip_container_copy(input, start, end).await;
-            }
             Ok(probe) => match self.video_keyframe_times(input).await {
                 Ok(keyframes) => {
                     let plan = plan_clip_segments(&keyframes, start, end);
@@ -879,33 +940,6 @@ impl FfmpegRunner {
                 Ok(output)
             }
         }
-    }
-
-    /// Container-level stream copy for video-less inputs: with no video
-    /// keyframe domain there is no reorder depth to overshoot, so the
-    /// half-open `[start, end)` trim is a packet copy.
-    async fn clip_container_copy(
-        &self,
-        input: &str,
-        start: f64,
-        end: f64,
-    ) -> Result<PathBuf, crate::MediaError> {
-        let output = RollbackOwnedOutput::new(self.output_path("mp4"));
-        let mut command = Command::new(&self.ffmpeg_path);
-        command
-            .arg("-ss")
-            .arg(format!("{start:.3}"))
-            .arg("-to")
-            .arg(format!("{end:.3}"))
-            .arg("-i")
-            .arg(input)
-            .arg("-c")
-            .arg("copy")
-            .arg("-avoid_negative_ts")
-            .arg("make_zero")
-            .arg(output.path());
-        Self::run_to_completion(command, "clip").await?;
-        Ok(output.commit())
     }
 
     /// One whole-span seek re-encode — the degradation path (and the
@@ -1140,8 +1174,12 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Convert a video segment to GIF.
-    /// Uses the two-pass palettegen + paletteuse pipeline for quality.
+    /// Convert a video segment to GIF in two passes: the palette is written
+    /// to a file, then applied. One graph that splits the frames between
+    /// palettegen and paletteuse holds every frame in memory until the
+    /// palette is known (measured 2026-11-13: 60 s at 1280 wide and 30 fps
+    /// peaked at 6.7 GB; the two passes peaked at 195 MB and wrote the same
+    /// bytes).
     pub async fn to_gif(
         &self,
         input: &str,
@@ -1155,13 +1193,10 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
 
+        // Rollback-owned and never committed: removed when this call ends.
+        let palette = RollbackOwnedOutput::new(self.output_path("png"));
         let output = RollbackOwnedOutput::new(self.output_path("gif"));
-
-        // Build filter complex for palette generation + GIF conversion
-        let filter = format!(
-            "fps={},scale={}:-1:flags=lanczos,split[v1][v2];[v1]palettegen[p];[v2][p]paletteuse",
-            fps, width
-        );
+        let frames = format!("fps={fps},scale={width}:-1:flags=lanczos");
 
         let mut command = Command::new(&self.ffmpeg_path);
         command
@@ -1171,8 +1206,23 @@ impl FfmpegRunner {
             .arg(format!("{:.3}", duration_sec))
             .arg("-i")
             .arg(input)
+            .arg("-vf")
+            .arg(format!("{frames},palettegen"))
+            .arg(palette.path());
+        Self::run_to_completion(command, "GIF palette").await?;
+
+        let mut command = Command::new(&self.ffmpeg_path);
+        command
+            .arg("-ss")
+            .arg(format!("{:.3}", start_sec))
+            .arg("-t")
+            .arg(format!("{:.3}", duration_sec))
+            .arg("-i")
+            .arg(input)
+            .arg("-i")
+            .arg(palette.path())
             .arg("-filter_complex")
-            .arg(&filter)
+            .arg(format!("[0:v]{frames}[v];[v][1:v]paletteuse"))
             .arg(output.path());
         Self::run_to_completion(command, "GIF conversion").await?;
 
@@ -1181,8 +1231,14 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Add text caption overlay to a video.
-    /// Uses the drawtext filter with configurable position and font size.
+    /// Add text caption overlay to a video with the drawtext filter.
+    ///
+    /// The caption reaches the filter through a file and is drawn as it is
+    /// written (`expansion=none`): it never enters the filter-graph
+    /// grammar. Placed inline between quotes, a caption holding `'` closed
+    /// the quote and the rest was parsed as filters — a second drawtext
+    /// with `textfile=` drew the content of any file the server can read
+    /// into the published video; `,` `;` `[` failed the parse.
     pub async fn add_caption(
         &self,
         input: &str,
@@ -1197,24 +1253,29 @@ impl FfmpegRunner {
 
         let output = RollbackOwnedOutput::new(self.output_path("mp4"));
 
-        // Map position to drawtext y-coordinate
+        // drawtext's y grows downward from the top edge. The first two
+        // arms were exchanged: "top" drew at the bottom and the default
+        // "bottom" at the top, and any other word drew at the top.
         let y_pos = match position {
-            "top" => "(h-text_h-10)",
+            "top" => "10",
             "center" => "(h-text_h)/2",
-            _ => "10", // bottom
+            "bottom" => "(h-text_h-10)",
+            other => {
+                return Err(crate::MediaError::FfmpegFailed(format!(
+                    "caption position '{other}' is enumerated but has no placement"
+                )));
+            }
         };
 
-        // Escape special characters in text for ffmpeg filter
-        // % must be escaped first to avoid double-escaping the %% we produce
-        let escaped_text = text
-            .replace('%', "%%")
-            .replace('\\', "\\\\")
-            .replace(':', "\\:")
-            .replace('\'', "\\'");
-
+        // Rollback-owned and never committed: removed when this call ends.
+        let caption = RollbackOwnedOutput::new(self.output_path("txt"));
+        std::fs::write(caption.path(), text)
+            .map_err(|e| crate::MediaError::Io(format!("Failed to write caption text: {e}")))?;
         let drawtext = format!(
-            "drawtext=text='{}':fontsize={}:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y={}",
-            escaped_text, font_size, y_pos
+            "drawtext=textfile={}:expansion=none:fontsize={}:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=5:x=(w-text_w)/2:y={}",
+            filter_option_value(&caption.path().to_string_lossy()),
+            font_size,
+            y_pos
         );
 
         let mut command = Command::new(&self.ffmpeg_path);
@@ -1365,6 +1426,61 @@ impl FfmpegRunner {
         Ok(output)
     }
 
+    /// Join clips a caller supplies. The join is a stream copy under the
+    /// first clip's header, so it is sound only for clips that agree: each
+    /// must hold video, in one codec, and all or none must hold audio, in
+    /// one codec. Measured 2026-11-13 on clips that differ: two audio files
+    /// were published as a video with no picture, and a silent clip
+    /// followed by one with sound lost the sound — each reported as
+    /// concatenated. Frame size is not checked: two sizes joined into a
+    /// file ffmpeg decodes at both sizes. Segments this crate cuts from one
+    /// source go straight to [`FfmpegRunner::concat`].
+    pub async fn concat_clips(&self, video_paths: &[String]) -> Result<PathBuf, crate::MediaError> {
+        let mut first: Option<VideoProbeInfo> = None;
+        for path in video_paths {
+            let probe = self.probe(path).await?;
+            let differs = |reason: String| crate::MediaError::ClipsDiffer {
+                clip: path.clone(),
+                reason,
+            };
+            if !probe.has_video_stream {
+                return Err(differs("it holds no video stream".to_string()));
+            }
+            let Some(first) = &first else {
+                first = Some(probe);
+                continue;
+            };
+            if probe.codec != first.codec {
+                return Err(differs(format!(
+                    "its video codec is {}, the first clip's is {}",
+                    probe.codec, first.codec
+                )));
+            }
+            if probe.has_audio_stream != first.has_audio_stream {
+                return Err(differs(format!(
+                    "it {} audio and the first clip {}",
+                    if probe.has_audio_stream {
+                        "holds"
+                    } else {
+                        "holds no"
+                    },
+                    if first.has_audio_stream {
+                        "does"
+                    } else {
+                        "does not"
+                    },
+                )));
+            }
+            if probe.audio_codec != first.audio_codec {
+                return Err(differs(format!(
+                    "its audio codec is {}, the first clip's is {}",
+                    probe.audio_codec, first.audio_codec
+                )));
+            }
+        }
+        self.concat(video_paths).await
+    }
+
     /// Concatenate multiple video clips into one.
     /// Uses the concat demuxer for fast, lossless joining.
     pub async fn concat(&self, video_paths: &[String]) -> Result<PathBuf, crate::MediaError> {
@@ -1417,6 +1533,7 @@ impl FfmpegRunner {
             .arg("-of")
             .arg("csv=p=0")
             .arg(input)
+            .kill_on_drop(true)
             .output()
             .await
             .map_err(|e| {
@@ -1426,7 +1543,7 @@ impl FfmpegRunner {
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "ffprobe keyframe scan failed with status {}: {}",
                 output.status,
-                String::from_utf8_lossy(&output.stderr)
+                failure_text(&output.stderr)
             )));
         }
         let mut times = String::from_utf8_lossy(&output.stdout)
@@ -1659,13 +1776,13 @@ impl FfmpegRunner {
             .arg("-frames:v")
             .arg(max_frames.to_string())
             .arg(&pattern);
-        let output = command.output().await.map_err(|error| {
+        let output = command.kill_on_drop(true).output().await.map_err(|error| {
             crate::MediaError::FfmpegFailed(format!("frame extraction spawn: {error}"))
         })?;
         if !output.status.success() {
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "frame extraction failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                failure_text(&output.stderr)
             )));
         }
         let timestamps = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
@@ -1749,13 +1866,13 @@ impl FfmpegRunner {
             .arg("-f")
             .arg("null")
             .arg("-");
-        let output = command.output().await.map_err(|error| {
+        let output = command.kill_on_drop(true).output().await.map_err(|error| {
             crate::MediaError::FfmpegFailed(format!("scene detection spawn: {error}"))
         })?;
         if !output.status.success() {
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "scene detection failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                failure_text(&output.stderr)
             )));
         }
         let boundaries_sec = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
@@ -1833,13 +1950,13 @@ impl FfmpegRunner {
             .arg("-frames:v")
             .arg(max_frames.to_string())
             .arg(&pattern);
-        let output = command.output().await.map_err(|error| {
+        let output = command.kill_on_drop(true).output().await.map_err(|error| {
             crate::MediaError::FfmpegFailed(format!("frame extraction spawn: {error}"))
         })?;
         if !output.status.success() {
             return Err(crate::MediaError::FfmpegFailed(format!(
                 "frame extraction failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                failure_text(&output.stderr)
             )));
         }
         let timestamps = selected_frame_timestamps(&String::from_utf8_lossy(&output.stderr))?;
@@ -1889,14 +2006,30 @@ impl FfmpegRunner {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
+        let probe = match self.probe(input).await {
+            Err(error @ crate::MediaError::NotMedia { .. }) => return Err(error),
+            probe => probe.ok(),
+        };
+        self.audio_trim_probed(input, start_sec, end_sec, probe.as_ref())
+            .await
+    }
+
+    /// [`FfmpegRunner::audio_trim`] for a caller that has already probed
+    /// the input.
+    async fn audio_trim_probed(
+        &self,
+        input: &str,
+        start_sec: f32,
+        end_sec: f32,
+        probe: Option<&VideoProbeInfo>,
+    ) -> Result<PathBuf, crate::MediaError> {
         // The output is published as WAV, so its payload must be PCM. The
         // stream copy this replaced wrapped mp3/aac in a RIFF header that
         // players and STT uploads refuse, and cut PCM at packet boundaries
         // (a 1.0 s request returned 1.024 s). Decoding cuts on the sample; a
         // PCM source is re-written in its own sample format, which keeps the
         // samples bit-identical. A failed probe falls back to 16-bit PCM.
-        let probe = self.probe(input).await.ok();
-        if let Some(probe) = &probe
+        if let Some(probe) = probe
             && start_sec >= probe.duration_secs
         {
             return Err(crate::MediaError::RangeOutsideMedia {
@@ -1905,7 +2038,7 @@ impl FfmpegRunner {
                 duration_secs: probe.duration_secs,
             });
         }
-        let codec = wav_pcm_codec(probe.as_ref().map(|probe| probe.audio_codec.as_str()));
+        let codec = wav_pcm_codec(probe.map(|probe| probe.audio_codec.as_str()));
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let duration = end_sec - start_sec;
@@ -2591,6 +2724,68 @@ mod tests {
         assert!(error.to_string().contains("keyframe sentinel failure"));
         assert_eq!(std::fs::read_dir(&output_dir)?.count(), 0);
         Ok(())
+    }
+
+    /// expect: ffmpeg is stopped when the call that started it is abandoned.
+    /// [P1] Measured on the installed server (round l2): a `video_clip` job
+    /// was cancelled, `job_status` answered `cancelled`, and its ffmpeg was
+    /// still encoding three seconds later and after the server had exited.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_abandoned_ffmpeg_run_is_stopped() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let pid_file = root.path().join("pid");
+        let (runner, _output_dir) = fake_ffmpeg_runner(
+            &root,
+            "sleeper.sh",
+            &format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec sleep 30\n",
+                pid_file.display()
+            ),
+        )?;
+        let abandoned = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            runner.to_gif("input.mp4", 0.0, 1.0, 320, 10),
+        )
+        .await;
+        assert!(abandoned.is_err(), "the stand-in ffmpeg outlasts the wait");
+        let pid = std::fs::read_to_string(&pid_file)?.trim().to_string();
+        for _ in 0..50 {
+            // Gone, or a zombie waiting to be reaped (state Z): not running.
+            let state = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .ok()
+                .and_then(|stat| {
+                    stat.rsplit(')')
+                        .next()
+                        .map(|rest| rest.trim().chars().next())
+                });
+            if matches!(state, None | Some(Some('Z'))) {
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("process {pid} is still running five seconds after its call was dropped");
+    }
+
+    /// expect: an ffmpeg failure is reported by its cause, without the
+    /// two-to-three-kilobyte startup banner in front of it.
+    #[test]
+    fn a_failure_message_omits_the_startup_banner() {
+        let stderr = b"ffmpeg version 8.0.1 Copyright (c) 2000-2025 the FFmpeg developers\n  built with gcc 15\n  configuration: --prefix=/usr --enable-gpl\n  libavutil      60.  8.100 / 60.  8.100\n  libavcodec     62. 11.100 / 62. 11.100\nInvalid duration for option t: inf\nError opening input files: Invalid argument\n";
+        assert_eq!(
+            failure_text(stderr),
+            "Invalid duration for option t: inf\nError opening input files: Invalid argument"
+        );
+    }
+
+    /// expect: a filter option value survives both levels of ffmpeg's
+    /// filter-graph parsing.
+    #[test]
+    fn a_filter_option_value_is_escaped_at_both_levels() {
+        assert_eq!(filter_option_value("/tmp/a b.txt"), "/tmp/a b.txt");
+        assert_eq!(filter_option_value("a:b"), "a\\\\:b");
+        assert_eq!(filter_option_value("it's"), "it\\\\\\'s");
+        assert_eq!(filter_option_value("a,b;[c]"), "a\\,b\\;\\[c\\]");
     }
 
     /// expect: A failed FFmpeg process cannot leave a partial output or concat-list file behind.

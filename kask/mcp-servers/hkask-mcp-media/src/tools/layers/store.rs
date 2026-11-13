@@ -80,17 +80,28 @@ fn transcript_stream(
 #[tool_router(router = layers_store_router, vis = "pub")]
 impl MediaServer {
     #[tool(
-        description = "Store one media layer with time-keyed items over a local or URL video/audio file. Item ranges are source-PTS seconds validated against the ffprobe-anchored media duration; reversed or out-of-bounds ranges, blank searchable_text, frame asset ids absent from the gallery, and unknown gallery asset ids are rejected with named errors and nothing is persisted. Provenance (model, prompt_template) is recorded with the layer; created_at is stamped server-side. Layers are database rows only — source media bytes are never modified."
+        description = "Store one media layer with time-keyed items over a local or URL video/audio file. Item ranges are source-PTS seconds validated against the ffprobe-anchored media duration; reversed or out-of-bounds ranges, blank searchable_text, frame asset ids absent from the gallery, unknown gallery asset ids, a layer with no items and a blank provenance model or prompt_template are rejected with named errors and nothing is persisted. Provenance (model, prompt_template) is recorded as the caller declares it; created_at is stamped server-side. Layers are database rows only — source media bytes are never modified."
     )]
     pub async fn layers_store(
         &self,
         Parameters(request): Parameters<LayersStoreRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_store", async {
-            ensure_local_input_exists(&request.media_path)?;
-            if !crate::is_local_media_path(&request.media_path) {
-                validate_tool_url_with_dns(&request.media_path).await?;
+            // A layer records who or what made it and annotates something:
+            // one with neither is refused before the media is probed.
+            if request.provenance.model.trim().is_empty()
+                || request.provenance.prompt_template.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "provenance.model and provenance.prompt_template must be nonblank",
+                ));
             }
+            if request.items.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "items is empty: a layer with no items annotates nothing",
+                ));
+            }
+            admit_media_source(&request.media_path).await?;
             let ffmpeg = self.require_ffmpeg()?;
             let probe = ffmpeg
                 .probe(&request.media_path)
@@ -138,13 +149,18 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "List stored media layers, newest first, optionally filtered by media_path and/or kind. Returns summaries with provenance and item counts; load full items with layers_get."
+        description = "List stored media layers, newest first, optionally filtered by media_path and/or kind. Returns summaries with provenance and item counts; load full items with layers_get. limit defaults to 50, must be at least 1 and is capped at 500."
     )]
     pub async fn layers_list(
         &self,
         Parameters(request): Parameters<LayersListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_list", async {
+            if request.limit == Some(0) {
+                return Err(McpToolError::invalid_argument(
+                    "limit must be at least 1; a limit of 0 lists nothing",
+                ));
+            }
             let driver = &**self.gallery_store.driver();
             let filter = MediaLayerFilter {
                 media_path: request.media_path,
@@ -216,6 +232,15 @@ impl MediaServer {
                         )));
                     }
                 }
+            }
+            // The stated bounds are enforced, not clamped: a limit of 0
+            // returned one event and 4,000,000,000 returned 5000, each
+            // while reporting the page as what was asked for.
+            let limit = request.limit.unwrap_or(500);
+            if !(1..=5000).contains(&limit) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "limit must be between 1 and 5000, got {limit}"
+                )));
             }
             let driver = &**self.gallery_store.driver();
             let records = layer_store::recording_layers(driver, &request.media_path, request.kind)
@@ -342,8 +367,7 @@ impl MediaServer {
                 .into_iter()
                 .collect();
             let resume_from = (request.resume_from.unwrap_or(0) as usize).min(total);
-            let limit = (request.limit.unwrap_or(500).clamp(1, 5000)) as usize;
-            let page_end = (resume_from + limit).min(total);
+            let page_end = (resume_from + limit as usize).min(total);
             // Read-time cross-stream corroboration (the S1 refinement): each
             // event carries the sensory badges of every overlapping event in
             // the returned page plus its own (the door slam heard AND seen).

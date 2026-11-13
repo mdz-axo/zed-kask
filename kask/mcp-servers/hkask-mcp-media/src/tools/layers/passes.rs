@@ -191,6 +191,28 @@ pub(crate) fn map_layer_pass_error(error: LayerPassError) -> McpToolError {
     }
 }
 
+/// Refuse a recording id that is not a gallery asset, in the layer store's
+/// own words, before a pass does any work. The store makes the same check
+/// when the layer is written, which for a model pass is after the provider
+/// has been paid.
+fn require_gallery_asset(
+    gallery_store: &GalleryStore,
+    gallery_asset_id: Option<&str>,
+) -> Result<(), McpToolError> {
+    let Some(gallery_asset_id) = gallery_asset_id else {
+        return Ok(());
+    };
+    match gallery_store.get_by_id(gallery_asset_id) {
+        Ok(_) => Ok(()),
+        Err(crate::gallery::GalleryStoreError::NotFound(_)) => Err(map_layer_store_error(
+            layer_store::LayerStoreError::GalleryAssetNotFound {
+                gallery_asset_id: gallery_asset_id.to_string(),
+            },
+        )),
+        Err(error) => Err(map_gallery_store_error(error)),
+    }
+}
+
 /// Validate a model-produced normalized box — the deterministic gate on
 /// the vision pass's hallucination risk: a box outside the frame is a
 /// named rejection of the whole pass, never a silent clamp. Shared by the
@@ -373,6 +395,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_shot_pass", async {
             let _admission = self.admit_heavy_operation()?;
+            require_gallery_asset(&self.gallery_store, request.gallery_asset_id.as_deref())?;
             ensure_local_input_exists(&request.media_path)?;
             if !crate::is_local_media_path(&request.media_path) {
                 validate_tool_url_with_dns(&request.media_path).await?;
@@ -458,7 +481,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. grounded=true (default false) switches to the grounded template — the identical output schema with raised box density and label specificity — and resolves the model per-call, then the tagging model setting (HKASK_MEDIA_TAGGING_MODEL), then the configured analysis model; provenance records layers_semantic_pass_grounded so the modes stay distinguishable. Media without a video stream fails as failed_precondition naming the requirement; a missing file as not_found naming the path; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
+        description = "Generate semantic, object and OCR layers over a video's sampled frames via the bounded vision pass — one inference call per chunk. Bound by a source-PTS time_range or by the shots of one stored shot layer (exactly one required); chunks beyond max_chunks return a resume cursor, and the coverage block reports plan-vs-observed (chunks planned vs processed, frames published, frameless chunks, per-kind item counts). Frames are sampled per chunk and published as durable gallery assets (source_pts_sec + source_sha256); item frame references resolve to those assets. Model-produced boxes are validated to lie within 0..1, confidences within 0..1, and frame indices within the attached frames — violations reject the whole pass with named errors and nothing is stored. structured=true routes through the structured-output counters with the schema in the prompt (image inputs have no provider-enforced strict-schema path — the response names the mode used); structured=false (default) is the v1 schema-in-prompt mode. grounded=true (default false) switches to the grounded template — the identical output schema with raised box density and label specificity — and resolves the model per-call, then the tagging model setting (HKASK_MEDIA_TAGGING_MODEL), then the configured analysis model; provenance records layers_semantic_pass_grounded so the modes stay distinguishable. Media without a video stream fails as failed_precondition naming the requirement; a missing file as not_found naming the path; an unknown gallery_asset_id as not_found before any frame is sampled or sent; a shot layer with no shots returns the no_shots note. Sampled frames only — audio and unobserved intervals are not assessed; source media bytes are never modified."
     )]
     pub async fn layers_semantic_pass(
         &self,
@@ -466,6 +489,10 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_semantic_pass", async {
             let _admission = self.admit_heavy_operation()?;
+            // The layer store refuses an unknown recording id, but only when
+            // the layers are written: after the frames were published and
+            // every chunk had been sent to the provider.
+            require_gallery_asset(&self.gallery_store, request.gallery_asset_id.as_deref())?;
             ensure_local_input_exists(&request.media_path)?;
             if !crate::is_local_media_path(&request.media_path) {
                 validate_tool_url_with_dns(&request.media_path).await?;
@@ -586,6 +613,14 @@ impl MediaServer {
                             "shot_layer_id must reference a kind=shot layer \
                              (layers_shot_pass output), got kind {}",
                             record.kind.as_str()
+                        )));
+                    }
+                    // Another recording's shots are another recording's
+                    // seconds.
+                    if record.media_path != request.media_path {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "shot layer {layer_id} annotates {}, not {}",
+                            record.media_path, request.media_path
                         )));
                     }
                     if record.items.is_empty() {
@@ -970,7 +1005,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Generate labeled audio_event items over a recording's audio via the bounded audio pass — one chat_audio inference call per chunk. Bound by a source-PTS time_range (default: the full probed duration); chunks beyond max_chunks return a resume cursor. Model-produced event spans are validated (finite, inside the chunk, confidences within 0..1, nonblank labels) before storing one kind=audio_event layer whose provenance records the model and template — a violation rejects the whole pass and nothing is stored. Speech is not transcribed (that is the transcript pipeline's job); media without an audio stream fails as failed_precondition naming the requirement; a pass that finds no events returns a named no_events note and stores nothing. Source media bytes are never modified."
+        description = "Generate labeled audio_event items over a recording's audio via the bounded audio pass — one chat_audio inference call per chunk. Bound by a source-PTS time_range (default: the full probed duration); chunks beyond max_chunks return a resume cursor. Model-produced event spans are validated (finite, inside the chunk, confidences within 0..1, nonblank labels) before storing one kind=audio_event layer whose provenance records the model and template — a violation rejects the whole pass and nothing is stored. Speech is not transcribed (that is the transcript pipeline's job); media without an audio stream fails as failed_precondition naming the requirement; an unknown gallery_asset_id fails as not_found before any audio is sent; a pass that finds no events returns a named no_events note and stores nothing. Source media bytes are never modified."
     )]
     pub async fn layers_audio_pass(
         &self,
@@ -978,6 +1013,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_audio_pass", async {
             let _admission = self.admit_heavy_operation()?;
+            require_gallery_asset(&self.gallery_store, request.gallery_asset_id.as_deref())?;
             ensure_local_input_exists(&request.media_path)?;
             if !crate::is_local_media_path(&request.media_path) {
                 validate_tool_url_with_dns(&request.media_path).await?;
@@ -1250,7 +1286,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Stitch one stored object layer's detections into deterministic tracks — a derived kind=object layer whose items carry track_id, span identity, and the per-frame detections in payload (S2 of the visual-event-tagging design, §4 delta 3). Opt-in per recording: nothing runs automatically. Detections link when the same label recurs within max_gap_secs and the boxes' IoU clears iou_threshold; an occlusion gap keeps the track with disjoint spans (counted in stats, never smoothed); cross_shot=false (default) refuses merges across shot boundaries when the source pass was shot-chunked; singleton detections stay unlinked and are named in stats. Span ranges tighten to the source frame's PTS ± half the sampling interval. Boxes and confidences are re-validated (a violation rejects the whole stitch, nothing stored); a malformed source layer — wrong kind, missing box/frame anchor, or an item whose frame asset has no generation params with source_pts_sec — fails as invalid_argument naming the layer; a source with no detections returns a named no_detections note and stores nothing. The derived layer records provenance model deterministic:track-stitcher with the versioned algorithm label and every parameter; source media bytes are never modified."
+        description = "Stitch one stored object layer's detections into deterministic tracks — a derived kind=object layer whose items carry track_id, span identity, and the per-frame detections in payload (S2 of the visual-event-tagging design, §4 delta 3). Opt-in per recording: nothing runs automatically. Detections link when the same label recurs within max_gap_secs and the boxes' IoU clears iou_threshold; an occlusion gap keeps the track with disjoint spans (counted in stats, never smoothed); cross_shot=false (default) refuses merges across shot boundaries when the source pass was shot-chunked; singleton detections stay unlinked and are named in stats. Span ranges tighten to the source frame's PTS ± half the sampling interval. Boxes and confidences are re-validated (a violation rejects the whole stitch, nothing stored); a malformed source layer — wrong kind, another recording's layer, missing box/frame anchor, or an item whose frame asset has no generation params with source_pts_sec — fails as invalid_argument naming the layer; a source with no detections returns a named no_detections note and stores nothing. The derived layer records provenance model deterministic:track-stitcher with the versioned algorithm label and every parameter; source media bytes are never modified."
     )]
     pub async fn layers_stitch_tracks(
         &self,
@@ -1301,6 +1337,15 @@ impl MediaServer {
                      (a layers_semantic_pass output)",
                     request.layer_id,
                     record.kind.as_str()
+                )));
+            }
+            // The derived layer is stored under media_path with the source
+            // layer's seconds: stitching one recording's detections onto
+            // another stored tracks for moments that recording does not have.
+            if record.media_path != request.media_path {
+                return Err(McpToolError::invalid_argument(format!(
+                    "layer {} annotates {}, not {}",
+                    request.layer_id, record.media_path, request.media_path
                 )));
             }
             if record.items.is_empty() {

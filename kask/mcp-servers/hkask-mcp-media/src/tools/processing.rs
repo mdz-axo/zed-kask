@@ -228,10 +228,54 @@ pub(crate) fn compose_collage_grid(
     canvas
 }
 
+/// What `video_caption` can be asked to write. The prompt template has one
+/// branch per entry and none for anything else: an unlisted style rendered
+/// a prompt with no instruction and was still sent to the provider.
+pub const VIDEO_CAPTION_STYLES: [&str; 3] = ["descriptive", "summary", "hashtags"];
+
+fn optional_video_caption_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [{"type": "string", "enum": VIDEO_CAPTION_STYLES}, {"type": "null"}]})
+}
+
+/// Largest GIF width. The scaled frame is held decoded: width x height x 4
+/// bytes, so the collage's edge bound applies for the same reason.
+const MAX_GIF_WIDTH: u32 = MAX_COLLAGE_EDGE;
+/// A GIF frame delay is a whole number of hundredths of a second.
+const MAX_GIF_FPS: u32 = 100;
+
+/// Probe a source a video tool is about to decode: it must be media and
+/// hold a video stream. `path` is what ffprobe opens (the source, or its
+/// private snapshot); a refusal names `source`, the caller's argument.
+pub(crate) async fn require_video_stream(
+    ffmpeg: &FfmpegRunner,
+    source: &str,
+    path: &str,
+    operation: &str,
+) -> Result<crate::video::ffmpeg::VideoProbeInfo, McpToolError> {
+    let probe = ffmpeg.probe(path).await.map_err(|error| match error {
+        MediaError::NotMedia { reason, .. } => map_media_error(MediaError::NotMedia {
+            input: source.to_string(),
+            reason,
+        }),
+        other => map_media_error(other),
+    })?;
+    // The kind the layer passes already answer with for the same case
+    // (pinned there as the named degradation kind).
+    if !probe.has_video_stream {
+        return Err(McpToolError::failed_precondition(format!(
+            "{operation} requires a video stream; {source} has none"
+        )));
+    }
+    Ok(probe)
+}
+
 /// Captioning is explicitly bounded visual sampling, not whole-recording analysis.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SampledVideoCaptionRequest {
     pub video_url: String,
+    /// What to write: "descriptive" (default), "summary" or "hashtags".
+    #[schemars(schema_with = "optional_video_caption_style_schema")]
     pub style: Option<String>,
     /// Minimum separation between selected source frames in seconds.
     #[serde(default = "caption_interval")]
@@ -577,7 +621,7 @@ impl MediaServer {
     /// post: the durable output, gallery row, lineage, result id, and media-block id agree.
     /// [P1] Constraining: any publication failure removes the output and coupled rows.
     #[tool(
-        description = "Trim media to specified start/end times using local ffmpeg — video inputs clip through a keyframe-aligned segment plan (boundary spans re-encode for a frame-exact cut; interior keyframe-aligned GOPs stream-copy), audio inputs decode to wav; the published asset kind follows the input."
+        description = "Trim media to specified start/end times using local ffmpeg — a recording with a video stream clips through a keyframe-aligned segment plan (boundary spans re-encode for a frame-exact cut; interior keyframe-aligned GOPs stream-copy) into an MP4; a recording without one is cut on the sample into a PCM WAV in its own sample format. The route follows the streams the file holds, not its name. A range that starts at or past the end of the recording is refused; one that runs past the end is cut at the end, and end_sec and duration_sec report what was cut."
     )]
     pub async fn video_clip(
         &self,
@@ -593,18 +637,17 @@ impl MediaServer {
             self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
 
-            let params = ClipEffectiveParams {
-                source: &video_url,
-                start_sec,
-                end_sec,
-                duration_sec: end_sec - start_sec,
-            };
-            let output = self
+            let (output, cut_end_sec) = self
                 .ffmpeg
-                .clip(params.source, params.start_sec, params.end_sec)
+                .clip_bounded(&video_url, start_sec, end_sec)
                 .await
                 .map_err(map_media_error)?;
-            let effective_params = LocalVideoEffectiveParams::Clip(params);
+            let effective_params = LocalVideoEffectiveParams::Clip(ClipEffectiveParams {
+                source: &video_url,
+                start_sec,
+                end_sec: cut_end_sec,
+                duration_sec: cut_end_sec - start_sec,
+            });
             // The publication format follows the real output (2026-10-27):
             // audio inputs decode to wav — publishing them as the op's
             // default Mp4 would mislabel the asset's kind and display hint.
@@ -625,7 +668,9 @@ impl MediaServer {
         .await
     }
 
-    #[tool(description = "Convert a video segment to GIF format using local ffmpeg.")]
+    #[tool(
+        description = "Convert a video segment to an animated GIF using local ffmpeg and publish it. Defaults: start_sec 0, duration_sec 5, width 480 (height follows the aspect ratio), fps 10. width is 1 to 8192 and fps 1 to 100. The source must hold a video stream and start_sec must lie inside it."
+    )]
     pub async fn video_to_gif(
         &self,
         Parameters(VideoToGifRequest {
@@ -643,21 +688,35 @@ impl MediaServer {
             let w = width.unwrap_or(480);
             let f = fps.unwrap_or(10);
 
-            if start < 0.0 || dur <= 0.0 {
+            // JSON numbers beyond f32 decode to infinity, which ffmpeg
+            // rejects only after it has been spawned.
+            if !start.is_finite() || !dur.is_finite() || start < 0.0 || dur <= 0.0 {
                 return Err(McpToolError::invalid_argument(
-                    "timestamps must be non-negative",
+                    "start_sec must be finite and >= 0; duration_sec must be finite and > 0",
                 ));
             }
-            if w == 0 {
-                return Err(McpToolError::invalid_argument(
-                    "width must be greater than 0",
-                ));
+            if !(1..=MAX_GIF_WIDTH).contains(&w) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "width must be between 1 and {MAX_GIF_WIDTH} pixels, got {w}"
+                )));
             }
             if f == 0 {
-                return Err(McpToolError::invalid_argument("fps must be greater than 0"));
+                return Err(McpToolError::invalid_argument(format!(
+                    "fps must be between 1 and {MAX_GIF_FPS}, got {f}"
+                )));
             }
             self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
+            let probe =
+                require_video_stream(&self.ffmpeg, &video_url, &video_url, "GIF conversion")
+                    .await?;
+            if start >= probe.duration_secs {
+                return Err(map_media_error(MediaError::RangeOutsideMedia {
+                    input: video_url.clone(),
+                    start_sec: start,
+                    duration_secs: probe.duration_secs,
+                }));
+            }
             let params = GifEffectiveParams {
                 source: &video_url,
                 start_sec: start,
@@ -689,7 +748,9 @@ impl MediaServer {
         .await
     }
 
-    #[tool(description = "Add text caption overlay to a video using local ffmpeg.")]
+    #[tool(
+        description = "Draw a text caption over a video using local ffmpeg and publish the result as an MP4. position is top, center or bottom (default bottom); font_size defaults to 24. The text is drawn exactly as written, line breaks included. The source must hold a video stream."
+    )]
     pub async fn video_add_caption(
         &self,
         Parameters(VideoAddCaptionRequest {
@@ -703,13 +764,24 @@ impl MediaServer {
             let _admission = self.admit_heavy_operation()?;
             let pos = position.as_deref().unwrap_or("bottom");
             let size = font_size.unwrap_or(24);
+            crate::tools::gallery::require_one_of(
+                "position",
+                pos,
+                &crate::video::ffmpeg::CAPTION_POSITIONS,
+            )?;
             if size == 0 {
                 return Err(McpToolError::invalid_argument(
                     "font_size must be greater than 0",
                 ));
             }
+            if text.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "text is blank: there is no caption to draw",
+                ));
+            }
             self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
+            require_video_stream(&self.ffmpeg, &video_url, &video_url, "a caption").await?;
             let params = CaptionEffectiveParams {
                 source: &video_url,
                 text: &text,
@@ -739,7 +811,9 @@ impl MediaServer {
         .await
     }
 
-    #[tool(description = "Concatenate multiple video clips into one using ffmpeg.")]
+    #[tool(
+        description = "Join 2 to 64 video clips end to end, in order, using local ffmpeg and publish the result as an MP4. The clips are joined without re-encoding, so they must agree: each holds a video stream in the same codec, and either all or none hold audio, in the same codec. Clips that differ are refused naming the clip and the difference."
+    )]
     pub async fn video_concat(
         &self,
         Parameters(VideoConcatRequest { video_urls }): Parameters<VideoConcatRequest>,
@@ -759,7 +833,7 @@ impl MediaServer {
             };
             let output = self
                 .ffmpeg
-                .concat(params.sources)
+                .concat_clips(params.sources)
                 .await
                 .map_err(map_media_error)?;
             let effective_params = LocalVideoEffectiveParams::Concat(params);
@@ -776,7 +850,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Analyze sampled video frames with a vision model. Returns requested sampling coverage, actual source-frame timestamps, and explicit visual-only limitations; not whole-recording analysis."
+        description = "Analyze sampled video frames with a vision model. style is descriptive (default), summary or hashtags. Returns requested sampling coverage, actual source-frame timestamps, and explicit visual-only limitations; not whole-recording analysis."
     )]
     pub async fn video_caption(
         &self,
@@ -788,6 +862,8 @@ impl MediaServer {
         }): Parameters<SampledVideoCaptionRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_caption", async {
+            let style_str = style.as_deref().unwrap_or("descriptive");
+            crate::tools::gallery::require_one_of("style", style_str, &VIDEO_CAPTION_STYLES)?;
             let _admission = self.admit_heavy_operation()?;
             ensure_local_input_exists(&video_url)?;
             if !crate::is_local_media_path(&video_url) {
@@ -795,9 +871,9 @@ impl MediaServer {
             }
 
             validate_sampling(interval_sec, max_frames)?;
-            let style_str = style.as_deref().unwrap_or("descriptive");
             self.require_ffmpeg()?;
             let source = SourceSnapshot::capture(&self.gallery_store, &video_url).await?;
+            require_video_stream(&self.ffmpeg, &video_url, &source.path(), "captioning").await?;
 
             let frames = self
                 .ffmpeg
@@ -900,6 +976,8 @@ impl MediaServer {
             self.require_ffmpeg()?;
 
             let source = SourceSnapshot::capture(&self.gallery_store, &video_url).await?;
+            require_video_stream(&self.ffmpeg, &video_url, &source.path(), "frame extraction")
+                .await?;
             let frames = self
                 .ffmpeg
                 .extract_keyframes(&source.path(), interval_sec, max_frames)
@@ -1205,8 +1283,11 @@ mod curation_tests {
             std::ffi::OsStr::new("mock/visual"),
         );
         let root = tempfile::tempdir()?;
+        // A real video: the tool probes the source before the (fake)
+        // extractor runs.
         let source = root.path().join("original.mp4");
-        std::fs::write(&source, b"original bytes")?;
+        crate::test_support::media_fixture(&source, &[]).await?;
+        let source_bytes = std::fs::read(&source)?;
         let image = root.path().join("sample.jpg");
         image::RgbImage::new(2, 2).save(&image)?;
         let script = root.path().join("sample.sh");
@@ -1246,7 +1327,7 @@ mod curation_tests {
                 .ok_or("missing limitation")?
                 .contains("Sampled visual frames only")
         );
-        assert_eq!(std::fs::read(source)?, b"original bytes");
+        assert_eq!(std::fs::read(source)?, source_bytes);
         Ok(())
     }
 
@@ -1260,9 +1341,12 @@ mod curation_tests {
         let _lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
         let root = tempfile::tempdir()?;
         let _guard = EnvironmentGuard::set("HKASK_ARTIFACTS_DIR", root.path().as_os_str());
+        // A real video: the tool probes the source before the (fake)
+        // extractor runs.
         let original = root.path().join("original.mp4");
-        let original_bytes = b"immutable source revision";
-        std::fs::write(&original, original_bytes)?;
+        crate::test_support::media_fixture(&original, &[]).await?;
+        let original_bytes = std::fs::read(&original)?;
+        let original_bytes = original_bytes.as_slice();
         let fixture = root.path().join("fixture.jpg");
         image::RgbImage::new(2, 2).save(&fixture)?;
         let script = root.path().join("extract.sh");
