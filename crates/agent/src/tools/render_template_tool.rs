@@ -2031,6 +2031,73 @@ mod finalizer_handoff_tests {
         }
     }
 
+    /// The conflict template asks for classifications and a strategy; the
+    /// ranking, the winner and the escalation cases are PS-2's. A template
+    /// that asked the model for a rank or a winner would duplicate the gate
+    /// and let the two disagree.
+    #[test]
+    fn pragmatic_semantics_conflict_template_classifies_and_does_not_rank() {
+        let render = |conflicts: serde_json::Value, statements: serde_json::Value| {
+            render_template_for_test(
+                "pragmatic-semantics/semantics-conflict-resolve",
+                json!({
+                    "provenance_result": {"conflicts_detected": conflicts},
+                    "classification_result": {"provenance": "runtime"},
+                    "statements": statements
+                }),
+            )
+            .expect("conflict-resolve renders")
+        };
+        let detected = render(
+            json!(true),
+            json!([{"id": "S1", "statement": "A"}, {"id": "S2", "statement": "B"}]),
+        );
+        assert!(detected.contains("## Conflict Detected"));
+        assert!(detected.contains("## Statements (the multi-statement case)"));
+        let output = detected
+            .rsplit_once("## Output Requirements")
+            .expect("output section")
+            .1;
+        let block = output.split_once("```json\n").expect("JSON block").1;
+        let shape = block.split_once("\n```").expect("closed block").0;
+        let top_level: Vec<&str> = shape
+            .lines()
+            .filter_map(|line| line.strip_prefix("  \""))
+            .filter_map(|rest| rest.split_once('"'))
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(
+            top_level,
+            ["statements", "resolution_strategy", "reasoning"]
+        );
+        for computed in [
+            "\"rank\"",
+            "\"winner\"",
+            "\"ranked_statements\"",
+            "escalate\"",
+        ] {
+            assert!(
+                !shape.contains(computed),
+                "{computed} is PS-2's, not the model's"
+            );
+        }
+        // Every tier PS-2 reads is asked for, under the name PS-2 reads.
+        for tier in [
+            "\"id\"",
+            "\"ontological_mode\"",
+            "\"epistemic_mode\"",
+            "\"constraint_force\"",
+            "\"provenance\"",
+            "\"ontology_anchor\"",
+        ] {
+            assert!(shape.contains(tier), "{tier} missing from the output shape");
+        }
+
+        let none = render(json!(false), serde_json::Value::Null);
+        assert!(none.contains("## No Conflicts Detected"));
+        assert!(!none.contains("## Statements (the multi-statement case)"));
+    }
+
     fn planner_context(questions: Value) -> Value {
         json!({
             "context_summary": "Question handoff fixture, not an approved implementation plan.",

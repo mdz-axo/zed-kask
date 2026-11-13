@@ -802,6 +802,7 @@ form: "(= (+ a b) 3)"
         let pragmatic_semantics = skill_candidate("pragmatic-semantics", "domain_anchored");
         let domain_spec_checked = json!({
             "base_confidence": 0.7,
+            "provenance": "runtime",
             "domain_anchored": true,
             "sumo_anchored": false,
             "spec_checked": true,
@@ -813,6 +814,7 @@ form: "(= (+ a b) 3)"
         );
         let unanchored = json!({
             "base_confidence": 0.7,
+            "provenance": "runtime",
             "domain_anchored": false,
             "sumo_anchored": false,
             "spec_checked": false,
@@ -840,6 +842,7 @@ form: "(= (+ a b) 3)"
             // derived value is the modifier itself.
             let mut env = json!({
                 "base_confidence": 0.5,
+                "provenance": "runtime",
                 "domain_anchored": false,
                 "sumo_anchored": false,
                 "spec_checked": false,
@@ -862,6 +865,7 @@ form: "(= (+ a b) 3)"
             &mutated,
             &json!({
                 "base_confidence": 0.5,
+                "provenance": "runtime",
                 "domain_anchored": true,
                 "sumo_anchored": false,
                 "spec_checked": false,
@@ -2310,6 +2314,532 @@ form: "(= (+ a b) 3)"
         );
         assert_eq!(surplus["verdict"], json!("viable"));
         assert_eq!(surplus["deficit"], json!(-1));
+    }
+
+    #[test]
+    fn scientific_gate_ps_1_applies_modifiers_once_then_the_provenance_caps() {
+        let form = skill_candidate("pragmatic-semantics", "domain_anchored");
+        let eval = |base: f64, provenance: &str, flags: [bool; 4]| -> f64 {
+            eval_sandboxed(
+                &form,
+                &json!({
+                    "base_confidence": base, "provenance": provenance,
+                    "domain_anchored": flags[0], "sumo_anchored": flags[1],
+                    "spec_checked": flags[2], "unanchored": flags[3]
+                }),
+            )
+            .unwrap_or_else(|error| panic!("PS-1 ({provenance}, {base}): {error}"))
+            .as_f64()
+            .expect("PS-1 returns a number")
+        };
+        let close = |actual: f64, expected: f64, case: &str| {
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{case}: {actual} != {expected}"
+            );
+        };
+        let none = [false, false, false, false];
+        close(eval(0.7, "runtime", none), 0.7, "no modifier");
+        close(
+            eval(0.7, "runtime", [true, false, false, false]),
+            0.75,
+            "domain anchor",
+        );
+        close(
+            eval(0.7, "runtime", [false, true, false, false]),
+            0.73,
+            "SUMO anchor",
+        );
+        close(
+            eval(0.7, "runtime", [false, false, false, true]),
+            0.6,
+            "unanchored",
+        );
+        close(
+            eval(0.99, "runtime", [true, false, false, false]),
+            1.0,
+            "upper clamp",
+        );
+        close(
+            eval(0.05, "runtime", [false, false, false, true]),
+            0.0,
+            "lower clamp",
+        );
+        // Unknown provenance is capped at 0.3 however confident the base.
+        close(
+            eval(0.9, "unknown", [true, false, false, false]),
+            0.3,
+            "unknown cap",
+        );
+        close(
+            eval(0.2, "unknown", none),
+            0.2,
+            "unknown below the cap is untouched",
+        );
+        // A specification that was not checked is capped like unknown;
+        // a checked one is held at 0.8 or above.
+        close(
+            eval(0.9, "specification", none),
+            0.3,
+            "unchecked specification",
+        );
+        close(
+            eval(0.5, "specification", [false, false, true, false]),
+            0.8,
+            "checked floor",
+        );
+        close(
+            eval(0.9, "specification", [false, false, true, false]),
+            0.95,
+            "checked above floor",
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ps_2_ranks_by_strict_domination() {
+        let form = skill_candidate("pragmatic-semantics", "define anchor-rank");
+        let statement =
+            |id: &str, mode: &str, epistemic: &str, force: &str, provenance: &str, anchor: &str| {
+                json!({
+                    "id": id, "statement": "fixture", "ontological_mode": mode,
+                    "epistemic_mode": epistemic, "constraint_force": force,
+                    "provenance": provenance, "ontology_anchor": anchor
+                })
+            };
+        let rank = |case: &str, statements: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"statements": statements}))
+                .unwrap_or_else(|error| panic!("{case}: PS-2 failed to evaluate: {error}"))
+        };
+
+        // Tier 1 dominates: a subjunctive, unanchored OUGHT of unknown
+        // provenance beats a declarative, specification-backed IS.
+        let ought_beats_is = rank(
+            "OUGHT over IS",
+            json!([
+                statement(
+                    "is",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "specification",
+                    "omc:Asset"
+                ),
+                statement(
+                    "ought",
+                    "OUGHT",
+                    "subjunctive",
+                    "Hypothesis",
+                    "unknown",
+                    "unanchored"
+                )
+            ]),
+        );
+        assert_eq!(ought_beats_is["outcome"], json!("ranked"));
+        assert_eq!(ought_beats_is["winner"], json!("ought"));
+        assert_eq!(ought_beats_is["winner_ranks"], json!([1, 3, 5, 8, 9]));
+
+        // Each lower tier decides only when every higher tier is equal.
+        for (case, a, b, winner) in [
+            (
+                "tier 2",
+                statement(
+                    "a",
+                    "OUGHT",
+                    "probabilistic",
+                    "Prohibition",
+                    "specification",
+                    "omc:X",
+                ),
+                statement(
+                    "b",
+                    "OUGHT",
+                    "declarative",
+                    "Hypothesis",
+                    "unknown",
+                    "unanchored",
+                ),
+                "b",
+            ),
+            (
+                "tier 3",
+                statement(
+                    "a",
+                    "OUGHT",
+                    "declarative",
+                    "Guideline",
+                    "specification",
+                    "omc:X",
+                ),
+                statement(
+                    "b",
+                    "OUGHT",
+                    "declarative",
+                    "Guardrail",
+                    "unknown",
+                    "unanchored",
+                ),
+                "b",
+            ),
+            (
+                "tier 4: external ranks below memory and above inference",
+                statement("a", "IS", "declarative", "Evidence", "inference", "omc:X"),
+                statement(
+                    "b",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "external",
+                    "unanchored",
+                ),
+                "b",
+            ),
+            (
+                "tier 4: memory over external",
+                statement("a", "IS", "declarative", "Evidence", "memory", "unanchored"),
+                statement("b", "IS", "declarative", "Evidence", "external", "omc:X"),
+                "a",
+            ),
+            (
+                "tier 5: domain supplement over SUMO",
+                statement(
+                    "a",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "sumo:Process",
+                ),
+                statement(
+                    "b",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "sepio:Assertion",
+                ),
+                "b",
+            ),
+            (
+                "tier 5: core over unanchored",
+                statement(
+                    "a",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "unanchored",
+                ),
+                statement("b", "IS", "declarative", "Evidence", "runtime", "5w1h:What"),
+                "b",
+            ),
+        ] {
+            let out = rank(case, json!([a, b]));
+            assert_eq!(out["outcome"], json!("ranked"), "{case}");
+            assert_eq!(out["winner"], json!(winner), "{case}");
+        }
+
+        // Three statements: the winner is found wherever it sits.
+        let three = rank(
+            "three statements",
+            json!([
+                statement(
+                    "low",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "5w1h:What"
+                ),
+                statement(
+                    "top",
+                    "OUGHT",
+                    "declarative",
+                    "Guardrail",
+                    "design",
+                    "pko:Step"
+                ),
+                statement(
+                    "mid",
+                    "OUGHT",
+                    "probabilistic",
+                    "Guideline",
+                    "design",
+                    "pko:Step"
+                )
+            ]),
+        );
+        assert_eq!(three["winner"], json!("top"));
+
+        // Two Prohibitions escalate even though one outranks the other.
+        let prohibitions = rank(
+            "two Prohibitions",
+            json!([
+                statement(
+                    "p1",
+                    "OUGHT",
+                    "declarative",
+                    "Prohibition",
+                    "specification",
+                    "omc:X"
+                ),
+                statement(
+                    "p2",
+                    "OUGHT",
+                    "declarative",
+                    "Prohibition",
+                    "design",
+                    "omc:X"
+                )
+            ]),
+        );
+        assert_eq!(prohibitions["outcome"], json!("escalate_prohibitions"));
+
+        // Equal on all five tiers (dcterms and bibo share a rank): a tie.
+        let tie = rank(
+            "five-tier tie",
+            json!([
+                statement(
+                    "t1",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "dcterms:creator"
+                ),
+                statement(
+                    "t2",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "bibo:Article"
+                )
+            ]),
+        );
+        assert_eq!(tie["outcome"], json!("escalate_tie"));
+        assert_eq!(tie["winner"], json!("t1"));
+        assert_eq!(
+            tie["tied"],
+            json!(["t2"]),
+            "the statements tied with the winner"
+        );
+
+        for (case, bad) in [
+            (
+                "unknown mode",
+                statement(
+                    "x",
+                    "MAYBE",
+                    "declarative",
+                    "Evidence",
+                    "runtime",
+                    "5w1h:What",
+                ),
+            ),
+            (
+                "unknown force",
+                statement("x", "IS", "declarative", "Rule", "runtime", "5w1h:What"),
+            ),
+            (
+                "capitalised provenance",
+                statement("x", "IS", "declarative", "Evidence", "Runtime", "5w1h:What"),
+            ),
+        ] {
+            let out = rank(
+                case,
+                json!([
+                    bad,
+                    statement(
+                        "ok",
+                        "IS",
+                        "declarative",
+                        "Evidence",
+                        "runtime",
+                        "5w1h:What"
+                    )
+                ]),
+            );
+            assert_eq!(out["outcome"], json!("invalid_classification"), "{case}");
+            assert_eq!(out["invalid"], json!(["x"]), "{case}");
+        }
+
+        // An anchor outside the Tier-5 ranking is a valid classification.
+        // It never matters while a higher tier decides, and escalates when
+        // tiers 1-4 tie.
+        let decided_higher = rank(
+            "unranked anchor, decided at tier 4",
+            json!([
+                statement(
+                    "q",
+                    "IS",
+                    "declarative",
+                    "Evidence",
+                    "design",
+                    "qb:Observation"
+                ),
+                statement("w", "IS", "declarative", "Evidence", "runtime", "omc:Asset")
+            ]),
+        );
+        assert_eq!(decided_higher["outcome"], json!("ranked"));
+        assert_eq!(decided_higher["winner"], json!("q"));
+        for first in ["q", "w"] {
+            let (a, b) = if first == "q" {
+                ("qb:Observation", "5w1h:What")
+            } else {
+                ("5w1h:What", "qb:Observation")
+            };
+            let out = rank(
+                "unranked anchor, tiers 1-4 tie",
+                json!([
+                    statement("first", "IS", "declarative", "Evidence", "runtime", a),
+                    statement("second", "IS", "declarative", "Evidence", "runtime", b)
+                ]),
+            );
+            assert_eq!(out["outcome"], json!("escalate_unranked_anchor"), "{first}");
+            assert_eq!(out["unranked_anchor"], json!(["second"]), "{first}");
+        }
+
+        let single = rank(
+            "one statement",
+            json!([statement(
+                "only",
+                "IS",
+                "declarative",
+                "Evidence",
+                "runtime",
+                "5w1h:What"
+            )]),
+        );
+        assert_eq!(single["outcome"], json!("no_conflict"));
+        assert_eq!(
+            rank("no statements", json!([]))["outcome"],
+            json!("no_conflict")
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ps_3_names_unrouted_and_unnamed_steps() {
+        let form = skill_candidate("pragmatic-semantics", "define regimes");
+        let check = |case: &str, tags: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"tags": tags}))
+                .unwrap_or_else(|error| panic!("{case}: PS-3 failed to evaluate: {error}"))
+        };
+        let clean = check(
+            "clean table",
+            json!([
+                {"step": "1", "regime": "D", "oracle": "lisp_eval"},
+                {"step": "2", "regime": "P:propose-verify", "oracle": "PS-2"},
+                {"step": "3", "regime": "P:forecast", "oracle": "resolved outcomes"}
+            ]),
+        );
+        assert_eq!(clean["passed"], json!(true));
+        assert_eq!(clean["d_steps"], json!(1));
+        assert_eq!(clean["p_steps"], json!(2));
+
+        let unrouted = check(
+            "unknown regime",
+            json!([
+                {"step": "1", "regime": "D", "oracle": "cargo"},
+                {"step": "2", "regime": "P", "oracle": "a gate"}
+            ]),
+        );
+        assert_eq!(unrouted["passed"], json!(false));
+        assert_eq!(unrouted["unrouted"], json!(["2"]));
+
+        // A D tag with no oracle fails, as a P tag with no gate does.
+        let unnamed = check(
+            "no oracle",
+            json!([
+                {"step": "1", "regime": "D", "oracle": ""},
+                {"step": "2", "regime": "P:probabilistic", "oracle": ""},
+                {"step": "3", "regime": "D", "oracle": "lean_check"}
+            ]),
+        );
+        assert_eq!(unnamed["passed"], json!(false));
+        assert_eq!(unnamed["unnamed_oracle"], json!(["1", "2"]));
+
+        assert_eq!(check("empty table", json!([]))["passed"], json!(false));
+    }
+
+    #[test]
+    fn scientific_gate_ps_convergence_covers_all_three_analyses() {
+        let form = skill_candidate("pragmatic-semantics", "classification_provenance_unknown");
+        let base = json!({
+            "classification_provenance": "implementation", "unverifiable_gaps": [],
+            "chain_confidence": 0.85, "conflict_outcome": "no_conflict"
+        });
+        let gate = |case: &str, changes: serde_json::Value| {
+            eval_sandboxed(&form, &scientific_env(&base, changes))
+                .unwrap_or_else(|error| panic!("{case}: convergence failed to evaluate: {error}"))
+        };
+        assert_eq!(gate("clean", json!({}))["converged"], json!(true));
+        assert_eq!(
+            gate("ranked conflict", json!({"conflict_outcome": "ranked"}))["converged"],
+            json!(true)
+        );
+        assert_eq!(
+            gate("at the threshold", json!({"chain_confidence": 0.8}))["converged"],
+            json!(true)
+        );
+
+        for (case, changes, reason) in [
+            (
+                "a gap",
+                json!({"unverifiable_gaps": ["missing spec"]}),
+                "unverifiable_gaps",
+            ),
+            (
+                "low confidence",
+                json!({"chain_confidence": 0.79}),
+                "chain_confidence_below_0.8",
+            ),
+            // The two the former gate passed over a gap-free trace.
+            (
+                "unknown provenance",
+                json!({"classification_provenance": "unknown"}),
+                "classification_provenance_unknown",
+            ),
+            (
+                "skipped conflict step",
+                json!({"conflict_outcome": "skipped"}),
+                "conflict_resolution_skipped",
+            ),
+            (
+                "escalated tie",
+                json!({"conflict_outcome": "escalate_tie"}),
+                "conflict_unresolved",
+            ),
+            (
+                "two Prohibitions",
+                json!({"conflict_outcome": "escalate_prohibitions"}),
+                "conflict_unresolved",
+            ),
+            (
+                "invalid classification",
+                json!({"conflict_outcome": "invalid_classification"}),
+                "conflict_unresolved",
+            ),
+        ] {
+            let out = gate(case, changes);
+            assert_eq!(out["converged"], json!(false), "{case}");
+            assert_eq!(out["reasons"], json!([reason]), "{case}");
+        }
+        let several = gate(
+            "every condition fails",
+            json!({
+                "classification_provenance": "unknown", "unverifiable_gaps": ["g"],
+                "chain_confidence": 0.1, "conflict_outcome": "skipped"
+            }),
+        );
+        assert_eq!(
+            several["reasons"],
+            json!([
+                "classification_provenance_unknown",
+                "unverifiable_gaps",
+                "chain_confidence_below_0.8",
+                "conflict_resolution_skipped"
+            ])
+        );
     }
 
     #[test]

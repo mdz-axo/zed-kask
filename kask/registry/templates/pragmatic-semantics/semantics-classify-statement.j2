@@ -144,7 +144,4 @@ Respond with a JSON object:
 - Apply the Specification confidence floor only when the named specification and its current applicability have actually been checked; a path supplied as context is not verification. Otherwise mark provenance as unknown and do not apply the floor or ontology boost to compensate for missing evidence.
 - Do NOT apply ontology confidence modifiers here. Emit `base_confidence` unadjusted; the `PS-1` `lisp_eval` gate applies the domain-supplement (+0.05), SUMO (+0.03), checked-specification (+0.05), and unanchored (−0.10) modifiers after Step 2 `onto_anchor` resolution. Applying them here double-counts them.
 - Unanchored statements (no ontology tier): flag as ontological noise per P5.2 in `reasoning`; the confidence reduction itself is applied by `PS-1`, not here.
-- Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
-- Preserve the original prompt structure and formatting.
-- Handle missing variables gracefully (leave as-is or use default if specified).
 
