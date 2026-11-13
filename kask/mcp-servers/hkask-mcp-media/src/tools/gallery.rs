@@ -97,6 +97,9 @@ fn validate_analysis_target(
     image_count: usize,
     max_images: usize,
 ) -> Result<AnalysisTarget, McpToolError> {
+    // The vocabulary first: an unknown mode is reported as that, whatever
+    // else is wrong with the request.
+    require_one_of("mode", mode, &ANALYZE_MODES)?;
     if max_images == 0 {
         return Err(McpToolError::invalid_argument(
             "max_images must be greater than zero",
@@ -143,9 +146,13 @@ fn validate_analysis_target(
                 .collect();
             Ok(AnalysisTarget::Indices(deduplicated))
         }
-        other => Err(McpToolError::invalid_argument(format!(
-            "invalid mode '{other}': must be new, all, or selection"
-        ))),
+        other => Err(require_one_of("mode", other, &ANALYZE_MODES)
+            .err()
+            .unwrap_or_else(|| {
+                McpToolError::internal(format!(
+                    "analysis mode '{other}' is enumerated but has no handler"
+                ))
+            })),
     }
 }
 
@@ -201,7 +208,26 @@ fn hash_file_streaming(path: &std::path::Path) -> std::io::Result<(String, u64)>
 const MAX_ASSET_PAGE: usize = 500;
 /// `gallery_timeline` bounds for both the period count and images per period.
 const MAX_TIMELINE_PERIODS: usize = 500;
-use crate::types::{CAPTION_STYLES, FACE_STATUSES};
+use crate::types::{
+    ANALYZE_MODES, ANNOTATION_KINDS, CAPTION_STYLES, FACE_STATUSES, GALLERY_MODES,
+    IMPORT_MEDIA_TYPES, SEARCH_MODES, TIMELINE_PERIODS,
+};
+
+/// The one refusal for a value outside a closed vocabulary: the same list
+/// the tool's input schema enumerates, so the two cannot drift apart.
+pub(crate) fn require_one_of(
+    field: &str,
+    value: &str,
+    allowed: &[&str],
+) -> Result<(), McpToolError> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+    Err(McpToolError::invalid_argument(format!(
+        "unknown {field} '{value}' — {field} is one of {}",
+        allowed.join(", ")
+    )))
+}
 
 /// The timeline bucket for an EXIF `DateTimeOriginal` (`YYYY:MM:DD hh:mm:ss`),
 /// or `undated`. The date is validated before it is sliced: an absent or
@@ -294,9 +320,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_annotation_create", async {
             validate_annotation_value(&request.value)?;
-            if !matches!(request.kind.as_str(), "tag" | "note") {
-                return Err(McpToolError::invalid_argument("kind must be tag or note"));
-            }
+            require_one_of("kind", &request.kind, &ANNOTATION_KINDS)?;
             self.gallery_store.get_by_id(&request.gallery_asset_id).map_err(map_gallery_store_error)?;
             let annotation = self.gallery_store.tag_image(&request.gallery_asset_id, &request.kind, &request.value, 1.0, "user")
                 .map_err(map_gallery_store_error)?;
@@ -361,17 +385,8 @@ impl MediaServer {
         }): Parameters<GalleryOrganizeRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_organize", async {
-            let gallery_mode = match mode.as_str() {
-                "read-only" => GalleryMode::ReadOnly,
-                "copy-on-write" => GalleryMode::CopyOnWrite,
-                "destructive" => GalleryMode::Destructive,
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "Invalid mode '{}': must be read-only, copy-on-write, or destructive",
-                        other
-                    )));
-                }
-            };
+            require_one_of("mode", &mode, &GALLERY_MODES)?;
+            let gallery_mode: GalleryMode = mode.parse().map_err(map_gallery_store_error)?;
 
             let raw_path = PathBuf::from(&path);
             hkask_mcp_server::ensure_existing_dir(&raw_path, "Gallery path")?;
@@ -459,11 +474,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_search", async {
             let mode = mode.as_deref().unwrap_or("tags");
-            if !matches!(mode, "tags" | "semantic") {
-                return Err(McpToolError::invalid_argument(format!(
-                    "mode must be 'tags' or 'semantic', got '{mode}'"
-                )));
-            }
+            require_one_of("mode", mode, &SEARCH_MODES)?;
             if mode == "tags" && query.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "query must not be empty in tags mode",
@@ -890,21 +901,16 @@ impl MediaServer {
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "describe_image", async {
+            // An unknown style rendered an empty instruction block: the
+            // model was sent a prompt with no task and billed for it.
+            // Checked before admission and before any DNS lookup.
+            let style_str = style.as_deref().unwrap_or("descriptive");
+            require_one_of("style", style_str, &CAPTION_STYLES)?;
             let _admission = self.admit_heavy_operation()?;
             // Gallery asset paths are local files; the SSRF validator is for
             // network URLs (see `is_local_media_path`).
             if !crate::is_local_media_path(&image_url) {
                 validate_tool_url_with_dns(&image_url).await?;
-            }
-
-            // An unknown style rendered an empty instruction block: the
-            // model was sent a prompt with no task and billed for it.
-            let style_str = style.as_deref().unwrap_or("descriptive");
-            if !CAPTION_STYLES.contains(&style_str) {
-                return Err(McpToolError::invalid_argument(format!(
-                    "unknown style '{style_str}' — style is one of {}",
-                    CAPTION_STYLES.join(", ")
-                )));
             }
             let mut vars = HashMap::new();
             vars.insert("style", style_str);
@@ -1224,13 +1230,8 @@ impl MediaServer {
         Parameters(FaceListRequest { status }): Parameters<FaceListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_list", async {
-            if let Some(status) = status.as_deref()
-                && !FACE_STATUSES.contains(&status)
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "unknown status '{status}' — face_list filters by {}",
-                    FACE_STATUSES.join(" or ")
-                )));
+            if let Some(status) = status.as_deref() {
+                require_one_of("status", status, &FACE_STATUSES)?;
             }
             let faces = self
                 .gallery_store
@@ -1277,11 +1278,7 @@ impl MediaServer {
         }): Parameters<GalleryTimelineRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_timeline", async {
-            if !matches!(period.as_str(), "year" | "month" | "decade") {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Invalid period '{period}': must be year, month, or decade"
-                )));
-            }
+            require_one_of("period", &period, &TIMELINE_PERIODS)?;
             validate_item_count("count", count, 1, MAX_TIMELINE_PERIODS)?;
             validate_item_count("per_period", per_period, 1, MAX_TIMELINE_PERIODS)?;
             let ga = self.access_gallery().map_err(map_media_error)?;
@@ -1608,14 +1605,11 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_add_media", async {
             let media_type = media_type.to_lowercase();
-            let (kind, fallback_ext) = match media_type.as_str() {
-                "video" => ("video", "mp4"),
-                "audio" => ("audio", "mp3"),
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "media_type must be 'video' or 'audio', got '{other}'"
-                    )));
-                }
+            require_one_of("media_type", &media_type, &IMPORT_MEDIA_TYPES)?;
+            let (kind, fallback_ext) = if media_type == "video" {
+                ("video", "mp4")
+            } else {
+                ("audio", "mp3")
             };
             hkask_mcp_server::ensure_existing_file(&path, "media file")?;
             let file_path = std::path::Path::new(&path)
@@ -2392,7 +2386,7 @@ pub(super) mod tests {
             .expect_err("a status outside the set is refused");
         assert_eq!(faces.kind, hkask_types::McpErrorKind::InvalidArgument);
         assert!(
-            faces.message.contains("valid or rejected"),
+            faces.message.contains("valid, rejected"),
             "{}",
             faces.message
         );
@@ -2581,6 +2575,167 @@ pub(super) mod tests {
             .await
             .expect_err("a missing file is named");
         assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
+        Ok(())
+    }
+
+    /// expect: What a tool's schema says it accepts, the tool accepts; what
+    /// the schema leaves out, the tool refuses naming the same list.
+    /// pre: one organized gallery of two images.
+    /// post: for each enumerated vocabulary, every listed value passes the
+    /// handler's vocabulary check (the call may fail later for another
+    /// reason, never as an unknown value) and an unlisted value is refused
+    /// with every listed value in the message.
+    /// [P1] Constraining: the schemas were enumerated from constants while the
+    /// handlers matched their own string literals; adding a value to one side
+    /// would have advertised something the tool refuses.
+    #[tokio::test]
+    async fn every_enumerated_value_is_accepted_by_its_handler()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        organize(&server, dir.path(), 2, "read-only").await?;
+        let asset = payload(
+            &server
+                .gallery_list_assets(wire(serde_json::json!({}))?)
+                .await?,
+        )["assets"][0]["id"]
+            .as_str()
+            .ok_or("asset id")?
+            .to_string();
+        let enumerated = |tool: &str, field: &str| -> Vec<String> {
+            let property = &live_input_schema(tool)["properties"][field];
+            property
+                .get("enum")
+                .or_else(|| property["anyOf"][0].get("enum"))
+                .or_else(|| property["anyOf"][0]["items"].get("enum"))
+                .and_then(|values| values.as_array())
+                .unwrap_or_else(|| panic!("{tool}.{field} is not enumerated"))
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        };
+        // (tool, field, arguments with the field set to the value). gallery_analyze,
+        // gallery_search semantic mode and describe_image reach a paid port after the
+        // vocabulary check: research_server's port panics on inference, so they are
+        // exercised only through an argument that is refused after the check.
+        type Call = Box<dyn Fn(&str) -> serde_json::Value>;
+        let calls: Vec<(&str, &str, Call)> = vec![
+            (
+                "gallery_organize",
+                "mode",
+                Box::new({
+                    let dir = dir.path().to_path_buf();
+                    move |value| serde_json::json!({"path": dir, "mode": value})
+                }),
+            ),
+            (
+                "gallery_search",
+                "tag_types",
+                Box::new(|value| serde_json::json!({"query": "zz", "tag_types": [value]})),
+            ),
+            (
+                "gallery_timeline",
+                "period",
+                Box::new(|value| serde_json::json!({"period": value})),
+            ),
+            (
+                "face_list",
+                "status",
+                Box::new(|value| serde_json::json!({"status": value})),
+            ),
+            (
+                "gallery_annotation_create",
+                "kind",
+                Box::new({
+                    let asset = asset.clone();
+                    move |value| serde_json::json!({"gallery_asset_id": asset, "kind": value, "value": "zz"})
+                }),
+            ),
+            (
+                "gallery_add_media",
+                "media_type",
+                Box::new(
+                    |value| serde_json::json!({"path": "/nonexistent/zz.mp4", "media_type": value}),
+                ),
+            ),
+            (
+                "gallery_analyze",
+                "mode",
+                Box::new(|value| serde_json::json!({"mode": value, "max_images": 0})),
+            ),
+            (
+                "gallery_analyze",
+                "pipelines",
+                Box::new(|value| serde_json::json!({"pipelines": [value], "max_images": 0})),
+            ),
+            (
+                "gallery_search",
+                "mode",
+                Box::new(|value| serde_json::json!({"query": " ", "mode": value})),
+            ),
+            (
+                "describe_image",
+                "style",
+                Box::new(
+                    |value| serde_json::json!({"image_url": "ftp://zz.invalid/zz.png", "style": value}),
+                ),
+            ),
+            (
+                "image_create_collage",
+                "layout",
+                Box::new(
+                    |value| serde_json::json!({"image_indices": [0, 1], "layout": value, "canvas_size": "1x1"}),
+                ),
+            ),
+        ];
+        for (tool, field, arguments) in &calls {
+            let values = enumerated(tool, field);
+            assert!(!values.is_empty(), "{tool}.{field}");
+            let mut probes: Vec<(String, bool)> =
+                values.iter().map(|value| (value.clone(), true)).collect();
+            probes.push(("zz-not-listed".to_string(), false));
+            for (value, listed) in probes {
+                let arguments = arguments(&value);
+                let outcome = match *tool {
+                    "gallery_organize" => server.gallery_organize(wire(arguments)?).await,
+                    "gallery_search" => server.gallery_search(wire(arguments)?).await,
+                    "gallery_timeline" => server.gallery_timeline(wire(arguments)?).await,
+                    "face_list" => server.face_list(wire(arguments)?).await,
+                    "gallery_annotation_create" => {
+                        server.gallery_annotation_create(wire(arguments)?).await
+                    }
+                    "gallery_add_media" => server.gallery_add_media(wire(arguments)?).await,
+                    "gallery_analyze" => server.gallery_analyze(wire(arguments)?).await,
+                    "describe_image" => server.describe_image(wire(arguments)?).await,
+                    "image_create_collage" => server.image_create_collage(wire(arguments)?).await,
+                    other => panic!("no dispatch for {other}"),
+                };
+                let refused_as_unknown = outcome.as_ref().err().is_some_and(|error| {
+                    error.kind == hkask_types::McpErrorKind::InvalidArgument
+                        && error.message.starts_with("unknown ")
+                });
+                if listed {
+                    assert!(
+                        !refused_as_unknown,
+                        "{tool}.{field} lists '{value}' but the handler refuses it: {outcome:?}"
+                    );
+                } else {
+                    let error = outcome.expect_err("an unlisted value is refused");
+                    assert_eq!(
+                        error.kind,
+                        hkask_types::McpErrorKind::InvalidArgument,
+                        "{tool}.{field}: {error:?}"
+                    );
+                    for listed_value in &values {
+                        assert!(
+                            error.message.contains(listed_value.as_str()),
+                            "{tool}.{field} refusal omits '{listed_value}': {}",
+                            error.message
+                        );
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

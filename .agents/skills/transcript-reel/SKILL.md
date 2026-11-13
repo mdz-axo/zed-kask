@@ -181,7 +181,8 @@ for short informal recordings. Budget ~$0.02 per intake for the
 7. Call `educt_edl_from_highlights` to compose the EDL (overlapping
    selections are union-merged automatically).
 8. Call `educt_render_edl` to render the reel media file. Audio sources
-   render losslessly via the audio path; video via stream copy.
+   render as a PCM WAV cut on the sample (a PCM source keeps its bit depth);
+   video renders as MP4, stream-copied where the cut falls on keyframes.
 
 ### Phase 4 — Verify and export
 

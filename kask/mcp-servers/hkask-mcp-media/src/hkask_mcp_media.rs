@@ -367,8 +367,8 @@ impl MediaServer {
         Ok(access)
     }
 
-    /// Return the ffmpeg runner, or the missing-binary refusal: absent state
-    /// with a remedy, never `unavailable` (a retry cannot succeed).
+    /// Return the ffmpeg runner, or the missing-binary refusal naming what
+    /// to install (`unavailable`: see `map_media_error`).
     fn require_ffmpeg(&self) -> Result<&FfmpegRunner, McpToolError> {
         if self.ffmpeg.available {
             Ok(&self.ffmpeg)
@@ -2640,13 +2640,105 @@ mod tool_behavior_tests {
         let (codec, duration) = probed_audio(&single).await?;
         assert_eq!(codec, "pcm_s16le", "a single input is decoded, not renamed");
         assert!((duration - 2.0).abs() < 0.1, "{duration} s");
+
+        // Inputs that share one PCM format keep it: a join of 24-bit
+        // recordings is not reduced to 16-bit.
+        let other24 = gallery_root.path().join("zz24b.wav");
+        sine_fixture(&other24, 2, &["-ar", "48000", "-c:a", "pcm_s24le"]).await?;
+        let same_format = content_of(
+            &server
+                .audio_concat(crate::test_support::wire(
+                    serde_json::json!({"audio_urls": [pcm24, other24]}),
+                )?)
+                .await?,
+        );
+        let (codec, duration) = probed_audio(&same_format).await?;
+        assert_eq!(codec, "pcm_s24le");
+        assert!((duration - 4.0).abs() < 0.1, "{duration} s");
         Ok(())
     }
 
-    /// expect: Without ffmpeg installed I am told to install it, not to retry later.
-    /// post: direct and queued edits are failed_precondition naming the binary.
+    /// dcterms:identifier: `MediaServer::educt_render_edl`
+    /// expect: A reel cut from my recording is playable PCM of exactly the
+    /// kept length, and keeps the recording's bit depth.
+    /// pre: an 8 s recording (mp3, then 24-bit wav), one word per second; an
+    /// EDL keeping words 1-2 and 5-6 (two clips, 4 s).
+    /// post: mp3 renders 16-bit PCM, 4.000 s; the 24-bit wav renders 24-bit, 4.000 s.
+    /// [P1] Constraining: the reel renders through the same trim and join as
+    /// audio_trim and audio_concat. Before, an m4a reel was 2.14 s of aac in a
+    /// wav container and the others ran 0.1 s long; the first fix made them
+    /// exact but reduced a 24-bit reel to 16-bit.
     #[tokio::test]
-    async fn a_missing_ffmpeg_is_a_failed_precondition_naming_the_binary()
+    async fn an_audio_reel_is_pcm_of_the_kept_length_at_the_source_bit_depth()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+        let words: Vec<serde_json::Value> = (0..8)
+            .map(|index| {
+                serde_json::json!({
+                    "word": format!("zz{index}"), "start_ms": index * 1000, "end_ms": (index + 1) * 1000,
+                })
+            })
+            .collect();
+        for (name, codec_args, expected_codec) in [
+            ("zz-talk.mp3", &["-c:a", "libmp3lame"][..], "pcm_s16le"),
+            (
+                "zz-talk.wav",
+                &["-ar", "48000", "-c:a", "pcm_s24le"][..],
+                "pcm_s24le",
+            ),
+        ] {
+            let source = gallery_root.path().join(name);
+            sine_fixture(&source, 8, codec_args).await?;
+            let bundle = serde_json::json!({
+                "format": "hkask-transcript-v1", "audio_path": source, "audio_duration_secs": 8.0,
+                "full_text": "zz", "words": words, "segments": [], "language": "en", "model": "zz",
+            });
+            let stored = content_of(
+                &server
+                    .educt_store_transcript(crate::test_support::wire(
+                        serde_json::json!({"transcript": bundle.to_string()}),
+                    )?)
+                    .await?,
+            );
+            let transcript_id = stored["id"].as_str().ok_or("transcript id")?;
+            let layer = serde_json::json!({
+                "kind": "edl",
+                "provenance": {"model": "user", "prompt_template": "zz", "created_at": "2026-11-12T00:00:00Z"},
+                "ops": [
+                    {"range": {"start_word": 1, "end_word": 2}, "op": "keep"},
+                    {"range": {"start_word": 5, "end_word": 6}, "op": "keep"},
+                ],
+            });
+            server
+                .educt_store_layer(crate::test_support::wire(serde_json::json!({
+                    "transcript_id": transcript_id, "layer": layer.to_string(),
+                }))?)
+                .await?;
+            let reel = content_of(
+                &server
+                    .educt_render_edl(crate::test_support::wire(
+                        serde_json::json!({"transcript_id": transcript_id}),
+                    )?)
+                    .await?,
+            );
+            let (codec, duration) = probed_audio(&reel).await?;
+            assert_eq!(codec, expected_codec, "{name}");
+            assert!((duration - 4.0).abs() < 0.002, "{name}: {duration} s");
+        }
+        Ok(())
+    }
+
+    /// expect: Without ffmpeg installed I am told what to install, and the
+    /// media server is not scored as an unreliable tool for it.
+    /// post: direct and queued edits name the binary, under a kind the
+    /// regulation ledger excludes from the success rate.
+    /// [P1] Constraining: the review first moved this to failed_precondition,
+    /// which the ledger counts: a machine without ffmpeg would have read as a
+    /// degraded media domain. The kind is chosen by what consumes it.
+    #[tokio::test]
+    async fn a_missing_binary_names_the_install_and_is_not_a_tool_fault()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let source = root.path().join("zz.wav");
@@ -2667,7 +2759,10 @@ mod tool_behavior_tests {
             .await
             .expect_err("no ffmpeg");
         for error in [direct, queued] {
-            assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+            assert!(
+                hkask_types::tool_response::is_not_tool_fault_kind(&error.kind.to_string()),
+                "a missing binary must not count against the server: {error:?}"
+            );
             assert!(
                 error.message.contains("install ffmpeg"),
                 "{}",
@@ -2675,7 +2770,9 @@ mod tool_behavior_tests {
             );
         }
         let fetch = map_media_error(MediaError::YtDlpUnavailable);
-        assert_eq!(fetch.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(hkask_types::tool_response::is_not_tool_fault_kind(
+            &fetch.kind.to_string()
+        ));
         assert!(
             fetch.message.contains("install yt-dlp"),
             "{}",

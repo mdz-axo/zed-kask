@@ -585,8 +585,8 @@ mod tests {
 
     /// Per-variant classification pin (the canonical ruling 2026-10-05,
     /// the error.rs classification-tests discipline): the encoder's Media
-    /// arm re-enters the canonical media mapping (a missing ffmpeg is
-    /// absent state with a remedy, not an outage), a model download failure
+    /// arm re-enters the canonical media mapping (a missing ffmpeg is an
+    /// environment gap the ledger does not count), a model download failure
     /// is a transient outage, and integrity/runtime failures are server
     /// faults. Under the deleted blanket mapping every encoder failure
     /// surfaced as `unavailable` — a corrupted model read as a retryable
@@ -600,7 +600,7 @@ mod tests {
         ));
         assert_eq!(
             missing_binary.kind,
-            McpErrorKind::FailedPrecondition,
+            McpErrorKind::Unavailable,
             "{missing_binary:?}"
         );
 

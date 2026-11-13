@@ -1,4 +1,4 @@
-//! Research jobs — source-linked transcription and lossless trim/concat.
+//! Research jobs — source-linked transcription and trim/concat.
 //!
 //! File-producing jobs share staged publication and cancellation rollback;
 //! transcription returns the source-linked TranscriptBundle without creating

@@ -129,16 +129,20 @@ impl From<GalleryStoreError> for MediaError {
 ///   whose required state is absent — the message names the state and the
 ///   remedy: "Use gallery_organize first")
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
-/// - `FfmpegUnavailable`, `YtDlpUnavailable` → `failed_precondition` (install the binary)
+/// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (an environment gap: the
+///   message names the binary to install; the regulation ledger does not count it)
 /// - `DurationUnavailable`, `RangeOutsideMedia` → `invalid_argument`
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
         MediaError::ImageNotFound(_) => McpToolError::not_found(e.to_string()),
         MediaError::GalleryNotInitialized => McpToolError::failed_precondition(e.to_string()),
-        // A missing binary is absent state with a remedy (install it), not a
-        // transient outage: retrying later cannot succeed.
+        // A missing binary is `unavailable`: the kind the regulation ledger
+        // excludes from a server's success rate as an environment gap
+        // (`hkask_types::tool_response::is_config_gap_kind`). Any kind the
+        // ledger counts would make every media call on a machine without
+        // ffmpeg read as a failing tool and degrade the whole domain.
         MediaError::FfmpegUnavailable | MediaError::YtDlpUnavailable => {
-            McpToolError::failed_precondition(e.to_string())
+            McpToolError::unavailable(e.to_string())
         }
         MediaError::YtDlpAuthorization(_) => McpToolError::permission_denied(e.to_string()),
         MediaError::YtDlpVideoUnavailable(_) => McpToolError::not_found(e.to_string()),

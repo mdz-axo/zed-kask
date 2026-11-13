@@ -407,6 +407,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_create_collage", async {
             let _admission = self.admit_heavy_operation()?;
+            crate::tools::gallery::require_one_of("layout", &layout, &COLLAGE_LAYOUTS)?;
             validate_item_count("max_items", max_items, 1, MAX_COLLAGE_ITEMS)?;
             let mode_count =
                 search_terms.is_some() as u8 + similar_to_index.is_some() as u8 + image_indices.is_some() as u8;
@@ -513,10 +514,11 @@ impl MediaServer {
                 "vertical" => 1u32,
                 "masonry" => 3u32.min(images.len() as u32),
                 "grid" => (images.len() as f64).sqrt().ceil() as u32,
+                // Unreachable: the layout was checked against COLLAGE_LAYOUTS
+                // on entry, before any image was opened.
                 other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "unknown layout '{other}' — layout is one of {}",
-                        COLLAGE_LAYOUTS.join(", ")
+                    return Err(McpToolError::internal(format!(
+                        "collage layout '{other}' is enumerated but has no handler"
                     )));
                 }
             };

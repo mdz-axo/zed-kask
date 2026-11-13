@@ -1869,8 +1869,8 @@ impl FfmpegRunner {
         Ok(frames)
     }
 
-    /// Trim an audio file to specified start/end times.
-    /// Uses stream copy (-c copy) for fast, lossless trimming.
+    /// Trim an audio file, or the audio of a video, to start/end seconds as
+    /// a PCM WAV cut on the sample.
     pub async fn audio_trim(
         &self,
         input: &str,
@@ -1919,10 +1919,13 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Concatenate audio files into one 16-bit PCM WAV, in order.
+    /// Concatenate audio files into one PCM WAV, in order.
     ///
     /// Every input is decoded and joined through the concat filter, which
-    /// resamples to the first input's rate and layout. The concat demuxer
+    /// resamples to the first input's rate and layout. The output keeps the
+    /// sample format the inputs share when all are the same PCM format (a
+    /// reel cut from a 24-bit recording stays 24-bit); anything else, or a
+    /// mix, is written as 16-bit. The concat demuxer
     /// with stream copy this replaced appended each input's raw packets
     /// under the first input's header: an mp3 after a wav became noise, a
     /// 48 kHz file after a 16 kHz one played at a third of its speed, and
@@ -1936,6 +1939,19 @@ impl FfmpegRunner {
                 "audio_concat requires at least one file".to_string(),
             ));
         }
+        // One codec for the whole join: the inputs' own when they agree. A
+        // failed probe, a compressed input or a mix resolves to 16-bit.
+        let mut codec: Option<&'static str> = None;
+        for path in audio_paths {
+            let probe = self.probe(path).await.ok();
+            let this = wav_pcm_codec(probe.as_ref().map(|probe| probe.audio_codec.as_str()));
+            codec = match codec {
+                None => Some(this),
+                Some(shared) if shared == this => Some(shared),
+                Some(_) => Some("pcm_s16le"),
+            };
+        }
+        let codec = codec.unwrap_or("pcm_s16le");
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let mut command = Command::new(&self.ffmpeg_path);
@@ -1951,7 +1967,7 @@ impl FfmpegRunner {
             .arg("-map")
             .arg("[out]")
             .arg("-c:a")
-            .arg("pcm_s16le")
+            .arg(codec)
             .arg(output.path());
         Self::run_to_completion(command, "audio concat").await?;
 

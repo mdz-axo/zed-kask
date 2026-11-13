@@ -1828,7 +1828,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Render a stored EDL layer to one canonical durable gallery media asset: word ranges map to time ranges, ffmpeg clips and concatenates them losslessly, and temporary clips are removed. Audio sources publish WAV; other sources publish MP4. Defaults to the latest EDL layer."
+        description = "Render a stored EDL layer to one canonical durable gallery media asset: word ranges map to time ranges, ffmpeg clips and joins them, and temporary clips are removed. Audio sources publish a PCM WAV cut on the sample (a PCM source keeps its sample format; other codecs decode to 16-bit); other sources publish MP4, stream-copied where the cut falls on keyframes. Defaults to the latest EDL layer."
     )]
     pub async fn educt_render_edl(
         &self,

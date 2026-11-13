@@ -170,7 +170,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Render a media EDL layer into a durable playable gallery asset. Takes a media_path and an optional layer_id (of a kind=edl layer produced by layers_edl_compose). Each Keep op is clipped from the source media via ffmpeg and concatenated losslessly. The composed reel is published as a gallery asset whose OMC lineage records the EDL layer and contributing item ids. Rendering an unknown or empty EDL returns not_found naming the layer."
+        description = "Render a media EDL layer into a durable playable gallery asset. Takes a media_path and an optional layer_id (of a kind=edl layer produced by layers_edl_compose). Each Keep op is clipped from the source media via ffmpeg and joined: audio sources publish a PCM WAV cut on the sample, video sources an MP4 stream-copied where the cut falls on keyframes. The composed reel is published as a gallery asset whose OMC lineage records the EDL layer and contributing item ids. Rendering an unknown or empty EDL returns not_found naming the layer."
     )]
     pub async fn layers_render_edl(
         &self,
