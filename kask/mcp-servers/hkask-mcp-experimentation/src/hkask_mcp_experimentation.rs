@@ -110,38 +110,177 @@ mod tool_surface_tests {
         }
     }
 
-    /// The 2026-10-19 scientific-design evolution (task `f1a90cd2`) added
-    /// `design_spec`, `scientific_headroom` and `scientific_outcome`. A tool's
-    /// wire schema is generated from its request struct, so those fields are
-    /// callable — but the `#[tool(description)]` string is what a model reads
-    /// to *discover* them. A description that omits a new parameter is stale
-    /// misinformation: the capability exists and is invisible. This pin fails
-    /// if the three descriptions stop naming the fields they accept.
+    fn live_tools() -> Vec<(String, String, serde_json::Value)> {
+        crate::server::ExperimentationServer::experimentation_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                (
+                    tool.name.to_string(),
+                    tool.description.as_deref().unwrap_or_default().to_string(),
+                    serde_json::to_value(&tool.input_schema).expect("router schema serializes"),
+                )
+            })
+            .collect()
+    }
+
+    fn schema_of(name: &str) -> serde_json::Value {
+        live_tools()
+            .into_iter()
+            .find(|(tool, _, _)| tool == name)
+            .unwrap_or_else(|| panic!("tool {name} present"))
+            .2
+    }
+
+    /// The text the editor forwards to the model for a description
+    /// (`build_request_tools` in `crates/agent/src/thread.rs`): the whole
+    /// description up to 200 bytes, else its first sentence within 200
+    /// bytes, else a 200-byte cut ending in "...".
+    fn forwarded(description: &str) -> String {
+        if description.len() <= 200 {
+            return description.to_string();
+        }
+        let mut cutoff = 200;
+        while !description.is_char_boundary(cutoff) {
+            cutoff -= 1;
+        }
+        match description[..cutoff].find(". ") {
+            Some(position) => description[..=position].to_string(),
+            None => format!("{}...", &description[..cutoff]),
+        }
+    }
+
+    /// mcp-tool-review EX-02 pin. Measured 2026-11-12 on the installed
+    /// server (sha256 5b22cf61a9f00b2c): of 5,568 description characters the
+    /// editor forwarded 1,337, and six of the eight forwarded texts were
+    /// incomplete (four cut at 200 bytes, two ending at "(e.g."). Every
+    /// promise past the cut never reached a model. Each description now
+    /// leads with one complete sentence that says what the tool does.
     #[test]
-    fn tool_descriptions_name_the_scientific_design_fields() {
-        let router = crate::server::ExperimentationServer::experimentation_router();
-        let description = |name: &str| -> String {
-            router
-                .list_all()
+    fn descriptions_lead_with_a_complete_sentence() {
+        for (name, description, _) in live_tools() {
+            let lead = forwarded(&description);
+            assert!(
+                lead.ends_with('.') && !lead.ends_with("..."),
+                "{name}: the forwarded text is cut mid-sentence: {lead:?}"
+            );
+            assert!(
+                lead.len() >= 40 && !lead.contains("e.g"),
+                "{name}: the forwarded text is not a complete statement: {lead:?}"
+            );
+        }
+    }
+
+    /// The parameter rules live in the input schema, which is forwarded
+    /// whole. Every property of every tool carries a description, except the
+    /// self-describing record ids.
+    #[test]
+    fn every_parameter_is_described_in_the_live_schema() {
+        let self_describing = ["experiment_id", "variant_id"];
+        for (name, _, schema) in live_tools() {
+            let properties = schema["properties"].as_object().expect("properties");
+            for (property, node) in properties {
+                if self_describing.contains(&property.as_str()) {
+                    continue;
+                }
+                let described = node
+                    .get("description")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|text| !text.trim().is_empty());
+                assert!(described, "{name}.{property} has no description: {node}");
+            }
+        }
+        // The three scientific-design fields are discoverable where a model
+        // reads them.
+        for (tool, property) in [
+            ("experiment_propose", "design_spec"),
+            ("experiment_seal", "scientific_headroom"),
+            ("selection_record", "scientific_outcome"),
+        ] {
+            assert!(
+                schema_of(tool)["properties"][property]["description"].is_string(),
+                "{tool} must describe {property}"
+            );
+        }
+    }
+
+    /// mcp-tool-review EX-03 pin: the closed vocabularies are enumerated in
+    /// the live schema from the same constants the handlers check, so a
+    /// caller reads the set before calling instead of from a refusal.
+    #[test]
+    fn closed_vocabulary_inputs_enumerate_their_values_in_the_live_schema() {
+        use crate::types::{LAYERS, RUBRIC_KINDS, SCIENTIFIC_OUTCOMES, VARIANT_ROLES, VERDICTS};
+        let enum_of = |tool: &str, path: &[&str]| -> Vec<String> {
+            let schema = schema_of(tool);
+            let mut node = &schema;
+            for key in path {
+                node = &node[*key];
+                if let Some(reference) = node.get("$ref").and_then(|value| value.as_str()) {
+                    let name = reference
+                        .rsplit('/')
+                        .next()
+                        .expect("$ref names a definition");
+                    node = &schema["$defs"][name];
+                }
+            }
+            let follow = |arm: &serde_json::Value| -> Option<serde_json::Value> {
+                arm.get("enum").cloned().or_else(|| {
+                    let name = arm.get("$ref")?.as_str()?.rsplit('/').next()?;
+                    schema["$defs"][name].get("enum").cloned()
+                })
+            };
+            follow(node)
+                .or_else(|| node.get("anyOf")?.as_array()?.iter().find_map(follow))
+                .and_then(|values| values.as_array().cloned())
+                .unwrap_or_else(|| panic!("{tool} {path:?} carries no enum: {node}"))
                 .iter()
-                .find(|tool| tool.name == name)
-                .unwrap_or_else(|| panic!("tool {name} present"))
-                .description
-                .as_deref()
-                .unwrap_or_default()
-                .to_string()
+                .map(|value| value.as_str().expect("enum value is a string").to_string())
+                .collect()
         };
-        assert!(
-            description("experiment_propose").contains("design_spec"),
-            "experiment_propose description must name design_spec"
+        assert_eq!(
+            enum_of("experiment_propose", &["properties", "layer"]),
+            LAYERS
         );
-        assert!(
-            description("experiment_seal").contains("scientific_headroom"),
-            "experiment_seal description must name scientific_headroom"
+        assert_eq!(
+            enum_of("population_query", &["properties", "layer"]),
+            LAYERS
         );
-        assert!(
-            description("selection_record").contains("scientific_outcome"),
-            "selection_record description must name scientific_outcome"
+        assert_eq!(
+            enum_of("population_query", &["properties", "status"]),
+            ["proposed", "running", "resolved"]
         );
+        assert_eq!(
+            enum_of("variant_register", &["properties", "role"]),
+            VARIANT_ROLES
+        );
+        assert_eq!(
+            enum_of("selection_record", &["properties", "verdict"]),
+            VERDICTS
+        );
+        assert_eq!(
+            enum_of("selection_record", &["properties", "scientific_outcome"]),
+            SCIENTIFIC_OUTCOMES
+        );
+        assert_eq!(
+            enum_of(
+                "experiment_propose",
+                &["properties", "rubrics", "items", "properties", "kind"]
+            ),
+            RUBRIC_KINDS
+        );
+    }
+
+    /// mcp-tool-review EX-04 pin (schema side): every tool's input object is
+    /// closed. The wire-side pin is `a_misspelled_parameter_is_refused` in
+    /// the tool-behavior suite.
+    #[test]
+    fn every_input_schema_is_closed_to_unknown_parameters() {
+        for (name, _, schema) in live_tools() {
+            assert_eq!(
+                schema["additionalProperties"],
+                serde_json::Value::Bool(false),
+                "{name} accepts unknown parameters"
+            );
+        }
     }
 }

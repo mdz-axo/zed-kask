@@ -49,6 +49,10 @@ impl ExperimentStatus {
 pub const VERDICT_SELECTED: &str = "selected";
 pub const VERDICT_REJECTED: &str = "rejected";
 
+/// The closed verdict vocabulary: the `verdict` field accepts these two and
+/// nothing else. A scientific outcome goes in `scientific_outcome`.
+pub const VERDICTS: &[&str] = &[VERDICT_SELECTED, VERDICT_REJECTED];
+
 /// Typed scientific outcome vocabulary (task `f1a90cd2`) — the design-family
 /// resolution set that replaces `selected`/`rejected` for a design with no
 /// meaningful binary baseline. Only the two genuinely binary resolutions
@@ -71,35 +75,28 @@ pub const SCIENTIFIC_OUTCOMES: &[&str] = &[
     SCIENTIFIC_OUTCOME_DESIGN_VOID,
 ];
 
-/// A pre-registered prediction — the tiny controller (§P8.1). The claim is
-/// scored against the experiment's measured outcome by the linked kanban
-/// goal; the confidence is the experiment's own probability for the claim.
+// The pre-registered prediction is "the tiny controller" of the repair plan
+// (§P8.1): the confidence is the experiment's own probability for the claim.
+/// The prediction declared before any measurement.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Prediction {
-    /// The falsifiable claim the experiment pre-registers (e.g. "variant B
-    /// passes the fixed task set at a higher rate than the baseline").
+    /// The falsifiable claim, stated so the measured outcome can refute it.
     pub claim: String,
-    /// The experiment's own confidence in the claim, in [0, 1].
+    /// The probability that the claim holds, in [0, 1].
     pub confidence: f64,
 }
 
-/// The tagged scientific headroom criterion (task `f1a90cd2`) — the seal
-/// attestation for a design family that has no meaningful binary baseline
-/// pass rate (single-arm calibration, observational estimation, equivalence).
-/// `design_family` is the tag; `criterion` states what makes the design
-/// non-saturated in a way a pass rate cannot express; `evidence` carries the
-/// recorded report refs that support it. This is the honest alternative to
-/// fabricating a `baseline_pass_rate`.
+// Added by the 2026-10-19 scientific-design evolution (task `f1a90cd2`).
+/// The seal attestation for a design with no meaningful binary baseline pass
+/// rate (single-arm calibration, observational estimation, equivalence).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScientificHeadroom {
-    /// The design family the criterion applies to (e.g.
-    /// `measurement_or_calibration`, `observational_estimation`, `single_arm`,
-    /// `equivalence`).
+    /// The design family, for example `measurement_or_calibration`,
+    /// `observational_estimation`, `single_arm` or `equivalence`. Not blank.
     pub design_family: String,
-    /// The headroom criterion — what makes this design informative, stated so
-    /// it can fail.
+    /// What makes this design informative, stated so it can fail. Not blank.
     pub criterion: String,
-    /// Recorded report refs evidencing the criterion.
+    /// Report references that support the criterion. May be empty.
     pub evidence: Vec<String>,
 }
 
@@ -116,36 +113,39 @@ pub const RUBRIC_KINDS: &[&str] = &[
     RUBRIC_KIND_GROUNDED_REPORT,
 ];
 
-/// A rubric's verification — deliberately the same vocabulary as the
-/// execution harnesses' evaluator kinds (contains / not_contains /
-/// regex) plus the recorded-report form: one grammar from declaration
-/// (P1) to recorded run.
+// The vocabulary follows the derived-registry `rubric` entry (operator
+// ruling 2026-10-15): contains / not_contains / regex plus a report form.
+/// How a rubric is checked. The server stores this declaration and never
+/// runs the check.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RubricVerification {
-    /// The evidence must contain the spec string (the harness "contains" kind).
+    /// The evidence must contain the spec string.
     Contains { spec: String },
-    /// The evidence must not contain the spec string (the harness "not_contains" kind).
+    /// The evidence must not contain the spec string.
     NotContains { spec: String },
-    /// The evidence must match the regex pattern (the harness "regex" kind).
+    /// The evidence must match the regex pattern.
     Regex { pattern: String },
-    /// A recorded harness report names the evidence — a declaration this
-    /// server validates and stores, never one it executes.
+    /// A recorded harness report carries the evidence.
     ReportRef { harness: String },
 }
 
-/// One typed pass/fail criterion, declared before measurement (P1 — the
-/// machine-checkable eval contract; the derived-registry `rubric` ruling,
-/// operator 2026-10-15).
+fn rubric_kind_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "string", "enum": RUBRIC_KINDS})
+}
+
+/// One pass/fail criterion, declared before measurement.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Rubric {
-    /// Stable snake_case identifier (e.g. `pass_rate_threshold`).
+    /// Unique snake_case identifier: lowercase letters, digits and
+    /// underscores, not starting with a digit.
     pub id: String,
-    /// A concrete, measurable description of what passing means.
+    /// What passing means, stated so it can be measured. Not blank.
     pub description: String,
-    /// metric | implementation | grounded_report.
+    /// The rubric kind.
+    #[schemars(schema_with = "rubric_kind_schema")]
     pub kind: String,
-    /// The typed deterministic check that adjudicates the rubric.
+    /// How the rubric is checked.
     pub verification: RubricVerification,
 }
 
@@ -375,26 +375,21 @@ pub struct FinalEvaluationRecord {
 }
 
 /// Per-experiment health row for the regulation snapshot (§P8.9 step 1) —
-/// the Layer-A afferent view the bridge feeds to the cybernetics loop's
-/// `ExperimentationHealthSensor`.
+/// what the bridge's `ExperimentationHealthSensor` reads to find stuck
+/// experiments, and nothing else.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExperimentHealth {
     pub id: String,
-    pub layer: String,
     pub status: String,
     pub created_at: String,
     pub max_runs: u64,
+    /// Runs recorded so far: fitness records plus final evaluations, the
+    /// same sum the budget refusal uses.
     pub recorded_runs: u64,
-    pub prediction_confidence: Option<f64>,
-    pub verdict: Option<String>,
-    /// The typed scientific outcome (task `f1a90cd2`) when the first selection
-    /// carried one — the calibration-exclusion key.
-    pub scientific_outcome: Option<String>,
-    pub reject_reasons: Vec<String>,
 }
 
 /// The registry's health snapshot: every experiment with its recorded-run
-/// total, prediction confidence, and verdict.
+/// total against its ceiling.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExperimentationHealthSnapshot {
     pub experiments: Vec<ExperimentHealth>,
@@ -420,87 +415,6 @@ impl ExperimentationHealthSnapshot {
             .map(|experiment| experiment.id.clone())
             .collect()
     }
-
-    /// Mean Brier over resolved non-void claims: selected → the claim held
-    /// (outcome 1), rejected → refuted (outcome 0). Void experiments — the
-    /// first reject reason carries a void marker, "no-headroom" (design
-    /// failure: the eval set cannot discriminate) or "measurement-void"
-    /// (infrastructure failure: the runs never produced a valid
-    /// measurement) — never tested their claim, so they are excluded from
-    /// the calibration record rather than scored as refuted. A typed
-    /// scientific outcome (task `f1a90cd2`) takes precedence: only
-    /// `corroborated` (held) and `rejected` (refuted) calibrate, while
-    /// `evidence_of_practical_equivalence`, `inconclusive`,
-    /// `measurement_void` and `design_void` are excluded on the typed field.
-    /// Returns `(mean_brier, claim_count)`; `None` when no measured claims
-    /// exist.
-    pub fn resolved_claim_brier(&self) -> Option<(f64, u32)> {
-        let mut sum = 0.0;
-        let mut claims = 0u32;
-        for experiment in &self.experiments {
-            if experiment.status != STATUS_RESOLVED {
-                continue;
-            }
-            let Some(confidence) = experiment.prediction_confidence else {
-                continue;
-            };
-            // A typed scientific outcome (task `f1a90cd2`) is the
-            // authoritative resolution when present: only the two genuinely
-            // binary outcomes calibrate. The bounded and void outcomes are
-            // excluded structurally, on the typed field itself — never by
-            // parsing reject-reason text (the `is_void_marker` first-reason
-            // trap).
-            if let Some(outcome) = experiment.scientific_outcome.as_deref() {
-                match outcome {
-                    SCIENTIFIC_OUTCOME_CORROBORATED => {
-                        sum += (confidence - 1.0) * (confidence - 1.0);
-                        claims += 1;
-                    }
-                    SCIENTIFIC_OUTCOME_REJECTED => {
-                        sum += confidence * confidence;
-                        claims += 1;
-                    }
-                    _ => continue,
-                }
-                continue;
-            }
-            match experiment.verdict.as_deref() {
-                Some(VERDICT_SELECTED) => {
-                    sum += (confidence - 1.0) * (confidence - 1.0);
-                    claims += 1;
-                }
-                Some(VERDICT_REJECTED) => {
-                    if experiment
-                        .reject_reasons
-                        .first()
-                        .is_some_and(|reason| is_void_marker(reason))
-                    {
-                        continue;
-                    }
-                    sum += confidence * confidence;
-                    claims += 1;
-                }
-                _ => {}
-            }
-        }
-        if claims == 0 {
-            None
-        } else {
-            Some((sum / claims as f64, claims))
-        }
-    }
-}
-
-/// Void markers for the calibration record: a reject reason carrying one
-/// of these marks an experiment whose pre-registered claim was never
-/// tested — "no-headroom" (design failure: baseline saturated, nothing to
-/// measure) or "measurement-void" (infrastructure failure: the runs never
-/// produced a valid measurement). Such claims are excluded from
-/// [`ExperimentationHealthSnapshot::resolved_claim_brier`] rather than scored as
-/// refuted, so provider or harness noise cannot pollute the calibration
-/// record the agenda generator calibrates against.
-fn is_void_marker(reason: &str) -> bool {
-    reason.contains("no-headroom") || reason.contains("measurement-void")
 }
 
 /// Registry failures, classified per-variant for MCP dispatch — never a
@@ -517,34 +431,38 @@ pub enum ExperimentationError {
     ExperimentResolved(String),
     #[error("variant {0} does not belong to experiment {1}")]
     VariantNotInExperiment(String, String),
-    #[error(
-        "layer must be one of skill, prompt_template, tool_schema, regulation_scalar, scientific_hypothesis; got {0:?}"
-    )]
+    #[error("no experiment or variant has id {0}")]
+    ArtifactNotFound(String),
+    #[error("layer must be one of {}; got {:?}", LAYERS.join(", "), .0)]
     UnknownLayer(String),
+    #[error("{0} must not be blank when supplied; omit the field instead")]
+    BlankOptional(&'static str),
     #[error("prediction confidence must be in [0, 1], got {0}")]
     ConfidenceOutOfRange(f64),
-    #[error(
-        "budget.max_runs must be a positive integer within the i64 range — the declared budget is the Layer-A set point the server enforces (§P8.9 step 2, D-1); budget was: {0}"
-    )]
+    #[error("budget.max_runs must be a positive integer within the i64 range; budget was: {0}")]
     BudgetMissingMaxRuns(String),
     #[error(
-        "experiment {0} budget exhausted: recording {1} total runs would exceed the declared ceiling of {2} (§P8.9 step 2, D-1)"
+        "experiment {0} budget exhausted: recording {1} total runs would exceed the declared ceiling of {2}"
     )]
     BudgetExhausted(String, u64, u64),
     #[error(
-        "run_count must be a positive integer within the i64 range — the number of rollouts the referenced reports cover (§P8.9 step 2); got {0}"
+        "run_count must be a positive integer within the i64 range (the number of runs the referenced reports cover); got {0}"
     )]
     RunCountInvalid(u64),
-    #[error("verdict must be \"selected\" or \"rejected\", got {0:?}")]
+    #[error(
+        "verdict must be one of {}; got {:?} (a scientific outcome goes in scientific_outcome)",
+        VERDICTS.join(", "),
+        .0
+    )]
     UnknownVerdict(String),
     #[error(
-        "scientific_outcome must be one of rejected, corroborated, evidence_of_practical_equivalence, inconclusive, measurement_void, design_void; got {0:?}"
+        "scientific_outcome must be one of {}; got {:?}",
+        SCIENTIFIC_OUTCOMES.join(", "),
+        .0
     )]
     UnknownScientificOutcome(String),
-    #[error(
-        "supply exactly one of verdict or scientific_outcome — got verdict={0:?} scientific_outcome={1:?}"
-    )]
-    SelectionResolutionConflict(Option<String>, Option<String>),
+    #[error("supply exactly one of verdict or scientific_outcome; got {0}")]
+    SelectionResolutionConflict(&'static str),
     #[error(
         "experiment_seal requires exactly one of baseline_pass_rate or scientific_headroom — a design either has a meaningful binary pass rate or it does not, never both and never neither"
     )]
@@ -562,12 +480,12 @@ pub enum ExperimentationError {
     #[error("created_since must be an RFC 3339 timestamp, got {0:?}")]
     BadTimestamp(String),
     #[error(
-        "new declarations must carry a non-empty rubric bundle — the typed eval contract (P1): at least one metric rubric and one implementation or grounded_report rubric"
+        "the rubric bundle must not be empty: it needs at least one metric rubric and one implementation or grounded_report rubric"
     )]
     RubricsRequired,
     #[error("the rubric bundle must include at least one {0} rubric")]
     RubricsMissingKind(&'static str),
-    #[error("rubric kind must be one of metric, implementation, grounded_report; got {0:?}")]
+    #[error("rubric kind must be one of {}; got {:?}", RUBRIC_KINDS.join(", "), .0)]
     UnknownRubricKind(String),
     #[error("duplicate rubric id {0:?} — rubric ids must be unique and stable")]
     DuplicateRubricId(String),
@@ -575,46 +493,46 @@ pub enum ExperimentationError {
         "rubric id {0:?} must be stable snake_case (lowercase, digits, underscores; not digit-led)"
     )]
     RubricIdInvalid(String),
-    #[error("role must be one of baseline, challenger, ablation; got {0:?}")]
+    #[error("role must be one of {}; got {:?}", VARIANT_ROLES.join(", "), .0)]
     UnknownVariantRole(String),
     #[error(
-        "experiment {0} already has its baseline variant {1} — exactly one baseline is allowed (P4)"
+        "experiment {0} already has its baseline variant {1} — exactly one baseline is allowed"
     )]
     DuplicateBaseline(String, String),
     #[error(
-        "an ablation-role variant must name its parent_variant_id — the variant whose component it ablates (P4)"
+        "an ablation-role variant must name its parent_variant_id — the variant whose component it ablates"
     )]
     AblationWithoutParent,
     #[error(
-        "experiment {0} is already sealed by {1} — the eval contract is frozen; re-declaring sealed fields is a new experiment, never an edit (P2)"
+        "experiment {0} is already sealed by {1} with a different attestation — the seal is permanent"
     )]
     AlreadySealed(String, String),
     #[error(
-        "experiment {0} has no seal — measure the baseline variant and seal before any challenger work (P2)"
+        "experiment {0} has no seal — record the baseline variant's fitness and seal before recording any other variant or a final evaluation"
     )]
     ExperimentNotSealed(String),
     #[error(
-        "experiment {0} is sealed by {1} — every post-seal fitness record must cite that seal_id (P2)"
+        "experiment {0} is sealed by {1} — every fitness record after the seal must cite that seal_id"
     )]
     SealCitationMissing(String, String),
     #[error(
-        "baseline saturation at pass rate {0}: the eval set cannot discriminate (no headroom) — void the experiment via selection_record with a no-headroom reject reason, redesign the eval set, and re-declare (§5 Q6)"
+        "baseline pass rate {0} leaves no headroom: the eval set cannot discriminate — resolve the experiment through selection_record (verdict rejected with a no-headroom reason, or scientific_outcome design_void), redesign the eval set and declare a new experiment"
     )]
     NoHeadroom(f64),
     #[error(
         "scientific_headroom.design_family and .criterion must be non-empty — the headroom attestation is the seal's whole claim when no baseline pass rate exists"
     )]
     ScientificHeadroomIncomplete,
-    #[error("the seal's baseline variant {0} must carry the baseline role; got role {1:?} (P2)")]
+    #[error("the seal's baseline variant {0} must carry the baseline role; got role {1:?}")]
     SealBaselineMismatch(String, String),
-    #[error("the baseline variant has no recorded fitness — measure it before sealing (P2)")]
+    #[error("the baseline variant has no recorded fitness — measure it before sealing")]
     SealFitnessMissing,
-    #[error("cited seal_id {0} does not match the experiment's active seal {1} (P2)")]
+    #[error("cited seal_id {0} does not match the experiment's seal {1}")]
     SealMismatch(String, String),
     #[error("baseline_pass_rate must be in [0, 1], got {0}")]
     SealPassRateInvalid(f64),
     #[error(
-        "final-evaluation run refs must be disjoint from the experiment's prior records — overlapping refs: {0:?}"
+        "a final evaluation's run refs must be unique and appear in no other record of the experiment — overlapping refs: {0:?}"
     )]
     RunRefsNotDisjoint(Vec<String>),
     #[error(

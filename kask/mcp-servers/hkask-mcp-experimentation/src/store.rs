@@ -244,6 +244,22 @@ fn final_eval_from_row(row: &DbRow) -> Result<FinalEvaluationRecord, Experimenta
     })
 }
 
+/// What a fitness record or final evaluation is checked against inside its
+/// write transaction (`ExperimentationStore::insert_record`).
+struct RecordWrite<'a> {
+    experiment_id: &'a str,
+    /// The caller's checks saw no seal: a baseline's measurement before the
+    /// seal. Refused if a seal has landed since.
+    unsealed: bool,
+    runs: &'a [String],
+    run_count: u64,
+    ceiling: u64,
+    /// A final evaluation's refs must be absent from every record of the
+    /// experiment and must not repeat. A fitness record's refs must be
+    /// absent from every final evaluation.
+    final_evaluation: bool,
+}
+
 pub struct ExperimentationStore {
     driver: Arc<dyn DatabaseDriver>,
 }
@@ -469,39 +485,32 @@ impl ExperimentationStore {
         role: &str,
         variant_key: Option<&str>,
     ) -> Result<VariantRecord, ExperimentationError> {
-        let experiment = self.experiment_by_id(experiment_id)?;
-        if experiment.status == STATUS_RESOLVED {
-            return Err(ExperimentationError::ExperimentResolved(
-                experiment_id.to_string(),
-            ));
-        }
         if !VARIANT_ROLES.contains(&role) {
             return Err(ExperimentationError::UnknownVariantRole(role.to_string()));
-        }
-        if role == VARIANT_ROLE_BASELINE {
-            // Exactly one baseline per experiment (P4) — the pre-registered
-            // comparison point the seal attests. The check-then-insert shape
-            // matches the parent validation below (the same TOCTOU class);
-            // the seal names its baseline explicitly, so a raced duplicate
-            // cannot corrupt the attestation.
-            let rows = self.driver.query(
-                "SELECT id FROM variants WHERE experiment_id = ?1 AND role = ?2",
-                &[
-                    DbValue::Text(experiment_id.to_string()),
-                    DbValue::Text(VARIANT_ROLE_BASELINE.to_string()),
-                ],
-            )?;
-            if let Some(existing) = rows.first() {
-                let existing_id = existing.get_str(0)?.to_string();
-                return Err(ExperimentationError::DuplicateBaseline(
-                    experiment_id.to_string(),
-                    existing_id,
-                ));
-            }
         }
         if role == VARIANT_ROLE_ABLATION && parent_variant_id.is_none() {
             return Err(ExperimentationError::AblationWithoutParent);
         }
+        self.experiment_by_id(experiment_id)?;
+        // A keyed retry is answered from the key before any state check: the
+        // first call may have registered the baseline or the experiment may
+        // have resolved since, and neither makes the retry a new request.
+        let replayed = |existing: VariantRecord, key: &str| {
+            if existing.genotype_config == *genotype_config
+                && existing.parent_variant_id.as_deref() == parent_variant_id
+                && existing.role == role
+            {
+                Ok(existing)
+            } else {
+                Err(ExperimentationError::VariantKeyDiffers(key.to_string()))
+            }
+        };
+        if let Some(key) = variant_key {
+            if let Some(existing) = self.variant_by_key(experiment_id, key)? {
+                return replayed(existing, key);
+            }
+        }
+        // Variants are never deleted or moved, so the parent check needs no lock.
         if let Some(parent) = parent_variant_id {
             let parent_record = self.variant_by_id(parent)?;
             if parent_record.experiment_id != experiment_id {
@@ -513,21 +522,87 @@ impl ExperimentationStore {
         }
         let id = format!("var_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let inserted = self.driver.execute(
-            "INSERT OR IGNORE INTO variants \
-             (id, experiment_id, variant_key, genotype_config, parent_variant_id, role, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(experiment_id.to_string()),
-                text_or_null(variant_key),
-                DbValue::Text(value_column(genotype_config)?),
-                text_or_null(parent_variant_id),
-                DbValue::Text(role.to_string()),
-                DbValue::Text(created_at.clone()),
-            ],
-        )?;
+        let genotype_column = value_column(genotype_config)?;
+        // One write transaction holds the status check, the one-baseline
+        // check, the insert and the proposed -> running flip: a concurrent
+        // selection or second baseline cannot land between them, and a
+        // failure cannot leave a variant on an experiment still `proposed`.
+        let mut refusal = None;
+        let mut inserted = 0;
+        let transaction = self.driver.transaction(&mut |tx| {
+            let experiment_key = [DbValue::Text(experiment_id.to_string())];
+            // A concurrent call with the same key got here first: leave
+            // `inserted` at 0 so the replay comparison below answers it.
+            if let Some(key) = variant_key {
+                let taken = tx.query_optional(
+                    "SELECT 1 FROM variants WHERE experiment_id = ?1 AND variant_key = ?2",
+                    &[
+                        DbValue::Text(experiment_id.to_string()),
+                        DbValue::Text(key.to_string()),
+                    ],
+                )?;
+                if taken.is_some() {
+                    return Ok(());
+                }
+            }
+            let status = tx
+                .query_optional("SELECT status FROM experiments WHERE id = ?1", &experiment_key)?
+                .map(|row| row.get_str(0).map(str::to_string))
+                .transpose()?;
+            if status.as_deref() == Some(STATUS_RESOLVED) {
+                refusal = Some(ExperimentationError::ExperimentResolved(
+                    experiment_id.to_string(),
+                ));
+                return Err(DbError::Database("registration refused".to_string()));
+            }
+            if role == VARIANT_ROLE_BASELINE {
+                let baseline = tx.query_optional(
+                    "SELECT id FROM variants WHERE experiment_id = ?1 AND role = ?2",
+                    &[
+                        DbValue::Text(experiment_id.to_string()),
+                        DbValue::Text(VARIANT_ROLE_BASELINE.to_string()),
+                    ],
+                )?;
+                if let Some(existing) = baseline {
+                    refusal = Some(ExperimentationError::DuplicateBaseline(
+                        experiment_id.to_string(),
+                        existing.get_str(0)?.to_string(),
+                    ));
+                    return Err(DbError::Database("registration refused".to_string()));
+                }
+            }
+            inserted = tx.execute(
+                "INSERT OR IGNORE INTO variants \
+                 (id, experiment_id, variant_key, genotype_config, parent_variant_id, role, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                &[
+                    DbValue::Text(id.clone()),
+                    DbValue::Text(experiment_id.to_string()),
+                    text_or_null(variant_key),
+                    DbValue::Text(genotype_column.clone()),
+                    text_or_null(parent_variant_id),
+                    DbValue::Text(role.to_string()),
+                    DbValue::Text(created_at.clone()),
+                ],
+            )?;
+            if inserted == 1 {
+                tx.execute(
+                    "UPDATE experiments SET status = ?2 WHERE id = ?1 AND status = ?3",
+                    &[
+                        DbValue::Text(experiment_id.to_string()),
+                        DbValue::Text(STATUS_RUNNING.to_string()),
+                        DbValue::Text(STATUS_PROPOSED.to_string()),
+                    ],
+                )?;
+            }
+            Ok(())
+        });
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        transaction?;
         if inserted == 0 {
+            // The key was taken between the lookup above and the insert.
             let key = variant_key.ok_or_else(|| {
                 ExperimentationError::Serialization(
                     "INSERT was ignored without a variant_key — an unexpected \
@@ -535,27 +610,13 @@ impl ExperimentationStore {
                         .to_string(),
                 )
             })?;
-            // Replay convergence is for IDENTICAL retries only (dual-axis
-            // review Q3): a different payload under the same key is a
-            // typed refusal, matching the propose path.
-            let existing = self.variant_by_key(experiment_id, key)?;
-            if existing.genotype_config == *genotype_config
-                && existing.parent_variant_id.as_deref() == parent_variant_id
-                && existing.role == role
-            {
-                return Ok(existing);
-            }
-            return Err(ExperimentationError::VariantKeyDiffers(key.to_string()));
+            let existing = self.variant_by_key(experiment_id, key)?.ok_or_else(|| {
+                ExperimentationError::Serialization(format!(
+                    "variant_key {key} blocked the insert but names no variant"
+                ))
+            })?;
+            return replayed(existing, key);
         }
-        // First variant moves the experiment from proposed to running.
-        self.driver.execute(
-            "UPDATE experiments SET status = ?2 WHERE id = ?1 AND status = ?3",
-            &[
-                DbValue::Text(experiment_id.to_string()),
-                DbValue::Text(STATUS_RUNNING.to_string()),
-                DbValue::Text(STATUS_PROPOSED.to_string()),
-            ],
-        )?;
         Ok(VariantRecord {
             id,
             experiment_id: experiment_id.to_string(),
@@ -581,7 +642,7 @@ impl ExperimentationStore {
         &self,
         experiment_id: &str,
         key: &str,
-    ) -> Result<VariantRecord, ExperimentationError> {
+    ) -> Result<Option<VariantRecord>, ExperimentationError> {
         let row = self.driver.query_optional(
             "SELECT id, experiment_id, genotype_config, parent_variant_id, created_at, role \
              FROM variants WHERE experiment_id = ?1 AND variant_key = ?2",
@@ -590,9 +651,7 @@ impl ExperimentationStore {
                 DbValue::Text(key.to_string()),
             ],
         )?;
-        row.map(|row| variant_from_row(&row))
-            .transpose()?
-            .ok_or_else(|| ExperimentationError::VariantNotFound(format!("variant_key {key}")))
+        row.map(|row| variant_from_row(&row)).transpose()
     }
 
     pub fn variants_for_experiment(
@@ -629,6 +688,108 @@ impl ExperimentationStore {
         }
         chain.reverse();
         Ok(chain)
+    }
+
+    // ── Record writes ──────────────────────────────────────────────────
+
+    /// Insert a fitness record or a final evaluation inside ONE write
+    /// transaction that re-reads everything the insert depends on: the
+    /// experiment is still open, the seal state is the one the caller
+    /// checked, the run refs are not shared (see [`RecordWrite`]) and the
+    /// run budget holds. The transaction takes the write lock at BEGIN, so
+    /// two concurrent calls cannot both pass a check the other invalidates.
+    fn insert_record(
+        &self,
+        write: RecordWrite<'_>,
+        sql: &str,
+        params: &[DbValue],
+    ) -> Result<(), ExperimentationError> {
+        let experiment = [DbValue::Text(write.experiment_id.to_string())];
+        let refused = || DbError::Database("record refused".to_string());
+        let mut refusal = None;
+        let transaction = self.driver.transaction(&mut |tx| {
+            let status = tx
+                .query_optional("SELECT status FROM experiments WHERE id = ?1", &experiment)?
+                .map(|row| row.get_str(0).map(str::to_string))
+                .transpose()?;
+            if status.as_deref() == Some(STATUS_RESOLVED) {
+                refusal = Some(ExperimentationError::ExperimentResolved(
+                    write.experiment_id.to_string(),
+                ));
+                return Err(refused());
+            }
+            if write.unsealed {
+                let seal = tx
+                    .query_optional("SELECT id FROM seals WHERE experiment_id = ?1", &experiment)?;
+                if let Some(seal) = seal {
+                    refusal = Some(ExperimentationError::SealCitationMissing(
+                        write.experiment_id.to_string(),
+                        seal.get_str(0)?.to_string(),
+                    ));
+                    return Err(refused());
+                }
+            }
+            let tables: &[&str] = if write.final_evaluation {
+                &["final_evaluations", "fitness_records"]
+            } else {
+                &["final_evaluations"]
+            };
+            let mut recorded_refs = std::collections::HashSet::new();
+            for table in tables {
+                let rows = tx.query(
+                    &format!("SELECT runs FROM {table} WHERE experiment_id = ?1"),
+                    &experiment,
+                )?;
+                for row in rows {
+                    recorded_refs.extend(row.get_json::<Vec<String>>(0)?);
+                }
+            }
+            let mut overlap: Vec<String> = Vec::new();
+            for run in write.runs {
+                // A final evaluation also refuses a ref repeated inside the
+                // call: `insert` is false for the second occurrence.
+                let taken = if write.final_evaluation {
+                    !recorded_refs.insert(run.clone())
+                } else {
+                    recorded_refs.contains(run)
+                };
+                if taken && !overlap.contains(run) {
+                    overlap.push(run.clone());
+                }
+            }
+            if !overlap.is_empty() {
+                refusal = Some(ExperimentationError::RunRefsNotDisjoint(overlap));
+                return Err(refused());
+            }
+            // Fitness records and final evaluations spend the same budget.
+            let recorded = tx
+                .query_optional(
+                    "SELECT COALESCE((SELECT SUM(run_count) FROM fitness_records \
+                       WHERE experiment_id = ?1), 0) + COALESCE((SELECT SUM(run_count) \
+                       FROM final_evaluations WHERE experiment_id = ?1), 0)",
+                    &experiment,
+                )?
+                .map(|row| row.get_int(0))
+                .transpose()?
+                .unwrap_or(0);
+            let recorded = u64::try_from(recorded)
+                .map_err(|_| DbError::Database("negative recorded run total".to_string()))?;
+            if recorded + write.run_count > write.ceiling {
+                refusal = Some(ExperimentationError::BudgetExhausted(
+                    write.experiment_id.to_string(),
+                    recorded + write.run_count,
+                    write.ceiling,
+                ));
+                return Err(refused());
+            }
+            tx.execute(sql, params)?;
+            Ok(())
+        });
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        transaction?;
+        Ok(())
     }
 
     // ── Fitness ────────────────────────────────────────────────────────
@@ -700,53 +861,29 @@ impl ExperimentationStore {
         };
         let id = format!("fit_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let ceiling = experiment.max_runs;
-        // Single-statement atomicity (the crate's INSERT OR IGNORE shape):
-        // the budget condition and the write are ONE statement, so two
-        // concurrent fitness_record calls cannot both pass the check —
-        // SQLite serializes writers and the second statement's WHERE
-        // sees the first's committed SUM. The predicate counts fitness
-        // records AND final evaluations — both consume the same budget
-        // (§P8.9 step 2), so a final evaluation followed by a fitness
-        // record cannot undercount and slip past the ceiling.
-        let params = [
-            DbValue::Text(id.clone()),
-            DbValue::Text(experiment_id.to_string()),
-            DbValue::Text(variant_id.to_string()),
-            DbValue::Text(value_column(&runs)?),
-            db_int(run_count)?,
-            DbValue::Text(value_column(scores)?),
-            text_or_null(seal_column.as_deref()),
-            DbValue::Text(created_at.clone()),
-            db_int(ceiling)?,
-        ];
-        let inserted = self.driver.execute(
+        self.insert_record(
+            RecordWrite {
+                experiment_id,
+                unsealed: seal_column.is_none(),
+                runs,
+                run_count,
+                ceiling: experiment.max_runs,
+                final_evaluation: false,
+            },
             "INSERT INTO fitness_records \
              (id, experiment_id, variant_id, runs, run_count, scores, seal_id, created_at) \
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
-             WHERE ?5 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
-               WHERE experiment_id = ?2), 0) \
-                 + COALESCE((SELECT SUM(run_count) FROM final_evaluations \
-               WHERE experiment_id = ?2), 0) <= ?9",
-            &params,
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(experiment_id.to_string()),
+                DbValue::Text(variant_id.to_string()),
+                DbValue::Text(value_column(&runs)?),
+                db_int(run_count)?,
+                DbValue::Text(value_column(scores)?),
+                text_or_null(seal_column.as_deref()),
+                DbValue::Text(created_at.clone()),
+            ],
         )?;
-        if inserted == 0 {
-            let row = self.driver.query_optional(
-                "SELECT COALESCE((SELECT SUM(run_count) FROM fitness_records \
-                   WHERE experiment_id = ?1), 0) + COALESCE((SELECT SUM(run_count) \
-                   FROM final_evaluations WHERE experiment_id = ?1), 0)",
-                &[DbValue::Text(experiment_id.to_string())],
-            )?;
-            let recorded = match row {
-                Some(row) => required_int(&row, 0)?,
-                None => 0,
-            };
-            return Err(ExperimentationError::BudgetExhausted(
-                experiment_id.to_string(),
-                recorded + run_count,
-                ceiling,
-            ));
-        }
         Ok(FitnessRecord {
             id,
             experiment_id: experiment_id.to_string(),
@@ -757,18 +894,6 @@ impl ExperimentationStore {
             seal_id: seal_column,
             created_at,
         })
-    }
-
-    pub fn fitness_for_variant(
-        &self,
-        variant_id: &str,
-    ) -> Result<Vec<FitnessRecord>, ExperimentationError> {
-        let rows = self.driver.query(
-            "SELECT id, experiment_id, variant_id, runs, scores, run_count, created_at, seal_id \
-             FROM fitness_records WHERE variant_id = ?1 ORDER BY created_at",
-            &[DbValue::Text(variant_id.to_string())],
-        )?;
-        rows.iter().map(fitness_from_row).collect()
     }
 
     pub fn fitness_for_experiment(
@@ -836,17 +961,15 @@ impl ExperimentationStore {
                 variant.role,
             ));
         }
-        let baseline_fitness = self.fitness_for_variant(baseline_variant_id)?;
-        if baseline_fitness.is_empty() {
-            return Err(ExperimentationError::SealFitnessMissing);
-        }
-        // The fingerprint freezes the eval contract: SHA-256 over the
-        // canonical JSON of the sealed declaration fields (serde_json's
-        // object map is key-sorted, so the serialization is canonical). The
-        // typed `design_spec` joins the fingerprint (task `f1a90cd2`), so
-        // post-seal design drift yields a different fingerprint rather than
-        // silently reusing a stale design. A `None` design serializes as
-        // JSON `null`, so legacy declarations seal to a stable fingerprint.
+        // The fingerprint is SHA-256 over the JSON text of the sealed
+        // declaration fields, in the five-key order written below. The
+        // workspace builds serde_json with `preserve_order`, so objects
+        // inside `eval_set`, `noise_band` and `design_spec` serialize in the
+        // key order the caller declared, NOT sorted: the same content with
+        // keys in another order seals to a different fingerprint. Stored
+        // fingerprints depend on this exact computation; it is pinned by
+        // `seal_fingerprint_computation_is_pinned`. A `None` design
+        // serializes as JSON `null`.
         let sealed_contract = serde_json::json!({
             "eval_set": experiment.eval_set,
             "fitness_fn": experiment.fitness_fn,
@@ -859,32 +982,64 @@ impl ExperimentationStore {
         let fingerprint = format!("{:x}", hasher.finalize());
         let id = format!("seal_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let baseline_fitness_ids: Vec<String> = baseline_fitness
-            .iter()
-            .map(|record| record.id.clone())
-            .collect();
-        let inserted = self.driver.execute(
-            "INSERT OR IGNORE INTO seals \
-             (id, experiment_id, fingerprint, baseline_variant_id, baseline_fitness_ids, \
-              baseline_pass_rate, created_at, scientific_headroom) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            &[
-                DbValue::Text(id.clone()),
-                DbValue::Text(experiment_id.to_string()),
-                DbValue::Text(fingerprint.clone()),
-                DbValue::Text(baseline_variant_id.to_string()),
-                DbValue::Text(value_column(&baseline_fitness_ids)?),
-                baseline_pass_rate
-                    .map(|rate| DbValue::Text(rate.to_string()))
-                    .unwrap_or(DbValue::Null),
-                DbValue::Text(created_at.clone()),
-                scientific_headroom
-                    .map(value_column)
-                    .transpose()?
-                    .map(DbValue::Text)
-                    .unwrap_or(DbValue::Null),
-            ],
-        )?;
+        let headroom_column = scientific_headroom
+            .map(value_column)
+            .transpose()?
+            .map(DbValue::Text)
+            .unwrap_or(DbValue::Null);
+        // The baseline's records are read and the seal is inserted in ONE
+        // write transaction: a baseline record written while the seal is
+        // taken is either listed in `baseline_fitness_ids` or, landing after
+        // the seal, refused for not citing it (`insert_record`).
+        let mut missing_fitness = false;
+        let mut inserted = 0;
+        let mut baseline_fitness_ids: Vec<String> = Vec::new();
+        self.driver.transaction(&mut |tx| {
+            let sealed = tx.query_optional(
+                "SELECT 1 FROM seals WHERE experiment_id = ?1",
+                &[DbValue::Text(experiment_id.to_string())],
+            )?;
+            if sealed.is_some() {
+                // Already sealed: the comparison below answers the retry.
+                return Ok(());
+            }
+            baseline_fitness_ids = tx
+                .query(
+                    "SELECT id FROM fitness_records WHERE variant_id = ?1 ORDER BY created_at",
+                    &[DbValue::Text(baseline_variant_id.to_string())],
+                )?
+                .iter()
+                .map(|row| row.get_str(0).map(str::to_string))
+                .collect::<Result<_, _>>()?;
+            if baseline_fitness_ids.is_empty() {
+                missing_fitness = true;
+                return Ok(());
+            }
+            let fitness_ids_column = serde_json::to_string(&baseline_fitness_ids)
+                .map_err(|error| DbError::Database(error.to_string()))?;
+            inserted = tx.execute(
+                "INSERT OR IGNORE INTO seals \
+                 (id, experiment_id, fingerprint, baseline_variant_id, baseline_fitness_ids, \
+                  baseline_pass_rate, created_at, scientific_headroom) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                &[
+                    DbValue::Text(id.clone()),
+                    DbValue::Text(experiment_id.to_string()),
+                    DbValue::Text(fingerprint.clone()),
+                    DbValue::Text(baseline_variant_id.to_string()),
+                    DbValue::Text(fitness_ids_column),
+                    baseline_pass_rate
+                        .map(|rate| DbValue::Text(rate.to_string()))
+                        .unwrap_or(DbValue::Null),
+                    DbValue::Text(created_at.clone()),
+                    headroom_column.clone(),
+                ],
+            )?;
+            Ok(())
+        })?;
+        if missing_fitness {
+            return Err(ExperimentationError::SealFitnessMissing);
+        }
         if inserted == 0 {
             let existing = self.seal_for_experiment(experiment_id)?.ok_or_else(|| {
                 ExperimentationError::Serialization(
@@ -977,64 +1132,31 @@ impl ExperimentationStore {
                 experiment_id.to_string(),
             ));
         }
-        // Disjointness (P3): the selection set must not reuse any run ref
-        // the experiment has already recorded.
-        let mut seen_refs = std::collections::HashSet::new();
-        for record in self.fitness_for_experiment(experiment_id)? {
-            seen_refs.extend(record.runs.iter().cloned());
-        }
-        for record in self.final_evaluations_for_experiment(experiment_id)? {
-            seen_refs.extend(record.runs.iter().cloned());
-        }
-        let overlap: Vec<String> = runs
-            .iter()
-            .filter(|run| seen_refs.contains(*run))
-            .cloned()
-            .collect();
-        if !overlap.is_empty() {
-            return Err(ExperimentationError::RunRefsNotDisjoint(overlap));
-        }
         let id = format!("fev_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
-        let ceiling = experiment.max_runs;
-        let params = [
-            DbValue::Text(id.clone()),
-            DbValue::Text(experiment_id.to_string()),
-            DbValue::Text(variant_id.to_string()),
-            DbValue::Text(seal.id.clone()),
-            DbValue::Text(value_column(&runs)?),
-            db_int(run_count)?,
-            DbValue::Text(value_column(scores)?),
-            DbValue::Text(created_at.clone()),
-            db_int(ceiling)?,
-        ];
-        let inserted = self.driver.execute(
+        self.insert_record(
+            RecordWrite {
+                experiment_id,
+                unsealed: false,
+                runs,
+                run_count,
+                ceiling: experiment.max_runs,
+                final_evaluation: true,
+            },
             "INSERT INTO final_evaluations \
              (id, experiment_id, variant_id, seal_id, runs, run_count, scores, created_at) \
-             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 \
-             WHERE ?6 + COALESCE((SELECT SUM(run_count) FROM fitness_records \
-               WHERE experiment_id = ?2), 0) \
-                 + COALESCE((SELECT SUM(run_count) FROM final_evaluations \
-               WHERE experiment_id = ?2), 0) <= ?9",
-            &params,
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(experiment_id.to_string()),
+                DbValue::Text(variant_id.to_string()),
+                DbValue::Text(seal.id.clone()),
+                DbValue::Text(value_column(&runs)?),
+                db_int(run_count)?,
+                DbValue::Text(value_column(scores)?),
+                DbValue::Text(created_at.clone()),
+            ],
         )?;
-        if inserted == 0 {
-            let row = self.driver.query_optional(
-                "SELECT COALESCE((SELECT SUM(run_count) FROM fitness_records \
-                   WHERE experiment_id = ?1), 0) + COALESCE((SELECT SUM(run_count) \
-                   FROM final_evaluations WHERE experiment_id = ?1), 0)",
-                &[DbValue::Text(experiment_id.to_string())],
-            )?;
-            let recorded = match row {
-                Some(row) => required_int(&row, 0)?,
-                None => 0,
-            };
-            return Err(ExperimentationError::BudgetExhausted(
-                experiment_id.to_string(),
-                recorded + run_count,
-                ceiling,
-            ));
-        }
         Ok(FinalEvaluationRecord {
             id,
             experiment_id: experiment_id.to_string(),
@@ -1086,46 +1208,54 @@ impl ExperimentationStore {
         // or a typed scientific outcome (task `f1a90cd2`). A scientific
         // outcome is stored as itself — never renamed to selected/rejected,
         // which would mislabel the fossil.
-        if let Some(outcome) = scientific_outcome {
-            if !SCIENTIFIC_OUTCOMES.contains(&outcome) {
-                return Err(ExperimentationError::UnknownScientificOutcome(
-                    outcome.to_string(),
-                ));
-            }
-            if verdict != outcome {
-                return Err(ExperimentationError::SelectionResolutionConflict(
-                    Some(verdict.to_string()),
-                    Some(outcome.to_string()),
-                ));
-            }
-        }
-        match verdict {
-            VERDICT_SELECTED => {
-                let Some(selected) = selected_variant_id else {
-                    return Err(ExperimentationError::SelectedWithoutVariant);
-                };
-                let variant = self.variant_by_id(selected)?;
-                if variant.experiment_id != experiment_id {
-                    return Err(ExperimentationError::VariantNotInExperiment(
-                        selected.to_string(),
-                        experiment_id.to_string(),
+        match scientific_outcome {
+            Some(outcome) => {
+                if !SCIENTIFIC_OUTCOMES.contains(&outcome) {
+                    return Err(ExperimentationError::UnknownScientificOutcome(
+                        outcome.to_string(),
                     ));
                 }
-            }
-            VERDICT_REJECTED => {
-                if reject_reasons.is_empty() {
+                if verdict != outcome {
+                    return Err(ExperimentationError::SelectionResolutionConflict(
+                        "a verdict beside a scientific_outcome",
+                    ));
+                }
+                // A rejection names why; every other outcome stands on the
+                // typed field alone.
+                if outcome == SCIENTIFIC_OUTCOME_REJECTED && reject_reasons.is_empty() {
                     return Err(ExperimentationError::RejectedWithoutReasons);
                 }
             }
-            other if SCIENTIFIC_OUTCOMES.contains(&other) => {
-                // A scientific outcome needs no binary variant; a rejection
-                // still names why, every other outcome stands on the typed
-                // field alone.
-                if other == SCIENTIFIC_OUTCOME_REJECTED && reject_reasons.is_empty() {
-                    return Err(ExperimentationError::RejectedWithoutReasons);
+            // With no scientific outcome the token is a verdict, and the
+            // verdict vocabulary is closed: an outcome word here would be
+            // stored with a NULL scientific_outcome.
+            None => match verdict {
+                VERDICT_SELECTED => {
+                    if selected_variant_id.is_none() {
+                        return Err(ExperimentationError::SelectedWithoutVariant);
+                    }
                 }
+                VERDICT_REJECTED => {
+                    if reject_reasons.is_empty() {
+                        return Err(ExperimentationError::RejectedWithoutReasons);
+                    }
+                }
+                other => return Err(ExperimentationError::UnknownVerdict(other.to_string())),
+            },
+        }
+        if reject_reasons.iter().any(|reason| reason.trim().is_empty()) {
+            return Err(ExperimentationError::Empty("a reject_reasons entry"));
+        }
+        // A named variant is checked under every resolution, not only
+        // `selected`: the fossil never points at a variant that is not there.
+        if let Some(selected) = selected_variant_id {
+            let variant = self.variant_by_id(selected)?;
+            if variant.experiment_id != experiment_id {
+                return Err(ExperimentationError::VariantNotInExperiment(
+                    selected.to_string(),
+                    experiment_id.to_string(),
+                ));
             }
-            other => return Err(ExperimentationError::UnknownVerdict(other.to_string())),
         }
         let id = format!("sel_{}", uuid::Uuid::new_v4().simple());
         let created_at = chrono::Utc::now().to_rfc3339();
@@ -1254,37 +1384,28 @@ impl ExperimentationStore {
     // ── Regulation health (§P8.9 step 1) ────────────────────────────────
 
     /// The Layer-A afferent view: every experiment with its recorded-run
-    /// total, prediction confidence, and verdict. The bridge source feeds
+    /// total (fitness records plus final evaluations, the same sum the
+    /// budget refusal uses) against its ceiling. The bridge source feeds
     /// this to the cybernetics loop's `ExperimentationHealthSensor`.
     pub fn health_snapshot(&self) -> Result<ExperimentationHealthSnapshot, ExperimentationError> {
         let rows = self.driver.query(
-            "SELECT e.id, e.layer, e.status, e.created_at, e.max_runs, e.prediction, \
+            "SELECT e.id, e.status, e.created_at, e.max_runs, \
              (SELECT COALESCE(SUM(f.run_count), 0) FROM fitness_records f \
-               WHERE f.experiment_id = e.id) AS recorded_runs, \
-             (SELECT s.verdict FROM selection_records s WHERE s.experiment_id = e.id \
-               ORDER BY s.created_at LIMIT 1) AS verdict, \
-             (SELECT s.reject_reasons FROM selection_records s WHERE s.experiment_id = e.id \
-               ORDER BY s.created_at LIMIT 1) AS reject_reasons, \
-             (SELECT s.scientific_outcome FROM selection_records s WHERE s.experiment_id = e.id \
-               ORDER BY s.created_at LIMIT 1) AS scientific_outcome \
+               WHERE f.experiment_id = e.id) \
+             + (SELECT COALESCE(SUM(v.run_count), 0) FROM final_evaluations v \
+               WHERE v.experiment_id = e.id) AS recorded_runs \
              FROM experiments e ORDER BY e.created_at DESC",
             &[],
         )?;
         let experiments = rows
             .iter()
             .map(|row| {
-                let prediction: Prediction = row.get_json(5)?;
                 Ok(ExperimentHealth {
                     id: row.get_str(0)?.to_string(),
-                    layer: row.get_str(1)?.to_string(),
-                    status: row.get_str(2)?.to_string(),
-                    created_at: row.get_str(3)?.to_string(),
-                    max_runs: required_int(row, 4)?,
-                    prediction_confidence: Some(prediction.confidence),
-                    recorded_runs: required_int(row, 6)?,
-                    verdict: optional_text(row, 7),
-                    scientific_outcome: optional_text(row, 9),
-                    reject_reasons: row.get_json::<Vec<String>>(8).ok().unwrap_or_default(),
+                    status: row.get_str(1)?.to_string(),
+                    created_at: row.get_str(2)?.to_string(),
+                    max_runs: required_int(row, 3)?,
+                    recorded_runs: required_int(row, 4)?,
                 })
             })
             .collect::<Result<Vec<_>, ExperimentationError>>()?;
@@ -1297,9 +1418,7 @@ mod tests {
     use super::*;
     use crate::types::{
         Prediction, RUBRIC_KIND_GROUNDED_REPORT, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC,
-        Rubric, RubricVerification, SCIENTIFIC_OUTCOME_CORROBORATED,
-        SCIENTIFIC_OUTCOME_DESIGN_VOID, SCIENTIFIC_OUTCOME_EQUIVALENCE,
-        SCIENTIFIC_OUTCOME_INCONCLUSIVE, SCIENTIFIC_OUTCOME_MEASUREMENT_VOID, ScientificHeadroom,
+        Rubric, RubricVerification, SCIENTIFIC_OUTCOME_INCONCLUSIVE, ScientificHeadroom,
         VARIANT_ROLE_ABLATION, VARIANT_ROLE_BASELINE, VARIANT_ROLE_CHALLENGER, validate_rubrics,
     };
     use hkask_storage::database::sqlite::SqliteDriver;
@@ -1583,6 +1702,7 @@ mod tests {
         assert_eq!(
             store
                 .variant_by_key(&experiment.id, "v1-key")
+                .expect("lookup")
                 .expect("original intact")
                 .id,
             first.id
@@ -1886,16 +2006,20 @@ mod tests {
         );
     }
 
+    /// The snapshot's recorded-run total is the sum the budget refusal uses:
+    /// fitness records plus final evaluations. Counting fitness alone left an
+    /// experiment whose last runs were a final evaluation reading as under
+    /// budget, so the stuck sensor never saw it (mcp-tool-review EX-01).
     #[test]
-    fn health_snapshot_reports_recorded_runs_verdict_and_brier() {
+    fn health_snapshot_counts_final_evaluations_toward_recorded_runs() {
         let store = store();
-        let experiment = propose(&store, "skill", None); // confidence 0.7
+        let experiment = propose(&store, "skill", None); // ceiling 18
         let baseline = variant_role(
             &store,
             &experiment.id,
             "baseline",
             None,
-            Some("baseline"),
+            None,
             VARIANT_ROLE_BASELINE,
         );
         store
@@ -1909,6 +2033,36 @@ mod tests {
             )
             .expect("fitness");
         store
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.5), None)
+            .expect("seal");
+        let snapshot = store.health_snapshot().expect("snapshot");
+        assert_eq!(snapshot.experiments[0].recorded_runs, 9);
+        assert!(
+            snapshot.stuck_running(7).is_empty(),
+            "9 of 18 runs recorded: not stuck"
+        );
+
+        store
+            .record_final_evaluation(
+                &experiment.id,
+                &baseline.id,
+                &["held-out".to_string()],
+                9,
+                &serde_json::json!({}),
+            )
+            .expect("final evaluation to the ceiling");
+        let snapshot = store.health_snapshot().expect("snapshot");
+        let row = &snapshot.experiments[0];
+        assert_eq!(row.id, experiment.id);
+        assert_eq!(row.max_runs, 18);
+        assert_eq!(row.recorded_runs, 18, "fitness 9 + final evaluation 9");
+        assert_eq!(
+            snapshot.stuck_running(7),
+            vec![experiment.id.clone()],
+            "the whole budget is recorded with no selection: stuck"
+        );
+
+        store
             .record_selection(
                 &experiment.id,
                 VERDICT_SELECTED,
@@ -1919,124 +2073,269 @@ mod tests {
             )
             .expect("selection");
         let snapshot = store.health_snapshot().expect("snapshot");
-        assert_eq!(snapshot.experiments.len(), 1);
-        let row = &snapshot.experiments[0];
-        assert_eq!(row.id, experiment.id);
-        assert_eq!(row.status, STATUS_RESOLVED);
-        assert_eq!(row.max_runs, 18);
-        assert_eq!(row.recorded_runs, 9);
-        assert_eq!(row.verdict.as_deref(), Some(VERDICT_SELECTED));
-        // selected at confidence 0.7 → Brier (0.7-1)^2 = 0.09
-        let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
-        assert!((brier - 0.09).abs() < 1e-9, "brier: {brier}");
-        assert_eq!(claims, 1);
-        // Resolved + selected → not stuck regardless of budget.
-        assert!(snapshot.stuck_running(7).is_empty());
+        assert_eq!(snapshot.experiments[0].status, STATUS_RESOLVED);
+        assert!(snapshot.stuck_running(7).is_empty(), "resolved: not stuck");
     }
 
     #[test]
-    fn snapshot_stuck_and_void_exclusion_rules() {
+    fn snapshot_stuck_rules() {
         use crate::types::{ExperimentHealth, ExperimentationHealthSnapshot};
         let old = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let fresh = chrono::Utc::now().to_rfc3339();
+        let row = |id: &str, status: &str, created_at: &str, recorded_runs: u64| ExperimentHealth {
+            id: id.to_string(),
+            status: status.to_string(),
+            created_at: created_at.to_string(),
+            max_runs: 18,
+            recorded_runs,
+        };
         let snapshot = ExperimentationHealthSnapshot {
             experiments: vec![
-                // Running, created 30 days ago → stuck on age (D-3: 7 days).
-                ExperimentHealth {
-                    id: "exp_stale".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RUNNING.to_string(),
-                    created_at: old,
-                    max_runs: 18,
-                    recorded_runs: 3,
-                    prediction_confidence: Some(0.5),
-                    verdict: None,
-                    scientific_outcome: None,
-                    reject_reasons: Vec::new(),
-                },
-                // Running, fresh, but the whole budget is recorded with no
-                // verdict → stuck on spend.
-                ExperimentHealth {
-                    id: "exp_spent".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RUNNING.to_string(),
-                    created_at: fresh.clone(),
-                    max_runs: 9,
-                    recorded_runs: 9,
-                    prediction_confidence: Some(0.5),
-                    verdict: None,
-                    scientific_outcome: None,
-                    reject_reasons: Vec::new(),
-                },
-                // Running, fresh, budget unspent → healthy.
-                ExperimentHealth {
-                    id: "exp_healthy".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RUNNING.to_string(),
-                    created_at: fresh.clone(),
-                    max_runs: 18,
-                    recorded_runs: 3,
-                    prediction_confidence: Some(0.5),
-                    verdict: None,
-                    scientific_outcome: None,
-                    reject_reasons: Vec::new(),
-                },
-                // Rejected at 0.5 confidence → Brier 0.25.
-                ExperimentHealth {
-                    id: "exp_refuted".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RESOLVED.to_string(),
-                    created_at: fresh.clone(),
-                    max_runs: 18,
-                    recorded_runs: 18,
-                    prediction_confidence: Some(0.5),
-                    verdict: Some(VERDICT_REJECTED.to_string()),
-                    scientific_outcome: None,
-                    reject_reasons: vec!["claim refuted".to_string()],
-                },
-                // No-headroom void → excluded from the calibration record.
-                ExperimentHealth {
-                    id: "exp_void".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RESOLVED.to_string(),
-                    created_at: fresh.clone(),
-                    max_runs: 9,
-                    recorded_runs: 9,
-                    prediction_confidence: Some(0.9),
-                    verdict: Some(VERDICT_REJECTED.to_string()),
-                    scientific_outcome: None,
-                    reject_reasons: vec!["no-headroom: baseline saturated at 1.0".to_string()],
-                },
-                // Measurement-void (infrastructure failure) → also excluded:
-                // the claim was never tested, so scoring it as refuted would
-                // pollute the calibration record with provider noise.
-                ExperimentHealth {
-                    id: "exp_meas_void".to_string(),
-                    layer: "skill".to_string(),
-                    status: STATUS_RESOLVED.to_string(),
-                    created_at: fresh,
-                    max_runs: 18,
-                    recorded_runs: 18,
-                    prediction_confidence: Some(0.5),
-                    verdict: Some(VERDICT_REJECTED.to_string()),
-                    scientific_outcome: None,
-                    reject_reasons: vec![
-                        "measurement-void: 7/9 rollouts errored at the provider (0 tokens)"
-                            .to_string(),
-                    ],
-                },
+                // Running, created 30 days ago: stuck on age (D-3: 7 days).
+                row("exp_stale", STATUS_RUNNING, &old, 3),
+                // Running, fresh, whole budget recorded: stuck on spend.
+                row("exp_spent", STATUS_RUNNING, &fresh, 18),
+                // Running, fresh, under budget: healthy.
+                row("exp_healthy", STATUS_RUNNING, &fresh, 3),
+                // Proposed and old: the queue is not the running set.
+                row("exp_queued", STATUS_PROPOSED, &old, 0),
+                // Resolved, old, budget spent: never stuck.
+                row("exp_done", STATUS_RESOLVED, &old, 18),
+                // Running with an unreadable timestamp: reads as stuck.
+                row("exp_bad_stamp", STATUS_RUNNING, "not a timestamp", 0),
             ],
         };
-        let stuck = snapshot.stuck_running(7);
         assert_eq!(
-            stuck,
-            vec!["exp_stale".to_string(), "exp_spent".to_string()]
+            snapshot.stuck_running(7),
+            vec![
+                "exp_stale".to_string(),
+                "exp_spent".to_string(),
+                "exp_bad_stamp".to_string()
+            ]
         );
-        // Only the refuted claim counts: both voids (no-headroom and
-        // measurement-void) are excluded — mean Brier 0.25 over 1 claim.
-        let (brier, claims) = snapshot.resolved_claim_brier().expect("brier");
-        assert!((brier - 0.25).abs() < 1e-9, "brier: {brier}");
-        assert_eq!(claims, 1);
+    }
+
+    /// mcp-tool-review EX-15: the one-baseline rule and the proposed ->
+    /// running flip hold under concurrent registration. The status check,
+    /// the baseline check, the insert and the flip are one write
+    /// transaction; before, they were four separate statements on pooled
+    /// connections. Runs on a multi-connection file-backed pool, like the
+    /// selection race below.
+    #[test]
+    fn concurrent_baseline_registrations_record_exactly_one_baseline() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("experimentation-baseline-race.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        let pool = SqliteDriver::file_pool(&db_path).expect("file pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+        let store = Arc::new(ExperimentationStore::with_driver(driver).expect("race store"));
+        let experiment = propose(&store, "skill", None);
+
+        let (winners, losers) = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for index in 0..6 {
+                let store = Arc::clone(&store);
+                let experiment_id = experiment.id.clone();
+                handles.push(scope.spawn(move || {
+                    store.register_variant(
+                        &experiment_id,
+                        &serde_json::json!({"name": format!("baseline-{index}")}),
+                        None,
+                        VARIANT_ROLE_BASELINE,
+                        None,
+                    )
+                }));
+            }
+            let mut winners = 0;
+            let mut losers = 0;
+            for handle in handles {
+                match handle.join().expect("registration thread") {
+                    Ok(_) => winners += 1,
+                    Err(ExperimentationError::DuplicateBaseline(..)) => losers += 1,
+                    Err(other) => panic!("unexpected error: {other}"),
+                }
+            }
+            (winners, losers)
+        });
+        assert_eq!(winners, 1, "exactly one baseline registers");
+        assert_eq!(losers, 5, "the others are refused as a second baseline");
+        let variants = store
+            .variants_for_experiment(&experiment.id)
+            .expect("variants");
+        assert_eq!(variants.len(), 1, "exactly one variant row");
+        assert_eq!(
+            store
+                .experiment_by_id(&experiment.id)
+                .expect("reload")
+                .status,
+            STATUS_RUNNING
+        );
+    }
+
+    /// mcp-tool-review EX-15: the held-out rule holds under concurrent
+    /// final evaluations. Measured before the fix (2026-11-12, this test, 40
+    /// runs on the file-backed pool): in 6 runs, 2 or 3 of 8 concurrent final
+    /// evaluations citing the SAME run ref were all accepted, because the
+    /// overlap check and the insert were separate statements. They are now
+    /// one write transaction.
+    #[test]
+    fn concurrent_final_evaluations_never_share_a_run_ref() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("experimentation-ref-race.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        let pool = SqliteDriver::file_pool(&db_path).expect("file pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+        let store = Arc::new(ExperimentationStore::with_driver(driver).expect("race store"));
+        let experiment = propose(&store, "skill", None); // ceiling 18
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["base".to_string()],
+                1,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect("baseline fitness");
+        store
+            .seal_experiment(&experiment.id, &baseline.id, Some(0.5), None)
+            .expect("seal");
+
+        let winners = std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                let store = Arc::clone(&store);
+                let experiment_id = experiment.id.clone();
+                let variant_id = baseline.id.clone();
+                handles.push(scope.spawn(move || {
+                    store.record_final_evaluation(
+                        &experiment_id,
+                        &variant_id,
+                        &["held-out".to_string()],
+                        1,
+                        &serde_json::json!({}),
+                    )
+                }));
+            }
+            let mut winners = 0;
+            for handle in handles {
+                match handle.join().expect("final evaluation thread") {
+                    Ok(_) => winners += 1,
+                    Err(ExperimentationError::RunRefsNotDisjoint(_)) => {}
+                    Err(other) => panic!("unexpected error: {other}"),
+                }
+            }
+            winners
+        });
+        assert_eq!(winners, 1, "exactly one final evaluation takes the ref");
+        assert_eq!(
+            store
+                .final_evaluations_for_experiment(&experiment.id)
+                .expect("final evaluations")
+                .len(),
+            1
+        );
+    }
+
+    /// mcp-tool-review EX-15: a seal accounts for every baseline record
+    /// written before it. Each fitness record of the baseline either is
+    /// listed in the seal's `baseline_fitness_ids` or cites the seal.
+    /// Measured before the fix (2026-11-12, this test, 300 runs on the
+    /// file-backed pool): 253 runs left 1 to 8 baseline records with no
+    /// seal_id outside the seal's evidence, because the seal read the
+    /// baseline's records and inserted itself in separate statements. Both
+    /// are now one write transaction.
+    #[test]
+    fn a_seal_accounts_for_every_baseline_record_written_before_it() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("experimentation-seal-race.db");
+        let db_path = db_path.to_string_lossy().to_string();
+        let pool = SqliteDriver::file_pool(&db_path).expect("file pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new_labeled(pool, db_path.as_str()));
+        let store = Arc::new(ExperimentationStore::with_driver(driver).expect("race store"));
+        let experiment = propose(&store, "skill", None); // ceiling 18
+        let baseline = variant_role(
+            &store,
+            &experiment.id,
+            "baseline",
+            None,
+            None,
+            VARIANT_ROLE_BASELINE,
+        );
+        store
+            .record_fitness(
+                &experiment.id,
+                &baseline.id,
+                &["base-0".to_string()],
+                1,
+                &serde_json::json!({}),
+                None,
+            )
+            .expect("first baseline fitness");
+
+        std::thread::scope(|scope| {
+            let mut recorders = Vec::new();
+            for index in 1..=8 {
+                let store = Arc::clone(&store);
+                let experiment_id = experiment.id.clone();
+                let variant_id = baseline.id.clone();
+                recorders.push(scope.spawn(move || {
+                    store.record_fitness(
+                        &experiment_id,
+                        &variant_id,
+                        &[format!("base-{index}")],
+                        1,
+                        &serde_json::json!({}),
+                        None,
+                    )
+                }));
+            }
+            let sealer = {
+                let store = Arc::clone(&store);
+                let experiment_id = experiment.id.clone();
+                let variant_id = baseline.id.clone();
+                scope.spawn(move || {
+                    store.seal_experiment(&experiment_id, &variant_id, Some(0.5), None)
+                })
+            };
+            for recorder in recorders {
+                match recorder.join().expect("recorder thread") {
+                    Ok(_) | Err(ExperimentationError::SealCitationMissing(..)) => {}
+                    Err(other) => panic!("unexpected error: {other}"),
+                }
+            }
+            sealer
+                .join()
+                .expect("sealer thread")
+                .expect("the seal lands");
+        });
+
+        let seal = store
+            .seal_for_experiment(&experiment.id)
+            .expect("seal read")
+            .expect("sealed");
+        let uncited = store
+            .fitness_for_experiment(&experiment.id)
+            .expect("baseline fitness")
+            .into_iter()
+            .filter(|record| record.variant_id == baseline.id && record.seal_id.is_none())
+            .filter(|record| !seal.baseline_fitness_ids.contains(&record.id))
+            .count();
+        assert_eq!(
+            uncited, 0,
+            "a baseline record with no seal_id is missing from the seal's evidence"
+        );
     }
 
     /// The §P8.9 follow-up (2026-10-01): concurrent selections on one
@@ -2832,39 +3131,26 @@ mod tests {
         ));
     }
 
-    /// Criterion 3 + calibration: only `corroborated` and `rejected` typed
-    /// outcomes calibrate; equivalence, inconclusive and the two void
-    /// outcomes are excluded on the typed field, never by reject-reason text.
-    /// Each outcome gets its own store so the aggregate Brier reading isolates
-    /// exactly one claim.
+    /// Every scientific outcome is stored on its own field under its own
+    /// name, with no variant required; only `rejected` needs a reason.
     #[test]
-    fn scientific_outcomes_drive_calibration_exclusion() {
-        let outcome_brier = |outcome: &str| -> Option<(f64, u32)> {
+    fn every_scientific_outcome_is_stored_as_itself() {
+        for outcome in SCIENTIFIC_OUTCOMES {
             let store = store();
             let experiment = propose_design(&store, &design_spec("fixed"));
             baseline_with_fitness(&store, &experiment.id, 0.6);
-            let reasons: Vec<String> = if outcome == SCIENTIFIC_OUTCOME_REJECTED {
+            let reasons: Vec<String> = if *outcome == SCIENTIFIC_OUTCOME_REJECTED {
                 vec!["no variant beat the margin".to_string()]
             } else {
                 Vec::new()
             };
-            store
+            let (selection, resolved) = store
                 .record_selection(&experiment.id, outcome, None, &reasons, None, Some(outcome))
                 .expect("selection");
-            store
-                .health_snapshot()
-                .expect("snapshot")
-                .resolved_claim_brier()
-        };
-        // `corroborated` calibrates (claim held).
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_CORROBORATED).is_some());
-        // `rejected` calibrates (claim refuted).
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_REJECTED).is_some());
-        // The bounded and void outcomes never enter calibration.
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_EQUIVALENCE).is_none());
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_INCONCLUSIVE).is_none());
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_MEASUREMENT_VOID).is_none());
-        assert!(outcome_brier(SCIENTIFIC_OUTCOME_DESIGN_VOID).is_none());
+            assert_eq!(selection.scientific_outcome.as_deref(), Some(*outcome));
+            assert_eq!(selection.verdict, *outcome);
+            assert_eq!(resolved.status, STATUS_RESOLVED);
+        }
     }
 
     /// Criterion 3 (vocabulary): an unknown scientific outcome is a typed

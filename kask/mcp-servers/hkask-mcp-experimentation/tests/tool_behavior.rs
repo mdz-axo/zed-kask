@@ -17,7 +17,7 @@ use hkask_mcp_experimentation::types::{
     ExperimentStatus, Prediction, RUBRIC_KIND_IMPLEMENTATION, RUBRIC_KIND_METRIC, Rubric,
     RubricVerification,
 };
-use hkask_mcp_test_support::{invoke_tool, parse_envelope};
+use hkask_mcp_test_support::invoke_tool;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::AnyJsonValue;
 use hkask_types::WebID;
@@ -1185,4 +1185,620 @@ async fn scientific_outcome_resolves_through_the_tool_seam() {
         .await
         .expect_err("both resolutions refused");
     assert!(error.to_string().contains("exactly one"), "{error}");
+}
+
+// ── mcp-tool-review 2026-11-12 wire pins ────────────────────────────────────
+//
+// Each test below builds its request from JSON, the way a tool call arrives,
+// and goes through the tool handler. Every "before" in a comment was measured
+// on the installed server (sha256 5b22cf61a9f00b2c) over stdio on a temp
+// database.
+
+use hkask_types::McpErrorKind;
+
+fn from_wire<T: serde::de::DeserializeOwned>(arguments: serde_json::Value) -> T {
+    serde_json::from_value(arguments).expect("arguments deserialize like a tool call")
+}
+
+fn wire_proposal() -> serde_json::Value {
+    serde_json::json!({
+        "hypothesis": "zz wire hypothesis",
+        "layer": "skill",
+        "genotype_refs": ["zz/ref"],
+        "eval_set": r#"{"task_set":"zz","pins":["a"]}"#,
+        "fitness_fn": "zz pass rate",
+        "noise_band": r#"{"cost_band_pct":10}"#,
+        "rubrics": [
+            {"id": "m1", "description": "metric d", "kind": "metric",
+             "verification": {"type": "report_ref", "harness": "zz"}},
+            {"id": "i1", "description": "impl d", "kind": "implementation",
+             "verification": {"type": "contains", "spec": "zz"}}
+        ],
+        "prediction": {"claim": "zz claim", "confidence": 0.7},
+        "budget": r#"{"max_runs":10}"#
+    })
+}
+
+fn with(mut base: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
+    let target = base.as_object_mut().expect("object");
+    for (key, value) in extra.as_object().expect("object") {
+        target.insert(key.clone(), value.clone());
+    }
+    base
+}
+
+async fn wire_propose(server: &ExperimentationServer, arguments: serde_json::Value) -> String {
+    let body = invoke_tool!(server, experiment_propose, from_wire(arguments));
+    body["experiment"]["id"].as_str().expect("id").to_string()
+}
+
+async fn wire_variant(
+    server: &ExperimentationServer,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, hkask_mcp_server::server::McpToolError> {
+    let out = server
+        .variant_register(Parameters(from_wire(arguments)))
+        .await?;
+    Ok(hkask_mcp_test_support::parse_envelope(&out))
+}
+
+async fn wire_fitness(
+    server: &ExperimentationServer,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, hkask_mcp_server::server::McpToolError> {
+    let out = server
+        .fitness_record(Parameters(from_wire(arguments)))
+        .await?;
+    Ok(hkask_mcp_test_support::parse_envelope(&out))
+}
+
+async fn wire_select(
+    server: &ExperimentationServer,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, hkask_mcp_server::server::McpToolError> {
+    let out = server
+        .selection_record(Parameters(from_wire(arguments)))
+        .await?;
+    Ok(hkask_mcp_test_support::parse_envelope(&out))
+}
+
+/// Propose, register a baseline and a challenger, record the baseline and
+/// seal at 0.5. Returns (experiment, baseline, challenger, seal, fingerprint).
+async fn sealed(
+    server: &ExperimentationServer,
+    proposal: serde_json::Value,
+) -> (String, String, String, String, String) {
+    let experiment = wire_propose(server, proposal).await;
+    let baseline = wire_variant(
+        server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}", "role": "baseline"}),
+    )
+    .await
+    .expect("baseline")["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let challenger = wire_variant(
+        server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}"}),
+    )
+    .await
+    .expect("challenger")["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    wire_fitness(
+        server,
+        serde_json::json!({"experiment_id": experiment, "variant_id": baseline,
+            "runs": ["zz-base"], "run_count": 1, "scores": "{}"}),
+    )
+    .await
+    .expect("baseline fitness");
+    let seal = invoke_tool!(
+        server,
+        experiment_seal,
+        from_wire(serde_json::json!({"experiment_id": experiment,
+            "baseline_variant_id": baseline, "baseline_pass_rate": 0.5}))
+    );
+    (
+        experiment,
+        baseline,
+        challenger,
+        seal["seal"]["id"].as_str().expect("seal id").to_string(),
+        seal["seal"]["fingerprint"]
+            .as_str()
+            .expect("fingerprint")
+            .to_string(),
+    )
+}
+
+/// EX-04: a misspelled optional parameter is refused. Before: `rol:
+/// "baseline"` registered a challenger, `desing_spec` stored no design, and a
+/// `statuz` filter returned every status — each a successful call.
+#[test]
+fn a_misspelled_parameter_is_refused() {
+    let refused = |error: serde_json::Error, field: &str| {
+        let message = error.to_string();
+        assert!(
+            message.contains("unknown field") && message.contains(field),
+            "{message}"
+        );
+    };
+    refused(
+        serde_json::from_value::<VariantRegisterRequest>(serde_json::json!({
+            "experiment_id": "e", "genotype_config": "{}", "rol": "baseline"}))
+        .expect_err("rol"),
+        "rol",
+    );
+    refused(
+        serde_json::from_value::<ExperimentProposeRequest>(with(
+            wire_proposal(),
+            serde_json::json!({"desing_spec": r#"{"spec_version":"1"}"#}),
+        ))
+        .expect_err("desing_spec"),
+        "desing_spec",
+    );
+    refused(
+        serde_json::from_value::<PopulationQueryRequest>(serde_json::json!({"statuz": "resolved"}))
+            .expect_err("statuz"),
+        "statuz",
+    );
+    refused(
+        serde_json::from_value::<ExperimentSealRequest>(serde_json::json!({
+            "experiment_id": "e", "baseline_variant_id": "v", "pass_rate": 0.5}))
+        .expect_err("pass_rate"),
+        "pass_rate",
+    );
+    refused(
+        serde_json::from_value::<FitnessRecordRequest>(serde_json::json!({
+            "experiment_id": "e", "variant_id": "v", "runs": ["r"], "run_count": 1,
+            "scores": "{}", "seal": "s"}))
+        .expect_err("seal"),
+        "seal",
+    );
+    refused(
+        serde_json::from_value::<FinalEvaluationRecordRequest>(serde_json::json!({
+            "experiment_id": "e", "variant_id": "v", "runs": ["r"], "run_count": 1,
+            "scores": "{}", "seal_id": "s"}))
+        .expect_err("seal_id"),
+        "seal_id",
+    );
+    refused(
+        serde_json::from_value::<SelectionRecordRequest>(serde_json::json!({
+            "experiment_id": "e", "outcome": "corroborated"}))
+        .expect_err("outcome"),
+        "outcome",
+    );
+    refused(
+        serde_json::from_value::<LineageReadRequest>(serde_json::json!({
+            "artifact_ref": "e", "depth": 2}))
+        .expect_err("depth"),
+        "depth",
+    );
+}
+
+/// EX-05: an outcome word in the `verdict` field is refused. Before:
+/// `verdict: "corroborated"` was accepted and stored with a NULL
+/// scientific_outcome, so the typed field the exclusion rule keys on was
+/// empty for a scientific resolution.
+#[tokio::test]
+async fn a_scientific_outcome_in_the_verdict_field_is_refused() {
+    let server = make_server();
+    let experiment = wire_propose(&server, wire_proposal()).await;
+    let error = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "verdict": "corroborated"}),
+    )
+    .await
+    .expect_err("an outcome word is not a verdict");
+    assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+    assert!(
+        error.message.contains("selected, rejected")
+            && error.message.contains("scientific_outcome"),
+        "{error}"
+    );
+    // The experiment is still open, and the same word in its own field resolves it.
+    let resolved = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "scientific_outcome": "corroborated"}),
+    )
+    .await
+    .expect("the outcome field accepts it");
+    assert_eq!(resolved["selection"]["scientific_outcome"], "corroborated");
+    assert_eq!(resolved["experiment"]["status"], "resolved");
+}
+
+/// EX-06: a named variant is checked under every resolution. Before: a
+/// scientific outcome stored `selected_variant_id: "var_nope"` unchecked.
+#[tokio::test]
+async fn a_selection_never_names_a_variant_that_is_not_in_the_experiment() {
+    let server = make_server();
+    let experiment = wire_propose(&server, wire_proposal()).await;
+    let other = wire_propose(&server, wire_proposal()).await;
+    let foreign = wire_variant(
+        &server,
+        serde_json::json!({"experiment_id": other, "genotype_config": "{}"}),
+    )
+    .await
+    .expect("variant")["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let unknown = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "scientific_outcome": "corroborated",
+            "selected_variant_id": "var_nope"}),
+    )
+    .await
+    .expect_err("unknown variant");
+    assert_eq!(unknown.kind, McpErrorKind::NotFound);
+    let elsewhere = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "scientific_outcome": "inconclusive",
+            "selected_variant_id": foreign}),
+    )
+    .await
+    .expect_err("variant of another experiment");
+    assert_eq!(elsewhere.kind, McpErrorKind::InvalidArgument);
+}
+
+/// EX-07: an optional id or key is omitted or meaningful, never blank.
+/// Before: `experiment_key: ""` was stored as the key "", so the next
+/// blank-keyed declaration was refused as a conflict with it, and
+/// `linked_goal_id: ""` was stored as a link to nothing.
+#[tokio::test]
+async fn blank_optional_ids_and_keys_are_refused() {
+    let server = make_server();
+    for (field, value) in [
+        ("experiment_key", ""),
+        ("experiment_key", "  "),
+        ("linked_goal_id", ""),
+    ] {
+        let error = server
+            .experiment_propose(Parameters(from_wire(with(
+                wire_proposal(),
+                serde_json::json!({ field: value }),
+            ))))
+            .await
+            .expect_err("blank optional");
+        assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains(field) && error.message.contains("omit"),
+            "{error}"
+        );
+    }
+    let experiment = wire_propose(&server, wire_proposal()).await;
+    let error = wire_variant(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}", "variant_key": ""}),
+    )
+    .await
+    .expect_err("blank variant_key");
+    assert!(error.message.contains("variant_key"), "{error}");
+    // JSON null is the same as an omitted field.
+    wire_propose(
+        &server,
+        with(
+            wire_proposal(),
+            serde_json::json!({"experiment_key": null, "linked_goal_id": null}),
+        ),
+    )
+    .await;
+}
+
+/// EX-08: a keyed retry returns the variant the first call registered,
+/// whatever happened since. Before: retrying a keyed BASELINE registration
+/// was refused as a second baseline, and a keyed retry after the experiment
+/// resolved was refused as resolved — the two cases a retry exists for.
+#[tokio::test]
+async fn a_keyed_variant_retry_returns_the_existing_variant() {
+    let server = make_server();
+    let experiment = wire_propose(&server, wire_proposal()).await;
+    let baseline = serde_json::json!({"experiment_id": experiment, "genotype_config": r#"{"n":0}"#,
+        "role": "baseline", "variant_key": "zz-base"});
+    let first = wire_variant(&server, baseline.clone())
+        .await
+        .expect("first");
+    let retry = wire_variant(&server, baseline.clone())
+        .await
+        .expect("retry");
+    assert_eq!(first["variant"]["id"], retry["variant"]["id"]);
+
+    // An unkeyed second baseline is still refused, and so is a different
+    // baseline under a new key.
+    let second = wire_variant(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}", "role": "baseline"}),
+    )
+    .await
+    .expect_err("second baseline");
+    assert_eq!(second.kind, McpErrorKind::FailedPrecondition);
+    // The same key with another payload is refused as a key conflict.
+    let differs = wire_variant(
+        &server,
+        with(
+            baseline.clone(),
+            serde_json::json!({"genotype_config": r#"{"n":1}"#}),
+        ),
+    )
+    .await
+    .expect_err("different payload");
+    assert_eq!(differs.kind, McpErrorKind::InvalidArgument);
+    assert!(differs.message.contains("zz-base"), "{differs}");
+
+    wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "verdict": "rejected",
+            "reject_reasons": ["zz"]}),
+    )
+    .await
+    .expect("resolve");
+    let after = wire_variant(&server, baseline)
+        .await
+        .expect("retry after resolution");
+    assert_eq!(first["variant"]["id"], after["variant"]["id"]);
+    let fresh = wire_variant(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}", "variant_key": "zz-new"}),
+    )
+    .await
+    .expect_err("a new variant on a resolved experiment");
+    assert_eq!(fresh.kind, McpErrorKind::FailedPrecondition);
+}
+
+/// EX-09: held-out run references stay held out. Before: after a final
+/// evaluation on `zz-held`, a fitness record reusing `zz-held` was accepted,
+/// and a final evaluation listing one reference twice was accepted.
+#[tokio::test]
+async fn held_out_run_refs_are_not_reused_in_either_direction() {
+    let server = make_server();
+    let (experiment, _, challenger, seal, _) = sealed(&server, wire_proposal()).await;
+    let final_evaluation = |runs: serde_json::Value| {
+        serde_json::json!({"experiment_id": experiment, "variant_id": challenger,
+            "runs": runs, "run_count": 1, "scores": "{}"})
+    };
+    let repeated = server
+        .final_evaluation_record(Parameters(from_wire(final_evaluation(serde_json::json!(
+            ["zz-twice", "zz-twice"]
+        )))))
+        .await
+        .expect_err("one reference twice");
+    assert_eq!(repeated.kind, McpErrorKind::InvalidArgument);
+    assert!(repeated.message.contains("zz-twice"), "{repeated}");
+
+    invoke_tool!(
+        server,
+        final_evaluation_record,
+        from_wire(final_evaluation(serde_json::json!(["zz-held"])))
+    );
+    let reused = wire_fitness(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "variant_id": challenger,
+            "runs": ["zz-held", "zz-fresh"], "run_count": 1, "scores": "{}", "seal_id": seal}),
+    )
+    .await
+    .expect_err("a fitness record may not take a held-out reference");
+    assert_eq!(reused.kind, McpErrorKind::InvalidArgument);
+    assert!(
+        reused.message.contains("zz-held") && !reused.message.contains("zz-fresh"),
+        "{reused}"
+    );
+    // A reference no final evaluation used is still accepted.
+    wire_fitness(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "variant_id": challenger,
+            "runs": ["zz-fresh"], "run_count": 1, "scores": "{}", "seal_id": seal}),
+    )
+    .await
+    .expect("fresh reference");
+}
+
+/// EX-10: `created_since` selects by instant, not by text. Before: an
+/// instant two hours in the future written at -11:00 returned every
+/// experiment, because the stored UTC text sorted after it.
+#[tokio::test]
+async fn created_since_compares_instants_across_offsets() {
+    let server = make_server();
+    wire_propose(&server, wire_proposal()).await;
+    let count = |created_since: String| {
+        let server = &server;
+        async move {
+            let body = invoke_tool!(
+                server,
+                population_query,
+                from_wire(serde_json::json!({ "created_since": created_since }))
+            );
+            body["count"].as_u64().expect("count")
+        }
+    };
+    let offset = chrono::FixedOffset::west_opt(11 * 3600).expect("offset");
+    let ahead = chrono::Utc::now() + chrono::Duration::hours(2);
+    let behind = chrono::Utc::now() - chrono::Duration::hours(2);
+    assert_eq!(count(ahead.to_rfc3339()).await, 0);
+    assert_eq!(count(ahead.with_timezone(&offset).to_rfc3339()).await, 0);
+    assert_eq!(count(behind.to_rfc3339()).await, 1);
+    assert_eq!(count(behind.with_timezone(&offset).to_rfc3339()).await, 1);
+}
+
+/// EX-11: `reject_reasons` may be omitted when there is nothing to reject,
+/// and a blank reason is not a reason. Before: omitting the field failed
+/// deserialization for every selection, and `[" "]` satisfied "at least one
+/// reason".
+#[tokio::test]
+async fn reject_reasons_are_optional_and_never_blank() {
+    let server = make_server();
+    let (experiment, _, challenger, _, _) = sealed(&server, wire_proposal()).await;
+    let blank = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "verdict": "rejected",
+            "reject_reasons": ["  "]}),
+    )
+    .await
+    .expect_err("blank reason");
+    assert_eq!(blank.kind, McpErrorKind::InvalidArgument);
+    let missing = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "verdict": "rejected"}),
+    )
+    .await
+    .expect_err("rejected with the field omitted");
+    assert!(missing.message.contains("reject_reason"), "{missing}");
+    let selected = wire_select(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "verdict": "selected",
+            "selected_variant_id": challenger}),
+    )
+    .await
+    .expect("selected with reject_reasons omitted");
+    assert_eq!(
+        selected["selection"]["reject_reasons"],
+        serde_json::json!([])
+    );
+}
+
+/// EX-12: lineage_read takes either id, returns the same record sections for
+/// both, and an unknown reference says so for both kinds. Before: an unknown
+/// reference answered "experiment X not found" even when a variant id was
+/// meant, and the variant view left out the seal.
+#[tokio::test]
+async fn lineage_read_returns_the_same_sections_for_either_id() {
+    let server = make_server();
+    let (experiment, _, challenger, seal, _) = sealed(&server, wire_proposal()).await;
+    let read = |reference: String| {
+        let server = &server;
+        async move {
+            invoke_tool!(
+                server,
+                lineage_read,
+                from_wire(serde_json::json!({ "artifact_ref": reference }))
+            )
+        }
+    };
+    let by_experiment = read(experiment.clone()).await;
+    let by_variant = read(challenger.clone()).await;
+    for section in [
+        "experiment",
+        "seal",
+        "fitness",
+        "final_evaluations",
+        "selections",
+    ] {
+        assert_eq!(by_experiment[section], by_variant[section], "{section}");
+    }
+    assert_eq!(by_variant["seal"]["id"], seal.as_str());
+    assert_eq!(by_experiment["kind"], "experiment");
+    assert_eq!(
+        by_experiment["variants"]
+            .as_array()
+            .expect("variants")
+            .len(),
+        2
+    );
+    assert_eq!(by_variant["kind"], "variant");
+    assert_eq!(by_variant["ancestry"][0]["id"], challenger.as_str());
+
+    let error = server
+        .lineage_read(Parameters(from_wire(
+            serde_json::json!({"artifact_ref": "zz-nope"}),
+        )))
+        .await
+        .expect_err("unknown reference");
+    assert_eq!(error.kind, McpErrorKind::NotFound);
+    assert!(
+        error.message.contains("experiment or variant") && error.message.contains("zz-nope"),
+        "{error}"
+    );
+}
+
+/// EX-13: the seal fingerprint computation is pinned to the bytes the
+/// installed server produces. Both constants were computed two ways on
+/// 2026-11-12: by the installed binary, and by `sha256sum` over the JSON
+/// text `{"eval_set":…,"fitness_fn":…,"noise_band":…,"rubrics":…,
+/// "design_spec":null}` with each object in the order it was declared. The
+/// same eval_set with its keys in another order seals to a different
+/// fingerprint: declared order is part of what is sealed. A change that moves
+/// either constant changes what every stored seal attests.
+#[tokio::test]
+async fn seal_fingerprint_computation_is_pinned() {
+    let server = make_server();
+    let (_, _, _, _, declared_order) = sealed(&server, wire_proposal()).await;
+    assert_eq!(
+        declared_order,
+        "cf7eaf349a32e4adcc35d1cb31fefdbd275239357ad45c2d844da1d1b8516070"
+    );
+    let (_, _, _, _, other_order) = sealed(
+        &server,
+        with(
+            wire_proposal(),
+            serde_json::json!({"eval_set": r#"{"pins":["a"],"task_set":"zz"}"#}),
+        ),
+    )
+    .await;
+    assert_eq!(
+        other_order,
+        "d11ebe52c79bf2368942ac7035573b662649fab139e53e76256c6f9555a82bb8"
+    );
+}
+
+/// EX-14: every refusal carries the kind the canonical contract assigns.
+/// Before: both-or-neither headroom forms and a blank headroom criterion
+/// were `failed_precondition`, though no change of state makes them valid.
+#[tokio::test]
+async fn malformed_seal_arguments_are_invalid_argument() {
+    let server = make_server();
+    let experiment = wire_propose(&server, wire_proposal()).await;
+    let baseline = wire_variant(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "genotype_config": "{}", "role": "baseline"}),
+    )
+    .await
+    .expect("baseline")["variant"]["id"]
+        .as_str()
+        .expect("id")
+        .to_string();
+    let seal = |extra: serde_json::Value| {
+        let server = &server;
+        let arguments = with(
+            serde_json::json!({"experiment_id": experiment, "baseline_variant_id": baseline}),
+            extra,
+        );
+        async move {
+            server
+                .experiment_seal(Parameters(from_wire(arguments)))
+                .await
+                .expect_err("refused")
+        }
+    };
+    let headroom =
+        serde_json::json!({"design_family": "single_arm", "criterion": "c", "evidence": []});
+    for extra in [
+        serde_json::json!({}),
+        serde_json::json!({"baseline_pass_rate": 0.5, "scientific_headroom": headroom}),
+        serde_json::json!({"scientific_headroom":
+            {"design_family": "single_arm", "criterion": " ", "evidence": []}}),
+        serde_json::json!({"baseline_pass_rate": 1.2}),
+    ] {
+        let error = seal(extra.clone()).await;
+        assert_eq!(
+            error.kind,
+            McpErrorKind::InvalidArgument,
+            "{extra}: {error}"
+        );
+    }
+    // State refusals stay failed_precondition: no fitness yet, and saturation.
+    let unmeasured = seal(serde_json::json!({"baseline_pass_rate": 0.5})).await;
+    assert_eq!(unmeasured.kind, McpErrorKind::FailedPrecondition);
+    wire_fitness(
+        &server,
+        serde_json::json!({"experiment_id": experiment, "variant_id": baseline,
+            "runs": ["zz-base"], "run_count": 1, "scores": "{}"}),
+    )
+    .await
+    .expect("baseline fitness");
+    let saturated = seal(serde_json::json!({"baseline_pass_rate": 1.0})).await;
+    assert_eq!(saturated.kind, McpErrorKind::FailedPrecondition);
+    assert!(
+        saturated.message.contains("selection_record") && saturated.message.contains("design_void"),
+        "{saturated}"
+    );
 }
