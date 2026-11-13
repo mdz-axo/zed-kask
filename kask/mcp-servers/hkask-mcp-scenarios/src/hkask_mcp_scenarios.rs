@@ -1501,7 +1501,7 @@ impl ScenariosServer {
                 "signed_probability_error_bin_min_count": types::SIGNED_PROBABILITY_ERROR_MIN_BIN_COUNT,
                 "headline_min_bin_count": hkask_forecast::MIN_N_FOR_HEADLINE,
                 "interval_note": "Wilson binomial intervals assume independent trials; these intervals do not adjust for dependent events or repeated forecast versions.",
-                "reference": "Brier (1950)"
+                "reference": "Brier (1950); Murphy (1973) — decomposition of Brier score into reliability, resolution, and uncertainty components"
             });
 
             Ok(output)

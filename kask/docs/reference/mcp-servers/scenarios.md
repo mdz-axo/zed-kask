@@ -219,8 +219,9 @@ its `declared_at`; no version marker decides it. Older date-only/undeclared reco
 provenance-limited unscored history; no retrospective admission. Replays do not
 add independent event weight; changed forecasts need new IDs.
 Raw binary Brier loss is not calibration, and no automatic historical-bias
-correction is applied. The server computes no reliability/resolution/uncertainty
-decomposition. Compare references on matched cases/weights/horizons;
+correction is applied. Murphy (1973), DOI
+`10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
+resolution and uncertainty. Compare references on matched cases/weights/horizons;
 report admission, resolution, exclusions and dependence, not universal bands.
 Durability ordering — verified by regression (`kask/mcp-servers/hkask-mcp-scenarios/tests/tool_behavior.rs`):
 
