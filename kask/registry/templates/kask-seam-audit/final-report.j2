@@ -1,70 +1,70 @@
-{# goal: Synthesize the engagement report — three tracks, defense coverage, MCDA, remediations, hard-stop, convergence. #}
+{# goal: Synthesize the engagement report: a verdict over the three tracks and defense coverage, the deferred remediations, and a cited narrative. #}
 [inference]
 contract:
   input:
     task: string
-    seam_map: object
     security_track: object
     arch_track: object
     ui_track: object
     annotated_findings: array
-    mcda: object
+    gate_b: object
+    ksa_2: object
     applied_remediations: array
     hard_stop: object
     convergence_score: number
-    iterations: number
   output:
     report: object
 ---
 You are synthesizing the final engagement report. Task: {{ task }}.
+{%- set applied_ids = applied_remediations | map(attribute="id") | list %}
+{%- set blocking_open = annotated_findings | selectattr("constraint_force", "eq", "blocking") | rejectattr("id", "in", applied_ids) | map(attribute="id") | list %}
+
+## Computed facts (given; cite them, do not recompute or restate them as your own)
+
+```json
+{{ {"findings_per_track": {"security": gate_b.per_track[0], "architecture": gate_b.per_track[1], "ui": gate_b.per_track[2]}, "findings_per_severity": {"critical": gate_b.per_severity[0], "high": gate_b.per_severity[1], "medium": gate_b.per_severity[2], "low": gate_b.per_severity[3], "info": gate_b.per_severity[4]}, "defense_layers_declared": security_track.defense_layer_coverage.layers | length, "defense_layer_verdict": security_track.defense_layer_coverage.verdict, "mcda_top3": ksa_2.top3, "mcda_stable_under_perturbation": ksa_2.stable_under_perturbation, "mcda_excluded": ksa_2.excluded, "applied_remediation_ids": applied_ids, "blocking_findings_unremediated": blocking_open, "hard_stop_triggered": hard_stop.triggered, "convergence_score": convergence_score} | tojson(indent=2) }}
+```
 
 ## Inputs
 
-seam_map (divergence surface + prior verdicts + slices):
-{{ seam_map }}
-
 security track (findings + defense_layer_coverage):
-{{ security_track }}
+```json
+{{ security_track | tojson }}
+```
 
 architecture track (findings + dead_surface_summary):
-{{ arch_track }}
+```json
+{{ arch_track | tojson }}
+```
 
 ui track (findings + pattern_gap_summary):
-{{ ui_track }}
+```json
+{{ ui_track | tojson }}
+```
 
-annotated_findings (constraint_force + deletion_test + feedback verdict):
-{{ annotated_findings }}
-
-mcda (weight_vector + ranked_remediations, merged with the `KSA-2` result — weighted_totals, baseline_top3, perturbations, stable_under_perturbation):
-{{ mcda }}
+annotated_findings:
+```json
+{{ annotated_findings | tojson }}
+```
 
 applied_remediations:
-{{ applied_remediations }}
+```json
+{{ applied_remediations | tojson }}
+```
 
 hard_stop decision:
-{{ hard_stop }}
-
-convergence_score: {{ convergence_score }} (count of uncited-or-unadjudicated findings, computed by the Converge `lisp_eval` form in gates.md; 0 = clean)
-iterations: {{ iterations }}
-
-## Measured counts (Jinja-computed over the inputs above; verified by the `KSA-3` `lisp_eval` form in `gates.md` — never counted by the model)
-
-{% set all_findings = security_track.findings + arch_track.findings + ui_track.findings %}
-- findings_per_track: security={{ security_track.findings | length }}, architecture={{ arch_track.findings | length }}, ui={{ ui_track.findings | length }} (adjudicated findings: {{ annotated_findings | length }})
-- findings_per_severity: critical={{ all_findings | selectattr('severity', 'equalto', 'critical') | list | length }}, high={{ all_findings | selectattr('severity', 'equalto', 'high') | list | length }}, medium={{ all_findings | selectattr('severity', 'equalto', 'medium') | list | length }}, low={{ all_findings | selectattr('severity', 'equalto', 'low') | list | length }}, info={{ all_findings | selectattr('severity', 'equalto', 'info') | list | length }}
-- defense_layer_coverage: {{ security_track.defense_layer_coverage.layers | length }} layers declared (the covered/missing split is computed by `KSA-3` from `total_layers` + `missing_layers`)
+```json
+{{ hard_stop | tojson }}
+```
 
 ## Synthesis
 
-Produce a consolidated report with: (1) a verdict (Pass / Conditional / Fail)
-derived from the defense-layer coverage + whether any blocking finding remains
-unremediated (per-track/severity counts and defense-layer coverage counts are
-Jinja-computed over the inputs above and verified by the `KSA-3` `lisp_eval`
-form in `gates.md` — never counted by the model); (2) the MCDA top-3 and whether `stable_under_perturbation`
-held; (3) the applied remediations (with test descriptions) and the hard-stop
-decision; (4) the deliverable paths (ledger at `kask/docs/research/d-seam-audit.md`,
-templates under `kask/registry/templates/kask-seam-audit/`); (5) the convergence
-score and iteration count. Cite `file:line` throughout.
+Give (1) a verdict — Pass, Conditional or Fail — from the defense-layer
+verdict and `blocking_findings_unremediated` above: a non-empty list or a
+triggered hard stop cannot be Pass; (2) the remediations that were ranked but
+not applied, each with the reason; (3) a short narrative citing `file:line`
+from the findings. The deliverable is the ledger at
+`kask/docs/research/d-seam-audit.md`.
 
 ## Output (JSON only)
 
@@ -72,22 +72,13 @@ score and iteration count. Cite `file:line` throughout.
 {
   "report": {
     "verdict": "Pass|Conditional|Fail",
-    "mcda_top3": [ { "id": "...", "weighted_total": 0.0 } ],
-    "mcda_stable_under_perturbation": true,
-    "applied_remediations": [ { "id": "...", "test_description": "..." } ],
-    "hard_stop_triggered": false,
+    "verdict_basis": "which computed facts decide it",
     "deferred_remediations": [ { "id": "...", "reason": "..." } ],
-    "deliverable_paths": {
-      "reports": "kask/docs/research/d-seam-audit.md",
-      "skill_templates": "kask/registry/templates/kask-seam-audit/"
-    },
-    "convergence_score": 0,
-    "iterations": 1
+    "narrative": "..."
   }
 }
 ```
 
-Do not fabricate. If a track produced no findings, record 0. If remediations
-were deferred (not applied in-session), list them in `deferred_remediations`
-with the reason (e.g. "requires workspace compile verification exceeding a
-safe single-session bound").
+Do not fabricate. Do not restate a count, the top-3 or the convergence score
+in your output; the caller reports the computed facts block beside your
+report.

@@ -1,4 +1,4 @@
-{# goal: Adjudicate every finding with pragmatic-semantics + pragmatic-cybernetics + essentialist. #}
+{# goal: Adjudicate every finding with functional authority, pragmatic-semantics, pragmatic-cybernetics and the essentialist deletion test. #}
 [inference]
 contract:
   input:
@@ -7,20 +7,22 @@ contract:
     arch_findings: array
     ui_findings: array
     defense_layer_coverage: object
+    gate_defects:
+      type: array|null
   output:
     annotated_findings: array
 ---
-You are the adjudicator. Apply three lenses to every finding. Task: {{ task }}.
+You are the adjudicator. Apply the lenses to every finding. Task: {{ task }}.
 
 ## Lenses
 
 **functional authority** (leads every verdict): before any technical lens,
 state the operator's current supported function for the behavior and its
 revocation/deprecation status (from .rules, operator rulings, the ledger's
-decision history). A revoked or deprecated function routes to retire in the
-remediation field regardless of deletion-test or pin outcomes — a passing pin
-is not retention evidence for a revoked function. If the authority is unknown,
-set `authority_status` to `not_adjudicated` and propose exactly one functional
+decision history). A revoked or deprecated function sets `retire: true`
+regardless of deletion-test or pin outcomes — a passing pin is not retention
+evidence for a revoked function. If the authority is unknown, set
+`authority_status` to `not_adjudicated` and propose exactly one functional
 question for the operator (what does the user lose if this disappears?) —
 never a technical question.
 
@@ -40,19 +42,38 @@ deletion/extract — G1 Exist (delete the callers; does complexity reappear?),
 G2 Surface (is the module deep enough?), G3 Contract (is the interface minimal?).
 A deletion where complexity vanishes passes; one where it reappears fails.
 
-## Inputs
+## Findings (each carries its id, severity and citation; do not restate them)
 
-security_findings:
-{{ security_findings }}
+security:
+```json
+{{ security_findings | tojson }}
+```
 
-arch_findings:
-{{ arch_findings }}
+architecture:
+```json
+{{ arch_findings | tojson }}
+```
 
-ui_findings:
-{{ ui_findings }}
+ui:
+```json
+{{ ui_findings | tojson }}
+```
 
 defense_layer_coverage:
-{{ defense_layer_coverage }}
+```json
+{{ defense_layer_coverage | tojson }}
+```
+{% if gate_defects %}
+
+## Gate FA defects from the previous attempt
+
+```json
+{{ gate_defects | tojson }}
+```
+
+Each pair is `[finding id, defect code]`; an id listed alone has no annotated
+entry yet. Re-emit the full `annotated_findings` with these corrected.
+{% endif %}
 
 ## Output (JSON only)
 
@@ -61,11 +82,9 @@ defense_layer_coverage:
   "annotated_findings": [
     {
       "id": "KS-NN | RA-NN | UI-NN",
-      "track": "security|architecture|ui",
-      "severity": "critical|high|medium|low|info",
-      "file_line": "path:line",
       "current_function": "the operator's current supported function, or 'unknown'",
       "authority_status": "supported|revoked|deprecated|not_adjudicated",
+      "retire": false,
       "user_visible_loss": "what the user loses if the behavior is deleted",
       "nondivergent_route": "nearest upstream or kask-owned route + maintenance cost",
       "statement_class": "IS|OUGHT",
@@ -80,12 +99,11 @@ defense_layer_coverage:
 }
 ```
 
-`constraint_force` MUST be exactly one of: blocking, directing, enabling (Gate
-convergence reads this field). `deletion_test` MUST be exactly one of:
-complexity_reappears, complexity_vanishes, unclear, n/a. `authority_status`
-MUST be exactly one of: supported, revoked, deprecated, not_adjudicated (Gate
-FA reads `current_function` and `authority_status`); a revoked or deprecated
-`authority_status` forces the remediation field to route to retire. Carry
-`file_line` from the original finding verbatim. Do not fabricate adjudication
-— if a lens does not apply, use `"n/a"` and state why in the remediation
-field.
+One entry per finding, keyed by that finding's `id`. `authority_status` MUST
+be exactly one of: supported, revoked, deprecated, not_adjudicated, and
+`retire` MUST be `true` when it is revoked or deprecated (Gate FA checks
+both, and that every finding has an entry). `constraint_force` MUST be exactly
+one of: blocking, directing, enabling. `deletion_test` MUST be exactly one of:
+complexity_reappears, complexity_vanishes, unclear, n/a. Do not fabricate
+adjudication — if a lens does not apply, use `"n/a"` and state why in the
+remediation field.

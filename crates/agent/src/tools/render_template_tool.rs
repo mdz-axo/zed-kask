@@ -2473,4 +2473,162 @@ mod finalizer_handoff_tests {
         let specs: serde_json::Value = serde_json::from_str(&rendered).expect("marker_specs JSON");
         assert_eq!(specs, serde_json::Value::Array(expected));
     }
+
+    #[test]
+    fn seam_audit_final_report_computes_its_facts() {
+        let context = json!({
+            "task": "fixture",
+            "security_track": {"findings": [], "defense_layer_coverage": {"layers": [{"id": 1}, {"id": 2}], "verdict": "Conditional"}},
+            "arch_track": {"findings": [], "dead_surface_summary": {}},
+            "ui_track": {"findings": [], "pattern_gap_summary": {}},
+            "annotated_findings": [
+                {"id": "KS-01", "constraint_force": "blocking"},
+                {"id": "KS-02", "constraint_force": "blocking"},
+                {"id": "RA-01", "constraint_force": "directing"}
+            ],
+            "gate_b": {"per_track": [2, 1, 0], "per_severity": [0, 1, 1, 1, 0]},
+            "ksa_2": {"top3": ["KS-01", "RA-01"], "stable_under_perturbation": false, "excluded": ["UI-07"]},
+            "applied_remediations": [{"id": "KS-01", "test_description": "pins it"}],
+            "hard_stop": {"triggered": false},
+            "convergence_score": 0
+        });
+        let rendered = render_template_for_test("kask-seam-audit/final-report", context)
+            .expect("final-report renders");
+        assert_eq!(
+            section_json(&rendered, "## Computed facts"),
+            json!({
+                "findings_per_track": {"security": 2, "architecture": 1, "ui": 0},
+                "findings_per_severity": {"critical": 0, "high": 1, "medium": 1, "low": 1, "info": 0},
+                "defense_layers_declared": 2,
+                "defense_layer_verdict": "Conditional",
+                "mcda_top3": ["KS-01", "RA-01"],
+                "mcda_stable_under_perturbation": false,
+                "mcda_excluded": ["UI-07"],
+                "applied_remediation_ids": ["KS-01"],
+                // KS-02 is blocking and was not applied; KS-01 was.
+                "blocking_findings_unremediated": ["KS-02"],
+                "hard_stop_triggered": false,
+                "convergence_score": 0
+            })
+        );
+        // The model's output shape no longer carries a computed value.
+        let output = rendered
+            .split_once("## Output (JSON only)")
+            .expect("output section")
+            .1;
+        for retyped in [
+            "convergence_score",
+            "mcda_top3",
+            "hard_stop_triggered",
+            "iterations",
+        ] {
+            assert!(
+                !output.contains(&format!("\"{retyped}\"")),
+                "{retyped} is retyped"
+            );
+        }
+    }
+
+    #[test]
+    fn seam_audit_remediate_shows_only_the_top_ranked_candidates() {
+        let context = |defects: Option<serde_json::Value>| {
+            let mut context = json!({
+                "task": "fixture", "top3": ["KS-01", "RA-01"],
+                "candidates": [
+                    {"id": "KS-01", "remediation": "tighten the gate"},
+                    {"id": "UI-07", "remediation": "not ranked"},
+                    {"id": "RA-01", "remediation": "delete the helper"}
+                ],
+                "divergence_surface": ["crates/zed/src/main.rs", "crates/hkask-steer/"],
+                "seam_scope": "kask/"
+            });
+            if let Some(defects) = defects {
+                context["gate_defects"] = defects;
+            }
+            context
+        };
+        let rendered = render_template_for_test("kask-seam-audit/remediate", context(None))
+            .expect("remediate renders");
+        assert_eq!(
+            section_json(&rendered, "Their descriptions:"),
+            json!([
+                {"id": "KS-01", "remediation": "tighten the gate"},
+                {"id": "RA-01", "remediation": "delete the helper"}
+            ])
+        );
+        assert!(!rendered.contains("not ranked"));
+        assert_eq!(
+            section_json(&rendered, "## Which files may be touched"),
+            json!(["crates/zed/src/main.rs", "crates/hkask-steer/"])
+        );
+        assert!(
+            !rendered.contains("within_kask"),
+            "the seam test is Gate C's"
+        );
+        assert!(!rendered.contains("Gate C defects from the previous attempt"));
+
+        let repair = render_template_for_test(
+            "kask-seam-audit/remediate",
+            context(Some(json!([["KS-01", "remediation_missing_test"]]))),
+        )
+        .expect("remediate renders a repair");
+        assert_eq!(
+            section_json(&repair, "## Gate C defects from the previous attempt"),
+            json!([["KS-01", "remediation_missing_test"]])
+        );
+    }
+
+    #[test]
+    fn seam_audit_templates_carry_gate_defects_only_on_a_repair() {
+        let adjudicate = |defects: Option<serde_json::Value>| {
+            let mut context = json!({
+                "task": "fixture",
+                "security_findings": [{"id": "KS-01", "severity": "high", "file_line": "kask/a.rs:1"}],
+                "arch_findings": [], "ui_findings": [],
+                "defense_layer_coverage": {"layers": [], "verdict": "Pass"}
+            });
+            if let Some(defects) = defects {
+                context["gate_defects"] = defects;
+            }
+            render_template_for_test("kask-seam-audit/adjudicate", context)
+                .expect("adjudicate renders")
+        };
+        let first = adjudicate(None);
+        assert!(!first.contains("Gate FA defects from the previous attempt"));
+        assert_eq!(
+            section_json(&first, "security:"),
+            json!([{"id": "KS-01", "severity": "high", "file_line": "kask/a.rs:1"}])
+        );
+        let repair = adjudicate(Some(json!([["KS-01", "revoked_function_not_retired"]])));
+        assert_eq!(
+            section_json(&repair, "## Gate FA defects from the previous attempt"),
+            json!([["KS-01", "revoked_function_not_retired"]])
+        );
+
+        for (template, context) in [
+            (
+                "kask-seam-audit/audit-security",
+                json!({"task": "t", "seam_scope": "kask/", "prior_verdicts": []}),
+            ),
+            (
+                "kask-seam-audit/audit-architecture",
+                json!({"task": "t", "seam_scope": "kask/"}),
+            ),
+            ("kask-seam-audit/audit-ui", json!({"task": "t"})),
+        ] {
+            let first = render_template_for_test(template, context.clone()).expect("track renders");
+            assert!(
+                !first.contains("Gate B defects from the previous attempt"),
+                "{template}"
+            );
+            let mut with_defects = context;
+            with_defects["gate_defects"] = json!([["X-1", "invalid_severity"]]);
+            let repair = render_template_for_test(template, with_defects).expect("track repair");
+            assert_eq!(
+                section_json(&repair, "## Gate B defects from the previous attempt"),
+                json!([["X-1", "invalid_severity"]]),
+                "{template}"
+            );
+        }
+    }
 }

@@ -1722,6 +1722,466 @@ form: "(= (+ a b) 3)"
         }
     }
 
+    /// The one form pinned under the `### {heading}` entry of the
+    /// kask-seam-audit SKILL.md Gates section.
+    fn ksa_gate(heading: &str) -> String {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../.agents/skills/kask-seam-audit/SKILL.md");
+        let content = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+        let section = content
+            .split("\n### ")
+            .find(|section| section.starts_with(heading))
+            .unwrap_or_else(|| panic!("SKILL.md has no gate entry starting {heading:?}"));
+        let forms = extract_candidates(section);
+        assert_eq!(forms.len(), 1, "{heading}: expected one pinned form");
+        forms.into_iter().next().expect("one form checked").source
+    }
+
+    fn ksa_eval(heading: &str, case: &str, env: serde_json::Value) -> serde_json::Value {
+        eval_sandboxed(&ksa_gate(heading), &env)
+            .unwrap_or_else(|error| panic!("{heading} / {case}: gate failed to evaluate: {error}"))
+    }
+
+    #[test]
+    fn scientific_gate_ksa_gate_b_requires_citation_or_reasoned_deferral() {
+        let clean = json!({
+            "sec_findings": [
+                {"id": "KS-01", "severity": "high", "file_line": "kask/a.rs:10"},
+                {"id": "KS-02", "severity": "low", "deferred": true, "deferred_reason": "upstream non-D-seam"}
+            ],
+            "arch_findings": [{"id": "RA-01", "severity": "info", "file_line": "kask/b.rs:3"}],
+            "ui_findings": [{"id": "UI-01", "severity": "medium", "file_line": "crates/x.rs:9"}]
+        });
+        let out = ksa_eval("Gate B", "clean", clean.clone());
+        assert_eq!(out["passed"], json!(true));
+        assert_eq!(out["per_track"], json!([2, 1, 1]));
+        assert_eq!(out["per_severity"], json!([0, 1, 1, 1, 1]));
+
+        let empty = json!({"sec_findings": [], "arch_findings": [], "ui_findings": []});
+        assert_eq!(
+            ksa_eval("Gate B", "empty tracks", empty)["passed"],
+            json!(true)
+        );
+
+        for (case, track, finding, code) in [
+            (
+                "deferred without a reason",
+                "sec_findings",
+                json!({"id": "X-1", "severity": "high", "deferred": true}),
+                "uncited_and_not_deferred",
+            ),
+            (
+                "empty citation",
+                "sec_findings",
+                json!({"id": "X-1", "severity": "high", "file_line": ""}),
+                "uncited_and_not_deferred",
+            ),
+            (
+                "unknown severity",
+                "arch_findings",
+                json!({"id": "X-1", "severity": "severe", "file_line": "kask/a.rs:1"}),
+                "invalid_severity",
+            ),
+            (
+                "critical on the UI track",
+                "ui_findings",
+                json!({"id": "X-1", "severity": "critical", "file_line": "crates/x.rs:1"}),
+                "invalid_severity",
+            ),
+            (
+                "id reused across tracks",
+                "arch_findings",
+                json!({"id": "KS-01", "severity": "low", "file_line": "kask/c.rs:1"}),
+                "duplicate_id",
+            ),
+        ] {
+            let mut env = clean.clone();
+            env[track]
+                .as_array_mut()
+                .expect("track list")
+                .push(finding.clone());
+            let out = ksa_eval("Gate B", case, env);
+            assert_eq!(out["passed"], json!(false), "{case}");
+            let id = finding["id"].as_str().expect("fixture id");
+            assert_eq!(out["defects"][id], json!(code), "{case}");
+        }
+    }
+
+    #[test]
+    fn scientific_gate_ksa_gate_fa_enforces_retirement_and_coverage() {
+        let findings = json!([{"id": "KS-01"}, {"id": "RA-01"}]);
+        let annotated = |status: &str, retire: bool| {
+            json!([
+                {"id": "KS-01", "current_function": "governed MCP runtime", "authority_status": status, "retire": retire},
+                {"id": "RA-01", "current_function": "dead helper", "authority_status": "supported", "retire": false}
+            ])
+        };
+        let clean = ksa_eval(
+            "Gate FA",
+            "supported",
+            json!({"findings": findings, "annotated_findings": annotated("supported", false)}),
+        );
+        assert_eq!(clean["passed"], json!(true));
+        assert_eq!(clean["convergence_score"], json!(0));
+
+        let retired = ksa_eval(
+            "Gate FA",
+            "revoked and retired",
+            json!({"findings": findings, "annotated_findings": annotated("revoked", true)}),
+        );
+        assert_eq!(retired["passed"], json!(true));
+
+        for status in ["revoked", "deprecated"] {
+            let kept = ksa_eval(
+                "Gate FA",
+                "revoked but kept",
+                json!({"findings": findings, "annotated_findings": annotated(status, false)}),
+            );
+            assert_eq!(kept["passed"], json!(false), "{status}");
+            assert_eq!(
+                kept["defects"]["KS-01"],
+                json!("revoked_function_not_retired")
+            );
+            assert_eq!(kept["convergence_score"], json!(1));
+        }
+
+        let bad_status = ksa_eval(
+            "Gate FA",
+            "unknown status",
+            json!({"findings": findings, "annotated_findings": annotated("maybe", false)}),
+        );
+        assert_eq!(
+            bad_status["defects"]["KS-01"],
+            json!("invalid_authority_status")
+        );
+
+        let uncovered = ksa_eval(
+            "Gate FA",
+            "finding with no annotation",
+            json!({
+                "findings": [{"id": "KS-01"}, {"id": "RA-01"}, {"id": "UI-01"}],
+                "annotated_findings": annotated("supported", false)
+            }),
+        );
+        assert_eq!(uncovered["passed"], json!(false));
+        assert_eq!(uncovered["unadjudicated"], json!(["UI-01"]));
+        assert_eq!(uncovered["convergence_score"], json!(1));
+    }
+
+    #[test]
+    fn scientific_gate_ksa_2_weights_eligibility_and_ranking() {
+        let candidate = |id: &str, scores: [f64; 4], deepens: bool, deletion: &str| json!({"id": id, "scores": scores, "deepens_module": deepens, "deletion_test": deletion});
+        let candidates = json!([
+            candidate("A", [1.0, 0.0, 0.0, 0.0], false, "n/a"),
+            candidate("B", [0.0, 1.0, 0.0, 0.0], false, "complexity_vanishes"),
+            candidate("C", [0.0, 0.0, 1.0, 0.0], true, "complexity_reappears"),
+            candidate("D", [1.0, 1.0, 1.0, 1.0], false, "unclear"),
+            candidate("E", [1.0, 1.0, 1.0, 1.0], false, "complexity_reappears"),
+            candidate("F", [0.0, 0.0, 0.0, 1.0], false, "n/a")
+        ]);
+        for (priority, weights, top) in [
+            ("security", [0.35, 0.25, 0.25, 0.15], ["A", "B", "C"]),
+            ("codebase", [0.25, 0.4, 0.2, 0.15], ["B", "A", "C"]),
+            ("ui", [0.25, 0.2, 0.4, 0.15], ["C", "A", "B"]),
+        ] {
+            let out = ksa_eval(
+                "KSA-2",
+                priority,
+                json!({"operator_priority": priority, "candidates": candidates}),
+            );
+            assert_eq!(out["weights"], json!(weights), "{priority}");
+            let sum: f64 = weights.iter().sum();
+            assert!((sum - 1.0).abs() < 1e-9, "{priority} weights sum to {sum}");
+            // D (unclear) and E (reappears, not deepening) outscore everything
+            // and are still never ranked.
+            assert_eq!(out["excluded"], json!(["D", "E"]), "{priority}");
+            assert_eq!(out["top3"], json!(top), "{priority}");
+        }
+        let unknown = ksa_eval(
+            "KSA-2",
+            "unknown priority",
+            json!({"operator_priority": "speed", "candidates": candidates}),
+        );
+        assert_eq!(unknown["error"], json!("unknown_operator_priority"));
+
+        // A +20% codebase weight (0.25 -> 0.30) lifts Y (0.30) past X (0.28).
+        let fragile = ksa_eval(
+            "KSA-2",
+            "fragile ranking",
+            json!({"operator_priority": "security", "candidates": [
+                candidate("P", [1.0, 1.0, 1.0, 1.0], false, "n/a"),
+                candidate("Q", [1.0, 1.0, 1.0, 0.0], false, "n/a"),
+                candidate("X", [0.8, 0.0, 0.0, 0.0], false, "n/a"),
+                candidate("Y", [0.0, 1.0, 0.0, 0.0], false, "n/a")
+            ]}),
+        );
+        assert_eq!(fragile["top3"], json!(["P", "Q", "X"]));
+        assert_eq!(fragile["stable_under_perturbation"], json!(false));
+        let stable = ksa_eval(
+            "KSA-2",
+            "three candidates",
+            json!({"operator_priority": "security", "candidates": [
+                candidate("P", [1.0, 0.0, 0.0, 0.0], false, "n/a"),
+                candidate("Q", [0.0, 1.0, 0.0, 0.0], false, "n/a")
+            ]}),
+        );
+        assert_eq!(stable["stable_under_perturbation"], json!(true));
+    }
+
+    #[test]
+    fn scientific_gate_ksa_gate_c_computes_the_seam_boundary() {
+        let env = |remediations: serde_json::Value, hard_stop: bool| {
+            json!({
+                "applied_remediations": remediations,
+                "top3": ["KS-01", "RA-01"],
+                "divergence_surface": ["crates/zed/src/main.rs", "crates/hkask-steer/"],
+                "seam_scope": "kask/",
+                "hard_stop_triggered": hard_stop
+            })
+        };
+        let applied = |id: &str, files: serde_json::Value, test_added: bool| json!({"id": id, "touched_files": files, "test_added": test_added});
+        let allowed = json!([
+            "kask/crates/hkask-types/src/voice.rs",
+            "crates/zed/src/main.rs",
+            "crates/hkask-steer/src/lib.rs"
+        ]);
+        let clean = ksa_eval(
+            "Gate C",
+            "clean",
+            env(json!([applied("KS-01", allowed.clone(), true)]), false),
+        );
+        assert_eq!(clean["passed"], json!(true));
+        assert_eq!(clean["hard_stop_required"], json!(false));
+        assert_eq!(
+            ksa_eval("Gate C", "nothing applied", env(json!([]), false))["passed"],
+            json!(true)
+        );
+
+        // An upstream file is outside the seam whatever the model declared;
+        // a path that merely shares a prefix with a surface file is not on it.
+        for path in [
+            "crates/editor/src/editor.rs",
+            "crates/zed/src/main.rs.bak",
+            "crates/hkask-steerage/x.rs",
+        ] {
+            let out = ksa_eval(
+                "Gate C",
+                path,
+                env(json!([applied("KS-01", json!([path]), true)]), false),
+            );
+            assert_eq!(out["passed"], json!(false), "{path}");
+            assert_eq!(
+                out["defects"]["KS-01"],
+                json!("touched_file_outside_seam"),
+                "{path}"
+            );
+            assert_eq!(out["outside_seam"], json!([path]), "{path}");
+            assert_eq!(out["hard_stop_required"], json!(true), "{path}");
+        }
+        let untested = ksa_eval(
+            "Gate C",
+            "no test",
+            env(json!([applied("KS-01", allowed.clone(), false)]), false),
+        );
+        assert_eq!(
+            untested["defects"]["KS-01"],
+            json!("remediation_missing_test")
+        );
+        let unranked = ksa_eval(
+            "Gate C",
+            "not top ranked",
+            env(json!([applied("UI-09", allowed.clone(), true)]), false),
+        );
+        assert_eq!(unranked["defects"]["UI-09"], json!("not_top_ranked"));
+        let stopped = ksa_eval("Gate C", "declared hard stop", env(json!([]), true));
+        assert_eq!(stopped["passed"], json!(false));
+    }
+
+    #[test]
+    fn scientific_gate_ksa_1_derives_layout_gates_and_probes() {
+        let child = |element: &str, width: u32, kind: &str, primary: bool, label: bool| {
+            json!({"element": element, "min_width_px": width, "kind": kind,
+                   "primary_action": primary, "is_label": label})
+        };
+        let base = json!({
+            "container_outer_width": 400, "padding_px": [12, 12], "border_px": 2,
+            "gap_px": [4, 4],
+            "child_min_widths": [
+                child("name", 0, "text_column", false, false),
+                child("Details", 60, "fixed", true, true),
+                child("menu", 32, "fixed", true, false)
+            ],
+            "fitts_min_target": 32, "primary_action_visible": true
+        });
+        // available 400 - 24 - 2 = 374; children 92 + gaps 8 = 100.
+        let out = ksa_eval("KSA-1", "fits", base.clone());
+        assert_eq!(out["all_gates_passed"], json!(true));
+        assert_eq!(out["failing_gates"], json!([]));
+        assert_eq!(out["container_available_width"], json!(374));
+        assert_eq!(out["sum_min_widths"], json!(100));
+        assert_eq!(out["overflow_delta"], json!(-274));
+        assert_eq!(out["text_column_residual"], json!(274));
+        assert_eq!(out["action_count"], json!(2));
+        assert_eq!(out["fitts_violations"], json!([]));
+        assert_eq!(out["probe_narrow_300"], json!([]));
+        assert_eq!(out["probe_labels_plus_30pct"], json!([]));
+
+        let with = |changes: serde_json::Value| scientific_env(&base, changes);
+        // Four fixed 60px labels + a 0px text column: 240 + gaps 16 = 256 of
+        // 374 leaves a 118px text column; at 300px outer (274) it still fits
+        // without overflow; 30% longer labels (312 + 16) still fit 374.
+        let crowded = ksa_eval(
+            "KSA-1",
+            "text column squeezed",
+            with(json!({"gap_px": [4, 4, 4, 4], "child_min_widths": [
+                child("name", 0, "text_column", false, false),
+                child("a", 60, "fixed", true, true), child("b", 60, "fixed", true, true),
+                child("c", 60, "fixed", true, true), child("d", 60, "fixed", true, true)
+            ]})),
+        );
+        assert_eq!(crowded["failing_gates"], json!(["text_column_min_width"]));
+        assert_eq!(crowded["text_column_residual"], json!(118));
+
+        // 374 available; six fixed 60px labels = 360 + gaps 20 = 380.
+        let overflow = ksa_eval(
+            "KSA-1",
+            "overflow and over budget",
+            with(json!({"gap_px": [4, 4, 4, 4, 4], "child_min_widths": [
+                child("a", 60, "fixed", true, true), child("b", 60, "fixed", true, true),
+                child("c", 60, "fixed", true, true), child("d", 60, "fixed", true, true),
+                child("e", 60, "fixed", true, true), child("f", 60, "fixed", true, true)
+            ]})),
+        );
+        assert_eq!(overflow["overflow_delta"], json!(6));
+        assert_eq!(overflow["action_count"], json!(6));
+        assert_eq!(
+            overflow["failing_gates"],
+            json!([
+                "no_overflow",
+                "text_column_min_width",
+                "action_count_budget"
+            ])
+        );
+
+        let off_grid = ksa_eval("KSA-1", "off-grid gap", with(json!({"gap_px": [4, 5]})));
+        assert_eq!(off_grid["failing_gates"], json!(["on_grid_spacing"]));
+        let no_primary = ksa_eval(
+            "KSA-1",
+            "no primary",
+            with(json!({"primary_action_visible": false})),
+        );
+        assert_eq!(
+            no_primary["failing_gates"],
+            json!(["primary_action_visible"])
+        );
+        let small = ksa_eval(
+            "KSA-1",
+            "small target",
+            with(json!({"child_min_widths": [
+                child("name", 0, "text_column", false, false),
+                child("icon", 24, "fixed", true, false)
+            ]})),
+        );
+        assert_eq!(small["fitts_violations"], json!(["icon"]));
+        assert_eq!(
+            small["all_gates_passed"],
+            json!(true),
+            "Fitts is reported, not one of the five gates"
+        );
+
+        // Fits at 400 (374 available): 100 + 100 fixed + gap 4 = 204, text
+        // column 170. At 300 outer (274 available) the text column is 70.
+        // With labels 30% wider (260 + 4) the text column is 110.
+        let probes = ksa_eval(
+            "KSA-1",
+            "passes now, fails both probes",
+            with(json!({"gap_px": [4], "child_min_widths": [
+                child("name", 0, "text_column", false, false),
+                child("Publish", 100, "fixed", true, true),
+                child("Clone", 100, "fixed", true, true)
+            ]})),
+        );
+        assert_eq!(probes["all_gates_passed"], json!(true));
+        assert_eq!(probes["probe_narrow_300"], json!(["text_column_min_width"]));
+        assert_eq!(
+            probes["probe_labels_plus_30pct"],
+            json!(["text_column_min_width"])
+        );
+    }
+
+    #[test]
+    fn scientific_gate_ksa_4_accepts_only_a_fully_probed_layout() {
+        let probe = |name: &str, passed: bool, broken: serde_json::Value| json!({"probe_name": name, "input": "fixture", "passed": passed, "broken_gates": broken});
+        let all_passing = json!([
+            probe("long_label", true, json!([])),
+            probe("high_action_count", true, json!([])),
+            probe("empty_description", true, json!([]))
+        ]);
+        let base = json!({
+            "failing_gates": [], "probe_narrow_300": [], "probe_labels_plus_30pct": [],
+            "probes": all_passing, "hierarchy_present": true
+        });
+        // The case the former gate could never pass: every probe passing.
+        let out = ksa_eval("KSA-4", "all passing", base.clone());
+        assert_eq!(out["accepted"], json!(true));
+        assert_eq!(out["failing_gates"], json!([]));
+
+        let with = |changes: serde_json::Value| scientific_env(&base, changes);
+        let failed_probe = ksa_eval(
+            "KSA-4",
+            "a judgment probe fails",
+            with(json!({"probes": [
+                probe("long_label", false, json!(["no_overflow", "text_column_min_width"])),
+                probe("high_action_count", false, json!(["no_overflow"])),
+                probe("empty_description", true, json!([]))
+            ]})),
+        );
+        assert_eq!(failed_probe["accepted"], json!(false));
+        assert_eq!(
+            failed_probe["failing_probes"],
+            json!(["long_label", "high_action_count"])
+        );
+        assert_eq!(
+            failed_probe["failing_gates"],
+            json!(["text_column_min_width", "no_overflow"]),
+            "each broken gate once"
+        );
+
+        let missing = ksa_eval(
+            "KSA-4",
+            "a probe was not run",
+            with(json!({"probes": [probe("long_label", true, json!([]))]})),
+        );
+        assert_eq!(missing["accepted"], json!(false));
+        assert_eq!(
+            missing["missing_probes"],
+            json!(["high_action_count", "empty_description"])
+        );
+
+        for (case, changes) in [
+            (
+                "a gate still fails",
+                json!({"failing_gates": ["no_overflow"]}),
+            ),
+            (
+                "the 300px probe fails",
+                json!({"probe_narrow_300": ["text_column_min_width"]}),
+            ),
+            (
+                "the longer-label probe fails",
+                json!({"probe_labels_plus_30pct": ["no_overflow"]}),
+            ),
+            ("no visual hierarchy", json!({"hierarchy_present": false})),
+        ] {
+            assert_eq!(
+                ksa_eval("KSA-4", case, with(changes))["accepted"],
+                json!(false),
+                "{case}"
+            );
+        }
+    }
+
     #[test]
     fn scientific_gate_ht1_only_updates_on_the_four_declared_triggers() {
         let form = skill_candidate("hypothesis-testing", "\"new_category\"");

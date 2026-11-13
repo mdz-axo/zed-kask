@@ -3,6 +3,8 @@
 contract:
   input:
     task: string
+    gate_defects:
+      type: array|null
   output:
     findings: array
     pattern_gap_summary: object
@@ -52,7 +54,8 @@ code outside the above.
       "problem": "what happens (overflow / double-click / silent no-op / visual inconsistency)",
       "constraint_force": "blocking|directing|enabling",
       "remediation": "proposed GPUI fix (PopoverMenu / truncate / focus_handle().focus() / Button)",
-      "deferred": false
+      "deferred": false,
+      "deferred_reason": ""
     }
   ],
   "pattern_gap_summary": {
@@ -67,13 +70,17 @@ controls (a trap verified handled) are reported as a finding with
 `constraint_force: "enabling"` and `remediation: "None needed — pins the trap."`.
 If you cannot open a file, set `deferred: true` with a `deferred_reason`.
 
-## Gate B repair
+{% if gate_defects %}
+## Gate B defects from the previous attempt
 
-If `gate_defects` is present in context (Gate B found structural defects —
-bad severity, missing citation), re-run this template with
-`gate_defects` in context and re-emit the corrected `findings` and
-`pattern_gap_summary`. Never fabricate a `file_line`; if you cannot cite a
-real line, mark the finding `deferred: true` with a `deferred_reason`. If the
-surface genuinely has no findings, emit `findings: []` and state the examined
-boundary in `pattern_gap_summary`; Gate B accepts the empty list. Never
+```json
+{{ gate_defects | tojson }}
+```
+
+Each pair is `[finding id, defect code]`. Re-emit the full output with these
+corrected. Never fabricate a `file_line`; if you cannot cite a real line, mark
+the finding `deferred: true` with a `deferred_reason`.
+{% endif %}
+If the surface genuinely has no findings, emit `findings: []` and state the
+examined boundary in the summary field; Gate B accepts the empty list. Never
 fabricate a line-zero citation to make a track non-empty.

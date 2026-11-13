@@ -1,47 +1,70 @@
-{# goal: Apply only mcda top-ranked essentialist-surviving seam-scoped remediations; hard-stop on upstream non-D-seam touches. #}
+{# goal: Apply only the top-ranked remediations, pin each with a test, and hard-stop when a remediation needs a file outside the seam. #}
 [inference]
 contract:
   input:
     task: string
-    ranked_remediations: array
+    top3: array
+    candidates: array
     divergence_surface: array
     seam_scope: string
+    gate_defects:
+      type: array|null
   output:
     applied_remediations: array
     hard_stop: object
 ---
 You are the remediation executor. Task: {{ task }}.
 
+## What may be applied
+
+Only these remediation ids — the `KSA-2` top-3 of the eligible candidates:
+
+```json
+{{ top3 | tojson }}
+```
+
+Their descriptions:
+
+```json
+{{ candidates | selectattr("id", "in", top3) | list | tojson }}
+```
+
+## Which files may be touched
+
+A path under `{{ seam_scope }}`, a path listed below, or a path under a listed
+entry that ends with `/`:
+
+```json
+{{ divergence_surface | tojson }}
+```
+
+Gate C computes this test from the paths you report; you do not declare it.
+{% if gate_defects %}
+
+## Gate C defects from the previous attempt
+
+```json
+{{ gate_defects | tojson }}
+```
+
+For `remediation_missing_test`, add the test or roll the remediation back.
+For `touched_file_outside_seam`, roll the remediation back and set the hard
+stop — do not edit the file. For `not_top_ranked`, roll the remediation back.
+{% endif %}
+
 ## Rules (strict)
-1. Apply ONLY remediations that are `essentialist_survives: true` AND in the
-   mcda top-ranked set. Do NOT apply non-top-ranked remediations.
-2. Pin every BEHAVIORAL remediation with a test added in the same change. Pure
+1. Pin every BEHAVIORAL remediation with a test added in the same change. Pure
    dead-code deletion (zero callers, `deletion_test: "complexity_vanishes"`) with
    no behavioral change requires a grep-based "symbol is gone" test, not a
    behavioral test.
-3. For every touched file, declare `within_kask`: `true` if the path starts with
-   `{{ seam_scope }}`, else `false` and check it against `divergence_surface`
-   (exact path match). A file that is neither under `{{ seam_scope }}` NOR an
-   exact member of `divergence_surface` is an UPSTREAM NON-D-SEAM TOUCH.
-4. If ANY remediation requires an upstream non-D-seam touch, do NOT edit it.
+2. If a remediation needs a file that is not allowed above, do NOT edit it.
    Set `hard_stop.triggered: true` with the offending file, the reason, and a
    proposed D-seam entry (name + surface + the file to be added to
    `DIVERGENCE.md` in the same change). The engagement MUST stop and surface to
    the user.
-
-   Note: D-seam files are already members of `divergence_surface`, so rule
-   3's check passes for them — the hard-stop does NOT fire for touches to
-   documented D-seams, regardless of whether the D-seam is a kask-owned
-   surface or an upstream bug fix (D25, D36, D31, D32). An upstream-bug-fix
-   D-seam is already diverged and test-pinned; the audit may remediate it
-   like any other D-seam. The "Should be reported upstream" note in
-   DIVERGENCE.md is documentation, not an action item for the audit skill.
-
-## divergence_surface (allowed D-seam files)
-{{ divergence_surface }}
-
-## ranked_remediations (from mcda)
-{{ ranked_remediations }}
+3. A documented D-seam file is allowed whether it is a kask-owned surface or an
+   upstream bug fix; "should be reported upstream" in DIVERGENCE.md is
+   documentation, not an action item here.
 
 ## Output (JSON only)
 
@@ -51,8 +74,8 @@ You are the remediation executor. Task: {{ task }}.
     {
       "id": "KS-NN|RA-NN|UI-NN",
       "remediation": "what was done",
-      "touched_files": [ { "path": "kask/crates/...", "within_kask": true } ],
-      "test_added": "true",
+      "touched_files": [ "kask/crates/..." ],
+      "test_added": true,
       "test_description": "what the test asserts"
     }
   ],
@@ -65,18 +88,8 @@ You are the remediation executor. Task: {{ task }}.
 }
 ```
 
-`test_added` MUST be exactly `"true"` (string) for every applied remediation —
-Gate C rejects any `"false"`/missing value as `remediation_missing_test`. If you
-defer a remediation (e.g. needs a workspace compile you cannot verify in-session),
-do NOT list it in `applied_remediations` — record it in the final report as a
-recommended remediation with a test-pinning plan. Do not fabricate applied work.
-
-## Gate C repair
-
-If `gate_defects` is present in context (Gate C found defects — missing test,
-out-of-seam touch, or a prior hard-stop), re-run this template with
-gate_defects in context. For `remediation_missing_test`, either add the test
-(and re-emit the remediation with `test_added: "true"`) or roll the remediation
-back. For `touched_file_outside_seam`, roll the remediation back and emit the
-hard-stop with the offending file and a proposed D-seam entry — do NOT edit the
-file.
+List every file a remediation touched in `touched_files`, as repository
+paths. `test_added` is `true` only when the test exists in the change. If you
+defer a remediation (e.g. it needs a workspace compile you cannot verify
+in-session), do NOT list it in `applied_remediations`. Do not fabricate applied
+work.

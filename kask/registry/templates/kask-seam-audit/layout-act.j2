@@ -6,10 +6,9 @@ contract:
       type: object
     decide_result:
       type: object
-      description: The `KSA-1` deterministic gate result object (the `lisp_eval`
-        form in `gates.md`, run over `layout-sense`'s primitive measurements) —
-        `all_gates_passed`, `failing_gates`, `sum_min_widths`, `overflow_delta`,
-        `text_column_residual`, `fitts_violations`.
+      description: The `KSA-1` gate result object — `all_gates_passed`,
+        `failing_gates`, the derived widths, `fitts_violations`, and the
+        `probe_narrow_300` and `probe_labels_plus_30pct` failing-gate lists.
   output:
     remedies:
       type: array
@@ -31,7 +30,7 @@ You are a GPUI layout remediation engine. Your job is to prescribe the canonical
 
 {{ target | tojson }}
 
-## KSA-1 Gate Results (failing gates)
+## KSA-1 Gate Result (failing gates and failing probes)
 
 {{ decide_result | tojson }}
 
@@ -91,7 +90,7 @@ Fitts target).
 ## Output
 
 Produce a JSON object with:
-- `remedies`: array of {failing_gate, remedy, code_pattern, reference} — one per failing gate
+- `remedies`: array of {failing_gate, remedy, code_pattern, reference} — one per gate in `failing_gates`, `probe_narrow_300` or `probe_labels_plus_30pct`, and one per Fitts violation
 - `revised_layout`: description of the revised element tree after remedies
 - `codebase_pattern_reference`: "agent_panel.rs render_panel_options_menu" (the PopoverMenu pattern)
 

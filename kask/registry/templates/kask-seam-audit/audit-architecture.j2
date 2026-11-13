@@ -4,6 +4,8 @@ contract:
   input:
     task: string
     seam_scope: string
+    gate_defects:
+      type: array|null
   output:
     findings: array
     dead_surface_summary: object
@@ -54,11 +56,11 @@ loop could read as a measurement.
       "deletion_test": "complexity_reappears|complexity_vanishes|unclear",
       "constraint_force": "blocking|directing|enabling",
       "remediation": "delete|inline|keep-with-allow-dead-code|fold-into-consumer",
-      "deferred": false
+      "deferred": false,
+      "deferred_reason": ""
     }
   ],
   "dead_surface_summary": {
-    "total_dead_surface_lines_estimated": "N or range",
     "top_deletion_candidates": [ { "id": "RA-NN", "symbol": "...", "lines": N } ],
     "crate_with_mostly_orphaned_pub_use": "crate name or none"
   }
@@ -70,13 +72,17 @@ complexity_reappears, complexity_vanishes, unclear. If you cannot verify a
 caller count, set `deferred: true` with a `deferred_reason` — do NOT fabricate
 counts.
 
-## Gate B repair
+{% if gate_defects %}
+## Gate B defects from the previous attempt
 
-If `gate_defects` is present in context (Gate B found structural defects —
-bad severity, missing citation), re-run this template with
-`gate_defects` in context and re-emit the corrected `findings` and
-`dead_surface_summary`. Never fabricate a `file_line`; if you cannot cite a
-real line, mark the finding `deferred: true` with a `deferred_reason`. If the
-surface genuinely has no findings, emit `findings: []` and state the examined
-boundary in `dead_surface_summary`; Gate B accepts the empty list. Never
+```json
+{{ gate_defects | tojson }}
+```
+
+Each pair is `[finding id, defect code]`. Re-emit the full output with these
+corrected. Never fabricate a `file_line`; if you cannot cite a real line, mark
+the finding `deferred: true` with a `deferred_reason`.
+{% endif %}
+If the surface genuinely has no findings, emit `findings: []` and state the
+examined boundary in the summary field; Gate B accepts the empty list. Never
 fabricate a line-zero citation to make a track non-empty.

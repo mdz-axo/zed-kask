@@ -5,6 +5,8 @@ contract:
     task: string
     seam_scope: string
     prior_verdicts: array
+    gate_defects:
+      type: array|null
   output:
     findings: array
     defense_layer_coverage: object
@@ -58,7 +60,8 @@ claiming they passed a full-fleet security audit.
       "standard": "OWASP-LLM-2025:LLM0x | ATLAS:AML.Txxxx | CWE-xxxx | RR-NNNN",
       "constraint_force": "blocking|directing|enabling",
       "remediation": "proposed fix (push into kask/ behind a D-seam; if upstream, deferred)",
-      "deferred": false
+      "deferred": false,
+      "deferred_reason": ""
     }
   ],
   "defense_layer_coverage": {
@@ -80,13 +83,17 @@ Every finding MUST have `file_line` (a real `path:line`) OR `deferred: true`
 with a `deferred_reason`. Gate B rejects any finding missing both. `severity`
 MUST be exactly one of: critical, high, medium, low, info. Never fabricate.
 
-## Gate B repair
+{% if gate_defects %}
+## Gate B defects from the previous attempt
 
-If `gate_defects` is present in context (Gate B found structural defects —
-bad severity, missing citation), re-run this template with
-`gate_defects` in context and re-emit the corrected `findings` and
-`defense_layer_coverage`. Never fabricate a `file_line`; if you cannot cite a
-real line, mark the finding `deferred: true` with a `deferred_reason`. If the
-surface genuinely has no findings, emit `findings: []` and state the examined
-boundary in `defense_layer_coverage`; Gate B accepts the empty list. Never
+```json
+{{ gate_defects | tojson }}
+```
+
+Each pair is `[finding id, defect code]`. Re-emit the full output with these
+corrected. Never fabricate a `file_line`; if you cannot cite a real line, mark
+the finding `deferred: true` with a `deferred_reason`.
+{% endif %}
+If the surface genuinely has no findings, emit `findings: []` and state the
+examined boundary in the summary field; Gate B accepts the empty list. Never
 fabricate a line-zero citation to make a track non-empty.
