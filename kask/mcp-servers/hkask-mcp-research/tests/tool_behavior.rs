@@ -3094,6 +3094,41 @@ async fn resolve_paper_canonicalizes_any_identifier_form() {
     );
 }
 
+/// expect: an OpenAlex work resolves to the page OpenAlex serves
+/// (`/works/W…`), from every form of the identifier, and that page URL is
+/// itself an accepted input. Before, the tool returned `/work/W…`, which
+/// OpenAlex refuses with HTTP 403 (measured 2026-11-12); that form is now
+/// rejected as an identifier.
+#[tokio::test]
+async fn resolve_paper_returns_the_openalex_page_url_it_also_accepts() {
+    let server = make_server_without_db();
+    for query in [
+        "W2741809807",
+        "https://openalex.org/W2741809807",
+        "https://openalex.org/works/W2741809807",
+    ] {
+        let response = server
+            .resolve_paper(decode(serde_json::json!({ "query": query })).expect("decode"))
+            .await
+            .expect("resolves");
+        let json = parse_envelope(&response);
+        assert_eq!(json["identifier"]["kind"], "openalex", "{query}");
+        assert_eq!(
+            json["canonical_url"], "https://openalex.org/works/W2741809807",
+            "{query}"
+        );
+        assert_eq!(json["stable_key"], "openalex:W2741809807", "{query}");
+    }
+    let error = server
+        .resolve_paper(
+            decode(serde_json::json!({"query": "https://openalex.org/work/W2741809807"}))
+                .expect("decode"),
+        )
+        .await
+        .expect_err("the refused URL form is not an identifier");
+    assert_error_kind(&error, McpErrorKind::InvalidArgument);
+}
+
 #[tokio::test]
 async fn resolve_paper_rejects_garbage_with_typed_error() {
     let server = make_server_without_db();

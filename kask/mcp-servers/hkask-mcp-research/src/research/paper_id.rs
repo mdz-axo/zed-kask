@@ -49,7 +49,10 @@ impl PaperId {
             PaperId::Arxiv(id) => format!("https://arxiv.org/abs/{id}"),
             PaperId::Pmid(pmid) => format!("https://pubmed.ncbi.nlm.nih.gov/{pmid}/"),
             PaperId::Pmcid(pmcid) => format!("https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/"),
-            PaperId::OpenAlex(id) => format!("https://openalex.org/work/{id}"),
+            // `/works/W…` is the page OpenAlex serves (HTTP 200, measured
+            // 2026-11-12). `/work/W…`, which this returned before, is
+            // refused with 403.
+            PaperId::OpenAlex(id) => format!("https://openalex.org/works/{id}"),
         }
     }
 }
@@ -92,7 +95,10 @@ fn strip_wrappers(lowered: &str) -> String {
         "https://arxiv.org/abs/",
         "https://arxiv.org/pdf/",
         "https://pubmed.ncbi.nlm.nih.gov/",
-        "https://openalex.org/work/",
+        // The page URL, then the identifier form OpenAlex puts in its own
+        // records (`https://openalex.org/W…`); the longer prefix first.
+        "https://openalex.org/works/",
+        "https://openalex.org/",
     ] {
         if let Some(rest) = lowered.strip_prefix(prefix) {
             return rest.trim_end_matches('/').to_string();
@@ -257,7 +263,8 @@ mod paper_id_tests {
         for input in [
             "W1234567890",
             "w1234567890",
-            "https://openalex.org/work/W1234567890",
+            "https://openalex.org/works/W1234567890",
+            "https://openalex.org/W1234567890",
         ] {
             assert_eq!(
                 parse_ok(input),
@@ -287,8 +294,16 @@ mod paper_id_tests {
         );
         assert_eq!(
             PaperId::OpenAlex("W1234567890".to_string()).canonical_url(),
-            "https://openalex.org/work/W1234567890"
+            "https://openalex.org/works/W1234567890"
         );
+        // The URL this tool returns is one it accepts.
+        assert_eq!(
+            parse_ok("https://openalex.org/works/W1234567890").canonical_url(),
+            "https://openalex.org/works/W1234567890"
+        );
+        // The form it returned before is the one OpenAlex refuses; it is
+        // not an identifier.
+        assert!(parse_paper_id("https://openalex.org/work/W1234567890").is_err());
     }
 
     #[test]

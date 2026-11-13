@@ -538,6 +538,14 @@ degrades (a note either way — never silent). arXiv IDs have no direct
 OpenAlex lookup key and resolve to no-record. Pass `run_id` to record the
 resolution into the run ledger.
 
+An OpenAlex work ID resolves to `https://openalex.org/works/W…`, the page
+OpenAlex serves (2026-11-12). Before, `canonical_url` was
+`https://openalex.org/work/W…`, which OpenAlex refuses with HTTP 403; that
+was also the URL a run-scoped resolution wrote to the ledger. Accepted
+inputs are the bare ID, the page URL, and `https://openalex.org/W…` (the
+form in OpenAlex's own records). The `/work/` form is no longer accepted.
+Ledger rows written before the change keep the refused URL.
+
 ## Retrieval-path honesty (2026-09-30)
 
 Three changes from the zk-reference retrieval sweep's lessons:
