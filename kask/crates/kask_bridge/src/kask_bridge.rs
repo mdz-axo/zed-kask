@@ -135,5 +135,6 @@ pub use algedonic_board::{ALGEDONIC_BOARD_NAME, BoardAlertEscalationSink};
 // startup purges of the removed ABW and Reduct.cloud keys (D5) — called once
 // from zed's app init.
 pub use credentials::{
-    KASK_CREDENTIAL_NAMESPACE, purge_removed_abw_api_key, purge_removed_reduct_api_key,
+    KASK_CREDENTIAL_NAMESPACE, NOSTR_NCRYPTSEC_CREDENTIAL_URL, NOSTR_PASSWORD_CREDENTIAL_URL,
+    purge_removed_abw_api_key, purge_removed_reduct_api_key,
 };

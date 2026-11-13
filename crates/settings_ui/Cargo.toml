@@ -46,6 +46,11 @@ http_proxy.workspace = true
 itertools.workspace = true
 kask_bridge.workspace = true
 hkask-keystore.workspace = true
+# The Nostr settings page encrypts the entered nsec in the editor process
+# (D106); the signer crate's one shipped consumer is the editor.
+hkask-nostr-core.workspace = true
+hkask-nostr-signer.workspace = true
+zeroize.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true

@@ -980,6 +980,9 @@ hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
 hkask-nostr-core = { path = "kask/crates/hkask-nostr-core" }
+# Editor process only: the Nostr settings page (key entry) and the editor's
+# signer. No MCP server may depend on it.
+hkask-nostr-signer = { path = "kask/crates/hkask-nostr-signer" }
 
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 

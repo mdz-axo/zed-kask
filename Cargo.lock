@@ -17293,6 +17293,8 @@ dependencies = [
  "gpui",
  "heck 0.5.0",
  "hkask-keystore",
+ "hkask-nostr-core",
+ "hkask-nostr-signer",
  "http_client",
  "http_proxy",
  "itertools 0.14.0",
@@ -17327,6 +17329,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zed_credentials_provider",
+ "zeroize",
 ]
 
 [[package]]

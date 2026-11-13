@@ -12,6 +12,20 @@
 /// Used by the settings UI to read/write API keys via zed's CredentialsProvider.
 pub const KASK_CREDENTIAL_NAMESPACE: &str = "kask://credentials";
 
+/// The keychain slot for the operator's Nostr secret key, encrypted under
+/// their password as a NIP-49 `ncryptsec` (operator rulings 2026-11-12 and
+/// 2026-11-13: the nsec and the password are saved in the Nostr settings;
+/// D5: the keychain, never `settings.json`). Written by the Nostr settings
+/// page, read by the editor's signer and by nothing else: the slot is not a
+/// `DataServiceDescriptor`, so `credential_urls_for_mcp` cannot deliver it
+/// to a child process (`nostr_key_slots_reach_no_mcp_child`).
+pub const NOSTR_NCRYPTSEC_CREDENTIAL_URL: &str = "kask://credentials/nostr_ncryptsec";
+
+/// The keychain slot for the password that opens
+/// [`NOSTR_NCRYPTSEC_CREDENTIAL_URL`]. A separate slot, so the encrypted key
+/// and what opens it are separable entries and a reset removes both by name.
+pub const NOSTR_PASSWORD_CREDENTIAL_URL: &str = "kask://credentials/nostr_password";
+
 /// One-time startup purge of the removed ABW API key (ABW-removal plan
 /// Decision A; recorded in DIVERGENCE.md D5).
 ///
@@ -105,4 +119,53 @@ pub fn purge_removed_reduct_api_key(cx: &gpui::App) {
         }
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: the two Nostr key slots are in the kask namespace and are
+    /// distinct, so a reset can remove each by name.
+    #[test]
+    fn nostr_key_slots_are_two_named_entries_in_the_namespace() {
+        for url in [
+            NOSTR_NCRYPTSEC_CREDENTIAL_URL,
+            NOSTR_PASSWORD_CREDENTIAL_URL,
+        ] {
+            assert!(url.starts_with(KASK_CREDENTIAL_NAMESPACE), "{url}");
+        }
+        assert_ne!(
+            NOSTR_NCRYPTSEC_CREDENTIAL_URL,
+            NOSTR_PASSWORD_CREDENTIAL_URL
+        );
+    }
+
+    /// expect: neither slot is a credential any MCP child is given. The
+    /// child-delivery set is built from `DATA_SERVICES` and the inference
+    /// providers; the Nostr key is in neither registry, by design, so the
+    /// key reaches only the editor process that signs.
+    #[test]
+    fn nostr_key_slots_reach_no_mcp_child() {
+        let delivered = crate::credential_urls_for_mcp();
+        for url in [
+            NOSTR_NCRYPTSEC_CREDENTIAL_URL,
+            NOSTR_PASSWORD_CREDENTIAL_URL,
+        ] {
+            assert!(
+                !delivered.iter().any(|(_, slot)| slot == url),
+                "{url} is delivered to a child"
+            );
+        }
+        let prefetched = crate::data_service_credential_urls();
+        for url in [
+            NOSTR_NCRYPTSEC_CREDENTIAL_URL,
+            NOSTR_PASSWORD_CREDENTIAL_URL,
+        ] {
+            assert!(
+                !prefetched.iter().any(|(_, slot)| slot == url),
+                "{url} is in the data-service registry"
+            );
+        }
+    }
 }

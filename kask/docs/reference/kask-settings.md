@@ -319,6 +319,17 @@ file without that prompt.
 | `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server reads from, comma-joined: the first 8. `nostr_account` tries one connection to each and reports which answer; the read tools ask each one and report how its read ended |
 | `autopublish` | `bool` | `false` | none | Operator ruling 2026-11-13: off, the editor shows each publication the Curator initiates (text, signing `npub`, target relays) and signs only on the operator's approval; on, that step is removed. Read in the editor where the signature is made and delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`, `nostr_autopublish_resolves_off_unless_written_on`). Publishing is not built yet |
 
+**The key (not a setting).** The same page's Key block takes the `nsec` and
+an encryption password. The editor encrypts the key under the password
+(NIP-49) and stores the `ncryptsec` and the password in two keychain slots,
+`kask://credentials/nostr_ncryptsec` and `kask://credentials/nostr_password`
+(`kask_bridge::NOSTR_NCRYPTSEC_CREDENTIAL_URL`,
+`NOSTR_PASSWORD_CREDENTIAL_URL`), then writes the derived `npub` to
+`kask.nostr.npub`. Neither slot is delivered to any MCP server
+(`nostr_key_slots_reach_no_mcp_child`); a key whose `npub` differs from a
+set Identity row is refused, so changing accounts means clearing the row
+first. Reset removes both slots and clears the `npub`.
+
 The two identity variables are emitted for every settings state, so the
 editor's own environment never supplies them. The `npub` is trimmed and the relays are
 trimmed and de-duplicated here; nothing is validated here. The client server
