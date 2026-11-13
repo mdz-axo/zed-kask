@@ -533,6 +533,14 @@ repeat observation is not mistaken for a lost write), and
 confidence recomputed server-side from the ledger's own excerpt copies
 and a `validation` block.
 
+**Each ledger write is one transaction (2026-11-12).** The sources of one
+tool call are recorded together or not at all, and finishing a run writes
+its history row and its status together. Before, each was a sequence of
+separate statements: a failure partway through an append left the earlier
+rows in the ledger while the response said `recorded: 0`, and a failure
+of the status update left a history row for a transition the run never
+made. Both are pinned by making the second write fail.
+
 **The verified gate (fail-closed).** `annotate_research_run` records
 agent-declared verification states (not_checked, inferred, partial,
 verified, blocked, failed). `verified` is accepted ONLY for a URL the

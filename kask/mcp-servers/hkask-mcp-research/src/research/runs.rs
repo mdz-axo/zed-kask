@@ -61,6 +61,10 @@ pub(crate) struct RunSourceRecord {
 /// never clobbers the audit copy or an agent annotation (Commit 3's upsert
 /// owns those fields). Returns the number of rows actually inserted.
 /// A nonexistent `run_id` fails the foreign key and surfaces to the caller.
+///
+/// One transaction: the records of one tool call are recorded together or
+/// not at all. They were separate statements, so a failure partway left
+/// the earlier rows in the ledger while the caller was told `recorded: 0`.
 pub(crate) fn append_run_sources(
     connection: &Connection,
     run_id: &str,
@@ -68,6 +72,7 @@ pub(crate) fn append_run_sources(
 ) -> Result<usize, anyhow::Error> {
     let recorded_at = now_rfc3339();
     let mut inserted = 0usize;
+    let transaction = connection.unchecked_transaction()?;
     for record in sources {
         let excerpt = record.excerpt.as_deref().map(|text| {
             if text.chars().count() > RUN_SOURCE_EXCERPT_MAX_CHARS {
@@ -78,7 +83,7 @@ pub(crate) fn append_run_sources(
                 text.to_string()
             }
         });
-        inserted += connection.execute(
+        inserted += transaction.execute(
             "INSERT OR IGNORE INTO run_sources \
              (run_id, url, provider, title, published, source, excerpt, \
               corpus_ref, recorded_by, verification_state, verification_basis, recorded_at) \
@@ -95,6 +100,7 @@ pub(crate) fn append_run_sources(
             ],
         )?;
     }
+    transaction.commit()?;
     Ok(inserted)
 }
 
@@ -146,18 +152,28 @@ pub(crate) fn finish_research_run(
         return Err(FinishRunError::RequiresServerSource(status.to_string()));
     }
     let at = now_rfc3339();
-    connection
+    // One transaction: the history row and the status it records are
+    // written together or not at all. They were two separate statements,
+    // so a failure of the second left a recorded transition the run never
+    // made.
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(|e| FinishRunError::Db(e.into()))?;
+    transaction
         .execute(
             "INSERT INTO research_run_status_history \
              (run_id, from_status, to_status, note, at) VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![run_id, from_status, status, note, at],
         )
         .map_err(|e| FinishRunError::Db(e.into()))?;
-    connection
+    transaction
         .execute(
             "UPDATE research_runs SET status = ?2, updated_at = ?3 WHERE run_id = ?1",
             rusqlite::params![run_id, status, at],
         )
+        .map_err(|e| FinishRunError::Db(e.into()))?;
+    transaction
+        .commit()
         .map_err(|e| FinishRunError::Db(e.into()))?;
     Ok(Some(serde_json::json!({
         "run_id": run_id,
@@ -748,5 +764,129 @@ mod annotate_timestamp_tests {
             recorded_at, "2020-01-01T00:00:00Z",
             "annotation must preserve the original recorded_at"
         );
+    }
+}
+
+#[cfg(test)]
+mod ledger_atomicity_tests {
+    use super::*;
+
+    /// expect: finishing a run writes the history row and the run's status
+    /// together or not at all. The status update is made to fail with a
+    /// trigger; no history row may remain and the run keeps its status.
+    /// Before, the history row was committed on its own and recorded a
+    /// transition the run never made.
+    #[test]
+    fn a_failed_finish_leaves_no_history_row() {
+        let manager = hkask_storage::SqliteConnectionManager::memory();
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("r2d2 pool build");
+        let connection = pool.get().expect("r2d2 pool get");
+        connection
+            .execute_batch(crate::research::db::RESEARCH_SCHEMA_DDL)
+            .expect("research schema init");
+        let run = begin_research_run(&connection, "atomic finish").expect("begin run");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER zz_refuse_status_update BEFORE UPDATE ON research_runs \
+                 BEGIN SELECT RAISE(ABORT, 'status update refused'); END;",
+            )
+            .expect("trigger");
+
+        let error = finish_research_run(&connection, &run.run_id, "blocked", Some("note"))
+            .expect_err("the status update fails");
+        assert!(matches!(error, FinishRunError::Db(_)), "{error}");
+
+        let history: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM research_run_status_history WHERE run_id = ?1",
+                [&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(
+            history, 0,
+            "no transition is recorded for a finish that failed"
+        );
+        let status: String = connection
+            .query_row(
+                "SELECT status FROM research_runs WHERE run_id = ?1",
+                [&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("status");
+        assert_eq!(status, "planned");
+
+        // With the obstacle gone the same finish succeeds and records once.
+        connection
+            .execute_batch("DROP TRIGGER zz_refuse_status_update;")
+            .expect("drop trigger");
+        finish_research_run(&connection, &run.run_id, "blocked", Some("note"))
+            .expect("finishes")
+            .expect("the run exists");
+        let history: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM research_run_status_history WHERE run_id = ?1",
+                [&run.run_id],
+                |row| row.get(0),
+            )
+            .expect("count");
+        assert_eq!(history, 1);
+    }
+
+    /// expect: the sources of one tool call are recorded together or not
+    /// at all. The third insert is made to fail with a trigger; the first
+    /// two must not remain. Before, they did, while the caller was told
+    /// nothing had been recorded.
+    #[test]
+    fn a_failed_append_records_none_of_the_call() {
+        let manager = hkask_storage::SqliteConnectionManager::memory();
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("r2d2 pool build");
+        let connection = pool.get().expect("r2d2 pool get");
+        connection
+            .execute_batch(crate::research::db::RESEARCH_SCHEMA_DDL)
+            .expect("research schema init");
+        let run = begin_research_run(&connection, "atomic append").expect("begin run");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER zz_refuse_third BEFORE INSERT ON run_sources \
+                 WHEN NEW.url = 'https://example.org/3' \
+                 BEGIN SELECT RAISE(ABORT, 'insert refused'); END;",
+            )
+            .expect("trigger");
+        let records: Vec<RunSourceRecord> = (1..=3)
+            .map(|n| RunSourceRecord {
+                url: format!("https://example.org/{n}"),
+                provider: Some("stub".to_string()),
+                title: None,
+                published: None,
+                source: None,
+                excerpt: None,
+            })
+            .collect();
+        let count = |connection: &Connection| -> i64 {
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM run_sources WHERE run_id = ?1",
+                    [&run.run_id],
+                    |row| row.get(0),
+                )
+                .expect("count")
+        };
+
+        append_run_sources(&connection, &run.run_id, &records).expect_err("the third fails");
+        assert_eq!(count(&connection), 0, "none of the call is recorded");
+
+        connection
+            .execute_batch("DROP TRIGGER zz_refuse_third;")
+            .expect("drop trigger");
+        let inserted = append_run_sources(&connection, &run.run_id, &records).expect("appends");
+        assert_eq!(inserted, 3);
+        assert_eq!(count(&connection), 3);
     }
 }
