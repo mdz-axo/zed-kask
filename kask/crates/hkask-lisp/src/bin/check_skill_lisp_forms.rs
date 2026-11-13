@@ -1995,7 +1995,7 @@ form: "(= (+ a b) 3)"
         let unranked = ksa_eval(
             "Gate C",
             "not top ranked",
-            env(json!([applied("UI-09", allowed.clone(), true)]), false),
+            env(json!([applied("UI-09", allowed, true)]), false),
         );
         assert_eq!(unranked["defects"]["UI-09"], json!("not_top_ranked"));
         let stopped = ksa_eval("Gate C", "declared hard stop", env(json!([]), true));
