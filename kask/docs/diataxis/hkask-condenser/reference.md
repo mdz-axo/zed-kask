@@ -155,7 +155,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-002
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs (CondenserEngine::{new, compress, set_profile, profile}); kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3687-3715
+verified_against: kask/crates/hkask-condenser/src/types.rs:27-78; kask/crates/hkask-condenser/src/engine.rs (CondenserEngine::{new, compress, set_profile, profile}); kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:5699-5729
 status: VERIFIED
 -->
 

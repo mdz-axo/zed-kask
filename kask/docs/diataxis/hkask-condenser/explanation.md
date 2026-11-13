@@ -39,7 +39,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COND-004
 verified_date: 2026-09-28
-verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:3687-3715; crates/zed/src/main.rs:2299-2309
+verified_against: kask/crates/kask_bridge/src/condenser_bridge.rs:42-125; crates/agent/src/thread.rs:5699-5729; crates/zed/src/main.rs:2299-2309
 status: VERIFIED
 -->
 
@@ -103,7 +103,7 @@ thread lifecycle. Full specification with diagrams and reference models:
 
 The call site bypasses line elision for source code, searches, listings,
 diagnostics, references, code actions, and edits. The exact list is
-`NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:160-185`). Terminal output is
+`NO_COMPRESS_TOOLS` (`crates/agent/src/thread.rs:175-207`). Terminal output is
 intentionally eligible because build and test logs are a primary condenser use.
 The short-input floor (`MIN_COMPRESSIBLE_LINES`) is the complement of that
 decision: eligible output is compressed only when there is enough of it to

@@ -84,7 +84,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-COMPACTION-001
 verified_date: 2026-10-31
-verified_against: crates/agent/src/thread.rs:2941,4003,4072,4188; crates/agent/src/kask_compaction.rs:121
+verified_against: crates/agent/src/thread.rs:3253,4358,4427,4543; crates/agent/src/kask_compaction.rs:121
 status: VERIFIED
 -->
 

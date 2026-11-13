@@ -93,11 +93,11 @@ IS (tree):
   (`crates/agent/src/tools/context_server_registry.rs:705`). It is
   settings-driven: "Unlike built-in tools, third-party tools don't support
   pattern-based permissions. They only support `default` (allow/deny/confirm)
-  per tool." (`crates/agent/src/thread.rs:8850-8851`); it offers
-  `"Always for {display_name} MCP tool"` (`thread.rs:8868`); "MCP tools are
-  gated only by tool id (no per-input pattern" (`thread.rs:8893`); and an
+  per tool." (`crates/agent/src/thread.rs:8908-8909`); it offers
+  `"Always for {display_name} MCP tool"` (`thread.rs:8926`); "MCP tools are
+  gated only by tool id (no per-input pattern" (`thread.rs:8951`); and an
   `Allow` in settings "resolves the task immediately without prompting"
-  (`thread.rs:9591-9593`, return at `:9612`).
+  (`thread.rs:9649-9651`, return at `:9670`).
 - The prompt title is built before the input arrives:
   `let initial_title = self.initial_title(serde_json::Value::Null, cx);`
   (`context_server_registry.rs:703`), so it reads "Run MCP tool
@@ -115,7 +115,7 @@ IS (tree):
   `"default": "confirm"`). One click on the "Always" option, or a global
   default of `allow`, removes the human from every later publish.
 - A real human gate already exists for a different purpose. Goal outcomes use
-  `prompt_for_decision` (`thread.rs:9507`, called at
+  `prompt_for_decision` (`thread.rs:9565`, called at
   `crates/agent/src/tools/goal_tools.rs:267`), whose values are "created from
   the ActionChoice response, never deserialized from input"
   (`goal_tools.rs:45`), and those tools are excluded from grants because
@@ -1019,7 +1019,7 @@ operator producing the blob elsewhere; the operator should confirm.
   `crates/agent_ui/src/conversation_view/elicitation.rs`), and the tool that
   uses it hands the answer back to the model
   (`crates/agent/src/tools/ask_user_tool.rs:118`). The decision prompt offers
-  buttons only (`crates/agent/src/thread.rs:9507`). A masked input exists as
+  buttons only (`crates/agent/src/thread.rs:9565`). A masked input exists as
   a primitive (`crates/editor/src/editor.rs:9074`) and is used for a password
   prompt already (`crates/git_ui_core/src/askpass_modal.rs:45`). So the
   approval surface is a dedicated host prompt or the panel (§4): full note
