@@ -5,9 +5,9 @@ contract:
     loop_analysis: object
     system_context: string
   output:
-    system_variety: integer
-    regulator_variety: integer
-    observed_states: integer
+    disturbance_classes: array
+    response_classes: array
+    observed_disturbance_classes: array
     deficit_analysis: string
     attenuation_recommendations: array
     amplification_recommendations: array
@@ -51,7 +51,7 @@ From the loop analysis above, extract the system disturbances (what the system p
 
 1. **Enumerate** the distinct disturbance classes the system can produce.
 2. **Enumerate** the distinct response classes the regulator can produce.
-3. **Compare**: Is regulator variety ≥ system variety? Report both as counts of distinct classes you enumerated in steps 1–2, and the deficit as their difference in those same units. Do not state a deficit you did not count, and do not report satisfaction from an idle window — zero observed classes is no evidence of balance, not a satisfied one (`VarietyTracker::deficit` returns 0 for an idle window).
+3. **Observe**: list which disturbance classes were actually observed in the evidence window. Zero observed classes is an idle window — no evidence of balance, not a satisfied one (`VarietyTracker::deficit` returns 0 for an idle window). Do not count, subtract or compare: the invoking gate counts the lists you return.
 4. **Recommend**: For each deficit, propose either attenuation (reduce system variety) or amplification (increase regulator variety).
 
 ## Output Requirements
@@ -60,10 +60,10 @@ Respond with a JSON object:
 
 ```json
 {
-  "system_variety": 5,
-  "regulator_variety": 3,
-  "observed_states": 5,
-  "deficit_analysis": "Description of variety balance, which disturbance classes lack corresponding regulator responses, and the magnitude of the deficit",
+  "disturbance_classes": ["each distinct disturbance class the system can produce"],
+  "response_classes": ["each distinct response class the regulator can produce"],
+  "observed_disturbance_classes": ["the disturbance classes actually observed in the evidence window; empty for an idle window"],
+  "deficit_analysis": "Which disturbance classes lack a corresponding regulator response, and why",
   "attenuation_recommendations": [
     {
       "mechanism": "Name of the attenuation strategy",
@@ -81,11 +81,12 @@ Respond with a JSON object:
 }
 ```
 
-The invoking step computes `deficit = (- system_variety regulator_variety)` and `ashby_status` (`satisfied|deficit|critical|idle_no_signal`) deterministically in `lisp_eval` (`PC-1`).
+The invoking step counts the three lists and computes the deficit and `ashby_status` (`satisfied|deficit|critical|idle_no_signal`) in `lisp_eval` (`PC-1`).
 
 ## Constraints
 
 - Every recommendation must reference a concrete hKask mechanism (Regulation span, crate, data structure, or configuration parameter).
 - Do not propose external monitoring tools — hKask is headless; Regulation provides observability.
-- If `PC-1` returns `critical`, include an explicit escalation directive.
+- Name each class once; a class listed twice is counted twice.
+- An idle window (no observed disturbance class) is no evidence of balance: return `observed_disturbance_classes: []` and say so in `deficit_analysis`.
 

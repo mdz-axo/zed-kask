@@ -32,11 +32,11 @@ VSM mapping, loop-property assessment, and variety-engineering proposals are
 P — judgment over the observed evidence, critiqued by the Good Regulator check
 (can this model of the system actually regulate it?), by measurement against
 the recorded spec (spec drift is measured, not judged), and by the operator.
-The Convergence gate is D: a `lisp_eval` form over the analyses' counted
-outputs (broken-property count, variety counts, algedonic-channel boolean),
-live-executed at use time — a loop with no observable feedback path is an
-open loop no matter how well it is described, and the convergence verdict
-comes from the form's output, never from the analyst's confidence.
+The gate `PC-1` is D: one `lisp_eval` form over the three analyses' outputs as
+returned — it counts the broken loop properties, the enumerated classes and
+the uncovered subsystems itself. A loop with no observable feedback path is an
+open loop no matter how well it is described, and the verdict comes from the
+form's output, never from the analyst's confidence.
 
 ## Instructions
 
@@ -47,18 +47,22 @@ comes from the form's output, never from the analyst's confidence.
 3. Identify the action mechanism (what changes as a result).
 4. Trace the return path (how the action's effect is sensed again).
 5. Assess each of the 5 properties (polarity, delay, gain, closure, fidelity) against healthy, degraded, or broken criteria.
-6. Diagnose failures explicitly if any property is rated "broken" or "none".
+6. Diagnose failures explicitly if any property is rated at its broken value (`none`, `excessive` delay, `zero` gain, `open`, `low`).
 7. Prescribe targeted remediation steps that name specific mechanisms, parameters, or code paths.
+
+The variety check and the VSM map below both read only this loop analysis:
+issue their two renders together.
 
 ### cybernetics-variety-check
 
-1. Enumerate the distinct disturbance classes the system can produce.
-2. Enumerate the distinct response classes the regulator can produce.
-3. Compare regulator variety against system variety and quantify the deficit if regulator variety is insufficient.
+1. Enumerate the distinct disturbance classes the system can produce (`disturbance_classes`).
+2. Enumerate the distinct response classes the regulator can produce (`response_classes`).
+3. List the disturbance classes actually observed in the evidence window (`observed_disturbance_classes`; empty for an idle window).
 4. Propose attenuation strategies to reduce system variety for each identified deficit.
 5. Propose amplification strategies to increase regulator variety for each identified deficit.
 6. Reference concrete hKask mechanisms (Regulation spans, crates, data structures, or configuration parameters) for all recommendations.
-7. Compute `ashby_status` deterministically in `lisp_eval` (`PC-1`): `(if (= observed_states 0) "idle_no_signal" (let ((deficit (- system_variety regulator_variety))) (if (<= deficit 0) "satisfied" (if (and (> critical_threshold 0) (> deficit critical_threshold)) "critical" "deficit"))))`.
+
+The analysis names the classes; it does not count them, subtract or compare.
 
 ### cybernetics-vsm-map
 
@@ -67,16 +71,18 @@ comes from the form's output, never from the analyst's confidence.
 3. Verify S3 has both monitoring and resource-allocation paths to S1.
 4. Verify S4 has spec-drift and algedonic sensing capability.
 5. Verify S5 has clear policy that S3/S4 can reference.
-6. Verify the algedonic channel (S1 → S5 direct) exists and is not blocked (`algedonic_channel: boolean`), and check S1..S5 coverage via `lisp_eval` (`PC-2`): `(and (> s1_count 0) (> s2_count 0) (> s3_count 0) (> s4_count 0) (> s5_count 0) algedonic_channel)`.
-7. Assess overall system viability (viable, degraded, or unviable) based on the mapping.
-8. Identify unviable components and define the required structural interventions for viability.
+6. Verify the algedonic channel (S1 → S5 direct) exists and is not blocked (`algedonic_channel: boolean`).
+7. Record where a present subsystem is weak (`degradation_notes`) and each unviable component with its required structural intervention.
 
-### Convergence
+### Gate (`PC-1`)
 
-1. Gate — call `lisp_eval` with:
-   - form: `(cond ((> broken_properties 0) "broken_loop") ((not algedonic_channel) "unviable") ((< regulator_variety system_variety) "variety_deficit") (t "viable"))`
-   - env: `{ "broken_properties": <loop properties rated broken or none>, "regulator_variety": <counted response classes>, "system_variety": <counted disturbance classes>, "algedonic_channel": <true if the S1 → S5 channel exists and is unblocked> }`
-   The three analyses are P (judgment against evidence, each grounded in named hKask mechanisms, critiqued by the operator); the gate over their counted outputs is D. On anything but `viable`, re-run the failing analysis once with its remediation applied or the missing evidence gathered; a second failure is reported as the diagnosis, not iterated.
+1. Call `lisp_eval` once, after all three analyses, with:
+   - form: `(begin (define broken-value (list (list "polarity" "none") (list "delay" "excessive") (list "gain" "zero") (list "closure" "open") (list "fidelity" "low"))) (define broken-of (lambda (pairs) (if (is_null pairs) (list) (if (string= (assoc! (car (car pairs)) loop_analysis) (car (cdr (car pairs)))) (cons (car (car pairs)) (broken-of (cdr pairs))) (broken-of (cdr pairs)))))) (define empty-of (lambda (names) (if (is_null names) (list) (if (is_null (assoc! (car names) vsm_mapping)) (cons (car names) (empty-of (cdr names))) (empty-of (cdr names)))))) (let ((broken (broken-of broken-value)) (uncovered (empty-of (list "S1_operations" "S2_coordination" "S3_control" "S4_intelligence" "S5_policy"))) (system_variety (length disturbance_classes)) (regulator_variety (length response_classes)) (idle (= (length observed_disturbance_classes) 0))) (let ((deficit (- system_variety regulator_variety))) (let ((ashby (if idle "idle_no_signal" (if (<= deficit 0) "satisfied" (if (and (> critical_threshold 0) (> deficit critical_threshold)) "critical" "deficit"))))) (list (list "verdict" (cond ((not (is_null broken)) "broken_loop") ((or (not (eq algedonic_channel t)) (not (is_null uncovered))) "unviable") ((string= ashby "idle_no_signal") "idle_no_signal") ((> deficit 0) "variety_deficit") (t "viable"))) (list "broken_properties" broken) (list "uncovered_subsystems" uncovered) (list "system_variety" system_variety) (list "regulator_variety" regulator_variety) (list "deficit" deficit) (list "ashby_status" ashby))))))`
+   - env: `{ "loop_analysis": <the analyze-loop output, unchanged>, "vsm_mapping": <the vsm-map output's vsm_mapping, unchanged>, "algedonic_channel": <the vsm-map output's algedonic_channel>, "disturbance_classes": <from the variety check>, "response_classes": <from the variety check>, "observed_disturbance_classes": <from the variety check>, "critical_threshold": <the domain's algedonic threshold from the regulation configuration; 0 when the domain has none> }`
+   Pass each analysis output as returned; type no count.
+2. Read `verdict`, in the form's clause order: `broken_loop` (a property at its broken value; `broken_properties` names them) → `unviable` (the algedonic channel is blocked, or `uncovered_subsystems` names an S1–S5 list with no component) → `idle_no_signal` (no disturbance class was observed, so the window shows nothing about variety health) → `variety_deficit` → `viable`.
+3. `ashby_status` is reported beside the verdict. `critical` — a deficit above `critical_threshold` — requires an explicit escalation directive in the report (the runtime rule: `RuntimeAlert::new`, Critical when deficit > threshold).
+4. On anything but `viable`, re-run the failing analysis once with its remediation applied or the missing evidence gathered, then run the gate again; a second non-`viable` result is reported as the diagnosis, not iterated. `idle_no_signal` is resolved by evidence from an active window, not by a re-run over the same window.
 
 ## Reference models
 
@@ -87,40 +93,43 @@ Ashby, *An Introduction to Cybernetics* (1956) — requisite variety; Conant & A
 | Template | Purpose |
 |----------|---------|
 | `cybernetics-analyze-loop.j2` | Analyze a feedback loop on 5 properties: polarity, delay, gain, closure, fidelity. Diagnose broken loops and prescribe remediation. |
-| `cybernetics-variety-check.j2` | Evaluate variety balance using Ashby's Law of Requisite Variety. Identify deficits, recommend attenuation or amplification strategies. |
-| `cybernetics-vsm-map.j2` | Map hKask components to VSM S1–S5. Assess system viability and identify unviable components requiring structural intervention. |
+| `cybernetics-variety-check.j2` | Enumerate the disturbance classes, the regulator's response classes and the classes actually observed (Ashby's Law of Requisite Variety); recommend attenuation or amplification strategies. |
+| `cybernetics-vsm-map.j2` | Map hKask components to VSM S1–S5, report the algedonic channel, and identify unviable components requiring structural intervention. |
 
 To render a template, call the `render_template` tool with the template ref (e.g., `pragmatic-cybernetics/cybernetics-analyze-loop`) and a context object with the required variables.
 
-Template context variables (from each template's [inference] contract):
-- `cybernetics-analyze-loop.j2`: `loop_description`, `system_context`
-- `cybernetics-variety-check.j2`: `loop_analysis`, `system_context`
-- `cybernetics-vsm-map.j2`: `loop_analysis`, `variety_result`, `system_context`
+Copyable `render_template` context blocks (variable names from each template's `[inference]` contract):
+
+`pragmatic-cybernetics/cybernetics-analyze-loop`:
+```json
+{ "loop_description": "<the loop: what senses, decides, acts, and how the effect is sensed again>", "system_context": "<surrounding system, or an empty string>" }
+```
+
+`pragmatic-cybernetics/cybernetics-variety-check`:
+```json
+{ "loop_analysis": { "<the whole analyze-loop output>": "" }, "system_context": "<surrounding system, or an empty string>" }
+```
+
+`pragmatic-cybernetics/cybernetics-vsm-map`:
+```json
+{ "loop_analysis": { "<the whole analyze-loop output>": "" }, "system_context": "<surrounding system, or an empty string>" }
+```
 
 ## Regression case
 
-All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
-
-- Convergence gate, viable: `{broken_properties: 0, regulator_variety: 5,
-  system_variety: 5, algedonic_channel: true}` → `"viable"`.
-- Convergence gate, broken loop: same env with `broken_properties: 1` →
-  `"broken_loop"` (a single broken/none property dominates — the
-  analyze-loop instruction's rule, enforced by the form's clause order).
-- Convergence gate, unviable: `algedonic_channel: false` → `"unviable"`
-  (the S1 → S5 channel blocked — non-negotiable per the Constraints).
-- Convergence gate, unviable not masked by deficit: `regulator_variety: 3`
-  vs `system_variety: 5` AND `algedonic_channel: false` → `"unviable"` —
-  the non-negotiable unviable verdict fires before the variety-deficit
-  clause; a deficit never masks a blocked algedonic channel.
-- Convergence gate, variety deficit: `regulator_variety: 3` vs
-  `system_variety: 5` (algedonic channel open) → `"variety_deficit"`
-  (Ashby's requisite-variety shortfall, counted in distinct classes).
-
-The skill's form is executed at use time, never anchored in code.
+`PC-1` is evaluated on passing and failing cases by the
+`scientific_gate_pc_1_` test
+(`bash kask/scripts/check-skill-lisp-forms.sh`): a healthy loop with full
+S1–S5 coverage, an open channel and matched variety is `viable`; one property
+at its broken value is `broken_loop` and is named; a blocked algedonic channel
+or an empty subsystem list is `unviable`, and neither is masked by a variety
+deficit; an idle window is `idle_no_signal`, never `viable`; a shortfall is
+`variety_deficit`, with `ashby_status` `critical` above the threshold and
+`deficit` at or below it.
 
 ## Constraints
 
-- `cybernetics-analyze-loop.j2`: Every property assessment must be grounded in evidence. Broken/none property → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
-- `cybernetics-variety-check.j2`: Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. An idle window (zero observed states) yields deficit 0 from `VarietyTracker::deficit` (`hkask-regulation/src/runtime.rs:201`, pinned by `deficit_is_zero_for_idle_window`) — read it as no signal, never as variety health; name the idle window in the analysis instead of reporting a satisfied balance. Critical status requires explicit escalation directive.
+- `cybernetics-analyze-loop.j2`: Every property assessment must be grounded in evidence. A property at its broken value → broken loop. Remediation must name specific mechanisms. No external monitoring stacks (Prometheus, Grafana) — hKask is headless.
+- `cybernetics-variety-check.j2`: Every recommendation must reference a concrete hKask mechanism. Algedonic thresholds follow the runtime rule (`RuntimeAlert::new`, `hkask-regulation/src/algedonic.rs`): Warning when deficit > threshold/2, Critical when deficit > threshold; the deficit is counted in distinct classes. An idle window (zero observed states) yields deficit 0 from `VarietyTracker::deficit` (`hkask-regulation/src/runtime.rs`, pinned by `deficit_is_zero_for_idle_window`) — read it as no signal, never as variety health; `PC-1` returns `idle_no_signal` for it. Critical status requires explicit escalation directive.
 - `cybernetics-vsm-map.j2`: Every component maps to exactly one primary subsystem. Missing/blocked algedonic channel (S1 → S5) → unviable (non-negotiable). S4 must have spec-drift detection. S5 must reference Magna Carta principles.
-- Convergence check incorporates all three analysis steps (loop analysis, variety assessment, VSM mapping), not just loop analysis alone — defined in the Convergence section above.
+- The gate incorporates all three analyses (loop analysis, variety assessment, VSM mapping), not loop analysis alone.

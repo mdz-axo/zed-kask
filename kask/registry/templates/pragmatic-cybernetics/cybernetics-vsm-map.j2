@@ -3,12 +3,11 @@
 contract:
   input:
     loop_analysis: object
-    variety_result: object
     system_context: string
   output:
     vsm_mapping: object
     algedonic_channel: boolean
-    viability_assessment: string
+    degradation_notes: string
     unviable_components: array
 ---
 
@@ -40,11 +39,6 @@ A viable system requires:
 {{ loop_analysis | tojson }}
 ```
 
-## Variety Assessment
-
-```json
-{{ variety_result | tojson }}
-```
 
 {% if system_context %}
 ## System Context
@@ -75,7 +69,7 @@ Respond with a JSON object:
     "S5_policy": ["Component list"]
   },
   "algedonic_channel": true,
-  "viability_assessment": "Overall assessment: viable|degraded|unviable — and why",
+  "degradation_notes": "Where a subsystem is present but weak (a missing S2 channel, S3 without a resource path, S4 without spec-drift detection), and why; empty when none",
   "unviable_components": [
     {
       "component": "Name of the component",
@@ -90,7 +84,8 @@ Respond with a JSON object:
 ## Constraints
 
 - Every component must map to exactly one primary subsystem (it may have secondary interactions).
-- If the algedonic channel (S1 → S5 direct) is missing or blocked, the system is unviable — this is non-negotiable.
+- Report `algedonic_channel: false` when the S1 → S5 direct channel is missing or blocked. The invoking gate returns `unviable` for a blocked channel or an empty subsystem list; you do not state the verdict.
+- List a subsystem's components only when you found them; an empty list is the honest answer for a subsystem with none.
 - S4 must have spec-drift detection capability; without it, the system cannot adapt.
 - S5 must reference Magna Carta principles explicitly; policy without sovereignty is not policy.
 - Do not propose external monitoring — hKask is headless. Regulation spans provide observability.

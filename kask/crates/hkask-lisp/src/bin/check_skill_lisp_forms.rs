@@ -2183,6 +2183,136 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_pc_1_decides_viability_from_the_analyses_as_returned() {
+        let form = skill_candidate("pragmatic-cybernetics", "define broken-value ");
+        let base = json!({
+            "loop_analysis": {
+                "polarity": "balancing", "delay": "short", "gain": "proportional",
+                "closure": "closed", "fidelity": "high",
+                "broken_loop_diagnosis": "", "remediation": ""
+            },
+            "vsm_mapping": {
+                "S1_operations": ["agent execution"], "S2_coordination": ["MCP dispatch"],
+                "S3_control": ["call caps"], "S4_intelligence": ["spec drift"],
+                "S5_policy": ["Magna Carta"]
+            },
+            "algedonic_channel": true,
+            "disturbance_classes": ["d1", "d2", "d3"],
+            "response_classes": ["r1", "r2", "r3"],
+            "observed_disturbance_classes": ["d1", "d2"],
+            "critical_threshold": 2
+        });
+        let eval = |case: &str, changes: serde_json::Value| {
+            let env = scientific_env(&base, changes);
+            eval_sandboxed(&form, &env)
+                .unwrap_or_else(|error| panic!("{case}: PC-1 failed to evaluate: {error}"))
+        };
+        let loop_with = |property: &str, value: &str| {
+            let mut analysis = base["loop_analysis"].clone();
+            analysis[property] = json!(value);
+            json!({"loop_analysis": analysis})
+        };
+
+        let viable = eval("viable", json!({}));
+        assert_eq!(viable["verdict"], json!("viable"));
+        assert_eq!(viable["broken_properties"], json!([]));
+        assert_eq!(viable["uncovered_subsystems"], json!([]));
+        assert_eq!(viable["system_variety"], json!(3));
+        assert_eq!(viable["regulator_variety"], json!(3));
+        assert_eq!(viable["deficit"], json!(0));
+        assert_eq!(viable["ashby_status"], json!("satisfied"));
+
+        // Each property's broken value is a broken loop and is named.
+        for (property, value) in [
+            ("polarity", "none"),
+            ("delay", "excessive"),
+            ("gain", "zero"),
+            ("closure", "open"),
+            ("fidelity", "low"),
+        ] {
+            let out = eval(property, loop_with(property, value));
+            assert_eq!(out["verdict"], json!("broken_loop"), "{property}={value}");
+            assert_eq!(
+                out["broken_properties"],
+                json!([property]),
+                "{property}={value}"
+            );
+        }
+        // A degraded value is not broken. "excessive" is delay's broken
+        // value; on gain it is overshoot, which the template rates degraded.
+        for (property, value) in [
+            ("polarity", "reinforcing"),
+            ("delay", "moderate"),
+            ("gain", "weak"),
+            ("gain", "excessive"),
+            ("closure", "partial"),
+            ("fidelity", "moderate"),
+        ] {
+            let out = eval(property, loop_with(property, value));
+            assert_eq!(out["verdict"], json!("viable"), "{property}={value}");
+            assert_eq!(out["broken_properties"], json!([]), "{property}={value}");
+        }
+
+        let blocked = eval("blocked channel", json!({"algedonic_channel": false}));
+        assert_eq!(blocked["verdict"], json!("unviable"));
+        // The case the former Convergence form passed as viable: a
+        // subsystem with no component.
+        let mut uncovered_mapping = base["vsm_mapping"].clone();
+        uncovered_mapping["S2_coordination"] = json!([]);
+        uncovered_mapping["S4_intelligence"] = json!([]);
+        let uncovered = eval(
+            "empty subsystems",
+            json!({"vsm_mapping": uncovered_mapping}),
+        );
+        assert_eq!(uncovered["verdict"], json!("unviable"));
+        assert_eq!(
+            uncovered["uncovered_subsystems"],
+            json!(["S2_coordination", "S4_intelligence"])
+        );
+        // Unviable is not masked by a variety deficit, and a broken loop
+        // is not masked by either.
+        let masked = eval(
+            "blocked channel and deficit",
+            json!({"algedonic_channel": false, "response_classes": ["r1"]}),
+        );
+        assert_eq!(masked["verdict"], json!("unviable"));
+        let mut broken_and_blocked = loop_with("closure", "open");
+        broken_and_blocked["algedonic_channel"] = json!(false);
+        assert_eq!(
+            eval("broken loop and blocked channel", broken_and_blocked)["verdict"],
+            json!("broken_loop")
+        );
+
+        // The other case the former form passed as viable: an idle window.
+        let idle = eval("idle window", json!({"observed_disturbance_classes": []}));
+        assert_eq!(idle["verdict"], json!("idle_no_signal"));
+        assert_eq!(idle["ashby_status"], json!("idle_no_signal"));
+
+        // Deficit 2 at threshold 2 is a deficit; deficit 3 is critical.
+        let deficit = eval("deficit at threshold", json!({"response_classes": ["r1"]}));
+        assert_eq!(deficit["verdict"], json!("variety_deficit"));
+        assert_eq!(deficit["deficit"], json!(2));
+        assert_eq!(deficit["ashby_status"], json!("deficit"));
+        let critical = eval("deficit above threshold", json!({"response_classes": []}));
+        assert_eq!(critical["verdict"], json!("variety_deficit"));
+        assert_eq!(critical["deficit"], json!(3));
+        assert_eq!(critical["ashby_status"], json!("critical"));
+        // A domain with no threshold never reports critical.
+        let unthresholded = eval(
+            "no threshold",
+            json!({"response_classes": [], "critical_threshold": 0}),
+        );
+        assert_eq!(unthresholded["ashby_status"], json!("deficit"));
+        // Surplus regulator variety satisfies the law.
+        let surplus = eval(
+            "regulator surplus",
+            json!({"response_classes": ["r1", "r2", "r3", "r4"]}),
+        );
+        assert_eq!(surplus["verdict"], json!("viable"));
+        assert_eq!(surplus["deficit"], json!(-1));
+    }
+
+    #[test]
     fn scientific_gate_ht1_only_updates_on_the_four_declared_triggers() {
         let form = skill_candidate("hypothesis-testing", "\"new_category\"");
         for trigger in [
