@@ -400,9 +400,11 @@ returns.
      every rule × cross-check pair:
      - env: `{ "rules": [{ "quantity", "primary", "cross", "tolerance" }, ...] }`
    - On `conflict` (per record in the driver's result), emit a
-     `source_conflicts` finding: both values, both
-     sources, both periods/definitions, the relative difference, and the
-     precedence disposition. The default hierarchy is `primary source
+     `source_conflicts` finding: the `quantity`, both values, both
+     sources, both periods/definitions, the relative difference, the
+     precedence disposition, and `resolution` — `resolved` when the
+     disposition settles the quantity, `open` when it stays material and
+     unresolved (`GV-2` reads this field). The default hierarchy is `primary source
      (the original record) > a live observation > derived metric > model
      inference`; a rule's `resolution` field overrides it for that
      quantity. The disposition: prefer the more direct source, disclose
@@ -525,12 +527,13 @@ floor.
    nothing — no verdict a pending claim could hold would lower a floor
    always resting at the bottom — and the caveat is omitted.
 
-3. Derive and report the confidence band deterministically via `lisp_eval` (`GV-2`) from the floor, the source
-   conflicts, and the decoupling field (the Fermi `hud_contract.rs`
+3. Derive and report the confidence band deterministically via `lisp_eval` (`GV-2`) from the item-1 result, the
+   `source_conflicts` findings, and the decoupling field (the Fermi `hud_contract.rs`
    `confidence_for` adaptation — derived from the provenance verdict,
    never accepted from the model):
-   - form: `(if (= floor 0) "low" (if (or (string= decoupling "in_thread") (> unresolved_conflicts 0) (> pending_count 0) (= floor 1)) "medium" "high"))`
-   - env: `{ "floor": <provenance_floor>, "decoupling": "<spawn_agent|in_thread>", "unresolved_conflicts": <count>, "pending_count": <count> }`
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define floor (assoc "floor" floor_result)) (define pending (if (numberp (assoc "pending_count" floor_result)) (assoc "pending_count" floor_result) 0)) (define conflicts (if (listp source_conflicts) source_conflicts (list))) (define unresolved (lambda (cs) (if (is_null cs) (list) (if (string= (text-of (car cs) "resolution") "resolved") (unresolved (cdr cs)) (cons (text-of (car cs) "quantity") (unresolved (cdr cs))))))) (define open (unresolved conflicts)) (define mode (if (stringp decoupling) decoupling "")) (list (list "band" (cond ((not (numberp floor)) "unknown") ((= floor 0) "low") ((or (string= mode "in_thread") (not (is_null open)) (> pending 0) (= floor 1)) "medium") (t "high"))) (list "floor" floor) (list "pending_count" pending) (list "unresolved_conflicts" open) (list "decoupling" mode) (list "pending_caveat" (and (numberp floor) (> floor 0) (> pending 0)))))`
+   - env: `{ "floor_result": <item 1's lisp_eval result, unchanged>, "source_conflicts": <the Step 4 findings list>, "decoupling": "<spawn_agent|in_thread>" }`
+   - returns `band` (`low` | `medium` | `high`, or `unknown` when the floor is null — nothing graded), the floor and pending count it read, `unresolved_conflicts` (the quantities whose finding is not `resolved`) and `pending_caveat` (true when pending claims could still lower a floor above 0).
    The band caps at `medium` for an `in_thread` run (a self-check, no matter how strong the claims), at
    `medium` when unresolved material `source_conflicts` are present, and
    at `medium` when `pending_count` > 0 and the floor is above 0 (the
@@ -618,7 +621,7 @@ This is a bounded verifier loop, not skill-effectiveness evaluation; the operato
 
 ## Regression case
 
-Renders (declared contexts): `grounding-verify/extract-claims` with `target_text` (a short report citing one verbatim quote and one derived number) and `source_outputs` (two `{tool_name, description, output_key}` objects); `assign-provenance` with the extracted claims, the source outputs, a `pipeline_tool_log`, and one `congruence_rules` entry; `scan-narrative` with `narrative_fields`, post-Step-3 `sourced_blocks`, and `leak_rules` (one `Word` rule from an unsourced block); `compile-error-log` with one finding of each class (E, W, N). Forms: the six forms are executed live through `lisp_eval` at use time (receipts in the skill-audit records; the former pin suite was deleted by operator ruling 2026-09-30 — skills evolve independently of Rust). Full-run-only behaviors a render cannot check (a case that claims them over-claims): the extraction ceiling's correct operation (a synthesized claim held at strength 1), the append-only registry, and the decoupling field's presence in the emitted report — asserted by the process, not by any render.
+Renders (declared contexts): `grounding-verify/extract-claims` with `target_text` (a short report citing one verbatim quote and one derived number) and `source_outputs` (two `{tool_name, description, output_key}` objects); `assign-provenance` with the extracted claims, the source outputs, a `pipeline_tool_log`, and one `congruence_rules` entry; `scan-narrative` with `narrative_fields`, post-Step-3 `sourced_blocks`, and `leak_rules` (one `Word` rule from an unsourced block); `compile-error-log` with one finding of each class (E, W, N). Forms: the six forms are executed live through `lisp_eval` at use time (receipts in the skill-audit records; the former pin suite was deleted by operator ruling 2026-09-30 — skills evolve independently of Rust). `GV-2` receipts (2026-11-13, live): floor 3 / no pending / no conflicts / `spawn_agent` → `high`; the same `in_thread` → `medium`; two pending → `medium` with `pending_caveat` true; a conflict marked `resolved` → `high`, one marked `open` → `medium` naming its quantity; floor 1 → `medium`; floor 0 with five pending → `low`, caveat false; a null floor → `unknown`. Full-run-only behaviors a render cannot check (a case that claims them over-claims): the extraction ceiling's correct operation (a synthesized claim held at strength 1), the append-only registry, and the decoupling field's presence in the emitted report — asserted by the process, not by any render.
 
 ## Registry Templates
 
