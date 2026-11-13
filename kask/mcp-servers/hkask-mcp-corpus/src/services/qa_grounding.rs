@@ -553,6 +553,9 @@ fn serialize_rows(rows: &[QaGroundingRow]) -> Result<String, McpToolError> {
 /// mechanical record, never a verdict. A row with a model_inference answer is
 /// recorded honestly; only the ingestion gate decides admission.
 pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value, McpToolError> {
+    // Refuse an escaping destination before any input is read.
+    let output_path = crate::path_safety::contain_for_write(&request.output_dir)?;
+    let output_path = output_path.as_path();
     let candidates = read_grounding_candidates(&request.generated_jsonl)?;
     let (chunks, dropped_malformed) = read_grounding_chunks(&request.source_chunks_jsonl)?;
     let index = chunk_index(&chunks);
@@ -613,7 +616,6 @@ pub(crate) fn build_grounding_bundle(request: &GroundQaRequest) -> Result<Value,
             .count(),
     };
 
-    let output_path = Path::new(&request.output_dir);
     let parent = output_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());

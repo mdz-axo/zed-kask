@@ -163,6 +163,13 @@ impl CorpusServer {
                     "query must not be empty",
                 ));
             }
+            // Contain db_path before the embedding call: an escaping path is
+            // refused without spending a model call on it.
+            let db_path = db_path
+                .as_deref()
+                .map(crate::helpers::contained_for_read_or_absent)
+                .transpose()?
+                .map(|path| path.to_string_lossy().into_owned());
 
             // Parse the query string. When it starts with `(list`, it's a
             // Lisp S-expression specifying query options. Otherwise it's a
@@ -222,14 +229,8 @@ impl CorpusServer {
             let k = k.clamp(1, 50);
             // Fail-visible: no configured embedding model is a typed error
             // naming the setting — never a hidden constant.
-            let model_name = crate::default_embedding_model().ok_or_else(|| {
-                McpToolError::permission_denied(
-                    "no embedding model configured — set \\
-                     kask.models.embedding_model (injected as \\
-                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-                     hidden code constant",
-                )
-            })?;
+            let model_name = crate::default_embedding_model()
+                .ok_or_else(crate::helpers::no_embedding_model)?;
 
             let query_batch = match self
                 .inference_router
@@ -399,11 +400,11 @@ impl CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_purge_qa", async {
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            // Purge targets an existing DB — a typo'd path must refuse,
-            // not create an empty DB and report a silent zero-purged
-            // no-op (CO-02).
-            crate::helpers::ensure_db_exists(&req.db_path)?;
-            self.index.purge(&req.db_path, &passphrase, &req.prefix)
+            // Purge targets an existing DB inside the allowed roots — a
+            // typo'd path must refuse, not create an empty DB and report a
+            // silent zero-purged no-op.
+            let db_path = crate::helpers::existing_db(&req.db_path)?;
+            self.index.purge(&db_path, &passphrase, &req.prefix)
         })
         .await
     }
@@ -426,8 +427,9 @@ fn durable_retrieval(
     query_model: &str,
     query_actual_model: Option<&str>,
 ) -> Result<Retrieval, McpToolError> {
-    // CO-02: a typo'd path must refuse, never leave a stray empty DB behind it.
-    crate::helpers::ensure_db_exists(db_path)?;
+    // `db_path` arrives contained; a typo'd path refuses rather than leaving
+    // a stray empty DB behind it.
+    hkask_mcp_server::ensure_existing_file(db_path, "embedding database")?;
     let passphrase = crate::helpers::resolve_corpus_passphrase()?;
     let database =
         hkask_storage::Database::open_read_only(db_path, &passphrase).map_err(|error| {

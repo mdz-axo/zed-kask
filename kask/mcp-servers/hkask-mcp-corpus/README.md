@@ -225,7 +225,7 @@ vectors, ambiguous/missing provenance, duplicate stored refs, dimension mismatch
 primary source/text disagreement or failed reads are errors, not empty context
 (`src/services/prompt_builder.rs:119–246`).
 
-With positive `context_k`, `db_path` and `passphrase` are required. The builder
+With positive `context_k`, `db_path` is required (opened read-only). The builder
 loads complete-source embeddings and provenance, selects neighbors by similarity,
 and stores canonical passage mappings as local `p1`, `p2`, etc. Canonical IDs are
 metadata in the prepared request but never enter model messages.
@@ -528,7 +528,7 @@ research corpus, never staged training data.
 
 ## Centroids and composition
 
-`corpus_centroid(author, db_path, passphrase)` selects `style:{author}:` and stores
+`corpus_centroid(author, db_path)` selects `style:{author}:` and stores
 `style:{author}:centroid`. Optional `refs_file` is a contained UTF-8 file of existing
 refs, one per line; whitespace/blank lines are ignored and duplicates count once.
 Missing eligible refs or an empty selection fail before storage. Optional quality

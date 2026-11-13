@@ -92,24 +92,80 @@ fn passphrase_unavailable() -> McpToolError {
     )
 }
 
-/// Classify a `TriageError` from the PDF triage pipeline into the appropriate
-/// `McpToolError` kind: an invalid page spec is caller input
-/// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn
-/// failures (binary missing — operator-fixable, `unavailable`); a page-count
-/// mismatch between the two tools is an internal inconsistency (`internal`).
-/// A `db_path` naming a database that does not exist is the caller's
-/// error — refuse it before any SQLCipher open, which creates-if-missing
-/// (a typo'd path otherwise leaves a stray empty DB and surfaces as a
-/// misleading "No embeddings found", or as a silent zero-purged no-op
-/// for `corpus_purge_qa`; mcp-tool-review CO-02, live 2026-10-04).
-/// Read-oriented corpus tools (centroid, compose, rewrite, dedup,
-/// consolidate, query's durable db_path search, purge, build_prompts
-/// context) never create a database. `not_found` per the canonical
-/// classification (operator ruling 2026-10-05): a caller-named resource
-/// that does not exist — the former `invalid_argument` followed the
-/// inventory precedent before the contract unified the class.
-pub(crate) fn ensure_db_exists(db_path: &str) -> Result<(), McpToolError> {
-    hkask_mcp_server::ensure_existing_file(db_path, "embedding database")
+/// Resolve a caller-supplied `db_path` that a tool opens read-write, under
+/// write containment (CWE-73). Every SQLCipher open writes beside the
+/// database (a maintenance lock, WAL sidecars) and the creating tools
+/// (`corpus_embed`, `corpus_extract_assertions`, `corpus_ingest_qa`) make
+/// the file itself, so an uncontained `db_path` is an arbitrary-location
+/// write. The database need not exist yet. Returns the canonical path the
+/// open must use.
+pub(crate) fn contained_db(db_path: &str) -> Result<String, McpToolError> {
+    Ok(crate::path_safety::contain_for_write(db_path)?
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// [`contained_db`] for the tools that never create a database (centroid,
+/// compose, rewrite, dedup, consolidate, inventory, purge): a contained
+/// path naming no file is `not_found` before any SQLCipher open, which
+/// creates-if-missing (a typo'd path otherwise leaves a stray empty DB and
+/// surfaces as a misleading "No embeddings found", or as a silent
+/// zero-purged no-op for `corpus_purge_qa`).
+pub(crate) fn existing_db(db_path: &str) -> Result<String, McpToolError> {
+    let resolved = contained_db(db_path)?;
+    hkask_mcp_server::ensure_existing_file(&resolved, "embedding database")?;
+    Ok(resolved)
+}
+
+/// Resolve a caller-supplied path that is only read and may be absent,
+/// under read containment. An existing path resolves through the read
+/// roots; an absent one resolves through the write roots so the caller
+/// can answer `not_found`. A path outside every root gets the same
+/// refusal whether or not it exists — no existence oracle.
+pub(crate) fn contained_for_read_or_absent(path: &str) -> Result<std::path::PathBuf, McpToolError> {
+    crate::path_safety::contain_for_read(path)
+        .or_else(|_| crate::path_safety::contain_for_write(path))
+}
+
+/// Refuse an escaping `output` before the work that produces it. The tools
+/// that write their result last (tagging, consolidation, dedup, prompt
+/// building, QA ingestion) would otherwise spend the whole run — model
+/// calls included — and only then fail to write.
+pub(crate) fn check_output(output: &str) -> Result<(), McpToolError> {
+    crate::path_safety::contain_for_write(output).map(|_| ())
+}
+
+/// The read-only twin of [`existing_db`] for the opens that never write
+/// (`corpus_query`'s durable search, `corpus_build_prompts` context).
+pub(crate) fn existing_db_read_only(db_path: &str) -> Result<String, McpToolError> {
+    let resolved = contained_for_read_or_absent(db_path)?;
+    hkask_mcp_server::ensure_existing_file(&resolved, "embedding database")?;
+    Ok(resolved.to_string_lossy().into_owned())
+}
+
+/// The refusal a model-using tool gives when its model setting is unset:
+/// `permission_denied` naming the setting and the variable that carries it.
+fn no_model_configured(role: &str, setting: &str, env_var: &str) -> McpToolError {
+    McpToolError::permission_denied(format!(
+        "no {role} model configured — set {setting} (injected as {env_var}); \
+         kask never falls back to a hidden code constant"
+    ))
+}
+
+pub(crate) fn no_embedding_model() -> McpToolError {
+    no_model_configured(
+        "embedding",
+        "kask.models.embedding_model",
+        "HKASK_EMBEDDING_MODEL",
+    )
+}
+
+pub(crate) fn no_classifier_model() -> McpToolError {
+    no_model_configured(
+        "classifier",
+        "kask.models.classifier_model",
+        "HKASK_CLASSIFIER_MODEL",
+    )
 }
 
 /// Record one inference call's measured usage into the executing
@@ -121,6 +177,11 @@ pub(crate) fn record_usage(result: &hkask_types::ports::InferenceResult) {
     hkask_mcp_server::server::record_tool_usage(result.usage.clone());
 }
 
+/// Classify a `TriageError` from the PDF triage pipeline into the appropriate
+/// `McpToolError` kind: an invalid page spec is caller input
+/// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn
+/// failures (binary missing — operator-fixable, `unavailable`); a page-count
+/// mismatch between the two tools is an internal inconsistency (`internal`).
 pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
     use crate::ocr::triage::TriageError;
     let message = format!("triage failed: {error}");
@@ -628,22 +689,35 @@ mod tests {
     /// F1 pin: the resolver is fail-closed — it either returns a non-empty
     /// passphrase or an error naming the credential, never an empty string
     /// a caller could pass on to a DB open.
-    /// CO-02 pin (mcp-tool-review): a db_path naming a nonexistent
-    /// database is refused before any SQLCipher open — no stray DB file is
-    /// created behind a typo (the storage layer opens create-if-missing;
-    /// live 2026-10-04: corpus_centroid on a fresh path created a 128KB
-    /// empty DB and errored "No embeddings found").
+    /// A db_path naming a nonexistent database inside the allowed roots is
+    /// refused before any SQLCipher open — no stray DB file is created
+    /// behind a typo (the storage layer opens create-if-missing; live
+    /// 2026-10-04: corpus_centroid on a fresh path created a 128KB empty DB
+    /// and errored "No embeddings found").
     #[test]
-    fn ensure_db_exists_refuses_before_any_db_creation() {
-        let directory = tempfile::tempdir().expect("tempdir");
+    fn existing_db_refuses_before_any_db_creation() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/helpers-test");
+        std::fs::create_dir_all(&root).expect("fixture root");
+        let directory = tempfile::tempdir_in(root).expect("tempdir");
         let db_path = directory
             .path()
             .join("never-created.db")
             .to_str()
             .expect("utf-8 path")
             .to_string();
-        let error = match ensure_db_exists(&db_path) {
-            Ok(()) => panic!("nonexistent db must be refused"),
+        for resolve in [existing_db, existing_db_read_only] {
+            let error = match resolve(&db_path) {
+                Ok(_) => panic!("nonexistent db must be refused"),
+                Err(error) => error,
+            };
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::NotFound,
+                "a caller-named missing DB is not_found: {error:?}"
+            );
+        }
+        let error = match existing_db(&db_path) {
+            Ok(_) => panic!("nonexistent db must be refused"),
             Err(error) => error,
         };
         assert_eq!(

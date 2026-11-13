@@ -14,7 +14,7 @@ The editor-managed MCP server processes documents into retrievable passages,
 classified chunks, evidence-carrying QA and style centroids. There is one current
 schema contract and **25 registered tools**, pinned by
 `tool_surface_is_exactly_25_registered_tools` at
-`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:321-326` (the
+`kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:323-328` (the
 `corpus_prepare_training_dataset` tool was removed 2026-10-17 with the training
 capability).
 Parameter additions do not add tools.
@@ -76,8 +76,8 @@ the current `ocr_protocol` do not resume; no plain-text compatibility route exis
 ## Pipeline parameters
 
 Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-1097`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:578-594`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:560-698`,
-`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:541-590`, and
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/tagging/ops.rs:562-579`, `kask/mcp-servers/hkask-mcp-corpus/src/tools/corpus.rs:570-702`,
+`kask/mcp-servers/hkask-mcp-corpus/src/tools/compose_tools.rs` (`ComposeRequest`, `RewriteRequest`, `CentroidRequest`), `kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs:516-581`, and
 `kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:46-81`.
 
 | Tool | Inputs and defaults |
@@ -88,17 +88,17 @@ Schema sources: `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:994-109
 | `corpus_chunk` | `text` or `path`, or `input_dir` with `output`; required `entity_ref_prefix`; optional `max_tokens`, `overlap_tokens`, `strip_gutenberg`, `multi_tier`, tier bounds, `target_pages`; `index=true`. Directory mode reports per-source bounded leading title/publisher/praise pages, contents/index/bibliography/reference sections, newsletter calls to action, distribution watermarks, isolated caption-only pages and inferred-image exclusions in `boilerplate_exclusion_reports`. Directory mode also reads `{stem}.origin.json` provenance sidecars (written by the cache tools' `origin_provider`) and stamps `origin_provider` on that source's chunk rows, surfacing `origin_stamped` in the summary; unstamped files carry no provenance. |
 | `corpus_build_chunk_representations` | Immutable accepted source identities, output directory, namespace and complete current/fine/parent policies. Applies the canonical furniture filter once before every policy and seals source exclusion reports in a schema-v2 manifest; reconstruction targets the retained view. |
 | `corpus_tag_chunks` | `chunks_jsonl`, `output`; `concurrency` from shared ceiling, `tag_batch_size=10`, `dry_run=false` |
-| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path`, `passphrase`, optional embedding `model`, `batch_size`; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
-| `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, `passphrase`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs without writes |
-| `corpus_export_bundle` | `run_dir` (sealed run: `run-identity.json`, `representations/manifest.json`, `<index_name>.db`), `output_dir` (no existing `bundle.json`), `source_id`, `display_name`, `index_name`, `bundle_key` (public, ≥8 chars). Verifies the run's seal, rekeys a copy to the bundle key, measures content pins, splits into parts, writes `bundle.json`; the sealed run is never modified |
+| `corpus_embed` | `chunks_jsonl`, optional `tagged_jsonl`, `db_path` (created when absent), optional embedding `model`, `batch_size`; a run that embeds nothing returns the provider's failure as the tool error, a partial run reports it as `first_error` beside the counts; durable rows retain provider-confirmed actual model identity when available; every batch requests `dimensions = HKASK_EMBEDDING_DIM` (default 1024) so MRL models (default `OpenRouter/qwen/qwen3-embedding-8b`) emit the store's width, and re-embedding replaces prior vectors per `entity_ref` (idempotent) |
+| `corpus_embedding_inventory` | `chunks_jsonl`, existing `db_path`, required provider-confirmed `expected_model`; returns exact missing/mismatched/retry refs and stores no row |
+| `corpus_export_bundle` | `run_dir` (sealed run: `run-identity.json`, `representations/manifest.json`, `<index_name>.db`), `output_dir` (no existing `bundle.json`), `source_id`, `display_name`, `index_name`, `bundle_key` (public, ≥8 chars). `source_id` and `index_name` become file names: letters, digits, `_`, `.`, `-`, `:` only, no leading `.`. Verifies the run's seal, rekeys a copy to the bundle key, measures content pins, splits into parts, writes `bundle.json`; the sealed run is never modified |
 | `corpus_build_prompts` | `tagged_jsonl`, `output`; `prefix` defaults `corpus:researcher:`, `context_k=0`, `qa_pairs_per_chunk=2`, `type_distribution="1,1,1,1,1"` (exactly 5 comma-separated nonnegative weights — factual, conceptual, analyze, evaluate, create — with at least one nonzero; anything else is rejected, never partially parsed), `max_pairs=0`; optional `db_path`/`passphrase` are required only for positive context_k. Brave-derived chunks (stamped `origin_provider: "brave"`) are excluded from QA generation with the exclusion surfaced; an all-Brave corpus fails closed naming Brave API ToS clause xiii (training AI models on Search Results) |
 
 | `corpus_generate_qa_batch` | `prompts_jsonl`, `quality_adjudications_jsonl`, `output`, `concurrency`, optional QA `model` |
 | `corpus_ground_generated_qa` | `generated_jsonl`, `source_chunks_jsonl` (tagged chunks classified under `published-term-resolution-v2`), `output_dir` — must not already exist |
 | `corpus_ingest_qa` | `generated_jsonl`, `grounding_manifest` (path to the bundle's `manifest.json`), `source_chunks_jsonl`, `output`, `db_path`, `dataset`, `owner`, `dry_run=false`; pass dataset/owner explicitly. The DB passphrase resolves server-side. Brave-derived candidates are dropped after the structural filter (surfaced as `brave_excluded`, never silent); retained rows and stored research-QA h_mems carry their chunk's `origin_provider` when recorded |
-| `corpus_centroid` | `author`, `db_path`, `passphrase`; optional contained `refs_file`, quality `dimension` |
-| `corpus_compose` | `prompt`, `author`, `db_path`, `passphrase`, optional `config_path`, `no_validate=false` |
-| `corpus_rewrite` | `content`, `author`, `db_path`, `passphrase`, `dimension=composite`, optional `config_path` |
+| `corpus_centroid` | `author`, `db_path`; optional contained `refs_file`, quality `dimension` |
+| `corpus_compose` | `prompt`, `author`, `db_path`, optional `config_path`, `no_validate=false` |
+| `corpus_rewrite` | `content`, `author`, `db_path`, `dimension=composite`, optional `config_path` |
 | `corpus_cache` | `content`, `label`; optional `origin_provider` — the originating search provider for search-derived content (e.g. "brave"), agent-declared at cache time and recorded in a `{stem}.origin.json` sidecar next to the cached file (a sidecar write failure fails the cache — fail-closed). Unrecorded means no provenance, not Brave |
 | `corpus_cache_work` | `slug`, `content`, `cache_dir`; optional `origin_provider` — same sidecar contract as `corpus_cache` (`{slug}.origin.json`) |
 
@@ -272,6 +272,19 @@ live 2026-10-19 over the zk-ref-open authoring DB (the
 
 ### Document size and containment
 
+No tool takes a passphrase: the database credential resolves server-side.
+Every path argument of every tool is contained before anything is read,
+opened or created. The roots are the server's working directory, the kask
+data directory, and the artifacts directory (reads: the whole tree; writes:
+`corpus-mcp/` only). `db_path` is a write target for every tool that opens
+the database read-write, because SQLCipher writes a lock and journal beside
+it; `corpus_query` and `corpus_build_prompts` open it read-only. A path
+outside the roots is `invalid_argument` naming the root, whether or not the
+file exists; a contained `db_path` naming no file is `not_found` for the
+tools that never create a database (`src/helpers.rs`, `contained_db`,
+`existing_db`, `existing_db_read_only`; pinned over the wire by
+`src/containment_tests.rs`).
+
 Normal PDF conversion passes the contained canonical path to Poppler and uses
 page-based OCR only where needed; it does not read the PDF container under the
 32 MiB text/JSONL cap. Large PDFs therefore do not require a forced-OCR workaround.
@@ -336,7 +349,7 @@ and publishes single-tier JSONL with `entity_ref`, original `source`, `text`,
 `word_count`. Source components are reversible fixed-width UTF-8 hex, avoiding
 punctuation collisions. `zero_chunk_files` surfaces coverage loss. Directory
 multi-tier is rejected; per-file/text tiers default 2048/512/128 and share the
-same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:935–1113`;
+same engine (`kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs:929–1107`;
 `kask/mcp-servers/hkask-mcp-corpus/src/text.rs:7-16` and `kask/mcp-servers/hkask-mcp-corpus/src/tools/document.rs:300-346`).
 
 ### Classification and prompt context
@@ -357,7 +370,7 @@ do not qualify.
 
 The prompt builder rejects nonclassified, stale, noncanonical or duplicate refs
 and invalid metadata. Default `context_k=0` is primary-only and performs no DB or
-knowledge-graph read. With positive context, `db_path` and `passphrase` are
+knowledge-graph read. With positive context, `db_path` is
 required; complete-source embeddings and provenance select same-source neighbors.
 Canonical passage identities are stored with local `p0`, `p1`, etc. but withheld
 from rendered model messages.

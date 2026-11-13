@@ -547,13 +547,7 @@ impl<'a> ConvertService<'a> {
             .or_else(|| default_embedding_model())
             .ok_or_else(|| {
                 // Fail-visible (operator spec): never a hidden constant.
-                PassageIndexError::NotConfigured(
-                    "no embedding model configured — set \\
-                     kask.models.embedding_model (injected as \\
-                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-                     hidden code constant"
-                        .to_string(),
-                )
+                PassageIndexError::NotConfigured(crate::helpers::no_embedding_model().message)
             })?;
 
         let publication = self

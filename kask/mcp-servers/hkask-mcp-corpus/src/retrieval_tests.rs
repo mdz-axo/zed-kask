@@ -242,7 +242,7 @@ impl InferencePort for RecordingPort {
 /// pinned in `index.rs` and `hkask-storage` tests with deliberately mixed
 /// fixtures. The smoke test isolates its env via `env_clear()` subprocesses
 /// and is unaffected.
-fn ensure_offline_embedding_model_env() {
+pub(crate) fn ensure_offline_embedding_model_env() {
     static SET: std::sync::Once = std::sync::Once::new();
     SET.call_once(|| {
         if std::env::var("HKASK_EMBEDDING_MODEL").is_err() {
@@ -1694,7 +1694,8 @@ async fn retrieval_missing_text_is_visible_without_generation() {
 }
 
 /// expect: Invalid provider cardinality/dimension cannot report unstored chunks as embedded.
-/// [P8] Motivating: honest completion counts; pre: malformed embedding response; post: all rows failed, no writes.
+/// [P8] Motivating: honest completion counts; pre: malformed embedding response; post: the run
+/// that stored nothing is the provider failure (unavailable), not a zero-count success; no writes.
 #[tokio::test]
 async fn retrieval_invalid_vectors_do_not_publish() {
     for short in [true, false] {
@@ -1710,14 +1711,20 @@ async fn retrieval_invalid_vectors_do_not_publish() {
             .map(|entity_ref| json!({"entity_ref":entity_ref,"text":ORIGINAL}).to_string())
             .join("\n");
         std::fs::write(&request.chunks_jsonl, rows).expect("two chunks");
-        let summary = content(server.corpus_embed(Parameters(request)).await);
-        assert_eq!(summary["total"], 2);
-        assert_eq!(summary["embedded"], 0);
-        assert_eq!(summary["failed"], 2);
-        assert_eq!(summary["failed_entity_refs_complete"], true);
+        let error = server
+            .corpus_embed(Parameters(request))
+            .await
+            .expect_err("a run that embeds nothing is an error");
         assert_eq!(
-            summary["failed_entity_refs"],
-            json!(["corpus:test:1", "corpus:test:2"])
+            error.kind,
+            hkask_types::McpErrorKind::Unavailable,
+            "{error:?}"
+        );
+        assert!(
+            error
+                .message
+                .contains("no chunk was embedded (2 requested, model offline)"),
+            "{error:?}"
         );
         let store = crate::helpers::open_memory_store(
             &directory.path().join("memory.db").to_string_lossy(),

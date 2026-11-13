@@ -2,7 +2,9 @@
 //! OWASP LLM06). This server is launched per-project via ContextServerStore
 //! with no governance membrane, so containment is enforced here: every
 //! caller-supplied path must resolve (after canonicalization, which also
-//! collapses symlink escapes) under the process current working directory.
+//! collapses symlink escapes) under an allowed root: the process current
+//! working directory, the kask data directory, or the artifacts directory
+//! (reads: the whole tree; writes: this server's `corpus-mcp/` folder).
 //!
 //! The implementation lives in `hkask_mcp_server::server` (shared with the
 //! other MCP servers) and is re-exported here so in-crate call sites keep

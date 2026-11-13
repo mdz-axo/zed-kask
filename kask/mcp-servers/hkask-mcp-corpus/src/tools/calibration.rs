@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const REFERENCE_MIN_WORDS: usize = 50;
 const REFERENCE_MAX_WORDS: usize = 100;
@@ -256,7 +256,7 @@ fn embedding_inventory(
             "expected_model must be non-empty",
         ));
     }
-    crate::helpers::ensure_db_exists(&request.db_path)?;
+    let db_path = crate::helpers::existing_db(&request.db_path)?;
 
     // The DB passphrase resolves server-side only (fail-closed; never an
     // empty-key open).
@@ -288,7 +288,7 @@ fn embedding_inventory(
     }
 
     let requested_refs = requested.iter().cloned().collect::<Vec<_>>();
-    let store = crate::helpers::open_existing_memory_store(&request.db_path, &passphrase)?;
+    let store = crate::helpers::open_existing_memory_store(&db_path, &passphrase)?;
     let stored = store
         .embedding_models_for_refs(&requested_refs)
         .map_err(|error| McpToolError::internal(format!("cannot inventory embeddings: {error}")))?;
@@ -383,7 +383,22 @@ fn export_bundle(request: ExportBundleRequest) -> Result<serde_json::Value, McpT
             "bundle_key must be at least 8 characters (the rekey target's minimum)",
         ));
     }
-    let run_dir = PathBuf::from(&request.run_dir);
+    // source_id and index_name become file names: one path component each.
+    for (field, value) in [
+        ("source_id", &request.source_id),
+        ("index_name", &request.index_name),
+    ] {
+        hkask_mcp_server::validate_identifier(field, value, 128)?;
+        if value.starts_with('.') {
+            return Err(McpToolError::invalid_argument(format!(
+                "{field} must not start with '.'"
+            )));
+        }
+    }
+    // The sealed run is read; an absent run_dir inside the roots is not_found
+    // below, one outside them is refused here.
+    let run_dir = crate::helpers::contained_for_read_or_absent(&request.run_dir)?;
+    let output_dir = crate::path_safety::contain_for_write(&request.output_dir)?;
     let database_path = run_dir.join(format!("{}.db", request.index_name));
     let identity_path = run_dir.join("run-identity.json");
     let representations_path = run_dir.join("representations").join("manifest.json");
@@ -437,7 +452,6 @@ fn export_bundle(request: ExportBundleRequest) -> Result<serde_json::Value, McpT
         )));
     }
 
-    let output_dir = PathBuf::from(&request.output_dir);
     let bundle_path = output_dir.join("bundle.json");
     if bundle_path.exists() {
         return Err(McpToolError::invalid_argument(format!(
@@ -790,7 +804,7 @@ fn build_representations(
     request: BuildChunkRepresentationsRequest,
 ) -> Result<serde_json::Value, McpToolError> {
     validate_request(&request)?;
-    let output_dir = PathBuf::from(&request.output_dir);
+    let output_dir = crate::path_safety::contain_for_write(&request.output_dir)?;
     if output_dir.exists() {
         return Err(McpToolError::invalid_argument(format!(
             "output_dir already exists: {}",
@@ -1057,24 +1071,22 @@ fn validate_request(request: &BuildChunkRepresentationsRequest) -> Result<(), Mc
 }
 
 fn load_source(accepted: &AcceptedSource) -> Result<String, McpToolError> {
-    let raw = fs::read(&accepted.raw_path).map_err(|error| {
-        McpToolError::invalid_argument(format!(
-            "cannot read raw source {}: {error}",
-            accepted.raw_path
-        ))
-    })?;
-    if sha256_bytes(&raw) != accepted.raw_sha256.to_ascii_lowercase() {
+    // Contained reads: an accepted source outside the allowed roots is
+    // refused before any byte is read or hashed. The raw file is only
+    // hashed, so it is streamed rather than held (a raw PDF may exceed the
+    // text read cap).
+    let raw_path = crate::path_safety::contain_for_read(&accepted.raw_path)?;
+    let raw_digest = sha256_file(&raw_path)?;
+    if raw_digest != accepted.raw_sha256.to_ascii_lowercase() {
         return Err(McpToolError::failed_precondition(format!(
             "raw source hash changed for {}",
             accepted.source
         )));
     }
-    let canonical = fs::read(&accepted.canonical_path).map_err(|error| {
-        McpToolError::invalid_argument(format!(
-            "cannot read canonical source {}: {error}",
-            accepted.canonical_path
-        ))
-    })?;
+    let canonical = crate::path_safety::read_capped(
+        &accepted.canonical_path,
+        crate::path_safety::MAX_READ_BYTES,
+    )?;
     if sha256_bytes(&canonical) != accepted.canonical_sha256.to_ascii_lowercase() {
         return Err(McpToolError::failed_precondition(format!(
             "canonical source hash changed for {}",
@@ -1398,6 +1410,7 @@ fn encode_source(source: &str) -> String {
 mod tests {
     use super::*;
     use rmcp::handler::server::wrapper::Parameters;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     fn server() -> CorpusServer {
@@ -1726,6 +1739,14 @@ mod tests {
         Ok(run_dir)
     }
 
+    /// Export fixtures live inside an allowed root (the crate's ignored
+    /// target dir): run_dir and output_dir are contained.
+    fn export_fixture() -> anyhow::Result<tempfile::TempDir> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/export-bundle-test");
+        fs::create_dir_all(&root)?;
+        Ok(tempfile::tempdir_in(root)?)
+    }
+
     fn sha256_of(path: &Path) -> anyhow::Result<String> {
         Ok(super::sha256_file(path)?)
     }
@@ -1745,7 +1766,7 @@ mod tests {
     /// without touching the sealed run." [P8]
     #[tokio::test]
     async fn export_bundle_ships_a_verified_package() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
+        let directory = export_fixture()?;
         let run_dir = sealed_run(directory.path())?;
         let sealed_digest = sha256_of(&run_dir.join("fine.db"))?;
         let output_dir = directory.path().join("package");
@@ -1793,7 +1814,7 @@ mod tests {
     /// any package artifact is emitted." [P8]
     #[tokio::test]
     async fn export_bundle_rejects_a_tampered_run() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
+        let directory = export_fixture()?;
         let run_dir = sealed_run(directory.path())?;
         let mut tampered = fs::read(&run_dir.join("fine.db"))?;
         tampered.push(0);
@@ -1816,7 +1837,7 @@ mod tests {
     /// expect: "An existing bundle is never silently overwritten." [P8]
     #[tokio::test]
     async fn export_bundle_refuses_to_overwrite_an_existing_bundle() -> anyhow::Result<()> {
-        let directory = tempfile::tempdir()?;
+        let directory = export_fixture()?;
         let run_dir = sealed_run(directory.path())?;
         let output_dir = directory.path().join("package");
         server()

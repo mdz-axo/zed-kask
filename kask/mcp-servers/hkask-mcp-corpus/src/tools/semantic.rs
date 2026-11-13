@@ -205,6 +205,7 @@ impl CorpusServer {
         }): Parameters<ExtractAssertionsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_extract_assertions", async {
+            let db_path = crate::helpers::contained_db(&db_path)?;
             let passphrase = resolve_corpus_passphrase()?;
             AssertionsService::new(Arc::clone(&self.inference_router))
                 .extract(AssertionsRequest {
@@ -222,7 +223,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. Returns total, embedded, failed, retries (transient retries consumed across batches — a saturation signal, not an error), cancelled, legacy model=requested_model, requested_model, provider-returned actual_model, and actual_model_status (confirmed, partial, or unavailable); clear/purge cancellation includes a note — no inline vectors."
+        description = "Generate ontology-anchored embedding vectors for corpus chunks. Uses the configured embedding model via the inference router. Reads chunks from chunks_jsonl (entity_ref, source, text, word_count per line). When tagged_jsonl is provided, ontology tags are prepended to chunk text before embedding (per INSTRUCTOR, Su et al. 2023), producing vectors that encode both content and ontological classification. Batch-embeds in groups of batch_size and replaces each DB/ref vector plus original passage_text, publishing to the warm cache. Annotations affect embedding input only. A run that embeds nothing fails with the provider's classified error; a partial run adds first_error. Returns total, embedded, failed, retries (transient retries consumed across batches — a saturation signal, not an error), cancelled, legacy model=requested_model, requested_model, provider-returned actual_model, and actual_model_status (confirmed, partial, or unavailable); clear/purge cancellation includes a note — no inline vectors."
     )]
     pub async fn corpus_embed(
         &self,
@@ -235,6 +236,7 @@ impl CorpusServer {
         }): Parameters<EmbedRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_embed", async {
+            let db_path = crate::helpers::contained_db(&db_path)?;
             let passphrase = resolve_corpus_passphrase()?;
             self.embed_batch_from_jsonl(
                 &chunks_jsonl,
@@ -331,14 +333,9 @@ impl CorpusServer {
 
         // Fail-visible: no configured embedding model is a typed error
         // naming the setting — never a hidden constant.
-        let model_name = model.or_else(|| default_embedding_model()).ok_or_else(|| {
-            McpToolError::permission_denied(
-                "no embedding model configured — set \\
-                     kask.models.embedding_model (injected as \\
-                     HKASK_EMBEDDING_MODEL); kask never falls back to a \\
-                     hidden code constant",
-            )
-        })?;
+        let model_name = model
+            .or_else(|| default_embedding_model())
+            .ok_or_else(crate::helpers::no_embedding_model)?;
 
         let write = self.index.begin_durable(
             db_path,
@@ -370,6 +367,9 @@ impl CorpusServer {
         let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let retries = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let failed_entity_refs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        // The first provider failure, classified: a run that embeds nothing
+        // returns it as the tool error, a partial run reports its message.
+        let first_provider_error = Arc::new(std::sync::Mutex::new(None::<McpToolError>));
         let identity = Arc::new(std::sync::Mutex::new(EmbeddingIdentityState::default()));
 
         let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -387,6 +387,7 @@ impl CorpusServer {
             let failed = Arc::clone(&failed);
             let retries = Arc::clone(&retries);
             let failed_entity_refs = Arc::clone(&failed_entity_refs);
+            let first_provider_error = Arc::clone(&first_provider_error);
             let identity = Arc::clone(&identity);
 
             let batch_len = chunk_batch.len();
@@ -440,6 +441,10 @@ impl CorpusServer {
                             error = %e,
                             "Batch {batch_idx} failed after retries"
                         );
+                        first_provider_error
+                            .lock()
+                            .map_err(|_| McpToolError::internal("provider error lock poisoned"))?
+                            .get_or_insert(crate::helpers::map_embedding_error(e));
                         return record_batch_failure();
                     }
                 };
@@ -455,6 +460,10 @@ impl CorpusServer {
                 let vectors = batch.vectors;
                 if let Err(error) = crate::index::validate_vectors(&vectors, batch_len) {
                     tracing::warn!(%error, "Invalid embedding batch response");
+                    first_provider_error
+                        .lock()
+                        .map_err(|_| McpToolError::internal("provider error lock poisoned"))?
+                        .get_or_insert(error);
                     return record_batch_failure();
                 }
 
@@ -528,6 +537,23 @@ impl CorpusServer {
         failed_entity_refs.sort();
         failed_entity_refs.dedup();
         let failed_entity_refs_complete = failed_entity_refs.len() == failed;
+        let first_provider_error = first_provider_error
+            .lock()
+            .map_err(|_| McpToolError::internal("provider error lock poisoned"))?
+            .take();
+        // A run that stored nothing because the provider refused or answered
+        // wrongly is that failure, classified — not a success with a zero count.
+        if embedded == 0
+            && let Some(error) = first_provider_error
+        {
+            return Err(McpToolError::new(
+                error.kind,
+                format!(
+                    "no chunk was embedded ({total} requested, model {model_name}): {}",
+                    error.message
+                ),
+            ));
+        }
 
         tracing::info!(
             target: "hkask.mcp.docproc.embed",
@@ -555,6 +581,9 @@ impl CorpusServer {
         if cancelled > 0 {
             result["note"] =
                 json!("Publication cancelled by clear/purge; rerun to publish new data");
+        }
+        if let Some(error) = first_provider_error {
+            result["first_error"] = json!(error.message);
         }
         let outcome = BatchOutcome::from_counts(failed, total);
         outcome.log_if_degraded("hkask.mcp.docproc.embed", "Embedding");

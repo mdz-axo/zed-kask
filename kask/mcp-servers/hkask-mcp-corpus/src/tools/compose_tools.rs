@@ -16,9 +16,11 @@ use serde_json::json;
 
 use crate::{McpToolError, Parameters, execute_tool, tool, tool_router};
 
-/// Resolve the embedding model from HkaskSettings.
-fn embedding_model() -> String {
-    crate::settings::HkaskSettings::load().embedding_model()
+/// The configured embedding model, resolved the way `corpus_embed` and
+/// `corpus_query` resolve it: an explicitly blank setting is a refusal
+/// naming the setting, not a silent return to the code default.
+fn embedding_model() -> Result<String, McpToolError> {
+    crate::default_embedding_model().ok_or_else(crate::helpers::no_embedding_model)
 }
 
 /// Resolve the generation model from InferenceConfig.
@@ -90,18 +92,7 @@ fn resolve_cognition_config(
 ) -> Result<crate::compose::CognitionConfig, McpToolError> {
     match config_path {
         Some(path) if !path.trim().is_empty() => load_cognition_config(path, author),
-        _ => {
-            let embed_model = embedding_model();
-            if embed_model.trim().is_empty() {
-                return Err(McpToolError::permission_denied(
-                    "no embedding model configured — set \
-                     kask.models.embedding_model (injected as \
-                     HKASK_EMBEDDING_MODEL); kask never falls back to a \
-                     hidden code constant",
-                ));
-            }
-            Ok(inline_cognition_config_with(author, embed_model))
-        }
+        _ => Ok(inline_cognition_config_with(author, embedding_model()?)),
     }
 }
 
@@ -194,13 +185,13 @@ impl crate::CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_compose", async {
             let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            crate::helpers::ensure_db_exists(&params.db_path)?;
+            let db_path = crate::helpers::existing_db(&params.db_path)?;
             let gen_model = generation_model();
             let config = resolve_cognition_config(params.config_path.as_deref(), &params.author)?;
 
             let request = crate::compose::ComposeRequest {
                 prompt: params.prompt,
-                db_path: PathBuf::from(&params.db_path),
+                db_path: PathBuf::from(db_path),
                 db_passphrase,
                 cognition: config,
                 inference: self.inference_router.clone(),
@@ -236,15 +227,7 @@ impl crate::CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_centroid", async {
             let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            let embed_model = embedding_model();
-            if embed_model.trim().is_empty() {
-                return Err(McpToolError::permission_denied(
-                    "no embedding model configured — set \
-                     kask.models.embedding_model (injected as \
-                     HKASK_EMBEDDING_MODEL); kask never falls back to a \
-                     hidden code constant",
-                ));
-            }
+            let embed_model = embedding_model()?;
 
             let dimension = params
                 .dimension
@@ -260,10 +243,10 @@ impl crate::CorpusServer {
             // resource check — a refs error must not read as a DB problem
             // (error-precedence pinned by
             // centroid_refs_file_containment_and_empty_selection).
-            crate::helpers::ensure_db_exists(&params.db_path)?;
+            let db_path = crate::helpers::existing_db(&params.db_path)?;
             let result = crate::compose::ComposeService::style_centroid(
                 crate::compose::CentroidComputeRequest {
-                    db_path: PathBuf::from(&params.db_path),
+                    db_path: PathBuf::from(db_path),
                     db_passphrase,
                     author: params.author.clone(),
                     dimension,
@@ -298,7 +281,7 @@ impl crate::CorpusServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_rewrite", async {
             let db_passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            crate::helpers::ensure_db_exists(&params.db_path)?;
+            let db_path = crate::helpers::existing_db(&params.db_path)?;
             let dimension = normalize_dimension(&params.dimension)?;
             let prompt = rewrite_prompt(params.config_path.is_some(), &dimension, &params.content);
 
@@ -311,7 +294,7 @@ impl crate::CorpusServer {
 
             let request = crate::compose::ComposeRequest {
                 prompt,
-                db_path: PathBuf::from(&params.db_path),
+                db_path: PathBuf::from(db_path),
                 db_passphrase,
                 cognition: config,
                 inference: self.inference_router.clone(),

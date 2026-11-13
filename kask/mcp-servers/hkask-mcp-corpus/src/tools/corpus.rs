@@ -76,11 +76,12 @@ impl CorpusServer {
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_dedup_chunks", async {
+            crate::helpers::check_output(&req.output)?;
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            crate::helpers::ensure_db_exists(&req.db_path)?;
+            let db_path = crate::helpers::existing_db(&req.db_path)?;
             let input = crate::services::cluster::load_clusters(
                 &req.tagged_jsonl,
-                &req.db_path,
+                &db_path,
                 &passphrase,
                 &req.prefix,
             )?;
@@ -142,8 +143,9 @@ impl CorpusServer {
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
+            crate::helpers::check_output(&req.output)?;
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
-            crate::helpers::ensure_db_exists(&req.db_path)?;
+            let db_path = crate::helpers::existing_db(&req.db_path)?;
             ConsolidationService::new(
                 Arc::clone(&self.inference_router),
                 Arc::clone(&self.index),
@@ -152,7 +154,7 @@ impl CorpusServer {
             .consolidate(ChunkConsolidationRequest {
                 tagged_jsonl: req.tagged_jsonl,
                 output: req.output,
-                db_path: req.db_path,
+                db_path,
                 passphrase,
                 prefix: req.prefix,
                 threshold: req.threshold,
@@ -175,6 +177,7 @@ impl CorpusServer {
         Parameters(req): Parameters<BuildPromptsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_build_prompts", async {
+            crate::helpers::check_output(&req.output)?;
             // The credential is only needed when context_k > 0 resolves
             // neighbors from the DB — primary-only builds stay usable
             // without a resolvable passphrase (same laziness as before
@@ -185,18 +188,19 @@ impl CorpusServer {
                 None
             };
             // The DB is read only when context_k > 0 resolves neighbors —
-            // check existence exactly there (primary-only builds never
-            // touch it).
-            if req.context_k > 0
-                && let Some(path) = req.db_path.as_deref()
-            {
-                crate::helpers::ensure_db_exists(path)?;
-            }
+            // contain it and check existence exactly there (primary-only
+            // builds never touch it).
+            let db_path = match req.db_path.as_deref() {
+                Some(path) if req.context_k > 0 => {
+                    Some(crate::helpers::existing_db_read_only(path)?)
+                }
+                _ => req.db_path,
+            };
             PromptBuilderService::new()
                 .build_prompts(ServiceBuildPromptsRequest {
                     tagged_jsonl: req.tagged_jsonl,
                     output: req.output,
-                    db_path: req.db_path,
+                    db_path,
                     passphrase,
                     prefix: req.prefix,
                     context_k: req.context_k,
@@ -226,6 +230,9 @@ impl CorpusServer {
                     )));
                 }
             }
+            // Refuse an escaping output or db_path before any read or store.
+            crate::helpers::check_output(&req.output)?;
+            let db_path = crate::helpers::contained_db(&req.db_path)?;
             let content = read_text_capped(&req.generated_jsonl, "generated_jsonl")?;
 
             let mut total_nonblank_rows = 0usize;
@@ -457,7 +464,7 @@ impl CorpusServer {
             // generate embeddings or feed a training executor. The output file
             // and individual DB inserts are not one atomic transaction.
             let store = crate::helpers::open_memory_store(
-                &req.db_path,
+                &db_path,
                 &crate::helpers::resolve_corpus_passphrase()?,
             )?;
             let webid = owner_webid(&req.owner);

@@ -272,6 +272,7 @@ impl CorpusServer {
         Parameters(req): Parameters<TagChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_tag_chunks", async {
+            crate::helpers::check_output(&req.output)?;
             let chunks = read_input_chunks(&req.chunks_jsonl)?;
             let total = chunks.len();
             tracing::info!("  Tagging {} chunks with ontology dimensions...", total);
@@ -288,14 +289,8 @@ impl CorpusServer {
             let router = Arc::clone(&self.inference_router);
             // Fail-visible: no configured classifier model is a typed
             // error naming the setting — never a hidden constant.
-            let model_override = classifier_model().ok_or_else(|| {
-                McpToolError::permission_denied(
-                    "no classifier model configured — set \\
-                     kask.models.classifier_model (injected as \\
-                     HKASK_CLASSIFIER_MODEL); kask never falls back to a \\
-                     hidden code constant",
-                )
-            })?;
+            let model_override =
+                classifier_model().ok_or_else(crate::helpers::no_classifier_model)?;
             let batch_size = req.tag_batch_size.max(1);
 
             let start_time = std::time::Instant::now();

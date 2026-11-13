@@ -30,6 +30,8 @@
 mod backend;
 pub(crate) mod batch;
 pub(crate) mod compose;
+#[cfg(test)]
+mod containment_tests;
 pub(crate) mod convert;
 mod helpers;
 mod index;
