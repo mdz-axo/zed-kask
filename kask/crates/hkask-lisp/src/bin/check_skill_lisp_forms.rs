@@ -3092,6 +3092,245 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_cg_1_requires_a_bounded_plan_that_quotes_the_task() {
+        let form = skill_candidate("coding-guidelines", "define untraced");
+        let form = form.as_str();
+        let step = |name: &str, quote: serde_json::Value, lines: serde_json::Value| {
+            json!({"step": name, "files_to_touch": ["src/fetch.rs"], "files_not_to_touch": [],
+                   "lines_estimate": lines, "traces_to": quote, "verify": "v"})
+        };
+        let base = json!({
+            "task_description": "Please add a retry to the fetch call.",
+            "success_criteria": [{"goal": "a"}, {"goal": "b"}],
+            "constrained_plan": [step("retry", json!("add a retry to the fetch call"), json!(50))]
+        });
+        let eval = |case: &str, changes: serde_json::Value| {
+            eval_sandboxed(form, &scientific_env(&base, changes))
+                .unwrap_or_else(|error| panic!("{case}: CG-1 failed to evaluate: {error}"))
+        };
+        let pass = eval("pass", json!({}));
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["reasons"], json!([]));
+        assert_eq!(pass["criteria"], json!(2));
+        let five = eval(
+            "five criteria",
+            json!({"success_criteria": [{}, {}, {}, {}, {}]}),
+        );
+        assert_eq!(five["verdict"], json!("pass"));
+
+        for (case, criteria) in [
+            ("one criterion", json!([{}])),
+            ("six criteria", json!([{}, {}, {}, {}, {}, {}])),
+        ] {
+            let result = eval(case, json!({"success_criteria": criteria}));
+            assert_eq!(result["verdict"], json!("revise"), "{case}");
+            assert_eq!(result["reasons"], json!(["criteria_count"]), "{case}");
+        }
+        let empty = eval("empty plan", json!({"constrained_plan": []}));
+        assert_eq!(empty["reasons"], json!(["empty_plan"]));
+
+        // The quote must be present, non-empty, and found in the task text exactly.
+        for (case, quote) in [
+            ("missing quote", serde_json::Value::Null),
+            ("empty quote", json!("")),
+            ("invented quote", json!("add structured logging")),
+            ("wrong case", json!("Add a retry")),
+            (
+                "quote longer than the task",
+                json!("Please add a retry to the fetch call. And everything else."),
+            ),
+        ] {
+            let result = eval(
+                case,
+                json!({"constrained_plan": [step("s", quote, json!(10))]}),
+            );
+            assert_eq!(result["verdict"], json!("revise"), "{case}");
+            assert_eq!(result["reasons"], json!(["untraced_steps"]), "{case}");
+            assert_eq!(result["untraced_steps"], json!(["s"]), "{case}");
+        }
+        for (case, lines) in [("51 lines", json!(51)), ("estimate is text", json!("12"))] {
+            let result = eval(
+                case,
+                json!({"constrained_plan": [step("big", json!("add a retry"), lines)]}),
+            );
+            assert_eq!(result["reasons"], json!(["oversized_steps"]), "{case}");
+            assert_eq!(result["oversized_steps"], json!(["big"]), "{case}");
+        }
+        let mut no_files = step("bare", json!("fetch call"), json!(5));
+        no_files["files_to_touch"] = json!([]);
+        let fileless = eval("no files", json!({"constrained_plan": [no_files]}));
+        assert_eq!(fileless["reasons"], json!(["steps_without_files"]));
+        assert_eq!(fileless["steps_without_files"], json!(["bare"]));
+
+        // One bad step among good ones is named; the good ones are not.
+        let mixed = eval(
+            "mixed plan",
+            json!({"constrained_plan": [
+                step("good", json!("add a retry"), json!(20)),
+                step("stray", json!("rewrite the client"), json!(20)),
+                step("also good", json!("fetch call"), json!(20))
+            ]}),
+        );
+        assert_eq!(mixed["untraced_steps"], json!(["stray"]));
+        assert_eq!(mixed["oversized_steps"], json!([]));
+    }
+
+    #[test]
+    fn scientific_gate_cg_2_decides_from_the_audit_the_scope_and_the_record() {
+        let form = skill_candidate("coding-guidelines", "define malformed");
+        let form = form.as_str();
+        let scores = |a: f64, b: f64, c: f64, d: f64| {
+            json!({"think_before_coding": a, "simplicity_first": b,
+                   "surgical_changes": c, "goal_driven_execution": d})
+        };
+        let scope = |changes: serde_json::Value| {
+            let mut scope = json!({"changed": ["src/a.rs"], "unplanned": [], "untouched_planned": [],
+                                   "forbidden_touched": [], "prior_audits": []});
+            scope
+                .as_object_mut()
+                .expect("scope object")
+                .extend(changes.as_object().expect("scope changes").clone());
+            json!({"scope": scope})
+        };
+        let violation = |principle: &str, severity: &str, description: &str| {
+            json!({"principle": principle, "severity": severity, "description": description,
+                   "location": "src/a.rs:1", "correction": "c"})
+        };
+        let base = json!({
+            "violations": [violation("surgical-changes", "low", "renamed a local")],
+            "compliance_score": scores(1.0, 0.8, 0.9, 0.7),
+            "scope": scope(json!({}))["scope"]
+        });
+        let eval = |case: &str, changes: serde_json::Value| {
+            eval_sandboxed(form, &scientific_env(&base, changes))
+                .unwrap_or_else(|error| panic!("{case}: CG-2 failed to evaluate: {error}"))
+        };
+
+        let pass = eval("pass", json!({}));
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["reasons"], json!([]));
+        assert_eq!(pass["critical"], json!([]));
+        assert_eq!(pass["audit"], json!(1));
+        // The mean is computed, with the engine's own float arithmetic.
+        assert_eq!(pass["overall"], json!(0.8500000000000001));
+
+        // Each failing reason alone asks for the one correction pass.
+        for (case, changes, reason) in [
+            (
+                "critical violation",
+                json!({"violations": [violation("simplicity-first", "critical", "single-use trait"),
+                                      violation("surgical-changes", "high", "touched b")]}),
+                "critical_violations",
+            ),
+            (
+                "below the floor",
+                json!({"compliance_score": scores(0.6, 0.7, 0.7, 0.79)}),
+                "below_floor",
+            ),
+            (
+                "unplanned file",
+                scope(json!({"changed": ["src/a.rs", "src/z.rs"], "unplanned": ["src/z.rs"]})),
+                "unplanned_files",
+            ),
+            (
+                "forbidden file",
+                scope(
+                    json!({"changed": ["src/a.rs", "src/c.rs"], "forbidden_touched": ["src/c.rs"]}),
+                ),
+                "forbidden_files_touched",
+            ),
+        ] {
+            let result = eval(case, changes);
+            assert_eq!(result["verdict"], json!("correct"), "{case}");
+            assert_eq!(result["reasons"], json!([reason]), "{case}");
+        }
+        let critical = eval(
+            "critical is selected from the whole report",
+            json!({"violations": [violation("simplicity-first", "critical", "single-use trait"),
+                                  violation("surgical-changes", "high", "touched b"),
+                                  violation("goal-driven-execution", "critical", "no criteria")]}),
+        );
+        assert_eq!(
+            critical["critical"],
+            json!(["single-use trait", "no criteria"])
+        );
+        // Exactly at the floor passes.
+        let floor = eval(
+            "at the floor",
+            json!({"compliance_score": scores(0.7, 0.7, 0.7, 0.7)}),
+        );
+        assert_eq!(floor["verdict"], json!("pass"));
+        assert_eq!(floor["overall"], json!(0.7));
+
+        // A vocabulary slip cannot hide a critical violation or a score.
+        for (case, changes) in [
+            (
+                "capitalised severity",
+                json!({"violations": [violation("simplicity-first", "Critical", "x")]}),
+            ),
+            (
+                "unknown severity",
+                json!({"violations": [violation("simplicity-first", "blocker", "x")]}),
+            ),
+            (
+                "underscored principle",
+                json!({"violations": [violation("simplicity_first", "high", "x")]}),
+            ),
+            (
+                "severity missing",
+                json!({"violations": [{"principle": "simplicity-first", "description": "x"}]}),
+            ),
+            (
+                "score as text",
+                json!({"compliance_score": {"think_before_coding": "0.9", "simplicity_first": 0.9, "surgical_changes": 0.9, "goal_driven_execution": 0.9}}),
+            ),
+            (
+                "score above one",
+                json!({"compliance_score": scores(1.5, 0.9, 0.9, 0.9)}),
+            ),
+            (
+                "score below zero",
+                json!({"compliance_score": scores(-0.1, 0.9, 0.9, 0.9)}),
+            ),
+            (
+                "score missing",
+                json!({"compliance_score": {"think_before_coding": 0.9, "simplicity_first": 0.9, "surgical_changes": 0.9}}),
+            ),
+        ] {
+            assert_eq!(eval(case, changes)["verdict"], json!("invalid"), "{case}");
+        }
+        let slip = eval(
+            "one malformed row is counted",
+            json!({"violations": [violation("simplicity-first", "Critical", "x"),
+                                  violation("surgical-changes", "low", "y")]}),
+        );
+        assert_eq!(slip["malformed_violations"], json!(1));
+        assert_eq!(slip["scores_valid"], json!(true));
+
+        // Nothing changed: the post-implementation gate has nothing to pass.
+        let unchanged = eval("no implementation", scope(json!({"changed": []})));
+        assert_eq!(unchanged["verdict"], json!("no_implementation"));
+
+        // The bound: the second audit may pass, a second failure stops, and a
+        // third audit is refused whatever it reports.
+        let second = scope(json!({"prior_audits": ["correct"]}));
+        let second_pass = eval("second audit passes", second.clone());
+        assert_eq!(second_pass["verdict"], json!("pass"));
+        assert_eq!(second_pass["audit"], json!(2));
+        let mut second_fail = second;
+        second_fail["compliance_score"] = scores(0.2, 0.2, 0.2, 0.2);
+        let stopped = eval("second audit fails", second_fail);
+        assert_eq!(stopped["verdict"], json!("stop_bound"));
+        assert_eq!(stopped["reasons"], json!(["below_floor"]));
+        let third = eval(
+            "third audit",
+            scope(json!({"prior_audits": ["correct", "stop_bound"]})),
+        );
+        assert_eq!(third["verdict"], json!("stop_bound"));
+        assert_eq!(third["audit"], json!(3));
+    }
+
+    #[test]
     fn scientific_gate_ht1_only_updates_on_the_four_declared_triggers() {
         let form = skill_candidate("hypothesis-testing", "\"new_category\"");
         for trigger in [

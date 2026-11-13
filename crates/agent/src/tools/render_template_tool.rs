@@ -1521,6 +1521,176 @@ mod tests {
         }
     }
 
+    fn change_scope(
+        before: &str,
+        after: &str,
+        audits: &str,
+        plan: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        authored_jq(
+            "coding-guidelines",
+            "Change scope",
+            serde_json::json!({"before": before, "after": after, "audits": audits,
+                "assess": [{"constrained_plan": plan}]}),
+        )
+    }
+
+    #[test]
+    fn coding_guidelines_change_scope_is_measured_against_the_plan() {
+        let plan = serde_json::json!([
+            {"step":"a","files_to_touch":["src/a.rs","src/b.rs"],"files_not_to_touch":["src/c.rs"]},
+            {"step":"b","files_to_touch":["src/b.rs"],"files_not_to_touch":["src/d.rs"]}
+        ]);
+        // Another session's uncommitted file is in both captures, unchanged.
+        let before = "7\t2\tkask/other/session.rs\n";
+        let inside = "7\t2\tkask/other/session.rs\n3\t1\tsrc/a.rs\n10\t0\tsrc/b.rs\n";
+        let exact = change_scope(before, inside, "", plan.clone()).expect("change inside the plan");
+        assert_eq!(
+            exact,
+            serde_json::json!({"changed":["src/a.rs","src/b.rs"],"unplanned":[],
+                "untouched_planned":[],"forbidden_touched":[],"prior_audits":[]})
+        );
+
+        // A stray file, a forbidden file, an untracked file, and a planned file
+        // left alone are each reported in their own list.
+        let stray =
+            "7\t2\tkask/other/session.rs\n3\t1\tsrc/a.rs\n2\t2\tsrc/c.rs\nnew\tnew\tsrc/z.rs\n";
+        let audits = "{\"audit\":1,\"verdict\":\"correct\",\"overall\":0.65}\n";
+        let strayed = change_scope(before, stray, audits, plan.clone()).expect("stray change");
+        assert_eq!(
+            strayed,
+            serde_json::json!({"changed":["src/a.rs","src/c.rs","src/z.rs"],
+                "unplanned":["src/c.rs","src/z.rs"],"untouched_planned":["src/b.rs"],
+                "forbidden_touched":["src/c.rs"],"prior_audits":["correct"]})
+        );
+
+        // A file whose line moved between the captures counts as changed.
+        let grown = "9\t2\tkask/other/session.rs\n3\t1\tsrc/a.rs\n10\t0\tsrc/b.rs\n";
+        assert_eq!(
+            change_scope(before, grown, "", plan.clone()).expect("other file grew")["unplanned"],
+            serde_json::json!(["kask/other/session.rs"])
+        );
+        let nothing = change_scope(before, before, "", plan.clone()).expect("no change");
+        assert_eq!(nothing["changed"], serde_json::json!([]));
+        assert_eq!(
+            nothing["untouched_planned"],
+            serde_json::json!(["src/a.rs", "src/b.rs"])
+        );
+
+        // A committed change is audited with no baseline.
+        let committed = change_scope(
+            "",
+            "3\t1\tsrc/a.rs\n-\t-\tassets/logo.png\n",
+            "",
+            plan.clone(),
+        )
+        .expect("committed change");
+        assert_eq!(
+            committed["changed"],
+            serde_json::json!(["src/a.rs", "assets/logo.png"])
+        );
+        assert_eq!(
+            committed["unplanned"],
+            serde_json::json!(["assets/logo.png"])
+        );
+
+        assert!(
+            change_scope("", "not numstat output\n", "", plan.clone()).is_err(),
+            "a line that is not numstat output is refused"
+        );
+        for bad in [
+            "{\"audit\":2,\"verdict\":\"correct\"}\n",
+            "{\"audit\":1}\n",
+            "{\"audit\":1,\"verdict\":\"correct\"}\n{\"audit\":1,\"verdict\":\"pass\"}\n",
+        ] {
+            assert!(
+                change_scope(before, inside, bad, plan.clone()).is_err(),
+                "audit record refused: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn coding_guidelines_templates_carry_the_plan_fields_and_the_measured_scope() {
+        let assess = render_template_for_test(
+            "coding-guidelines/guidelines-assess",
+            serde_json::json!({"task_description":"TASK_SENTINEL","code_context":{"note":"CONTEXT_SENTINEL"}}),
+        )
+        .expect("assess render");
+        assert!(assess.contains("TASK_SENTINEL") && assess.contains("CONTEXT_SENTINEL"));
+        // The field is asked for (with the rule that it is an exact quote) and shown.
+        assert!(assess.contains("- `traces_to`: The words of the task above"));
+        assert!(assess.contains("copied exactly") && assess.contains("\"traces_to\":"));
+        assert!(assess.contains("7. **Style changes outside task scope**"));
+        assert!(!assess.contains("assumption_log"));
+
+        let verify = |scope: serde_json::Value, diff: &str| {
+            render_template_for_test(
+                "coding-guidelines/guidelines-verify",
+                serde_json::json!({"task_description":"TASK_SENTINEL",
+                    "assumptions":[{"assumption":"ASSUMPTION_SENTINEL"}],
+                    "success_criteria":[{"goal":"CRITERION_SENTINEL"}],
+                    "constrained_plan":[{"step":"PLAN_SENTINEL"}],
+                    "diff_preview":diff,"scope":scope}),
+            )
+            .expect("verify render")
+        };
+        let audited = verify(
+            serde_json::json!({"changed":["CHANGED_SENTINEL","UNPLANNED_SENTINEL","FORBIDDEN_SENTINEL"],
+                "unplanned":["UNPLANNED_SENTINEL"],"untouched_planned":["UNTOUCHED_SENTINEL"],
+                "forbidden_touched":["FORBIDDEN_SENTINEL"],"prior_audits":[]}),
+            "DIFF_SENTINEL",
+        );
+        for text in [
+            "TASK_SENTINEL",
+            "ASSUMPTION_SENTINEL",
+            "CRITERION_SENTINEL",
+            "PLAN_SENTINEL",
+            "DIFF_SENTINEL",
+            "CHANGED_SENTINEL",
+        ] {
+            assert!(audited.contains(text), "{text}");
+        }
+        // Each measured list sits on its own labelled line.
+        for (label, sentinel) in [
+            (
+                "- Changed but in no step's `files_to_touch`: ",
+                "[\"UNPLANNED_SENTINEL\"]",
+            ),
+            (
+                "- Changed although a step listed it under `files_not_to_touch`: ",
+                "[\"FORBIDDEN_SENTINEL\"]",
+            ),
+            ("- Planned but not changed: ", "[\"UNTOUCHED_SENTINEL\"]"),
+        ] {
+            assert!(audited.contains(&format!("{label}{sentinel}")), "{label}");
+        }
+        // The audit checks the same seven anti-patterns the plan forbade.
+        assert!(audited.contains("6. **Unrequested logging/telemetry**"));
+        assert!(audited.contains("7. **Style changes outside task scope**"));
+        assert!(!audited.contains("No file was changed"));
+        // The model is asked for no overall score, count or recommendations list.
+        assert!(!audited.contains("\"recommendations\"") && !audited.contains("overall_score"));
+
+        let unchanged = verify(
+            serde_json::json!({"changed":[],"unplanned":[],"untouched_planned":["UNTOUCHED_SENTINEL"],
+                "forbidden_touched":[],"prior_audits":[]}),
+            "",
+        );
+        assert!(
+            unchanged.contains("No file was changed")
+                && unchanged.contains("No diff text was provided")
+        );
+        assert!(!unchanged.contains("- Changed:"));
+        let mut missing = serde_json::json!({"task_description":"t","assumptions":[],"success_criteria":[],
+            "constrained_plan":[],"diff_preview":""});
+        assert!(
+            render_template_for_test("coding-guidelines/guidelines-verify", missing.take())
+                .expect_err("the measured scope is required")
+                .contains("scope")
+        );
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(

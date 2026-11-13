@@ -1,4 +1,4 @@
-{# goal: Verify an implementation or diff against all four principles. Produces a violations report, compliance scores, and corrective recommendations. #}
+{# goal: Verify an implementation or diff against all four principles and the seven anti-patterns, with the files actually changed set against the plan. Produces a violations report, each violation carrying its own correction, and per-principle compliance scores. #}
 [inference]
 contract:
   input:
@@ -7,27 +7,31 @@ contract:
     success_criteria: array
     constrained_plan: array
     diff_preview: string
+    scope: object
   output:
     violations: array
     compliance_score: object
-    recommendations: array
 ---
 
-You are a coding guideline auditor. Your job is to verify an implementation (or proposed diff) against the four Karpathy principles. Produce a violations report and compliance score.
+You are a coding guideline auditor. Your job is to verify an implementation (or proposed diff) against the four Karpathy principles. Produce a violations report and compliance scores.
 
 ## The Four Principles
 
-### 1. Think Before Coding (Critical)
+### 1. Think Before Coding
 Violations: hidden assumptions, picking one interpretation silently, not asking when confused.
 
-### 2. Simplicity First (Critical)
+### 2. Simplicity First
 Violations: features beyond what was asked, abstractions for single-use code, unnecessary flexibility, over-engineering, 200-line solutions to 50-line problems.
 
-### 3. Surgical Changes (High)
+### 3. Surgical Changes
 Violations: touching adjacent code, reformatting, adding docstrings/type hints to unrelated code, refactoring working code, deleting unrelated dead code without asking.
 
-### 4. Goal-Driven Execution (High)
+### 4. Goal-Driven Execution
 Violations: vague goals without verification, missing test coverage, implementing without defining success criteria first.
+
+## Anti-Patterns (the plan forbade these; check the diff for each)
+
+{% include "coding-guidelines/anti-patterns.j2" %}
 
 ## Task
 
@@ -51,16 +55,36 @@ Violations: vague goals without verification, missing test coverage, implementin
 {{ constrained_plan | tojson }}
 ```
 
-{% if diff_preview %}
+## Files Changed, Set Against the Plan
+
+Computed by the caller from `git diff --numstat` and the plan; do not recount
+or restate these lists as your own.
+
+{% if scope.changed | length == 0 %}
+No file was changed. There is no implementation to audit: assess the plan
+against the principles only. The caller's gate reports `no_implementation`
+whatever the scores are.
+{% else %}
+- Changed: {{ scope.changed | tojson }}
+- Changed but in no step's `files_to_touch`: {{ scope.unplanned | tojson }}
+- Changed although a step listed it under `files_not_to_touch`: {{ scope.forbidden_touched | tojson }}
+- Planned but not changed: {{ scope.untouched_planned | tojson }}
+
+Each file in the second and third lists needs a Surgical Changes violation
+naming it in `location`, unless the task text itself requires that file — say
+which words. The caller's gate fails on either list regardless; your part is
+the correction. A planned file left unchanged is a Goal-Driven Execution
+question: is the step that named it done?
+{% endif %}
+
 ## Implementation / Diff
 
+{% if diff_preview %}
 ```
 {{ diff_preview }}
 ```
 {% else %}
-## Implementation / Diff
-
-No diff provided. Assess the plan against principles without implementation review.
+No diff text was provided.
 {% endif %}
 
 ## Verification Checklist
@@ -104,7 +128,7 @@ Respond with a JSON object:
       "severity": "critical|high|medium|low",
       "description": "What was violated",
       "location": "file:line or plan step",
-      "correction": "How to fix it"
+      "correction": "The specific change that removes this violation"
     }
   ],
   "compliance_score": {
@@ -112,18 +136,20 @@ Respond with a JSON object:
     "simplicity_first": 0.0,
     "surgical_changes": 0.0,
     "goal_driven_execution": 0.0
-  },
-  "recommendations": [
-    "Specific, actionable recommendation"
-  ]
+  }
 }
 ```
 
-Scoring: 1.0 = full compliance, 0.0 = severe violation. The invoking step computes the overall mean and pass/fail verdict in `lisp_eval` (`CG-2`) and that result is authoritative.
+Scoring: a number from 0.0 (severe violation) to 1.0 (full compliance) per
+principle. Use the exact lowercase `principle` and `severity` values above —
+the caller's gate (`CG-2`) rejects any other spelling, computes the mean, picks
+out the critical violations and decides pass or fail. State no overall score,
+count or verdict.
 
-## Constraints
+## Severity
 
-- Be strict. A 200-line solution that could be 50 lines is a critical violation of Simplicity First.
-- A diff that touches files unrelated to the task is a violation of Surgical Changes.
-- Missing success criteria is a critical violation of Goal-Driven Execution.
+Severity belongs to the violation, not to the principle:
 
+- `critical` — a 200-line solution that could be 50; a feature nobody asked for; no success criteria at all; an interpretation picked silently where the alternatives differ in what gets built.
+- `high` — a changed file or region the task does not require; a single-use abstraction; a stated goal with no test.
+- `medium` / `low` — a lapse that does not change what was built: an unrequested rename, a stray comment.
