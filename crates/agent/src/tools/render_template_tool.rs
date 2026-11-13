@@ -1972,6 +1972,65 @@ mod finalizer_handoff_tests {
         }
     }
 
+    /// Every key the classify and verify templates ask the model to emit has
+    /// a reader: a later stage's contract input, the PE-State gate, or the
+    /// SKILL.md step that consumes it. An output with no reader is a model
+    /// call's worth of tokens nothing uses.
+    #[test]
+    fn prompt_enhance_stage_outputs_all_have_a_reader() {
+        fn output_keys(rendered: &str) -> Vec<String> {
+            let section = rendered.rsplit_once("## Output").expect("output section").1;
+            let block = section.split_once("```json\n").expect("JSON block").1;
+            let payload = block.split_once("\n```").expect("closed JSON block").0;
+            payload
+                .lines()
+                .filter_map(|line| line.strip_prefix("  \""))
+                .filter_map(|rest| rest.split_once('"'))
+                .map(|(key, _)| key.to_string())
+                .collect()
+        }
+        let classify = render_template_for_test(
+            "prompt-enhance/enhance-classify",
+            json!({"prompt": "p", "task": "t", "effort": "medium", "output_format": "inline"}),
+        )
+        .expect("classify renders");
+        assert_eq!(
+            output_keys(&classify),
+            [
+                "prompt_type",
+                "effort_tier",
+                "output_format_resolved",
+                "output_path_resolved",
+                "unfold_mode_resolved",
+                "anchor_terms",
+                "finer_pico_framing",
+                "proxy_eval_set",
+                "checkability_map",
+                "risks"
+            ]
+        );
+        let verify = render_template_for_test(
+            "prompt-enhance/enhance-verify",
+            json!({
+                "enhanced_prompt": "e", "original_prompt": "p", "prompt_type": "coding",
+                "effort_tier": "high", "proxy_eval_set": [], "acceptance_criteria": [],
+                "checkability_map": [], "attempt_id": 1, "reviewed_revision": 0, "round": 3
+            }),
+        )
+        .expect("verify renders");
+        // The three keys PE-State reads from a completed attempt's outcome.
+        assert_eq!(output_keys(&verify), ["ratings", "findings", "verdict"]);
+        for area in [
+            "Recall",
+            "Mechanism",
+            "Rationale",
+            "Edge Cases",
+            "Synthesis",
+        ] {
+            assert!(verify.contains(&format!("\"area\": \"{area}\"")), "{area}");
+        }
+    }
+
     fn planner_context(questions: Value) -> Value {
         json!({
             "context_summary": "Question handoff fixture, not an approved implementation plan.",

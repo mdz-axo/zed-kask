@@ -83,11 +83,11 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Step 1 — Classify (enhance-classify.j2)
 
-1. **Semantic classification (`pragmatic-semantics`)**: classify the input prompt against the 7-type taxonomy using IS/OUGHT + epistemic-mode + provenance axes, and extract 2–4 domain/methodology `anchor_terms` when unfolding applies.
+1. **Semantic classification (`pragmatic-semantics`)**: classify the input prompt against the 7-type taxonomy using IS/OUGHT + epistemic-mode + provenance axes, record each fragile Inference-tier claim in `risks` (the rewrite stage reads `risks`), and extract 2–4 domain/methodology `anchor_terms` when unfolding applies.
 2. **Inquiry & objective framing (`hypothesis-framer`)**: apply the FINER admissibility gate and PICO/counterfactual structure (`finer_pico_framing`) to extract explicit and implied objectives, target conditions, and counterfactual falsifiers. If user intent is missing or untestable, set `unfold_mode_resolved = "clarify_first"` and populate `clarifying_questions` rather than inventing scope.
-3. **Unfold triage & optional forecast context (`metacognition`)**: validate `effort` and `output_format`, resolve `unfold_mode_resolved` (`rewrite_only` for trivial/single-step prompts, `inquiry` for reasoning/research prompts, `task_graph` for multi-step coding/agent-task prompts, or `clarify_first` when intent is missing), and leave routine `intake_confidence` null; a decision-relevant optional probability requires a separate prospective declaration and frozen resolver.
+3. **Unfold triage (`metacognition`)**: validate `effort` and `output_format`, resolve `unfold_mode_resolved` (`rewrite_only` for trivial/single-step prompts, `inquiry` for reasoning/research prompts, `task_graph` for multi-step coding/agent-task prompts, or `clarify_first` when intent is missing).
 4. Synthesize a minimal proxy eval set (3-5 representative inputs) for medium/high tiers; empty at low.
-5. Produce `prompt_type`, `semantic_classification`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `unfold_mode_resolved`, `intake_confidence`, `anchor_terms`, `finer_pico_framing`, `proxy_eval_set`, `risks`, `routing`, and `checkability_map`. For each consequential obligation choose `finite` (supported `lisp_eval`), `formal` (Lean 4 over stated assumptions), `empirical` (test or observation), `judgment` (evidence-based interpretation), or `none`. Leave the map empty if not applicable. These are *candidate* checks, not claims that any tool ran.
+5. Produce `prompt_type`, `effort_tier`, `output_format_resolved`, `output_path_resolved`, `unfold_mode_resolved`, `anchor_terms`, `finer_pico_framing`, `proxy_eval_set`, `risks`, and `checkability_map`. For each consequential obligation choose `finite` (supported `lisp_eval`), `formal` (Lean 4 over stated assumptions), `empirical` (test or observation), `judgment` (evidence-based interpretation), or `none`. Leave the map empty if not applicable. These are *candidate* checks, not claims that any tool ran.
 6. Render with the full context shape — copy it, do not reconstruct it from prose (the 2026-10-07..13 rejections dropped fields in varying subsets):
    ```json
    { "prompt": "<the prompt>", "task": "<the user's task description>",
@@ -125,46 +125,11 @@ Array-valued context fields are plain JSON arrays — never stringified JSON. A 
 
 ### Raw JSON preflight (before every PE-State evaluation)
 
-PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam.
+PE-State is a two-part gate over the SAME raw env, not two state owners. First run `jq -e -f .agents/skills/prompt-enhance/raw-shape.jq` with the saved NEW review-state JSON file supplied on stdin, using its actual discovered invocation artifact path. The filter is that file; this document does not repeat it. Refuse on nonzero status; only then pass that exact parsed object as JSON text in `lisp_eval.env`. No filtered log, reconstructed findings or separately normalized arrays may cross this seam.
 
 **The durable review ledger.** The preflighted review-state file IS the invocation's durable ledger: write it under the run directory (default `~/Documents/zk-data/skills/prompt-enhance/{date}-{run}/review-state.json`, beside the default output path; write via terminal — the built-in file tools are sandboxed outside the project) at every state mutation — initialization, pending append, settle, correction. A resumed run re-derives nothing: load the ledger, preflight it, continue from the recorded state. An admitted-but-undispatched attempt is voided explicitly under the mid-run amendment route (Local PDCA item 5), never silently orphaned.
 
 **Digest identity binding (operator ruling 2026-10-30).** `prompt_revisions` and each attempt's identity field carry the SHA-256 digest (lowercase hex) of the revision's exact text — computed with `sha256sum` over the canonical revision file (`{run_dir}/revisions/rev-<n>.txt`, written at rewrite time) — not the full text. The canonical revision files and the delivered output carry the full texts; the gate env carries only digests, so the same preflighted object crosses the seam at ~2-3KB instead of ~19KB and the double-paste transcription risk is gone. Anyone can re-verify a delivered prompt against its recorded digest by re-hashing the text.
-
-The filter below matches the applied companion resource `raw-shape.jq`:
-
-```jq
-# Preserve raw JSON identity before the lossy JSON -> Lisp bridge.
-# No review echo, scoring, call counter or shadow admission state.
-# Digest binding (operator ruling 2026-10-30): prompt identity crosses the
-# seam as a lowercase-hex SHA-256 digest; the full revision texts live in
-# the canonical revision files and the delivered output, never in the env.
-def digest:
-  type == "string" and test("^[0-9a-f]{64}$");
-def request_shape:
-  type == "object" and
-  keys == ["attempt_id","kind","level","reviewed_prompt_digest","reviewed_revision"] and
-  (.attempt_id | type == "number" and floor == .) and
-  (.level | type == "number" and floor == .) and
-  (.reviewed_revision | type == "number" and floor == .) and
-  (.reviewed_prompt_digest | digest) and
-  (.kind | IN("initial","escalate","reprobe","correction","retry"));
-type == "object" and has("effort_tier") and has("request") and
-(.prompt_revisions | type == "array" and all(.[]; digest)) and
-(.critique_runs | type == "array") and
-(.request == null or (.request | request_shape)) and
-all(.critique_runs[];
-  type == "object" and has("status") and has("outcome") and
-  has("reviewed_prompt_digest") and (.reviewed_prompt_digest | digest) and
-  (if .status == "pending" then .outcome == null
-   elif .status == "completed" then
-    (.outcome | type == "object") and
-    (.outcome.ratings | type == "array") and
-    (.outcome.findings | type == "array") and
-    all(.outcome.ratings[]; type == "object") and
-    all(.outcome.findings[]; type == "object")
-   else true end))
-```
 
 This preflight is necessary because the Lisp JSON bridge represents `null`, `[]` and `{}` identically when empty. It cannot recover their original JSON types. The raw filter requires pending `outcome` to be EXACT JSON null and distinguishes snapshot `request: null` from a complete known five-field request object. Empty objects/arrays are neither pending null nor snapshot null. Its numeric request fields must be integer-valued; the Lisp gate still checks legal level/revision/identity values. Other than these producer-boundary shape checks, PE-State owns record admission, identity, threshold arithmetic and budgets. Interpreter errors or raw shape refusal mean incomplete/invalid review, never another free critique. Neither component establishes semantic quality, actual dispatch provenance, independence, or that the agent appended before sending; the executor must obey that ordering and retain its tool receipts.
 
@@ -329,7 +294,7 @@ This preflight is necessary because the Lisp JSON bridge represents `null`, `[]`
 
 ## Regression case
 
--Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with a fresh attempt log and revision history and the prior delivered prompt as baseline; (c) PE-State replays NEW-data attempt logs: initial low/medium/high routing, exact-next escalation, same-level reprobe, failed/pending exhaustion, one revision-bound correction, exact area coverage, invalid vocabulary and inclusive/exclusive threshold boundaries. Exercise the mid-run and interruption paths: (d) a mid-run explicit amendment opens a fresh invocation, voids an admitted-but-undispatched attempt with zero attempts consumed, and still delivers; (e) an interruption at any verify point delivers the last rewrite with the verify state labeled on the next turn — never a pause without a deliverable. Digest binding: (f) the preflight rejects a non-hex or non-64-character digest, the PE-State gate rejects a ledger whose attempt `reviewed_prompt_digest` does not match `prompt_revisions[reviewed_revision]`, and a delivered prompt re-hashes to its recorded digest. Scalar-selected raw findings still reach the actual finalizer unchanged; no malformed or stale result certifies the current prompt. Large-context binding: (g) a context payload over the inline budget renders through `context_path` — write the object to a JSON file, pass its path, and the render succeeds; a non-object or missing context file is rejected before rendering; inline `context` merges over the file's object with inline values winning. Fan-out binding: (h) `unfold_plan` decomposes a valid plan into waves (independent tasks share a wave; dependencies precede dependents), rejects cycles, unknown dependencies, duplicate IDs and over-cap plans, and batches reconsolidate outputs to the byte budget in dependency order; a zero budget yields one flat batch.
+Run a mixed request (for example: improve a proof skill, check a finite invariant with `lisp_eval`, check an example with Lean, and decide which additions are useful) through classify → rewrite → verify → output at `medium` effort. Include one run whose verify verdict is `rewrite_needed`: it must drive exactly one corrective re-render (`prior_enhanced_prompt` plus `critic_feedback` taken from the verify `findings`) and one re-verify. Check that the classifier emits distinct `finite`, `formal`, `empirical`, and `judgment` obligations; the rewrite proposes checks without claiming they ran; the critic challenges whether those checks establish the claims; and the final `delivered_output` contains the enhanced prompt and an honest verdict. Exercise low-effort `file` output separately: `grill_verdict` must be `skipped` and `output_path_written` must remain empty until a separate write succeeds. A failed verdict must remain visible, not be silently changed to `pass`. Exercise the post-delivery boundary: (a) an agent-generated extra suggestion after one correction does not reopen the loop; (b) an explicit user amendment starts a new invocation with a fresh attempt log and revision history and the prior delivered prompt as baseline; (c) PE-State replays NEW-data attempt logs: initial low/medium/high routing, exact-next escalation, same-level reprobe, failed/pending exhaustion, one revision-bound correction, exact area coverage, invalid vocabulary and inclusive/exclusive threshold boundaries. Exercise the mid-run and interruption paths: (d) a mid-run explicit amendment opens a fresh invocation, voids an admitted-but-undispatched attempt with zero attempts consumed, and still delivers; (e) an interruption at any verify point delivers the last rewrite with the verify state labeled on the next turn — never a pause without a deliverable. Digest binding: (f) the preflight rejects a non-hex or non-64-character digest, the PE-State gate rejects a ledger whose attempt `reviewed_prompt_digest` does not match `prompt_revisions[reviewed_revision]`, and a delivered prompt re-hashes to its recorded digest. Scalar-selected raw findings still reach the actual finalizer unchanged; no malformed or stale result certifies the current prompt. Large-context binding: (g) a context payload over the inline budget renders through `context_path` — write the object to a JSON file, pass its path, and the render succeeds; a non-object or missing context file is rejected before rendering; inline `context` merges over the file's object with inline values winning. Fan-out binding: (h) `unfold_plan` decomposes a valid plan into waves (independent tasks share a wave; dependencies precede dependents), rejects cycles, unknown dependencies, duplicate IDs and over-cap plans, and batches reconsolidate outputs to the byte budget in dependency order; a zero budget yields one flat batch.
 
 ## Registry Templates
 

@@ -66,18 +66,12 @@ contract:
       - both
     output_path_resolved:
       type: string
-    semantic_classification:
-      type: object
-      description: pragmatic-semantics classification of the prompt's primary claims (IS/OUGHT, epistemic mode, constraint force, provenance)
     proxy_eval_set:
       type: array
       description: 3-5 synthesized representative inputs for medium/high tiers; empty at low tier
     checkability_map:
       type: array
       description: Claim or obligation, proposed check kind, and whether a runnable oracle is known; empty when none applies
-    routing:
-      type: object
-      description: 'Which phases to run given type + effort (phase: bool map)'
     risks:
       type: array
       description: Type-specific risks surfaced for Phase 2 attention
@@ -89,9 +83,6 @@ contract:
       - task_graph
       - clarify_first
       description: Resolved unfolding mode from metacognition + hypothesis-framer triage
-    intake_confidence:
-      type: [number, 'null']
-      description: Null for routine work; optional probability only under a separately admitted prospective forecast
     anchor_terms:
       type: array
       description: 2-4 domain/methodology terms to resolve via onto_anchor and zk-ref-open (empty if rewrite_only or clarify_first)
@@ -141,7 +132,7 @@ Classify the prompt's primary claims on three axes:
 - **Epistemic**: Are the prompt's assumptions about the model declarative (grounded in docs/observation), probabilistic (heuristic), or subjunctive (speculative)?
 - **Provenance**: For every hardcoded value, persona claim, or behavioral assumption — is it Specification (grounded), Implementation (observed), or Inference (vibe)?
 
-Flag any Inference-tier claim with confidence ≤ 0.3 as fragile — these are Phase 2 audit targets.
+Add each fragile Inference-tier claim (confidence ≤ 0.3) to `risks`, naming the claim and why it is fragile: `risks` is what the rewrite stage reads, and these claims are its audit targets.
 
 ## Step 2 — Type Classification & Unfold Triage (hypothesis-framer + metacognition)
 
@@ -154,14 +145,13 @@ Pick exactly one type from the 7-type table. If the prompt is genuinely mixed, p
 - Tool use, iteration, environment → `agent-task`
 - Prompt about prompts → `meta`
 
-Next, apply **hypothesis-framer (FINER + PICO/counterfactual)** and **metacognition (unfold triage + intake confidence)**:
+Next, apply **hypothesis-framer (FINER + PICO/counterfactual)** and **metacognition (unfold triage)**:
 1. Evaluate whether the user's intent is feasible, testable, and specific enough to act on (`finer_pico_framing`). Extract explicit and implied objectives and a minimal counterfactual falsifier. If critical functional intent is missing or untestable, set `unfold_mode_resolved = "clarify_first"` and populate `clarifying_questions` rather than inventing scope.
 2. Otherwise, resolve `unfold_mode` (default `auto`) into `unfold_mode_resolved`:
    - `rewrite_only`: trivial, single-step, or purely stylistic prompts where multi-task unfolding would over-engineer.
    - `inquiry`: research, diagnosis, or `reasoning` prompts that benefit from competing falsifiable hypotheses and discriminating probes.
    - `task_graph`: multi-step `coding`, `agent-task`, or `meta` prompts that benefit from a dependency-ordered task DAG anchored in reference models.
-3. Return `intake_confidence: null` for routine work. A decision-relevant optional probability requires a separate complete prospective declaration, frozen resolver and matched cohort; this render never creates a forecast.
-4. When `unfold_mode_resolved` is `inquiry` or `task_graph`, extract 2–4 domain or methodology terms in `anchor_terms` for Step 1.5 (`onto_anchor` + `zk-ref-open`). Leave `anchor_terms` empty (`[]`) when `rewrite_only` or `clarify_first`.
+3. When `unfold_mode_resolved` is `inquiry` or `task_graph`, extract 2–4 domain or methodology terms in `anchor_terms` for Step 1.5 (`onto_anchor` + `zk-ref-open`). Leave `anchor_terms` empty (`[]`) when `rewrite_only` or `clarify_first`.
 
 ## Step 3 — Checkability routing
 
@@ -191,10 +181,6 @@ Synthesize 3-5 representative inputs that the enhanced prompt should handle well
 
 At `low` tier, return an empty `proxy_eval_set` — the rewrite runs without proxy examples.
 
-## Step 7 — Routing
-
-Produce the `routing` object: rewrite always runs, verify runs at medium/high, output render always runs. Rendering a template supplies instructions; the agent must produce the stage's JSON before passing it to the next stage.
-
 ## Context
 ```json
 {
@@ -218,7 +204,6 @@ Return JSON only:
   "output_format_resolved": "inline|file|both",
   "output_path_resolved": "resolved path or empty string",
   "unfold_mode_resolved": "rewrite_only|inquiry|task_graph|clarify_first",
-  "intake_confidence": null,
   "anchor_terms": ["term1", "term2"],
   "finer_pico_framing": {
     "admissible": true,
@@ -227,21 +212,12 @@ Return JSON only:
     "counterfactual_falsifier": "what observation would falsify or break the goal",
     "clarifying_questions": []
   },
-  "semantic_classification": {
-    "ontological_mode": "IS|OUGHT|mixed",
-    "epistemic_mode": "declarative|probabilistic|subjunctive|mixed",
-    "primary_provenance": "Specification|Implementation|Inference|mixed",
-    "fragile_claims": [
-      {"claim": "the hardcoded value or assumption", "provenance": "Inference", "confidence": 0.2, "why_fragile": "reason"}
-    ]
-  },
   "proxy_eval_set": [
     {"input": "representative input", "expected_good_response": "one sentence", "case_type": "typical|edge|adversarial|missing"}
   ],
   "checkability_map": [
     {"obligation": "claim to check", "kind": "finite|formal|empirical|judgment|none", "candidate_oracle": "supported tool, test, or none", "assumptions": "inputs and limitations"}
   ],
-  "routing": {"rewrite": true, "verify": true, "output_render": true},
   "risks": ["type-specific risk for Phase 2 attention"]
 }
 ```
