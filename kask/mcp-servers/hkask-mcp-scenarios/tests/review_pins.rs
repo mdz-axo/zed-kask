@@ -915,3 +915,30 @@ async fn the_scored_equity_path_runs_on_the_stores_clock() {
         "Brier on the frozen 0.6: {recorded}"
     );
 }
+
+// ── D3e (SC-20 annex): the certainty-tier ranges are the pre-review wording ──
+//
+// 3b155590a7 reworded the ranges to the code's boundaries without a source
+// check (the fourth unvetted source edit of SC-20). The operator's D3e
+// default restores the wording the review started from; the code's actual
+// boundaries (hkask_forecast::certainty_tier: >=0.67, >=0.33) match the
+// integer-percent ranges, and the pin keeps the wire text stable.
+
+#[tokio::test]
+async fn scenario_build_certainty_tiers_are_the_pre_review_wording() {
+    let server = server();
+    let scaffold =
+        wire!(server, scenario_build, json!({"subject": "pins"})).expect("scenario_build answers");
+    assert_eq!(
+        scaffold["certainty_tiers"]["proximate"]["range"], "67-100%",
+        "proximate range: {scaffold}"
+    );
+    assert_eq!(
+        scaffold["certainty_tiers"]["probable"]["range"], "33-66%",
+        "probable range: {scaffold}"
+    );
+    assert_eq!(
+        scaffold["certainty_tiers"]["possible"]["range"], "0-32%",
+        "possible range: {scaffold}"
+    );
+}

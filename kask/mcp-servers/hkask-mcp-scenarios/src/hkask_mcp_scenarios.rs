@@ -733,7 +733,7 @@ impl ScenariosServer {
                     "Based on the research context above about '{}', extract up to {} key future events as binomial yes/no questions with deadlines {}. Each event should be:\n\
                      1. A specific yes/no question with a clear deadline\n\
                      2. Placed in a dependency tree (what must happen first?)\n\
-                     3. Assigned a probability tier: proximate (67% or more), probable (33% to under 67%), or possible (under 33%)\n\
+                     3. Assigned a probability tier: proximate (>67%), probable (33-66%), or possible (<33%)\n\
                      4. Anchored to either technical_feasibility or scaling_distribution as the basis\n\
                      \n\
                      Format as a JSON array of ScenarioEvent objects with:\n\
@@ -787,9 +787,9 @@ impl ScenariosServer {
                     }
                 },
                 "certainty_tiers": {
-                    "proximate": {"range": "67% or more", "description": "Already started to happen, could stop"},
-                    "probable": {"range": "33% to under 67%", "description": "All elements exist for it to happen"},
-                    "possible": {"range": "under 33%", "description": "Could happen but unlikely"}
+                    "proximate": {"range": "67-100%", "description": "Already started to happen, could stop"},
+                    "probable": {"range": "33-66%", "description": "All elements exist for it to happen"},
+                    "possible": {"range": "0-32%", "description": "Could happen but unlikely"}
                 },
                 "methodology": {
                     "framework": "MAIA event-based scenario planning (Tetlock Superforecasting + Schwartz imagination)",
