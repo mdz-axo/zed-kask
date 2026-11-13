@@ -60,8 +60,9 @@ impl Refusal {
 /// One recorded admission decision.
 #[derive(Debug, Clone, Serialize)]
 pub struct Decision {
-    /// Unix seconds when the decision was made.
-    pub at: u64,
+    /// Unix seconds when the decision was made, or null when the system
+    /// clock could not say (a clock before 1970). Never a made-up zero.
+    pub at: Option<u64>,
     /// `websocket` or `sync`.
     pub path: &'static str,
     pub event_id: String,
@@ -123,8 +124,8 @@ impl Gate {
         let decision = Decision {
             at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_secs())
-                .unwrap_or_default(),
+                .ok()
+                .map(|elapsed| elapsed.as_secs()),
             path,
             event_id: event.id.to_hex(),
             author: event.pubkey.to_hex(),
@@ -245,5 +246,10 @@ mod tests {
         assert_eq!(recent[0].path, PATH_WEBSOCKET);
         assert_eq!(recent[1].outcome, Refusal::AuthorNotAllowed.message());
         assert_eq!(gate.totals(), (1, DECISION_LOG_CAPACITY as u64));
+        assert!(
+            recent[0].at.is_some_and(|at| at > 1_700_000_000),
+            "a decision made now carries the clock's reading, {:?}",
+            recent[0].at
+        );
     }
 }

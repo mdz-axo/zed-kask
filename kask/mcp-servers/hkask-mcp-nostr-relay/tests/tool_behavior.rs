@@ -323,7 +323,7 @@ async fn query_truncates_long_content_and_caps_the_limit() {
         fx.server,
         nostr_relay_query,
         QueryRequest {
-            limit: Some(10_000),
+            limit: Some(MAX_QUERY_EVENTS as u32),
             ..QueryRequest::default()
         }
     );
@@ -353,6 +353,10 @@ async fn query_refuses_bad_input_with_invalid_argument() {
             until: Some(100),
             ..QueryRequest::default()
         },
+        QueryRequest {
+            limit: Some(MAX_QUERY_EVENTS as u32 + 1),
+            ..QueryRequest::default()
+        },
     ] {
         let error = fx
             .server
@@ -361,6 +365,67 @@ async fn query_refuses_bad_input_with_invalid_argument() {
             .expect_err("bad input refused");
         assert_eq!(error.kind, McpErrorKind::InvalidArgument, "{error}");
     }
+}
+
+/// expect: a limit over the stated maximum is refused by name, for the
+/// query and for the log, and never silently clamped (mcp-tool-review NR-02).
+#[tokio::test]
+async fn a_limit_over_the_maximum_is_refused_not_clamped() {
+    let fx = fixture(&[]).await;
+    let query = fx
+        .server
+        .nostr_relay_query(Parameters(QueryRequest {
+            limit: Some(100_000),
+            ..QueryRequest::default()
+        }))
+        .await
+        .expect_err("100000 is over the query maximum");
+    assert_eq!(query.kind, McpErrorKind::InvalidArgument);
+    assert!(
+        query.to_string().contains("100000") && query.to_string().contains("100"),
+        "{query}"
+    );
+    let log = fx
+        .server
+        .nostr_relay_log(Parameters(LogRequest { limit: Some(5_000) }))
+        .await
+        .expect_err("5000 is over the log maximum");
+    assert_eq!(log.kind, McpErrorKind::InvalidArgument);
+    assert!(log.to_string().contains("200"), "{log}");
+
+    let at_most = invoke_tool!(fx.server, nostr_relay_log, LogRequest { limit: Some(200) });
+    assert_eq!(
+        at_most["limit"], 200,
+        "the maximum itself is accepted and echoed"
+    );
+    let default = invoke_tool!(fx.server, nostr_relay_log, LogRequest { limit: None });
+    assert_eq!(default["limit"], 50);
+}
+
+/// expect: an argument no tool declares is refused at decode, so a
+/// misspelled filter never runs as the unfiltered default (NR-01).
+#[test]
+fn undeclared_arguments_are_refused_at_decode() {
+    fn refuses_unknown<T: serde::de::DeserializeOwned + std::fmt::Debug>(
+        name: &str,
+        mut valid: serde_json::Value,
+    ) {
+        serde_json::from_value::<T>(valid.clone())
+            .unwrap_or_else(|error| panic!("{name}: the valid form must decode: {error}"));
+        valid["zz_undeclared"] = serde_json::json!(1);
+        let error = serde_json::from_value::<T>(valid).expect_err(name);
+        assert!(
+            error.to_string().contains("unknown field"),
+            "{name}: {error}"
+        );
+    }
+    refuses_unknown::<StatusRequest>("StatusRequest", serde_json::json!({}));
+    refuses_unknown::<QueryRequest>("QueryRequest", serde_json::json!({"kinds": [1]}));
+    refuses_unknown::<SyncRequest>("SyncRequest", serde_json::json!({}));
+    refuses_unknown::<LogRequest>("LogRequest", serde_json::json!({"limit": 5}));
+    // The misspelling that matters: `kind` for `kinds` must not read the whole archive.
+    serde_json::from_value::<QueryRequest>(serde_json::json!({"kind": [1]}))
+        .expect_err("a singular `kind` is not the `kinds` filter");
 }
 
 // ── nostr_relay_sync ────────────────────────────────────────────────
@@ -573,6 +638,68 @@ async fn the_log_records_admissions_and_refusals_newest_first() {
         .await
         .expect_err("zero limit refused");
     assert_eq!(error.kind, McpErrorKind::InvalidArgument);
+}
+
+/// expect: the behaviour `ACCESS_LIMITS` states is the behaviour the store
+/// has (mcp-tool-review NR-04, pinned for the operator's decision): an
+/// allowlisted author's NIP-09 deletion request, whether published over the
+/// websocket or copied in by a sync, removes the archived event it names;
+/// a stranger's deletion request naming the same event changes nothing.
+#[tokio::test]
+async fn an_allowlisted_authors_deletion_request_removes_the_archived_event() {
+    let author = Keys::generate();
+    let stranger = Keys::generate();
+    let fx = fixture(&[&author]).await;
+    let target = note(&author, Kind::TextNote, "to be withdrawn");
+    fx.state
+        .relay
+        .add_event(target.clone())
+        .await
+        .expect("stored");
+    assert_eq!(
+        invoke_tool!(fx.server, nostr_relay_query, QueryRequest::default())["returned"],
+        1
+    );
+
+    // A stranger's deletion naming it: refused by the gate, archive untouched.
+    let forged = EventDeletionRequest::new()
+        .id(target.id)
+        .into_event_builder()
+        .finalize(&stranger)
+        .expect("signs");
+    publish(&fx.url(), &forged).await;
+    assert_eq!(
+        invoke_tool!(fx.server, nostr_relay_query, QueryRequest::default())["returned"],
+        1,
+        "a stranger cannot delete an allowlisted author's event"
+    );
+
+    // The author's own deletion over the websocket: the event is gone.
+    let withdrawal = EventDeletionRequest::new()
+        .id(target.id)
+        .into_event_builder()
+        .finalize(&author)
+        .expect("signs");
+    let (accepted, _) = publish(&fx.url(), &withdrawal).await;
+    assert_eq!(accepted, 1, "kind 5 is not a refused kind");
+    let after = invoke_tool!(
+        fx.server,
+        nostr_relay_query,
+        QueryRequest {
+            kinds: Some(vec![1]),
+            ..QueryRequest::default()
+        }
+    );
+    assert_eq!(
+        after["returned"], 0,
+        "the store processed the deletion request"
+    );
+    assert!(
+        ACCESS_LIMITS
+            .iter()
+            .any(|limit| limit.contains("deletion requests (NIP-09, kind 5)")),
+        "status tells the reader this happens"
+    );
 }
 
 // ── The archive survives a restart ──────────────────────────────────

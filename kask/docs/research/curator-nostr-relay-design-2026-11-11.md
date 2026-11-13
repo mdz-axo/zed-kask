@@ -163,7 +163,7 @@ What the server does that this note did not say, or says differently:
     the operator allowlisted, a sync would otherwise copy the operator's
     sent kind-4 messages into the archive. Their text is encrypted; the
     recipient and time are readable, on the public relays as well.
-- **`nostr_relay_delete` is not built.** It has no human gate (§3).
+- **`nostr_relay_delete` is not built.** It has no human gate (§3). The store itself does delete, by `nostr-lmdb`'s defaults (`process_nip09`, `process_nip62`): an allowlisted author's own kind 5 deletion request or kind 62 request to vanish, published here or copied in by a sync, removes the archived events it names; a stranger's is refused by the gate. Found in the 2026-11-13 tool review (NR-04), pinned by `an_allowlisted_authors_deletion_request_removes_the_archived_event`, stated in `ACCESS_LIMITS` and the NIP-11 `supported_nips` (now `[1, 9, 11, 62]`; 42 and 70 were claimed and are not built: no NIP-42 mode is set, so no AUTH is ever issued). Whether the archive should honour remote deletions is the operator's call; until ruled, it does.
 - **A value that cannot be parsed is left out and reported**, never guessed:
   `nostr_relay_status` lists it under `configuration_warnings`.
 - **`nostr-sdk`'s default TLS provider is replaced** by the one the rest of

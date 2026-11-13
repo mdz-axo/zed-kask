@@ -165,7 +165,9 @@ struct RelayStatus {
 /// One entry of `nostr_relay_log`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 struct Decision {
-    at: u64,
+    /// Null when the relay's clock could not say.
+    #[serde(default)]
+    at: Option<u64>,
     path: String,
     author: String,
     kind: u16,
@@ -1162,7 +1164,10 @@ impl NostrViewer {
                 Self::line(
                     display_text(&format!(
                         "{} · {} · kind {} · {} · {}",
-                        utc_text(decision.at),
+                        decision
+                            .at
+                            .map(utc_text)
+                            .unwrap_or_else(|| "time unknown".to_string()),
                         decision.path,
                         decision.kind,
                         short_hex(&decision.author),
