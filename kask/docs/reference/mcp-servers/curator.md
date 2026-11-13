@@ -1,7 +1,7 @@
 ---
 title: "Curator MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-11-12
+last_updated: 2026-11-13
 version: "0.42.1"
 status: "Active"
 domain: "Composition"
@@ -41,7 +41,16 @@ resolution finds the same root the editor uses (`open_curator_stores`,
   fields and every input schema carries `additionalProperties: false`. A
   misspelled argument fails the call instead of being dropped.
 - **Closed vocabularies are enumerated in the schema**: `ontology_axis`,
-  `strategy`, `mode`, `recall_shape`, `failure_origin`.
+  `strategy`, `mode`, `recall_shape`, `failure_origin`. An optional field is
+  never listed under `required`: a `schema_with` enumeration on an `Option`
+  field hides the `Option` from the schema generator, so each such field also
+  carries `#[serde(default)]` (`kask/mcp-servers/hkask-mcp-curator/src/types.rs`,
+  pinned by `no_nullable_property_is_listed_as_required`,
+  `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:2192`). No
+  request path in this editor sends tool schemas under a strict flag that
+  would want the opposite shape (`crates/open_ai/src/completion.rs:340` sets
+  `strict: Some(false)`; the Anthropic and Google tool definitions have no
+  such field).
 - **Amounts are checked before they are used.** A lookback window or age too
   large for a calendar offset, a confidence outside 0.0–1.0, a zero limit, and
   a blank query, reason, thread id or report field are `invalid_argument`.
@@ -96,7 +105,14 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
   - A confidence written at or below `kask.memory.confidence_floor`
     (default 0.3), by `memory_update` or by `update_confidence`, is a
     deferred delete: the editor's consolidation pass removes the row on
-    its next tick. Both `new_confidence` parameters say so.
+    its next tick. Both `new_confidence` parameters say so. The pass runs
+    every 300 s and is gated on the `hmems` high-water rowid
+    (`kask/crates/hkask-memory/src/consolidation_service.rs:38`): a write
+    through this server moves the rowid, so a lowered confidence is seen on
+    the next tick; with no write since the last pass the tick is skipped.
+    The server does not receive the floor (no `HKASK_` variable carries it),
+    so it neither refuses nor warns on such a write (operator decision open,
+    CU-31).
   - `memory_resolve_contradiction`: `forget` deletes the target;
     `update_confidence` sets the target's confidence to `new_confidence`.
     The `reason` and `h_mem_ids` are returned in the response and are not
@@ -148,8 +164,13 @@ both halves):
    deletes the turns a watermark older than `HKASK_MEMORY_FORGETTING_DAYS`
    (default 7; 0 disables) covers, with their embeddings.
 
-Both halves read one thread's rows by exact entity
-(`kask/mcp-servers/hkask-mcp-curator/src/thread_turns.rs:26`).
+Both halves read and delete one thread's rows by exact entity
+(`kask/mcp-servers/hkask-mcp-curator/src/thread_turns.rs:26`;
+`forgetting.rs:173`, `:186`), never by prefix (operator ruling 2026-11-12).
+A turn stored under a key that extends a thread's key is not forgotten
+with it, and an ordinary pass takes milliseconds: measured on the installed
+binary after the change, 51–125 ms (5 passes) against 1.2–3.1 s before, with
+13 of 77 earlier passes at 25–71 s whose cause was not identified.
 
 ## Architecture
 
@@ -169,7 +190,14 @@ Both halves read one thread's rows by exact entity
 
 The tool-behavior suite (`tests/tool_behavior.rs`) drives the tools through
 their parameter seams; the pins added by the 2026-11-12 tool review decode
-their requests from JSON, as a caller's arguments are. The store-level
+their requests from JSON, as a caller's arguments are. Two surface pins read
+the live `tools/list`: the forwarded sentence of every description is
+complete and carries the tool's load-bearing fact
+(`forwarded_descriptions_are_complete_and_carry_the_load_bearing_fact`,
+`src/hkask_mcp_curator.rs:2138` — the editor forwards a description only to
+its first sentence within 200 bytes), and no nullable property is listed as
+required (`:2192`). The review's artifact and probe scripts are under
+`~/Documents/zk-data/skills/mcp-tool-review/2026-11-12-curator/`. The store-level
 contracts (recall round-trips per writer variant, orphaned-embedding
 surfacing, decay) are pinned in the `hkask-memory` crate; the register's L10
 row carries the citations. `tests/live_memory_recall.rs` holds two ignored

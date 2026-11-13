@@ -24,13 +24,39 @@ MCP server exposing Regulation history, memory search and per-store liveness (`c
 | `curator_memory_backfill_embeddings` | Backfill semantic embeddings: missing passages or model-mismatch re-embed — the write side of the search model gate. |
 | `curator_memory_extract` | List one thread's stored turns, by its complete id, as candidates for `memory_insert`. Read-only. |
 
-Every tool refuses an argument it does not declare, and every input schema
-says so (`additionalProperties: false`). Besides the tools, the server runs a
-background pass with no tool call: every
+## Request contract (2026-11-12 tool review, CU-01..CU-32)
+
+- Every tool refuses an argument it does not declare, and every input schema
+  says so (`additionalProperties: false`). Closed vocabularies
+  (`ontology_axis`, `strategy`, `mode`, `recall_shape`, `failure_origin`) are
+  enumerated in the schema; an optional field is never listed as `required`.
+- Amounts are checked before use: an oversized `hours`, `window_seconds`,
+  `max_age_days` or `spare_recalled_within_days`, a confidence outside
+  0.0–1.0, a zero limit, or a blank query, reason, thread id or report field
+  is `invalid_argument` (the pre-review binary panicked on four of these).
+- `curator_memory_recall` takes `entity` **or** `ontology_axis` +
+  `ontology_value`; it returns at most `limit` rows per scope (default 100,
+  max 500) with `total` and `limit_reached`; only the rows it returns have
+  their decay clock reset.
+- `memory_insert` and `curator_report_skill_use_issue` return the new
+  `h_mem_id`. A `new_confidence` at or below the editor's
+  `kask.memory.confidence_floor` (default 0.3), through `memory_update`'s
+  pooling or `update_confidence`, is a deferred delete: the editor's
+  consolidation pass removes the row on its next tick. Both parameters say so.
+- `phase` in `reg_query` and `curator_algedonic_log` is the stored word
+  (`sense`, `compute`, `compare`, `act`).
+- A refusal raised while decoding arguments carries no error kind (shared
+  runtime behaviour); a handler refusal carries `{error, kind}`.
+
+Besides the tools, the server runs a background pass with no tool call: every
 `HKASK_MEMORY_DISTILLATION_CADENCE_SECS` (default 600; 0 disables it) it
 distils idle threads into lessons through a model call, then deletes the
 turns of threads whose distillation is older than
-`HKASK_MEMORY_FORGETTING_DAYS` (default 7; 0 disables the deletion).
+`HKASK_MEMORY_FORGETTING_DAYS` (default 7; 0 disables the deletion). Both
+halves read and delete one thread's rows by exact entity (`thread_turns.rs`),
+never by prefix: a thread id that extends another's never returns or
+forgets the other thread's turns, and a pass costs milliseconds instead of a
+full scan per aged watermark (operator ruling 2026-11-12).
 
 `curator_report_skill_use_issue` stores one controlled ownership value:
 `skill_contract`, `agent_execution`, `tool_implementation`,

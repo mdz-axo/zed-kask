@@ -1,8 +1,8 @@
 ---
 title: "Memory System Specification"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-10-28
-version: "5.3.4"
+last_updated: 2026-11-13
+version: "5.3.5"
 status: "Active"
 domain: "Lifecycle"
 mds_categories: [lifecycle, domain, curation, trust]
@@ -764,6 +764,19 @@ removed because interval ticks now perform passes directly. Paused-time
 production-timer regressions cover the cold start and a two-hour setting;
 the real pruning and ingestion-independence controls remain green.
 
+**No-op gate (2026-11-12, `36da0f739f`):** before sweeping, the pass reads
+the `hmems` high-water rowid (`MemoryStore::max_h_mem_rowid`,
+`kask/crates/hkask-memory/src/memory_store.rs:380`). Every insert moves it and
+every update is delete-plus-reinsert, so an unchanged value means no new
+deletion candidate since the last pass and the pass is skipped
+(`ConsolidationOutcome::skipped`, logged by the timer). The gate lives in the
+database file, so a write by the curator MCP child process re-arms it (pinned
+by `the_gate_sees_writes_through_another_store_over_the_same_db`). Fail-safe:
+a gate-read failure runs the pass, and a lower rowid re-runs it once — the
+gate can only over-run. Consequence for the memory tools: a confidence
+lowered to or below the floor by `memory_update` or `update_confidence` is a
+write, so it is deleted on the next tick, not deferred by the gate.
+
 ### Distillation pass (ALWAYS-mode)
 
 **Source:** `kask/mcp-servers/hkask-mcp-curator/src/distillation.rs`
@@ -881,6 +894,14 @@ deletion is scoped to rows the pass read as covered (never a blind
 prefix delete), a turn racing in during the pass is uncovered by
 construction. Forgetting is time-based and distillation-gated.
 
+- **Exact key (2026-11-12, operator ruling, `a50c3ca752`):** the pass reads
+  and deletes one thread's rows by exact entity (`MemoryStore::h_mems_by_entity`,
+  `delete_h_mems_by_entity`; `forgetting.rs:173`, `:186`; the same contract
+  `thread_turns::thread_turns` gives `curator_memory_extract`). The earlier
+  prefix read scanned the table once per aged watermark and matched a
+  sibling whose id extended the thread's; a turn under such a key is no
+  longer forgotten with the thread. Measured on the running server: an
+  ordinary pass fell from 1.2–3.1 s to 51–125 ms.
 - **Scope:** shared copies only (`curator:thread:{id}`). Since the
   2026-09-04 single-copy ruling there is no separate perspective original
   to preserve — a turn's content lives only in its shared chunks, so
@@ -1053,7 +1074,13 @@ alone. Two reasons, both grounded in the calibration literature[^tetlock]:
 The curator MCP server (`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`)
 exposes the memory surface. Read tools (available to all threads):
 `curator_semantic_search`, `curator_federated_search`,
-`curator_memory_recall`, and `curator_consult`. Federated search reads Curator
+`curator_memory_recall`, and `curator_consult`. Since the 2026-11-12 tool
+review every request type denies unknown fields, enumerates its closed sets
+in the schema, and checks amounts before use; `curator_memory_recall` takes
+`entity` or an ontology axis, returns at most `limit` rows per scope
+(default 100, max 500) with `total` and `limit_reached`, and resets the
+decay clock of returned rows only (`kask/docs/reference/mcp-servers/curator.md`
+carries the full contract). Federated search reads Curator
 memory plus separately configured sealed sources; it does not make those source
 rows Curator memories. Write tools (available to all threads since
 2026-09-01, when the curator-thread gate was removed by operator
@@ -1065,7 +1092,10 @@ floor — live in the curator server, pinned by
 
 - **`memory_insert`** — evidence-grounded insert; confidence starts at 0.5 whatever
   the caller believes; afterwards only `memory_update` and
-  `memory_resolve_contradiction` change it. It uses the shared
+  `memory_resolve_contradiction` change it, and the response carries the new
+  `h_mem_id`. The evidence id is checked for existence and lends its private
+  mark, but is not stored with the memory (open operator decision, review
+  finding CU-21). It uses the shared
   `MemoryStore::prepare_semantic_write` operation: retain a supported canonical
   passage, or derive `recall_text` from entity, attribute, and the supplied JSON
   value. Embedding generation must succeed before publication; `SemanticWrite::publish`
@@ -1103,15 +1133,21 @@ floor — live in the curator server, pinned by
   the configured inference bridge, and requires each replacement ID to round-trip
   in semantic mode. It is ignored in default tests and writes only its report.
 - **`memory_resolve_contradiction`** — `forget` physically deletes the
-  dissonant h_mem; `update_confidence` reduces its importance. These are the
-  only supported strategies (operator reaffirmation 2026-09-04).
+  dissonant h_mem; `update_confidence` sets its confidence to `new_confidence`
+  (a value at or below the floor is a deferred delete, §6). These are the
+  only supported strategies (operator reaffirmation 2026-09-04); there is no
+  merge. `h_mem_ids` and `reason` are required, echoed in the response, and
+  not stored (open operator decision, CU-23).
 - **`curator_memory_prune`** (`:1586`) — deterministic bulk hygiene:
-  delete curator h_mems older than `max_age_days`, optionally sparing
-  those recalled within a recent window.
-- **`curator_memory_dedup`** — deterministic bulk hygiene: group by
-  (entity, attribute, normalized string value), keep the highest-confidence
-  h_mem, and delete the rest. Non-string values are skipped; the result
-  reports `deleted_count`.
+  hard-delete curator h_mems older than `max_age_days`, optionally sparing
+  those recalled within a recent window. The default scope is turn storage
+  (`curator:thread:`); `prefixes` or `all_layers` widen it, and an unknown
+  argument is refused rather than silently widening or narrowing the scope.
+- **`curator_memory_dedup`** (`:1677`) — deterministic bulk hygiene: among
+  the newest `limit` rows (default 10000), group by (entity, attribute,
+  normalized string value), keep the highest-confidence h_mem, and delete the
+  rest. Non-string values are skipped; the result reports `deleted_count` and
+  `limit_reached` when older rows may remain unscanned.
 - **`curator_memory_extract`** (`:1765`) — lists one thread's stored turns, by its
   complete id, as candidates for `memory_insert`; read-only.
 - **`curator_report_skill_use_issue`** (`:1226`) — skill-reported tool
@@ -1172,8 +1208,8 @@ graph TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MEM-THERAPY-TOOLS
-verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:399 (curator_semantic_search), :639 (curator_memory_recall), :738 (curator_consult), :972 (curator_report_skill_use_issue), :1063 (memory_insert), :1166 (memory_update), :1223 (memory_resolve_contradiction), :1307 (curator_memory_prune), :1386 (curator_memory_dedup), :1490 (curator_memory_extract), :1598 (embed_for_semantic_recall); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/tests/mod.rs:5470 (edit-tools-available pin — the curator-thread gate itself was removed 2026-09-01)
-verified_date: 2026-09-28
+verified_against: kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:600 (curator_semantic_search), :859 (curator_memory_recall), :989 (curator_consult), :1226 (curator_report_skill_use_issue), :1320 (memory_insert), :1440 (memory_update), :1496 (memory_resolve_contradiction), :1586 (curator_memory_prune), :1677 (curator_memory_dedup), :1765 (curator_memory_extract), :1896 (embed_for_semantic_recall); kask/registry/templates/therapy/ (scan.j2, classify.j2, report.j2); crates/agent/src/tests/mod.rs (edit-tools-available pin — the curator-thread gate itself was removed 2026-09-01)
+verified_date: 2026-11-13
 status: VERIFIED
 -->
 
