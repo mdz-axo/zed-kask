@@ -67,7 +67,11 @@ fn default_embedding_model() -> String {
 }
 
 fn default_ocr_model() -> String {
-    "ollama/glm-ocr:latest".to_string()
+    // The single literal lives in hkask_inference::model_constants
+    // (DEFAULT_OCR_MODEL) — the zed-side settings layer references the same
+    // constant, so the server started directly and the server started by the
+    // host agree on the default.
+    hkask_inference::model_constants::DEFAULT_OCR_MODEL.to_string()
 }
 
 fn default_chunk_max_tokens() -> usize {
