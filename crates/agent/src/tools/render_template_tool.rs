@@ -1691,6 +1691,64 @@ mod tests {
         );
     }
 
+    /// The essentialist template is the interrogator's once-per-run reference:
+    /// the three gates, the finding vocabulary the `ESS-1` gate consumes, and
+    /// the reduction actions. The loop (mode, order, retries, rounds, zero-delta,
+    /// score) lives in the SKILL.md form and must not be restated here as
+    /// pseudo-code, nor may a `mode: autonomous` claim be printed as verified.
+    #[test]
+    fn essentialist_flow_is_a_gate_reference_not_a_loop() {
+        let context = serde_json::json!({
+            "artifact": {"name": "Wrapper", "source": "pub fn get() {}"},
+            "code_context": {"callers": {"a.rs": "get()"}, "dependencies": {}, "structure": ["mod wrapper"]},
+            "mode": "autonomous",
+            "scope": "auto"
+        });
+        let rendered = render_template_for_test("essentialist/essentialist-flow", context.clone())
+            .expect("essentialist flow renders with the documented context");
+        for gate in [
+            "Gate 1 — EXIST: Deletion Test",
+            "Gate 2 — SURFACE: Interface Count",
+            "Gate 3 — CONTRACT: Abstraction Trace",
+        ] {
+            assert!(rendered.contains(gate), "missing {gate}");
+        }
+        // The finding vocabulary ESS-1 validates against, verbatim.
+        assert!(rendered.contains(
+            "\"constraint_force\": \"prohibition|guardrail|guideline|evidence|hypothesis\""
+        ));
+        assert!(rendered.contains("\"action\": \"DELETE|MERGE|JUSTIFY|RETAIN\""));
+        assert!(rendered.contains("malformed_findings"));
+        // G3 is this template's own trace; the former delegation is gone.
+        assert!(rendered.contains("Every generic parameter"));
+        assert!(!rendered.contains("guidelines-verify"));
+        // No loop restatement and no authorization claim from a parameter.
+        for absent in [
+            "FOR round",
+            "WHILE retries",
+            "max_retries_per_gate",
+            "authorization was verified",
+        ] {
+            assert!(
+                !rendered.contains(absent),
+                "template restates the loop: {absent}"
+            );
+        }
+        assert!(rendered.contains("Claimed mode**: autonomous"));
+        assert!(rendered.contains("resolves to advisory"));
+
+        let mut missing = context;
+        missing
+            .as_object_mut()
+            .expect("context object")
+            .remove("code_context");
+        assert!(
+            render_template_for_test("essentialist/essentialist-flow", missing)
+                .expect_err("the code context is required")
+                .contains("code_context")
+        );
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(

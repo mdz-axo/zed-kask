@@ -748,26 +748,6 @@ form: "(= (+ a b) 3)"
 
     #[test]
     fn repaired_corpus_gates_discriminate_both_directions() {
-        let essentialist = skill_candidate("essentialist", "current_surviving_items");
-        let stable = json!({
-            "current_surviving_items": ["A", "B"],
-            "prior_surviving_items": ["A", "B"],
-            "current_structure": [["module", "m"]],
-            "prior_structure": [["module", "m"]],
-            "current_interfaces": ["f"],
-            "prior_interfaces": ["f"]
-        });
-        assert_eq!(
-            eval_sandboxed(&essentialist, &stable).expect("stable essentialist form"),
-            json!(true)
-        );
-        let mut changed = stable;
-        changed["current_structure"] = json!([["module", "changed"]]);
-        assert_eq!(
-            eval_sandboxed(&essentialist, &changed).expect("changed essentialist form"),
-            json!(false)
-        );
-
         let wardley = skill_candidate("wardley-mapper", "all-names-present");
         let valid_map = json!({
             "components": [
@@ -3757,6 +3737,446 @@ form: "(= (+ a b) 3)"
         edge["base_gate_scores"]["vertical_slice_integrity"] = json!(0.2001);
         let result = eval_sandboxed(&gate_form, &edge).expect("just above acceptance boundary");
         assert_eq!(result["gate_pass"], json!(false));
+    }
+
+    /// The essentialist loop gate: one `ESS-1` call per gate evaluation,
+    /// state threaded back. These helpers build the env the SKILL.md documents
+    /// and run a sequence of steps the way the skill does, so a test reads as
+    /// a run ("G1 reduce, G1 clean, G2, G3, next round ...") rather than as
+    /// a pile of envs.
+    fn ess_form() -> String {
+        skill_candidate("essentialist", "define triggers")
+    }
+
+    fn ess_snapshot(items: &[&str], interfaces: &[&str]) -> serde_json::Value {
+        json!({"surviving_items": items, "structure": ["mod wrapper"], "interfaces": interfaces})
+    }
+
+    fn ess_finding(item: &str, force: &str, action: &str) -> serde_json::Value {
+        json!({"item": item, "constraint_force": force, "action": action,
+               "issue": "i", "recommendation": "r"})
+    }
+
+    fn ess_step(
+        form: &str,
+        request: &str,
+        mode: &str,
+        gate: &str,
+        findings: serde_json::Value,
+        decisions: serde_json::Value,
+        snapshot: serde_json::Value,
+        state: serde_json::Value,
+    ) -> serde_json::Value {
+        let env = json!({"request": request, "mode": mode, "gate": gate, "findings": findings,
+                         "decisions": decisions, "snapshot": snapshot, "state": state});
+        eval_sandboxed(form, &env)
+            .unwrap_or_else(|error| panic!("ESS-1 failed to evaluate at {gate}: {error}"))
+    }
+
+    /// Run `steps` of (gate, findings, snapshot) in autonomous mode with the
+    /// request "simplify", threading state; return the last result.
+    fn ess_run(
+        form: &str,
+        steps: &[(&str, serde_json::Value, serde_json::Value)],
+    ) -> serde_json::Value {
+        let mut state = json!({});
+        let mut last = json!(null);
+        for (gate, findings, snapshot) in steps {
+            last = ess_step(
+                form,
+                "simplify",
+                "autonomous",
+                gate,
+                findings.clone(),
+                json!([]),
+                snapshot.clone(),
+                state,
+            );
+            assert_ne!(
+                last["verdict"],
+                json!("invalid"),
+                "unexpected invalid step at {gate}: {last}"
+            );
+            state = last["state"].clone();
+        }
+        last
+    }
+
+    #[test]
+    fn scientific_gate_ess_1_resolves_mode_from_the_request_not_the_claim() {
+        let form = ess_form();
+        let snap = ess_snapshot(
+            &["Wrapper::get", "Wrapper::put", "Config", "Inner"],
+            &["fn get", "fn put"],
+        );
+        let finding = json!([ess_finding("Wrapper::get", "prohibition", "DELETE")]);
+        let step = |request: &str, mode: &str| {
+            ess_step(
+                &form,
+                request,
+                mode,
+                "G1",
+                finding.clone(),
+                json!([]),
+                snap.clone(),
+                json!({}),
+            )
+        };
+
+        let asked = step("please simplify this wrapper", "autonomous");
+        assert_eq!(asked["mode"], json!("autonomous"));
+        assert_eq!(asked["verdict"], json!("reduce"));
+        assert_eq!(asked["items"], json!(["Wrapper::get"]));
+
+        let stripped = step("Strip this module down", "autonomous");
+        assert_eq!(stripped["mode"], json!("autonomous"));
+
+        // In autonomous mode a guardrail reduces as a prohibition does; the
+        // informational forces never do.
+        let mixed = ess_step(
+            &form,
+            "simplify",
+            "autonomous",
+            "G1",
+            json!([
+                ess_finding("Config", "guardrail", "MERGE"),
+                ess_finding("depth", "evidence", "RETAIN"),
+                ess_finding("maybe", "guideline", "MERGE"),
+                ess_finding("guess", "hypothesis", "DELETE"),
+            ]),
+            json!([]),
+            snap.clone(),
+            json!({}),
+        );
+        assert_eq!(mixed["verdict"], json!("reduce"));
+        assert_eq!(mixed["items"], json!(["Config"]));
+
+        // A claim without the user's words, and a negated request, both resolve
+        // to advisory: the finding is presented, nothing is reduced.
+        for (case, request) in [
+            ("no intent", "review this wrapper"),
+            ("negated", "don't simplify this, just look at it"),
+            ("not", "this is not a simplify request"),
+        ] {
+            let result = step(request, "autonomous");
+            assert_eq!(result["mode"], json!("advisory"), "{case}");
+            assert_eq!(result["verdict"], json!("await_human"), "{case}");
+            assert_eq!(
+                result["present"],
+                json!({"Wrapper::get": "REQUIRED"}),
+                "{case}"
+            );
+            assert_eq!(
+                result["state"]["log"],
+                json!([]),
+                "{case}: an undecided step is not logged"
+            );
+        }
+
+        // The caller's own advisory claim is never upgraded by the words.
+        let advisory = step("simplify it", "advisory");
+        assert_eq!(advisory["mode"], json!("advisory"));
+        assert_eq!(advisory["verdict"], json!("await_human"));
+    }
+
+    #[test]
+    fn scientific_gate_ess_1_applies_only_the_human_decisions_in_advisory_mode() {
+        let form = ess_form();
+        let snap = ess_snapshot(
+            &["Wrapper::get", "Wrapper::put", "Config", "Inner"],
+            &["fn get", "fn put"],
+        );
+        let findings = json!([
+            ess_finding("Wrapper::get", "prohibition", "DELETE"),
+            ess_finding("Config", "guardrail", "MERGE"),
+            ess_finding("depth", "evidence", "RETAIN"),
+        ]);
+        let decide = |decisions: serde_json::Value| {
+            ess_step(
+                &form,
+                "review",
+                "advisory",
+                "G1",
+                findings.clone(),
+                decisions,
+                snap.clone(),
+                json!({}),
+            )
+        };
+
+        let labels = decide(json!([]));
+        assert_eq!(labels["verdict"], json!("await_human"));
+        assert_eq!(
+            labels["present"],
+            json!({"Wrapper::get": "REQUIRED", "Config": "REQUIRED (overridable with a reason)", "depth": "INFO"})
+        );
+
+        let refused = decide(json!([
+            {"item": "Wrapper::get", "response": "reject", "reason": "needed"},
+            {"item": "Config", "response": "accept"},
+            {"item": "depth", "response": "accept"}
+        ]));
+        assert_eq!(refused["verdict"], json!("escalate"));
+        assert_eq!(refused["reason"], json!("prohibition_rejected"));
+        assert_eq!(refused["items"], json!(["Wrapper::get"]));
+
+        let bare = decide(json!([
+            {"item": "Wrapper::get", "response": "accept"},
+            {"item": "Config", "response": "reject"},
+            {"item": "depth", "response": "accept"}
+        ]));
+        assert_eq!(bare["verdict"], json!("escalate"));
+        assert_eq!(bare["reason"], json!("guardrail_rejected_without_reason"));
+        assert_eq!(bare["items"], json!(["Config"]));
+
+        // A reasoned guardrail rejection stands; the accepted prohibition reduces;
+        // the accepted RETAIN is not a reduction.
+        let reasoned = decide(json!([
+            {"item": "Wrapper::get", "response": "accept"},
+            {"item": "Config", "response": "reject", "reason": "separate operational domain"},
+            {"item": "depth", "response": "accept"}
+        ]));
+        assert_eq!(reasoned["verdict"], json!("reduce"));
+        assert_eq!(reasoned["items"], json!(["Wrapper::get"]));
+
+        // An override needs its alternative; without it the item is undecided.
+        let bare_override = decide(json!([
+            {"item": "Wrapper::get", "response": "override"},
+            {"item": "Config", "response": "accept"},
+            {"item": "depth", "response": "accept"}
+        ]));
+        assert_eq!(bare_override["verdict"], json!("await_human"));
+        assert_eq!(bare_override["items"], json!(["Wrapper::get"]));
+        let with_override = decide(json!([
+            {"item": "Wrapper::get", "response": "override", "alternative": "make it private"},
+            {"item": "Config", "response": "accept"},
+            {"item": "depth", "response": "accept"}
+        ]));
+        assert_eq!(with_override["verdict"], json!("reduce"));
+        assert_eq!(with_override["items"], json!(["Wrapper::get", "Config"]));
+
+        // Only informational findings, all decided: the gate passes.
+        let info_only = ess_step(
+            &form,
+            "review",
+            "advisory",
+            "G1",
+            json!([ess_finding("depth", "evidence", "RETAIN")]),
+            json!([{"item": "depth", "response": "accept"}]),
+            snap.clone(),
+            json!({}),
+        );
+        assert_eq!(info_only["verdict"], json!("next_gate"));
+    }
+
+    #[test]
+    fn scientific_gate_ess_1_counts_retries_and_rounds_from_its_own_log() {
+        let form = ess_form();
+        let four = ess_snapshot(
+            &["Wrapper::get", "Wrapper::put", "Config", "Inner"],
+            &["fn get", "fn put"],
+        );
+        let three = ess_snapshot(&["Wrapper::put", "Config", "Inner"], &["fn put"]);
+        let delete_get = json!([ess_finding("Wrapper::get", "prohibition", "DELETE")]);
+        let clean = json!([]);
+
+        // The third reduce on one gate within a round escalates.
+        let exhausted = ess_run(
+            &form,
+            &[
+                ("G1", delete_get.clone(), four.clone()),
+                ("G1", delete_get.clone(), four.clone()),
+                ("G1", delete_get.clone(), four.clone()),
+            ],
+        );
+        assert_eq!(exhausted["verdict"], json!("escalate"));
+        assert_eq!(exhausted["reason"], json!("retries_exhausted"));
+        assert_eq!(exhausted["round"], json!(1));
+
+        // The documented regression case: G1 fails the pass-through, the reduced
+        // artifact passes all three gates, the round changed so another round
+        // runs, that round is unchanged -> complete with one of four removed.
+        let complete = ess_run(
+            &form,
+            &[
+                ("G1", delete_get, four.clone()),
+                ("G1", clean.clone(), three.clone()),
+                ("G2", clean.clone(), three.clone()),
+                ("G3", clean.clone(), three.clone()),
+                ("G1", clean.clone(), three.clone()),
+                ("G2", clean.clone(), three.clone()),
+                ("G3", clean.clone(), three.clone()),
+            ],
+        );
+        assert_eq!(complete["verdict"], json!("complete"));
+        assert_eq!(complete["round"], json!(2));
+        assert_eq!(complete["initial_items"], json!(4));
+        assert_eq!(complete["removed_items"], json!(1));
+        assert_eq!(complete["score"], json!(25.0));
+        assert_eq!(complete["band"], json!("minor_reduction"));
+        let log = complete["state"]["log"].as_array().expect("log array");
+        assert_eq!(log.len(), 7, "every decisive step is logged");
+        assert_eq!(log[3]["verdict"], json!("next_round"));
+
+        // A loop that is closed refuses another step.
+        let after = ess_step(
+            &form,
+            "simplify",
+            "autonomous",
+            "G1",
+            clean.clone(),
+            json!([]),
+            three.clone(),
+            complete["state"].clone(),
+        );
+        assert_eq!(after["verdict"], json!("invalid"));
+        assert_eq!(after["items"], json!(["loop_closed"]));
+
+        // Zero-delta is exact over all three lists: a round that changed only
+        // the interfaces is not complete.
+        let same_items_new_signature =
+            ess_snapshot(&["Wrapper::put", "Config", "Inner"], &["fn put(&self)"]);
+        let interface_changed = ess_run(
+            &form,
+            &[
+                ("G1", clean.clone(), three.clone()),
+                ("G2", clean.clone(), three),
+                ("G3", clean.clone(), same_items_new_signature),
+            ],
+        );
+        assert_eq!(interface_changed["verdict"], json!("next_round"));
+
+        // An unchanged first round is complete at once with score 0.
+        let minimal = ess_run(
+            &form,
+            &[
+                ("G1", clean.clone(), four.clone()),
+                ("G2", clean.clone(), four.clone()),
+                ("G3", clean.clone(), four),
+            ],
+        );
+        assert_eq!(minimal["verdict"], json!("complete"));
+        assert_eq!(minimal["score"], json!(0.0));
+        assert_eq!(minimal["band"], json!("already_minimal"));
+
+        // Three rounds that each change the artifact exhaust the round bound.
+        let shrink = |n: usize| {
+            let names: Vec<String> = (n..7).map(|i| format!("item{i}")).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            ess_snapshot(&refs, &[])
+        };
+        let mut steps = Vec::new();
+        for round in 1..=3 {
+            let before = shrink(round);
+            let after = shrink(round + 1);
+            steps.push((
+                "G1",
+                json!([ess_finding(
+                    &format!("item{round}"),
+                    "prohibition",
+                    "DELETE"
+                )]),
+                before,
+            ));
+            steps.push(("G1", clean.clone(), after.clone()));
+            steps.push(("G2", clean.clone(), after.clone()));
+            steps.push(("G3", clean.clone(), after));
+        }
+        let rounds = ess_run(&form, &steps);
+        assert_eq!(rounds["verdict"], json!("escalate"));
+        assert_eq!(rounds["reason"], json!("rounds_exhausted"));
+        assert_eq!(rounds["round"], json!(3));
+    }
+
+    #[test]
+    fn scientific_gate_ess_1_rejects_malformed_input_without_recording_it() {
+        let form = ess_form();
+        let snap = ess_snapshot(&["a"], &[]);
+        let invalid = |case: &str,
+                       gate: &str,
+                       mode: &str,
+                       findings: serde_json::Value,
+                       snapshot: serde_json::Value,
+                       state: serde_json::Value| {
+            let result = ess_step(
+                &form,
+                "simplify",
+                mode,
+                gate,
+                findings,
+                json!([]),
+                snapshot,
+                state,
+            );
+            assert_eq!(result["verdict"], json!("invalid"), "{case}: {result}");
+            result
+        };
+
+        let order = invalid(
+            "G3 before G2",
+            "G3",
+            "autonomous",
+            json!([]),
+            snap.clone(),
+            json!({}),
+        );
+        assert_eq!(order["items"], json!(["gate_out_of_order"]));
+
+        let cased = invalid(
+            "mis-cased force",
+            "G1",
+            "autonomous",
+            json!([ess_finding("x", "Prohibition", "DELETE")]),
+            snap.clone(),
+            json!({}),
+        );
+        assert_eq!(cased["items"], json!(["malformed_findings"]));
+        let action = invalid(
+            "unknown action",
+            "G1",
+            "autonomous",
+            json!([ess_finding("x", "prohibition", "REMOVE")]),
+            snap.clone(),
+            json!({}),
+        );
+        assert_eq!(action["items"], json!(["malformed_findings"]));
+
+        let partial = invalid(
+            "snapshot without interfaces",
+            "G1",
+            "autonomous",
+            json!([]),
+            json!({"surviving_items": ["a"], "structure": []}),
+            json!({}),
+        );
+        assert_eq!(partial["items"], json!(["snapshot_missing"]));
+        let text = invalid(
+            "snapshot is text",
+            "G1",
+            "autonomous",
+            json!([]),
+            json!("x"),
+            json!({}),
+        );
+        assert_eq!(text["items"], json!(["snapshot_missing"]));
+
+        let both = invalid(
+            "unknown mode and gate",
+            "G4",
+            "auto",
+            json!([]),
+            snap,
+            json!({}),
+        );
+        assert_eq!(
+            both["items"],
+            json!(["unknown_mode", "unknown_gate", "gate_out_of_order"])
+        );
+        assert_eq!(
+            both["state"]["log"],
+            json!([]),
+            "an invalid step is not logged"
+        );
     }
 
     #[test]
