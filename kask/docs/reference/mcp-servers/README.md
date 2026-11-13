@@ -169,7 +169,9 @@ byte-identical to `hkask_forecast::FermiQuestion`. The essentialist deletion tes
 it:[^ousterhout-deletion]
 
 - **Scenarios** embeds `SubQuestion` inside domain aggregates (`ScenarioEvent.sub_questions`,
-  `Perspective.fermi_sub_questions`). Replacing it would be a wide type migration across many
+  and the `scenario_calibrate` / `scenario_cross_validate` request sub-questions; the
+  perspective's `fermi_sub_questions` was removed with the other unread fields in the
+  2026-11-12 review). Replacing it would be a wide type migration across many
   struct definitions for a 3-line saving. **Retained** — the adapter is the cheaper seam.
   (The companies server, which held `SubQuestion` standalone and was **eliminated** in favour
   of `hkask_forecast::FermiQuestion`, was removed 2026-10-18.)
