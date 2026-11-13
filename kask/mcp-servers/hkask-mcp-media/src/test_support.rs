@@ -139,3 +139,34 @@ pub fn overlapping_keeps_edl(provenance: LayerProvenance) -> TranscriptLayer {
         ],
     })
 }
+
+/// A JPEG carrying one EXIF field: DateTimeOriginal, in the Exif sub-IFD
+/// where cameras write it. Built by hand: the image crate writes no EXIF.
+pub fn jpeg_with_capture_date(path: &std::path::Path, date: &str) {
+    assert_eq!(date.len(), 19, "EXIF dates are YYYY:MM:DD hh:mm:ss");
+    image::RgbImage::new(4, 4).save(path).expect("jpeg encodes");
+    let jpeg = std::fs::read(path).expect("jpeg reads back");
+    let mut tiff: Vec<u8> = Vec::new();
+    tiff.extend_from_slice(b"II\x2a\x00\x08\x00\x00\x00"); // little-endian, IFD0 at 8
+    tiff.extend_from_slice(&1u16.to_le_bytes()); // IFD0: one entry
+    tiff.extend_from_slice(&0x8769u16.to_le_bytes()); // ExifOffset
+    tiff.extend_from_slice(&4u16.to_le_bytes()); // LONG
+    tiff.extend_from_slice(&1u32.to_le_bytes());
+    tiff.extend_from_slice(&26u32.to_le_bytes()); // Exif IFD at 26
+    tiff.extend_from_slice(&0u32.to_le_bytes()); // no next IFD
+    tiff.extend_from_slice(&1u16.to_le_bytes()); // Exif IFD: one entry
+    tiff.extend_from_slice(&0x9003u16.to_le_bytes()); // DateTimeOriginal
+    tiff.extend_from_slice(&2u16.to_le_bytes()); // ASCII
+    tiff.extend_from_slice(&20u32.to_le_bytes());
+    tiff.extend_from_slice(&44u32.to_le_bytes()); // value at 44
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(date.as_bytes());
+    tiff.push(0);
+    let mut out = jpeg[..2].to_vec(); // SOI
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&((2 + 6 + tiff.len()) as u16).to_be_bytes());
+    out.extend_from_slice(b"Exif\0\0");
+    out.extend_from_slice(&tiff);
+    out.extend_from_slice(&jpeg[2..]);
+    std::fs::write(path, out).expect("jpeg with EXIF written");
+}

@@ -449,14 +449,28 @@ impl MediaServer {
         ];
 
         for (code, name) in tag_map {
-            if let Some(entry) = exif.get_by_code(nom_exif::IfdIndex::MAIN, *code)
-                && let Some(value_str) = entry.as_str()
-            {
-                fields.insert(
-                    name.to_string(),
-                    serde_json::Value::String(value_str.to_string()),
-                );
-            }
+            let Some(entry) = exif.get_by_code(nom_exif::IfdIndex::MAIN, *code) else {
+                continue;
+            };
+            // The reader parses the date tags into datetime values and the
+            // exposure tags into numbers; only free text arrives as text.
+            // Reading every tag as text dropped the capture date, so the
+            // timeline never dated an image.
+            let value = if let Some(text) = entry.as_str() {
+                text.to_string()
+            } else if let Some(datetime) = entry.as_datetime() {
+                match datetime {
+                    nom_exif::ExifDateTime::Aware(value) => {
+                        value.format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+                    }
+                    nom_exif::ExifDateTime::Naive(value) => {
+                        value.format("%Y-%m-%dT%H:%M:%S").to_string()
+                    }
+                }
+            } else {
+                entry.to_string()
+            };
+            fields.insert(name.to_string(), serde_json::Value::String(value));
         }
 
         // GPS info
@@ -491,6 +505,32 @@ mod tests {
                 .expect("configured model resolves");
         assert_eq!(name, "OpenRouter/openai/gpt-4o-mini");
         assert_eq!(label, "openai/gpt-4o-mini");
+    }
+
+    /// expect: A photograph's capture date is read. The EXIF reader parses
+    /// DateTimeOriginal into a datetime value, not text; reading it as text
+    /// returned nothing, so no image was ever dated.
+    #[test]
+    fn the_capture_date_is_read_from_exif() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("zz-dated.jpg");
+        crate::test_support::jpeg_with_capture_date(&path, "2019:07:04 10:00:00");
+        // The fixture itself: the reader must accept the file and find the
+        // tag, or a failure below would say nothing about extract_exif.
+        let parsed = nom_exif::read_exif(&path).expect("the fixture is a readable EXIF file");
+        let entry = parsed
+            .get_by_code(nom_exif::IfdIndex::MAIN, 0x9003)
+            .expect("the fixture carries DateTimeOriginal");
+        assert!(
+            entry.as_str().is_none() && entry.as_datetime().is_some(),
+            "the reader hands the capture date over as a datetime, not text: {entry:?}"
+        );
+        let exif = MediaServer::extract_exif(&path.to_string_lossy());
+        assert_eq!(
+            exif.get("date_taken").and_then(|value| value.as_str()),
+            Some("2019-07-04T10:00:00"),
+            "exif: {exif}"
+        );
     }
 
     #[test]

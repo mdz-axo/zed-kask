@@ -2434,6 +2434,48 @@ pub(super) mod tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::gallery_timeline`
+    /// expect: Photographs are grouped by the date they were taken.
+    /// pre: two photographs carrying EXIF capture dates in 2019 and 2023, and one image with none.
+    /// post: the year timeline is 2023, 2019, undated; the month and decade timelines name
+    /// 2023-11, 2019-07 and the 2020s, 2010s.
+    /// [P1] Constraining: the capture date used to be read as text from a reader that parses it
+    /// into a datetime, so every image in every gallery was undated.
+    #[tokio::test]
+    async fn timeline_groups_photographs_by_capture_date() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        crate::test_support::jpeg_with_capture_date(
+            &dir.path().join("zz-2019.jpg"),
+            "2019:07:04 10:00:00",
+        );
+        crate::test_support::jpeg_with_capture_date(
+            &dir.path().join("zz-2023.jpg"),
+            "2023:11:30 23:59:59",
+        );
+        organize(&server, dir.path(), 1, "read-only").await?;
+        for (period, expected) in [
+            ("year", ["undated", "2023", "2019"]),
+            ("month", ["undated", "2023-11", "2019-07"]),
+            ("decade", ["undated", "2020s", "2010s"]),
+        ] {
+            let timeline = payload(
+                &server
+                    .gallery_timeline(wire(serde_json::json!({"period": period}))?)
+                    .await?,
+            );
+            let periods: Vec<&str> = timeline["periods"]
+                .as_array()
+                .ok_or("periods")?
+                .iter()
+                .filter_map(|entry| entry["period"].as_str())
+                .collect();
+            assert_eq!(periods, expected, "{period}: {timeline}");
+        }
+        Ok(())
+    }
+
     /// expect: Naming a face group that no detected face carries tells me so;
     /// a registered reference face needs a real name.
     #[tokio::test]
