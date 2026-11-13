@@ -278,12 +278,16 @@ opened or created. The roots are the server's working directory, the kask
 data directory, and the artifacts directory (reads: the whole tree; writes:
 `corpus-mcp/` only). `db_path` is a write target for every tool that opens
 the database read-write, because SQLCipher writes a lock and journal beside
-it; `corpus_query` and `corpus_build_prompts` open it read-only. A path
-outside the roots is `invalid_argument` naming the root, whether or not the
-file exists; a contained `db_path` naming no file is `not_found` for the
-tools that never create a database (`src/helpers.rs`, `contained_db`,
+it; `corpus_query` and `corpus_build_prompts` open it read-only. A `db_path`
+or an output outside the roots is `invalid_argument` naming the root, whether
+or not the file exists; a contained `db_path` naming no file is `not_found`
+for the tools that never create a database (`src/helpers.rs`, `contained_db`,
 `existing_db`, `existing_db_read_only`; pinned over the wire by
-`src/containment_tests.rs`).
+`src/containment_tests.rs`). An input path that is only read is refused the
+same way when it exists outside the roots; when it does not exist anywhere
+the refusal is `invalid_argument` "Cannot resolve path", so that message
+still tells an absent outside path from an existing one (shared containment
+code, not specific to this server).
 
 Normal PDF conversion passes the contained canonical path to Poppler and uses
 page-based OCR only where needed; it does not read the PDF container under the
