@@ -4476,6 +4476,210 @@ form: "(= (+ a b) 3)"
         );
     }
 
+    /// A `dme-harness summary` object as the harness writes it (the fields
+    /// the inline gates read).
+    fn dme_summary(n: u64, hit: u64, wrong: u64, correct: u64, hash: &str) -> serde_json::Value {
+        json!({"n": n, "counts": {"hit_limit": hit, "wrong_complete": wrong, "correct_complete": correct},
+               "gguf_sha256": hash})
+    }
+
+    #[test]
+    fn scientific_gate_dme_1_routes_from_the_summary_file_and_checks_it_sums() {
+        let form = skill_candidate("direct-model-edit", "summary-counts-do-not-sum");
+        let route = |summary: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"summary": summary}))
+                .unwrap_or_else(|error| panic!("DME-1 failed to evaluate: {error}"))
+        };
+        let anchor = route(dme_summary(96, 85, 4, 7, "a"));
+        assert_eq!(anchor[0], json!("blocker-removal-route"));
+        assert_eq!(anchor[1]["n"], json!(96));
+        let gemma = route(dme_summary(100, 8, 60, 32, "a"));
+        assert_eq!(gemma[0], json!("capability-gap-outside-this-skill"));
+        assert_eq!(gemma[1]["wrong_complete_share"], json!(0.6));
+        assert_eq!(
+            route(dme_summary(100, 30, 30, 40, "a"))[0],
+            json!("collect-more-evidence")
+        );
+        // Exactly half is the route threshold.
+        assert_eq!(
+            route(dme_summary(100, 50, 10, 40, "a"))[0],
+            json!("blocker-removal-route")
+        );
+        assert_eq!(
+            route(dme_summary(100, 49, 50, 1, "a"))[0],
+            json!("capability-gap-outside-this-skill")
+        );
+        assert_eq!(
+            route(dme_summary(0, 0, 0, 0, "a"))[0],
+            json!("empty-baseline")
+        );
+        let short = route(dme_summary(96, 85, 4, 6, "a"));
+        assert_eq!(short[0], json!("summary-counts-do-not-sum"));
+        assert_eq!(short[1]["sum"], json!(95));
+        assert_eq!(route(json!({"n": 96}))[0], json!("summary-malformed"));
+        assert_eq!(
+            route(
+                json!({"n": "96", "counts": {"hit_limit": 85, "wrong_complete": 4, "correct_complete": 7}})
+            )[0],
+            json!("summary-malformed")
+        );
+    }
+
+    #[test]
+    fn scientific_gate_dme_2_reads_the_surface_from_the_convert_manifest() {
+        let form = skill_candidate("direct-model-edit", "manifest-missing-projection");
+        let check = |manifest: serde_json::Value| {
+            eval_sandboxed(&form, &json!({"manifest": manifest}))
+                .unwrap_or_else(|error| panic!("DME-2 failed to evaluate: {error}"))
+        };
+        let anchor = check(
+            json!({"projected_weights_touched": 131072, "total_weights": 752393024,
+                                  "projected_edited_share": 0.00017420682518183475}),
+        );
+        assert_eq!(anchor[0], json!("within-budget"));
+        assert_eq!(anchor[1]["budget"], json!(752393.024));
+        assert_eq!(anchor[1]["edited_weights"], json!(131072));
+        assert_eq!(
+            check(json!({"projected_weights_touched": 752393, "total_weights": 752393024}))[0],
+            json!("within-budget")
+        );
+        // Exactly the cap is within budget.
+        assert_eq!(
+            check(json!({"projected_weights_touched": 1000, "total_weights": 1000000}))[0],
+            json!("within-budget")
+        );
+        assert_eq!(
+            check(json!({"projected_weights_touched": 1001, "total_weights": 1000000}))[0],
+            json!("over-budget")
+        );
+        assert_eq!(
+            check(json!({"projected_weights_touched": 752394, "total_weights": 752393024}))[0],
+            json!("over-budget")
+        );
+        assert_eq!(
+            check(json!({"projected_weights_touched": 800000, "total_weights": 752393024}))[0],
+            json!("over-budget")
+        );
+        let lying = check(
+            json!({"projected_weights_touched": 131072, "total_weights": 752393024,
+                                 "projected_edited_share": 0.5}),
+        );
+        assert_eq!(lying[0], json!("manifest-share-disagrees-with-counts"));
+        assert_eq!(lying[1]["stated"], json!(0.5));
+        assert_eq!(check(json!({}))[0], json!("manifest-missing-projection"));
+        assert_eq!(
+            check(json!({"projected_weights_touched": 1, "total_weights": 0}))[0],
+            json!("manifest-missing-projection")
+        );
+    }
+
+    #[test]
+    fn scientific_gate_dme_3b_computes_the_sibling_delta_from_two_summaries() {
+        let form = skill_candidate("direct-model-edit", "sibling-runs-differ-in-size");
+        let verdict = |before: serde_json::Value, after: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"sibling_before": before, "sibling_after": after}),
+            )
+            .unwrap_or_else(|error| panic!("DME-3b failed to evaluate: {error}"))
+        };
+        // The anchor's Gemma control: 6.8 -> 7.0 points.
+        let flat = verdict(
+            dme_summary(500, 10, 456, 34, "base"),
+            dme_summary(500, 10, 455, 35, "edited"),
+        );
+        assert_eq!(flat[0], json!("sibling-flat"));
+        assert!((flat[1]["control_delta"].as_f64().expect("delta") - 0.2).abs() < 1e-9);
+        assert_eq!(flat[1]["flat_band"], json!(1.0));
+        // Exactly one point is flat; just over is not.
+        assert_eq!(
+            verdict(
+                dme_summary(500, 10, 456, 34, "base"),
+                dme_summary(500, 10, 451, 39, "edited")
+            )[0],
+            json!("sibling-flat")
+        );
+        assert_eq!(
+            verdict(
+                dme_summary(500, 10, 456, 34, "base"),
+                dme_summary(500, 10, 450, 40, "edited")
+            )[0],
+            json!("sibling-moved-general-booster-suspect")
+        );
+        // A loss beyond the band is a move too.
+        assert_eq!(
+            verdict(
+                dme_summary(500, 10, 456, 34, "base"),
+                dme_summary(500, 10, 466, 24, "edited")
+            )[0],
+            json!("sibling-moved-general-booster-suspect")
+        );
+        assert_eq!(
+            verdict(
+                dme_summary(500, 10, 456, 34, "base"),
+                dme_summary(500, 10, 455, 35, "base")
+            )[0],
+            json!("sibling-runs-on-the-same-model-file")
+        );
+        assert_eq!(
+            verdict(
+                dme_summary(500, 10, 456, 34, "base"),
+                dme_summary(400, 10, 355, 35, "edited")
+            )[0],
+            json!("sibling-runs-differ-in-size")
+        );
+        assert_eq!(
+            verdict(json!({"n": 5}), json!({}))[0],
+            json!("sibling-summary-malformed")
+        );
+    }
+
+    #[test]
+    fn scientific_gate_dme_4_converges_on_the_hit_limit_counts_of_the_pass_summaries() {
+        let form = skill_candidate("direct-model-edit", "define max-passes");
+        let pass = |hit: u64| dme_summary(96, hit, 0, 96 - hit, "e");
+        let check = |passes: Vec<serde_json::Value>| {
+            eval_sandboxed(&form, &json!({"passes": passes}))
+                .unwrap_or_else(|error| panic!("DME-4 failed to evaluate: {error}"))
+        };
+        let converged = check(vec![pass(61), pass(12), pass(12), pass(12)]);
+        assert_eq!(converged[0], json!("converged"));
+        assert_eq!(converged[1], json!([61, 12, 12, 12]));
+        assert_eq!(
+            check(vec![pass(61), pass(12), pass(12), pass(4)])[0],
+            json!("continue")
+        );
+        assert_eq!(check(vec![pass(12), pass(12)])[0], json!("continue"));
+        assert_eq!(
+            check(vec![pass(12), pass(12), pass(12)])[0],
+            json!("converged")
+        );
+        assert_eq!(
+            check(vec![pass(61), pass(50), pass(40), pass(30), pass(20)])[0],
+            json!("stop-bound-unstable")
+        );
+        // A fifth pass that converges is converged, not stopped.
+        assert_eq!(
+            check(vec![pass(61), pass(50), pass(20), pass(20), pass(20)])[0],
+            json!("converged")
+        );
+        assert_eq!(
+            check(vec![
+                pass(61),
+                pass(50),
+                pass(40),
+                pass(30),
+                pass(20),
+                pass(10)
+            ])[0],
+            json!("pass-bound-exceeded")
+        );
+        assert_eq!(
+            check(vec![json!({"n": 1})])[0],
+            json!("pass-summary-malformed")
+        );
+    }
+
     #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
