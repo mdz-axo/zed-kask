@@ -357,21 +357,37 @@ pub(crate) struct ProviderPool {
     pub(crate) breakers: std::sync::Mutex<crate::research::breaker::ProviderBreakerRegistry>,
 }
 
-/// Try each provider sequentially, returning first Ok or last Err.
-macro_rules! try_fallback {
-    ($providers:expr, $call:ident, $($arg:expr),* $(,)?) => {{
-        let mut last_err = WebError::NoProvider;
-        for p in $providers {
-            match p.$call($($arg,)*).await {
-                Ok(v) => return Ok(v),
-                Err(e) => {
-                    tracing::warn!(provider = p.kind(), error = %e);
-                    last_err = e;
+/// The error of an extract chain in which every provider failed.
+///
+/// One failure is returned as it is. Several are reported together, each
+/// under its provider's name, with the kind of the FIRST provider that
+/// actually attempted the request. Returning only the last error named the
+/// wrong cause: with Firecrawl configured and refusing a request, the
+/// caller was told "RawFetch cannot produce structured JSON; a structured
+/// extraction provider is required" (measured 2026-11-12) — the fallback's
+/// reason for not trying, not the reason the extraction failed.
+fn chain_error(mut failures: Vec<(String, WebError)>) -> WebError {
+    match failures.len() {
+        0 => WebError::NoProvider,
+        1 => failures.remove(0).1,
+        _ => {
+            let detail = failures
+                .iter()
+                .map(|(kind, error)| format!("{kind}: {error}"))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let message = format!("every extract provider failed — {detail}");
+            match failures.remove(0).1 {
+                WebError::RateLimited(_) => WebError::RateLimited(message),
+                WebError::ProviderUnavailable(_) => WebError::ProviderUnavailable(message),
+                WebError::BadArgs(_) => WebError::BadArgs(message),
+                WebError::NoProviderConfigured(_) => WebError::NoProviderConfigured(message),
+                WebError::ProviderError(_) | WebError::NoProvider => {
+                    WebError::ProviderError(message)
                 }
             }
         }
-        Err(last_err)
-    }};
+    }
 }
 
 /// Emit one per-provider outcome span and record the outcome into the
@@ -871,8 +887,17 @@ impl ProviderPool {
         // layer (validate_tool_url_with_dns) is the outer gate; this is the
         // inner gate before any provider fetches the URL.
         validate_provider_url(url).await?;
-        let ordered = extract_chain_order(&self.extract_providers, url);
-        try_fallback!(&ordered, extract, url, opts)
+        let mut failures: Vec<(String, WebError)> = Vec::new();
+        for provider in extract_chain_order(&self.extract_providers, url) {
+            match provider.extract(url, opts).await {
+                Ok(extracted) => return Ok(extracted),
+                Err(error) => {
+                    tracing::warn!(provider = provider.kind(), error = %error);
+                    failures.push((provider.kind().to_string(), error));
+                }
+            }
+        }
+        Err(chain_error(failures))
     }
 
     /// Score each configured search provider against a query + intent hint,
@@ -1497,6 +1522,120 @@ mod tests {
         assert!(!url_looks_like_pdf(
             "https://example.com/pdf?file=report.pdf"
         ));
+    }
+
+    /// expect: when every extract provider fails, the caller is told what
+    /// each one said, under the kind of the first that tried — not only
+    /// the last fallback's reason for declining.
+    #[test]
+    fn a_failed_extract_chain_reports_every_provider_under_the_first_kind() {
+        let error = chain_error(vec![
+            (
+                "firecrawl".to_string(),
+                WebError::ProviderError("Firecrawl extract error 400 Bad Request".to_string()),
+            ),
+            (
+                "rawfetch".to_string(),
+                WebError::ProviderError("RawFetch cannot produce structured JSON".to_string()),
+            ),
+        ]);
+        let message = error.to_string();
+        assert!(message.contains("firecrawl: "), "{message}");
+        assert!(message.contains("400 Bad Request"), "{message}");
+        assert!(message.contains("rawfetch: "), "{message}");
+
+        // The first provider's kind decides the classification.
+        let limited = chain_error(vec![
+            (
+                "firecrawl".to_string(),
+                WebError::RateLimited("429".to_string()),
+            ),
+            (
+                "rawfetch".to_string(),
+                WebError::ProviderError("x".to_string()),
+            ),
+        ]);
+        assert!(matches!(limited, WebError::RateLimited(_)), "{limited}");
+
+        // One failure is returned unchanged; none is the no-provider case.
+        let single = chain_error(vec![(
+            "rawfetch".to_string(),
+            WebError::ProviderUnavailable("RawFetch request failed".to_string()),
+        )]);
+        assert_eq!(
+            single.to_string(),
+            "Provider unavailable: RawFetch request failed"
+        );
+        assert!(matches!(chain_error(Vec::new()), WebError::NoProvider));
+    }
+
+    /// Extract stub that fails with a fixed provider message.
+    struct FailingExtractProvider {
+        kind: &'static str,
+        message: &'static str,
+    }
+
+    #[async_trait]
+    impl WebExtractProvider for FailingExtractProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        async fn extract(
+            &self,
+            _url: &str,
+            _opts: &ExtractOptions,
+        ) -> Result<ExtractedContent, WebError> {
+            Err(WebError::ProviderError(self.message.to_string()))
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    /// expect: the pool's extract chain hands every provider's failure to
+    /// the caller, in chain order. Before, only the last provider's error
+    /// survived: a Firecrawl 400 was reported as RawFetch declining JSON.
+    /// The URL is a literal public address, so validation resolves nothing
+    /// and the stubs fetch nothing.
+    #[tokio::test]
+    async fn extract_with_fallback_reports_each_provider_that_failed() {
+        let pool = ProviderPool::new(
+            Vec::new(),
+            vec![
+                Box::new(FailingExtractProvider {
+                    kind: "firecrawl",
+                    message: "Firecrawl extract error 400 Bad Request",
+                }),
+                Box::new(FailingExtractProvider {
+                    kind: "rawfetch",
+                    message: "RawFetch cannot produce structured JSON",
+                }),
+            ],
+            None,
+            None,
+            None,
+        );
+        let opts = ExtractOptions {
+            format: "json".to_string(),
+            json_prompt: None,
+            json_schema: None,
+            main_content_only: true,
+            wait_for_ms: 0,
+        };
+        let error = pool
+            .extract_with_fallback("https://93.184.216.34/page", &opts)
+            .await
+            .expect_err("both providers fail");
+        let message = error.to_string();
+        let firecrawl = message
+            .find("firecrawl: ")
+            .unwrap_or_else(|| panic!("names firecrawl: {message}"));
+        let rawfetch = message
+            .find("rawfetch: ")
+            .unwrap_or_else(|| panic!("names rawfetch: {message}"));
+        assert!(firecrawl < rawfetch, "chain order: {message}");
+        assert!(message.contains("400 Bad Request"), "{message}");
+        assert!(matches!(error, WebError::ProviderError(_)), "{error}");
     }
 
     /// expect: "A PDF URL reorders the extract chain local-first — the

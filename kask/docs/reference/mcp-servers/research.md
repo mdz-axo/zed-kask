@@ -282,6 +282,13 @@ A Firecrawl response that lacks the requested field (`data.json` for
 `data.json` was returned as the content `null` and a missing
 `data.markdown` as empty text, both as successes.
 
+When every provider in the extract chain fails, the error lists what each
+one said, in chain order (`every extract provider failed — firecrawl: …;
+rawfetch: …`), under the error kind of the first provider that tried.
+Before, only the last provider's error was returned, so a Firecrawl refusal
+reached the caller as RawFetch declining JSON. A single failure is returned
+unchanged.
+
 ## Citation — APA 7 (2026-11-12)
 
 `cite_sources` formats sources as an APA 7 reference list (operator ruling
