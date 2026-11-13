@@ -1,3 +1,13 @@
+---
+title: "educt voice-identity Phase 4 measurement — blocked: the frozen eval set does not exist yet (2026-11-04)"
+audience: [developers, operators]
+last_updated: 2026-11-04
+version: "1.0.0"
+status: "Active"
+domain: "Media / educt"
+mds_categories: [lifecycle, trust]
+---
+
 # educt voice-identity Phase 4 measurement — blocked: the frozen eval set does not exist yet (2026-11-04)
 
 Experiment `exp_1d2d6140796a481eba7deb63fbfaf1f2` (layer scientific_hypothesis,

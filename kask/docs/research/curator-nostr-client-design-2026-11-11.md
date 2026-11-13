@@ -1,3 +1,13 @@
+---
+title: "Curator Nostr client — design proposal (2026-11-11)"
+audience: [architects, developers, operators]
+last_updated: 2026-11-13
+version: "1.0.0"
+status: "Active"
+domain: "Curator / Nostr"
+mds_categories: [domain, composition, trust]
+---
+
 # Curator Nostr client — design proposal (2026-11-11)
 
 **Status: revised 2026-11-11 to state the design as the operator ruled it

@@ -1,3 +1,13 @@
+---
+title: "Continuation prompt — media panel transcript bundle: S4–S7"
+audience: [agents, developers]
+last_updated: 2026-11-05
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [lifecycle, domain]
+---
+
 # Continuation prompt — media panel transcript bundle: S4–S7
 
 **Handoff target:** any agent with repo access and no conversation history.

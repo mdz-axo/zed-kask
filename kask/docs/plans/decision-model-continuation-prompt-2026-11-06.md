@@ -1,3 +1,13 @@
+---
+title: "Decision-model adoption — continuation prompt (2026-11-06)"
+audience: [agents, operators]
+last_updated: 2026-11-11
+version: "1.0.0"
+status: "Active"
+domain: "Decision models / skills registry"
+mds_categories: [lifecycle, composition]
+---
+
 # Decision-model adoption — continuation prompt (2026-11-06)
 
 For the next session picking up the decision-model / provenance-routing

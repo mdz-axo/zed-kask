@@ -1,3 +1,13 @@
+---
+title: "media panel — composition & interaction review (S6/S7 axis): findings, receipts, and the S6 design pre-review (2026-11-06)"
+audience: [developers, architects]
+last_updated: 2026-11-05
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [composition, domain]
+---
+
 # media panel — composition & interaction review (S6/S7 axis): findings, receipts, and the S6 design pre-review (2026-11-06)
 
 Convergent code review of the composition and interaction patterns across the

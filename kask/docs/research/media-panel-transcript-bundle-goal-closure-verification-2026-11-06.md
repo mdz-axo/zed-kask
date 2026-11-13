@@ -1,3 +1,13 @@
+---
+title: "media panel — transcript bundle: goal-closure verification working paper (2026-11-06)"
+audience: [developers, operators]
+last_updated: 2026-11-05
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [lifecycle, trust]
+---
+
 # media panel — transcript bundle: goal-closure verification working paper (2026-11-06)
 
 Grounding-verify run over the worker's closure claims for goal

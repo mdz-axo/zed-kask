@@ -1,3 +1,13 @@
+---
+title: "media panel transcript bundle — composition & interaction review continuation prompt (S6/S7 axis)"
+audience: [agents, developers]
+last_updated: 2026-11-05
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [lifecycle, composition]
+---
+
 # media panel transcript bundle — composition & interaction review continuation prompt (S6/S7 axis)
 
 **Handoff target:** any agent with repo access and no conversation history.

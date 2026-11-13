@@ -1,3 +1,13 @@
+---
+title: "Curator Nostr relay — design proposal (2026-11-11)"
+audience: [architects, developers, operators]
+last_updated: 2026-11-13
+version: "1.0.0"
+status: "Active"
+domain: "Curator / Nostr"
+mds_categories: [domain, composition, trust]
+---
+
 # Curator Nostr relay — design proposal (2026-11-11)
 
 **Status: v1 built 2026-11-12 as `kask/mcp-servers/hkask-mcp-nostr-relay`

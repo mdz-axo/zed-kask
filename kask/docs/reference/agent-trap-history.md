@@ -1,3 +1,13 @@
+---
+title: "Agent trap history — the retired `.rules` corpus (archived 2026-11-06)"
+audience: [agents, operators]
+last_updated: 2026-11-06
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [curation, trust]
+---
+
 # Agent trap history — the retired `.rules` corpus (archived 2026-11-06)
 
 This is the accumulated worktree-root trap corpus, retired the same day by

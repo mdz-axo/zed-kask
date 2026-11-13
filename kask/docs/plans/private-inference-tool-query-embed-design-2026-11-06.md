@@ -1,3 +1,13 @@
+---
+title: "Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)"
+audience: [architects, developers, operators]
+last_updated: 2026-11-11
+version: "1.0.0"
+status: "Active"
+domain: "Private inference / memory privacy boundary"
+mds_categories: [domain, trust, lifecycle]
+---
+
 # Private-inference — the curator tool-side query embed, provenance-routed (design, 2026-11-06)
 
 > **Context note, 2026-11-11.** The provenance-routed embed and rerank legs designed here are in force. Where this text says "the private leg" it now means the local Ollama models configured under `kask.private_inference`; the kask-launched llama.cpp server was removed by operator ruling. The live record is `DIVERGENCE.md` row D100.

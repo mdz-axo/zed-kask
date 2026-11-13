@@ -1,3 +1,13 @@
+---
+title: "media panel — bug 1 (transcript-seek playback stop) continuation prompt: the live walk"
+audience: [agents, developers]
+last_updated: 2026-11-07
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [lifecycle, domain]
+---
+
 # media panel — bug 1 (transcript-seek playback stop) continuation prompt: the live walk
 
 **Handoff target:** any agent with repo access and no conversation history.

@@ -1,3 +1,13 @@
+---
+title: "Private-inference review findings — the privacy panel, the M5 `_meta` write, the P2 surface, the private store's lifecycle"
+audience: [architects, developers, operators]
+last_updated: 2026-11-13
+version: "1.0.0"
+status: "Active"
+domain: "Private inference / memory privacy boundary"
+mds_categories: [domain, trust]
+---
+
 # Private-inference review findings — the privacy panel, the M5 `_meta` write, the P2 surface, the private store's lifecycle
 
 > **Context note, 2026-11-11.** A dated review record. Its findings on private-thread routing, the tool perimeter and private memory (the F-numbers the code cites) still describe the tree. Its findings on the kask-launched llama.cpp server, the supervisor and the settings page's endpoint rows describe code removed by operator ruling on this date. The live record is `DIVERGENCE.md` rows D9 and D100.

@@ -1,3 +1,13 @@
+---
+title: "media panel — Study: synced-transcript interaction patterns, emerging standards, and the educt bundle build plan"
+audience: [developers, architects]
+last_updated: 2026-11-05
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [domain, composition]
+---
+
 # media panel — Study: synced-transcript interaction patterns, emerging standards, and the educt bundle build plan
 
 title: Media transcript-bundle interaction study

@@ -1,3 +1,13 @@
+---
+title: "media panel — transcript-bundle implementation plan (from the 2026-11-04 interaction study)"
+audience: [developers, architects, operators]
+last_updated: 2026-11-06
+version: "1.0.0"
+status: "Active"
+domain: "Media panel / UI"
+mds_categories: [domain, composition, lifecycle]
+---
+
 # media panel — transcript-bundle implementation plan (from the 2026-11-04 interaction study)
 
 title: Media panel transcript-bundle implementation plan
