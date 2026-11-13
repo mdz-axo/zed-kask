@@ -19,7 +19,7 @@ to prevent cross-domain identifier confusion.[^newtype]
 ## Module inventory
 
 The crate root is authoritative at
-`kask/crates/hkask-types/src/hkask_types.rs:6-51`.
+`kask/crates/hkask-types/src/hkask_types.rs:6-52`.
 
 ```mermaid
 classDiagram
@@ -87,13 +87,13 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-004
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/hkask_types.rs:6-51
+verified_against: kask/crates/hkask-types/src/hkask_types.rs:6-52
 status: VERIFIED
 -->
 
 `error`, `hmem_ontology`, and `kanban_status` are crate-private modules whose common
 items are re-exported; `sql_impls` is feature-gated
-(`kask/crates/hkask-types/src/hkask_types.rs:12,15,20,48-49,55-74`).
+(`kask/crates/hkask-types/src/hkask_types.rs:12,15,20,49-50,56-75`).
 
 ## Foundation modules
 
@@ -132,7 +132,7 @@ items are re-exported; `sql_impls` is feature-gated
 
 The `ports` module re-exports the current port and companion types at
 `kask/crates/hkask-types/src/ports.rs:7-23`; the crate root re-exports the module at
-`kask/crates/hkask-types/src/hkask_types.rs:76`.
+`kask/crates/hkask-types/src/hkask_types.rs:77`.
 
 ```mermaid
 classDiagram
@@ -347,7 +347,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-TYPES-003
 verified_date: 2026-10-23
-verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:75,88-131; kask/crates/hkask-types/src/hkask_types.rs:76
+verified_against: kask/crates/hkask-types/src/ports.rs:7-23; kask/crates/hkask-types/src/ports/inference_port.rs:17-40,115-183; kask/crates/hkask-types/src/ports/memory_port.rs:75,88-131; kask/crates/hkask-types/src/hkask_types.rs:77
 status: VERIFIED
 -->
 
@@ -362,7 +362,7 @@ status: VERIFIED
    `kask/crates/hkask-types/src/ports/memory_port.rs:75`).
 3. Re-export through `kask/crates/hkask-types/src/ports.rs:7-23`; the crate root
    already re-exports `ports::*` at
-   `kask/crates/hkask-types/src/hkask_types.rs:76`.
+   `kask/crates/hkask-types/src/hkask_types.rs:77`.
 4. Implement the port in the crate that owns the concrete backend and wire that
    adapter in the composition root.
 5. Test object safety, delegation, and the unavailable path. Degradation must be

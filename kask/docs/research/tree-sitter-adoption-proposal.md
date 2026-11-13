@@ -46,7 +46,7 @@ Measured (2026-10-11):
 |---|---|
 | Upstream Zed | 19 crates declare deps; **131 `tree_sitter::` refs** (`language` 66/6 files, `migrator` 30/27, `language_core` 12, `settings_json` 11, rest 1–3) |
 | Representative call sites | `crates/language/src/syntax_map.rs` (35 refs — the incremental-parsing wrapper), `buffer.rs`, `language_core/src/grammar.rs`, `language.rs`, `language_registry.rs` |
-| `kask/` subtree | **0 code refs** — `kask/deny.toml` license URLs + one prose mention (`DIVERGENCE.md:201`) |
+| `kask/` subtree | **0 code refs** — `kask/deny.toml` license URLs + one prose mention (`DIVERGENCE.md:202`) |
 | `crates/agent` | **0 API refs**; 2 comments in `read_file_tool.rs:510,739` explicitly *avoiding* tree-sitter on pseudo-code |
 | `.agents/skills` (60 skills) | **0** structural mentions |
 | Instruments present | all textual: ~70 bash/jq check scripts, `rg`, jscpd |

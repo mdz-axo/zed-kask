@@ -301,7 +301,7 @@ erDiagram
     PROVISION_LAUNCH {
         string fn "provision_db_passphrase (identity.rs:132)"
         string chain "env override → keychain entry → default 'allostery'"
-        string site "called at MCP launch (mcp_servers.rs:542@build_mcp_server_env_with_sweep) — no mirror step"
+        string site "called at MCP launch (mcp_servers.rs:549@build_mcp_server_env_with_sweep) — no mirror step"
     }
     NUDGE {
         string fn "nudge_mcp_servers(cx)"
@@ -328,7 +328,7 @@ when both tiers are empty — a missing credential is an authorization failure,
 not a transient unavailability. `provision_db_passphrase`
 (`kask/crates/kask_bridge/src/identity.rs:132`) is idempotent (env override →
 existing keychain entry → default `"allostery"`) and runs at governed MCP
-server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:542@build_mcp_server_env_with_sweep`); a failed
+server launch (`kask/crates/kask_bridge/src/mcp_servers.rs:549@build_mcp_server_env_with_sweep`); a failed
 provision logs a `tracing::warn!` naming the env var and the server fails
 with `permission_denied` at tool time.
 

@@ -17,8 +17,8 @@ and adapters pattern: consumers depend on stable contracts, while the compositio
 root supplies implementations.[^cockburn]
 
 The crate forbids unsafe code and declares its complete module surface at
-`kask/crates/hkask-types/src/hkask_types.rs:1-51`. Common cross-crate items and all
-ports are re-exported at `kask/crates/hkask-types/src/hkask_types.rs:33-74`.
+`kask/crates/hkask-types/src/hkask_types.rs:1-52`. Common cross-crate items and all
+ports are re-exported at `kask/crates/hkask-types/src/hkask_types.rs:34-75`.
 
 ## Why boundaries are split by failure domain
 

@@ -62,7 +62,7 @@ The ontology is re-anchored to the **17 surviving kask crates** (16 `hkask-*` + 
 
 ### 1.3 Service and runtime subsystems
 
-**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-407`). There is no daemon or `KaskCore` singleton.
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 9 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs`; registry at `kask/crates/kask_bridge/src/mcp_servers.rs:49-414`). There is no daemon or `KaskCore` singleton.
 
 The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
 
@@ -510,7 +510,7 @@ graph TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-MDS-001
 verified_date: 2026-10-19
-verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/kask_bridge/src/mcp_servers.rs:49-407; kask/crates/hkask-inference/src/hkask_inference.rs:157-395; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:203-278
+verified_against: crates/zed/src/main.rs:791-795,912-914,1317-1323; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/kask_bridge/src/mcp_servers.rs:49-414; kask/crates/hkask-inference/src/hkask_inference.rs:157-395; kask/crates/hkask-keystore/Cargo.toml:12-16; crates/media_panel/src/media_panel.rs:203-278
 status: VERIFIED
 -->
 

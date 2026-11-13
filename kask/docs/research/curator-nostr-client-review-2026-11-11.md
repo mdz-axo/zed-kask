@@ -109,8 +109,8 @@ IS (tree):
   (`DIVERGENCE.md` L35), and the un-prompted callers are named: "(bridge skill
   execution, panels, IPC)" (`DIVERGENCE.md` L114). The panel path is
   `ToolPort::invoke(&*tool_port, &server, &tool, args, webid)`
-  (`crates/zed/src/main.rs:4035`) under an identity that is "not a credential"
-  (`main.rs:4018`).
+  (`crates/zed/src/main.rs:4036`) under an identity that is "not a credential"
+  (`main.rs:4019`).
 - On defaults a prompt does appear each call (`assets/settings/default.json:1243`,
   `"default": "confirm"`). One click on the "Always" option, or a global
   default of `allow`, removes the human from every later publish.
@@ -156,7 +156,7 @@ IS (tree):
   keystore uses (1 hit, a kata-kanban test).
 - A child that reads the keychain itself bypasses the per-server credential
   allowlist, the control that "limits the blast radius of a compromised MCP
-  server" (`kask/crates/kask_bridge/src/mcp_servers.rs:441`).
+  server" (`kask/crates/kask_bridge/src/mcp_servers.rs:448`).
 - A stronger pattern is already in the tree: "the zed side holds the
   OpenRouter key via the credential channel, the child never sees it"
   (`DIVERGENCE.md` L40).
@@ -321,7 +321,7 @@ mandatory and the note should say who launches it (it needs a terminal).
   signal to consolidate the pattern, not copy it" (`PRINCIPLES.md:89`).
 - The tree's own rule against landing a credential before its reader: "a
   dormant third-party secret with no read path is worse than a logged one-time
-  delete" (`mcp_servers.rs:1274-1275`).
+  delete" (`mcp_servers.rs:1302-1303`).
 
 OUGHT: give the descriptor a credential kind (API key, identity key, signer
 URI) that drives label, masking, validation and copy; make the presence check
@@ -536,7 +536,7 @@ flowchart TD
 | The nsec never reaches `settings.json`, logs, tool output or model context | Prohibition (P1) | Note §2; page contract `kask_page.rs:548` |
 | A human veto on publish that a model cannot satisfy | Prohibition (P2, charter) | "Default is deny. Access requires explicit, scoped, version-aware, and revocable consent." (`PRINCIPLES.md:49`); "never without a seat for the human" (`co-research-environment.md:60`) |
 | No Python | Prohibition | `.rules` |
-| Credential scoping per server | Guardrail (P4) | `mcp_servers.rs:441-449` |
+| Credential scoping per server | Guardrail (P4) | `mcp_servers.rs:448-456` |
 | Surfaced degradation | Guideline (V3) | `magnifica-humanitas.md:48` |
 | A new module earns its existence | Guideline (P5) | "Remove before adding. Every module must earn existence" (`PRINCIPLES.md:85`) |
 | Seams from usage | Guideline (P7) | "Types and seams should emerge from real usage" (`PRINCIPLES.md:143`) |
@@ -622,7 +622,7 @@ What the tree says about building one:
   baked-in panel state, and render tool lists from the server's generated
   names (`DIVERGENCE.md` L34). The split view is media-only today, so a second
   user is the consolidation signal (`PRINCIPLES.md:89`).
-- A panel button reaches a tool with no prompt (`main.rs:4035`; 0 uses of the
+- A panel button reaches a tool with no prompt (`main.rs:4036`; 0 uses of the
   permission or decision prompts in the panel crates). That is right when the
   click *is* the human act — and it is the one surface in the tree the model
   cannot press.

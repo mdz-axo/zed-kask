@@ -208,14 +208,14 @@ The current system has two credential paths with different owners.[^fowler-di]
 1. **Editor/provider credentials.** Zed's provider credential stores and Kask
    data-service credential URLs are read in the editor process. The composition
    root builds a filtered environment per `BuiltinMcpServer.credentials` and
-   `config_env` (`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`).
+   `config_env` (`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-556`).
 2. **Child inference configuration.** `hkask-inference` reads provider base URLs,
    API keys, and model settings from its process environment only; there is no
    child-side keychain fallback (`kask/crates/hkask-inference/src/config.rs:122-137,160-169,235-246`).
    This is why media generation stays child-local: the media child receives
    `OPENROUTER_API_KEY` and `DEEPINFRA_API_KEY`, while the editor process does
    not mirror those values into a Kask keyring
-   (`kask/crates/kask_bridge/src/mcp_servers.rs:528-629`).
+   (`kask/crates/kask_bridge/src/mcp_servers.rs:535-636`).
 3. **Sovereignty key storage.** `hkask-keystore` uses `oo7` directly for its
    Secret Service entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`;
    `kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`). It does not use
@@ -252,7 +252,7 @@ The connection surfaces use established patterns (ports-and-adapters, decorator,
 | Tool dispatch | `McpRuntime` implements `ToolPort` | Editor-owned runtime → MCP children over stdio (`kask/crates/hkask-mcp/src/runtime.rs`) |
 | Memory ingestion | Re-settable agent hook → `BridgeMemoryPort` | Editor thread → shared curator storage; chunk embeddings include `passage_text` (`kask/crates/kask_bridge/src/memory/ingest.rs:397,587`) |
 | Sovereignty keys | `hkask-keystore` → `oo7::Keyring` | Direct Secret Service access (`kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`) |
-| Data-service/provider credentials | Zed credential URLs → filtered child env | Per-server `credentials`/`config_env` allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`) |
+| Data-service/provider credentials | Zed credential URLs → filtered child env | Per-server `credentials`/`config_env` allowlists (`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-556`) |
 
 `kask_bridge` is the only crate that depends on both Zed types and hKask port
 types. MCP server crates remain Zed-free and communicate with the editor through

@@ -192,7 +192,7 @@ Machine checks: §0, all green. Doc claims adjudicated:
 | Captured at BOTH production constructor sites, D68 discipline (host-derived, never from input) | **IS** | `thread.rs:5594` (`run_tool`), `thread.rs:2052` (`replay_tool_call`) — both read `self.kask.is_private_inference()` inside the thread update |
 | Un-tied test streams default `PublicProvider` | **IS** | pinned `thread.rs:11178-11249`; pin green |
 | `KaskToolSource::invoke` carries it as an explicit host-set parameter | **IS** | trait `context_server_registry.rs:77-81`; read at `:719`, passed at `:734`; dispatch pin (incl. the input-spoof falsifier — the observable is the source-RECORDED provenance, not a struct field) green |
-| Routed by `main.rs`'s `ZedKaskToolSource` to the provenance-stamping entry | **IS** (tree), **unpinned** | `main.rs:3666-3697`, the routing line `:3692-3693` — no test covers it (finding F7) |
+| Routed by `main.rs`'s `ZedKaskToolSource` to the provenance-stamping entry | **IS** (tree), **unpinned** | `main.rs:3667-3698`, the routing line `:3692-3693` — no test covers it (finding F7) |
 | `_meta.inference_provenance` under the one-home key `META_INFERENCE_PROVENANCE`; child re-exports it | **IS** | parent `runtime.rs:1935-1982` (pin green); child re-export `call_provenance.rs:25`, parser `:54-68` |
 | The plain `ToolPort::invoke` path stays un-stamped | **IS** | `runtime.rs:1501-1515` → `invoke_governed(..., None)`; the wire pin asserts actual `_meta` key ABSENCE (`:1976-1981`) — not a vacuous observable |
 | FR-4 falsifier (b) tool legs compose end-to-end at the wire | **IS** | parent wire pin + child wire pin parse the same serialized form; curator `call_admits` pins both sides green (`hkask-mcp-curator` tool_behavior, 4 passed) |
@@ -201,10 +201,10 @@ Machine checks: §0, all green. Doc claims adjudicated:
 
 **F7 — the source→runtime link is unpinned (the one chain link).** The
 thread→stream→source→runtime→wire chain is pinned at every link except
-`main.rs:3692` (`ZedKaskToolSource::invoke` → `invoke_with_call_provenance`).
+`main.rs:3693` (`ZedKaskToolSource::invoke` → `invoke_with_call_provenance`).
 The trait contract is pinned via the fake source; the wire entry is pinned in
 hkask-mcp; the production composition-root line is only tree-verified. The
-`include_str!` source-order pin precedent exists at `main.rs:5325`
+`include_str!` source-order pin precedent exists at `main.rs:5326`
 (`kask_tool_source_is_installed_before_initial_refresh`) — the same pattern
 pins the routing line. Severity: low; the gap is a pinning gap, not a
 behavior gap.

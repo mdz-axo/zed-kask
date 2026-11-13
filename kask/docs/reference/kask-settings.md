@@ -312,7 +312,7 @@ change them.
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
 | `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
-| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server starts from, comma-joined. `nostr_account` tries one connection to each of the first 8 and reports which answer |
+| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server reads from, comma-joined: the first 8. `nostr_account` tries one connection to each and reports which answer; the read tools ask each one and report how its read ended |
 
 Both variables are emitted for every settings state, so the editor's own
 environment never supplies them. The `npub` is trimmed and the relays are
@@ -329,6 +329,17 @@ address is not caught. `nostr_account` reports each usable relay as
 `connected`, `unreachable`, `handshake_failed`, `timed_out` or `failed`, and
 each entry it will not contact as `refused`, by its position in the list and
 the reason, without repeating the entry.
+
+The client server also reads the local relay, and no setting names it. The
+relay server picks its port at each start unless `kask.nostr.relay.port` fixes
+one, so it writes the address it bound to `mcp/nostr-relay/listener.json`
+under the data directory, and the client server reads that file at each call.
+The file is the one way a loopback address reaches an installed client: it is
+accepted only as `ws://127.0.0.1:<port>`, and a loopback address written in
+`seed_relays` is still refused. With the relay server disabled or its listener
+down there is no file, and `nostr_account` reports the local relay as
+`not_announced`. Relays named inside events (an author's relay list, the hints
+in an identifier) are reported and never contacted.
 
 One subsection, `relay` (`KaskNostrRelaySettings`): the local relay server's
 policy. The operator sets it here or on the Settings > Kask > Nostr page; no
@@ -531,7 +542,7 @@ keychain) without changing serde-default signatures.
 
 ### First-run provisioning
 
-`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:542@build_mcp_server_env_with_sweep`). 
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers.rs:549@build_mcp_server_env_with_sweep`). 
 
 On first run, the DB passphrase defaults to `"allostery"`. There is ONE
 passphrase for every SQLCipher database (curator, corpus,

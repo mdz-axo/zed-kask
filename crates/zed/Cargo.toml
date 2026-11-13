@@ -79,6 +79,7 @@ hkask-regulation.workspace = true
 
 kanban_panel.workspace = true
 media_panel.workspace = true
+nostr_panel.workspace = true
 agent.workspace = true
 agent_servers = { workspace = true, optional = true }
 agent_settings.workspace = true

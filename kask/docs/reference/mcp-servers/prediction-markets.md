@@ -12,7 +12,7 @@ mds_categories: [domain, composition, lifecycle]
 
 **Crate:** `kask/mcp-servers/hkask-mcp-prediction-markets`
 **Tools:** 28 — 12 market tools (`market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`, `market_record_resolution`, `market_subscribe_resolutions`, `market_ladder`, `market_volatility`, `market_residual`, `market_check_resolutions`, `market_history`, `prediction_markets_status`) plus 16 economic-data tools in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs` (`fred_search_series`, `fred_get_observations`, `fred_get_series_info`, `fred_list_categories`, `fred_get_release`, `wb_search_indicators`, `wb_get_observations`, `wb_list_countries`, `wb_list_topics`, `wb_get_indicator_info`, `dbnomics_search`, `dbnomics_list_providers`, `dbnomics_get_dataset`, `dbnomics_get_series`, `market_score_rationale`, `mcda_weight_score`)
-**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:269-283,700-710`).
+**Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:269-283,707-717`).
 
 > **Tool count note:** the server registers **28 `#[tool]` methods** — 12 in
 > `kask/mcp-servers/hkask-mcp-prediction-markets/src/hkask_mcp_prediction_markets.rs` + 16 in `kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data_tools.rs`, both

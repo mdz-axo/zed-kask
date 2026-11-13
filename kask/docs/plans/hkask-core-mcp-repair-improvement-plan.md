@@ -62,7 +62,7 @@ Offline Cargo metadata reported 299 workspace members, including **19 libraries 
 | Regulation and interaction support | `hkask-regulation`, `hkask-steer-core` |
 | Zed-side integration exception | `kask_bridge` |
 
-Servers: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49-513`; do not hardcode these counts in new tests.
+Servers: companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm, training. Discover the execution-time inventory anew from manifests and `kask/crates/kask_bridge/src/mcp_servers.rs:49-520`; do not hardcode these counts in new tests.
 
 ### Observed boundaries and paths
 
@@ -224,7 +224,7 @@ and are retained in prose form as the historical record):**
 **Class:** reproduced packaging defect and verified CI coverage gap. **Severity:** High for capability availability; Medium for CI gap. **Confidence:** High.
 
 **Evidence:**
-- `kask/crates/kask_bridge/src/mcp_servers.rs:521–539` registers spreadsheet. *(Historical evidence: the
+- `kask/crates/kask_bridge/src/mcp_servers.rs:528–546` registers spreadsheet. *(Historical evidence: the
   spreadsheet capability has since been retired from the registry — the cite records the audited state,
   not the current tree.)*
 - `kask/scripts/build/mcp-servers.txt:12–22` omits it.

@@ -1,8 +1,11 @@
 //! Operator configuration, read once at startup.
 //!
-//! Public data only: the identity's `npub` and the seed relays. The agent
-//! cannot change either; no tool writes them. A value that does not parse is
-//! never guessed at: it is reported as invalid by `nostr_account`.
+//! Public data only: the identity's `npub`, the seed relays, and where the
+//! local relay server announces its listener. The agent cannot change any of
+//! them; no tool writes them. A value that does not parse is never guessed
+//! at: it is reported as invalid by `nostr_account`.
+
+use std::path::PathBuf;
 
 use hkask_nostr_core::{IdentifierError, decode_npub, encode_npub};
 
@@ -29,6 +32,9 @@ pub struct Config {
     pub identity: Identity,
     /// Seed relays as the operator wrote them, trimmed, first-seen order.
     pub seed_relays: Vec<String>,
+    /// The file the local relay server announces its listener in. `None`:
+    /// this server was not told where to look, and reads no local relay.
+    pub local_relay_announcement: Option<PathBuf>,
 }
 
 /// Why the configured value is not an `npub`, in words that repeat none of
@@ -89,13 +95,27 @@ impl Config {
         Config {
             identity,
             seed_relays: relays,
+            local_relay_announcement: None,
         }
     }
 
-    /// Read the settings the editor passes to this process.
+    /// Look for the local relay's announcement at `path`.
+    #[must_use]
+    pub fn with_local_relay_announcement(mut self, path: PathBuf) -> Self {
+        self.local_relay_announcement = Some(path);
+        self
+    }
+
+    /// Read the settings the editor passes to this process. The local
+    /// relay's announcement is looked for under the data directory, where
+    /// the relay server writes it.
     pub fn from_env() -> Self {
         let npub = std::env::var("HKASK_NOSTR_CLIENT_NPUB").ok();
         let seed_relays = std::env::var("HKASK_NOSTR_CLIENT_SEED_RELAYS").ok();
-        Self::from_values(npub.as_deref(), seed_relays.as_deref())
+        Self::from_values(npub.as_deref(), seed_relays.as_deref()).with_local_relay_announcement(
+            hkask_types::agent_paths::resolve_under_data_dir(
+                &hkask_types::nostr_wire::local_relay_announcement_path(),
+            ),
+        )
     }
 }

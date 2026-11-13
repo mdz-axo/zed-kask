@@ -22,6 +22,7 @@ pub(crate) mod kanban_status;
 pub mod kanban_wire;
 pub mod maybe_string;
 pub mod media_limits;
+pub mod nostr_wire;
 pub mod ocr_health;
 pub mod ytdlp;
 

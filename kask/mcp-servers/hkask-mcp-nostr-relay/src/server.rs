@@ -15,7 +15,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::admission::{DECISION_LOG_CAPACITY, Gate, REJECTED_KINDS, WebsocketPolicy};
 use crate::config::Config;
@@ -25,10 +25,9 @@ use crate::sync::{self, SyncError};
 pub const MAX_QUERY_EVENTS: usize = 100;
 /// Events returned when the caller sets no limit.
 pub const DEFAULT_QUERY_EVENTS: usize = 20;
-/// The most content characters returned per event.
-pub const MAX_CONTENT_CHARS: usize = 4_000;
-/// The most tags returned per event.
-pub const MAX_TAGS_PER_EVENT: usize = 64;
+/// The bounds on one event's content and tags, shared with the client
+/// server and the panel.
+pub use hkask_types::nostr_wire::{MAX_CONTENT_CHARS, MAX_TAGS_PER_EVENT};
 
 /// What a reader of this relay's output must know about its access control.
 pub const ACCESS_LIMITS: [&str; 4] = [
@@ -82,34 +81,54 @@ fn rejected_kind_numbers() -> Vec<u16> {
     REJECTED_KINDS.iter().map(|kind| kind.as_u16()).collect()
 }
 
-/// Truncate to at most `max` characters, on a character boundary.
-fn bounded(text: &str, max: usize) -> (String, bool) {
-    match text.char_indices().nth(max) {
-        Some((index, _)) => (text[..index].to_string(), true),
-        None => (text.to_string(), false),
-    }
+/// One stored event as tool output, in the shape every Nostr tool uses.
+/// `content` and `tags` are text written by the event's author, not by this
+/// system.
+fn wire_event(event: &Event) -> hkask_types::nostr_wire::WireEvent {
+    hkask_types::nostr_wire::WireEvent::bounded(
+        event.id.to_hex(),
+        event.pubkey.to_hex(),
+        event.created_at.as_secs(),
+        event.kind.as_u16(),
+        &event.content,
+        event.tags.iter().map(|tag| tag.as_slice()),
+    )
 }
 
-/// One stored event as tool output. `content` and `tags` are text written by
-/// the event's author, not by this system.
-fn event_json(event: &Event) -> Value {
-    let (content, content_truncated) = bounded(&event.content, MAX_CONTENT_CHARS);
-    let tags: Vec<&[String]> = event
-        .tags
-        .iter()
-        .take(MAX_TAGS_PER_EVENT)
-        .map(|tag| tag.as_slice())
-        .collect();
-    json!({
-        "id": event.id.to_hex(),
-        "author": event.pubkey.to_hex(),
-        "created_at": event.created_at.as_secs(),
-        "kind": event.kind.as_u16(),
-        "content": content,
-        "content_truncated": content_truncated,
-        "tags": tags,
-        "tags_truncated": event.tags.len() > MAX_TAGS_PER_EVENT,
-    })
+/// Where the relay announces its listener:
+/// `mcp/nostr-relay/listener.json` under the data dir.
+pub fn default_announcement_path() -> PathBuf {
+    hkask_types::agent_paths::resolve_under_data_dir(
+        &hkask_types::nostr_wire::local_relay_announcement_path(),
+    )
+}
+
+/// Tell the client server where the relay listens, or that it does not.
+///
+/// The port is picked by the operating system at each start unless the
+/// operator fixes one, so the address can only be published by the process
+/// that bound it. With the listener down the file is removed: an address
+/// left over from an earlier run would send the client to a port nothing of
+/// ours listens on.
+pub fn announce_listener(listener: &ListenerState, path: &Path) -> std::io::Result<()> {
+    match listener {
+        ListenerState::Listening(address) => {
+            let announcement = hkask_types::nostr_wire::LocalRelayAnnouncement {
+                address: format!("ws://{address}"),
+            };
+            let text = serde_json::to_string(&announcement).map_err(std::io::Error::other)?;
+            // Written beside the target and renamed over it, so a reader
+            // never sees half an address.
+            let staging = path.with_extension("json.new");
+            std::fs::write(&staging, text)?;
+            std::fs::rename(&staging, path)
+        }
+        ListenerState::Down(_) => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    }
 }
 
 fn parse_author(raw: &str) -> Result<PublicKey, McpToolError> {
@@ -270,7 +289,8 @@ impl NostrRelayServer {
                 .await
                 .map_err(|error| McpToolError::internal(format!("reading the archive failed: {error}")))?;
             // The store's set is ordered newest first.
-            let events: Vec<Value> = events.iter().take(limit).map(event_json).collect();
+            let events: Vec<hkask_types::nostr_wire::WireEvent> =
+                events.iter().take(limit).map(wire_event).collect();
             Ok(json!({
                 "returned": events.len(),
                 "limit": limit,
@@ -454,6 +474,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         .await
         .map_err(|error| infrastructure(error.to_string()))?;
     start_listener(&mut state).await;
+    // A failure here costs the client its redundant copy, not the relay its
+    // tools, so it is kept and logged once logging is up.
+    let announcement = announce_listener(&state.listener, &default_announcement_path());
     let state = Arc::new(state);
 
     hkask_mcp_server::run_server(
@@ -473,6 +496,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             for warning in &state.config.warnings {
                 tracing::warn!(%warning, "Nostr relay configuration");
             }
+            if let Err(error) = &announcement {
+                tracing::error!(
+                    %error,
+                    "the relay's address was not announced; the Nostr client will not find the local relay"
+                );
+            }
             Ok(NostrRelayServer::new(ctx.webid, state))
         },
         Vec::new(),
@@ -484,16 +513,37 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod tests {
     use super::*;
 
+    /// expect: the client can find a listening relay, and is never sent to
+    /// an address from an earlier run.
+    /// pre: a listener up at a loopback port, then the listener down.
+    /// post: up writes `ws://127.0.0.1:<port>` in the shared announcement
+    /// shape; down removes the file; down with no file is not an error.
     #[test]
-    fn bounded_cuts_on_a_character_boundary_and_says_so() {
-        assert_eq!(bounded("héllo", 10), ("héllo".to_string(), false));
-        assert_eq!(bounded("héllo", 2), ("hé".to_string(), true));
-        assert_eq!(bounded("", 0), (String::new(), false));
+    fn the_listener_is_announced_when_up_and_withdrawn_when_down() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("listener.json");
+        let address: SocketAddr = "127.0.0.1:43455".parse().expect("an address");
+
+        announce_listener(&ListenerState::Listening(address), &path).expect("announced");
+        let announcement: hkask_types::nostr_wire::LocalRelayAnnouncement =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("file written"))
+                .expect("the shared shape");
+        assert_eq!(announcement.address, "ws://127.0.0.1:43455");
+        assert!(
+            !path.with_extension("json.new").exists(),
+            "the staging file is renamed away"
+        );
+
+        let down = ListenerState::Down("port taken".to_string());
+        announce_listener(&down, &path).expect("withdrawn");
+        assert!(!path.exists());
+        announce_listener(&down, &path).expect("nothing to withdraw is not an error");
     }
 
     #[test]
     fn the_relay_info_document_states_the_write_restriction() {
-        let document: Value = serde_json::from_str(&relay_info_document()).expect("valid JSON");
+        let document: serde_json::Value =
+            serde_json::from_str(&relay_info_document()).expect("valid JSON");
         assert_eq!(document["limitation"]["restricted_writes"], true);
         assert_eq!(document["software"], "hkask-mcp-nostr-relay");
         assert!(

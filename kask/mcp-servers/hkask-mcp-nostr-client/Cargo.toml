@@ -3,7 +3,7 @@ name = "hkask-mcp-nostr-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Nostr client MCP server — reports the Nostr identity configured in settings. It receives no credential, holds no key and cannot sign: it depends on hkask-nostr-core (public operations) and never on hkask-nostr-signer"
+description = "Nostr client MCP server — reads the Nostr identity configured in settings and events from the local relay and the seed relays. Every tool reads. It receives no credential, holds no key and cannot sign: it depends on hkask-nostr-core (public operations) and never on hkask-nostr-signer"
 
 [lib]
 name = "hkask_mcp_nostr_client"
@@ -51,6 +51,12 @@ regex.workspace = true
 # value in the `npub` field, for one), so no key is written into a test file.
 bech32.workspace = true
 hkask-mcp-test-support.workspace = true
+# The real relay server, started inside a test so the client is read against
+# its accept layer and its announcement, not only against the SDK's listener.
+# Tests only: the server binary never links the relay.
+hkask-mcp-nostr-relay = { path = "../hkask-mcp-nostr-relay" }
+# The local relay's announcement file, written inside a test.
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 
 [lints]

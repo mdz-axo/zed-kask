@@ -795,7 +795,7 @@ registered `hkask-mcp-*` binaries as child processes over stdio, performs the MC
 handshake and tool discovery, and owns child shutdown/reconnect
 (`kask/crates/hkask-mcp/src/runtime.rs`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`).[^mcp-spec-build][^ousterhout-mcp-build]
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-556`).[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Current crate shape
 

@@ -1,15 +1,22 @@
 //! Relay addresses this server will connect to, and what one connection
 //! attempt found.
 //!
-//! Two rules hold for every relay this server contacts, whatever supplied
-//! the address (settings today; relay lists and hints in events later):
+//! Two rules hold for every relay this server contacts:
 //!
-//! - the address passes [`validate_relay_address`] before any connection;
+//! - the address is admitted before any connection: a seed relay by
+//!   [`validate_relay_address`], the local relay by
+//!   [`parse_local_relay_announcement`];
 //! - the attempt ends in exactly one named [`ProbeOutcome`].
+//!
+//! Addresses found in events (relay lists, hints in identifiers) are
+//! reported and never contacted.
 
 use std::error::Error as StdError;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::path::Path;
 use std::time::Duration;
+
+use hkask_types::nostr_wire::LocalRelayAnnouncement;
 
 use nostr_sdk::prelude::*;
 use serde_json::{Value, json};
@@ -192,7 +199,7 @@ impl ProbeOutcome {
 /// from the websocket transport's error, found on the SDK error's source
 /// chain: it fails the TCP stage as `Io` and everything after it (TLS, the
 /// websocket upgrade) as `Ws`.
-fn classify_failure(error: &nostr_sdk::error::Error) -> ProbeOutcome {
+pub(crate) fn classify_failure(error: &nostr_sdk::error::Error) -> ProbeOutcome {
     if error.kind() == nostr_sdk::error::ErrorKind::Timeout {
         return ProbeOutcome::TimedOut;
     }
@@ -221,6 +228,110 @@ pub async fn probe_relay(url: &RelayUrl) -> ProbeOutcome {
     match attempt {
         Ok(()) => ProbeOutcome::Connected,
         Err(error) => classify_failure(&error),
+    }
+}
+
+/// Why the local relay's announcement is not used. No variant carries the
+/// announced text: the file is written by another process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalRelayError {
+    /// The file could not be read.
+    Unreadable,
+    /// The file is not the announcement the relay server writes.
+    NotAnAnnouncement,
+    /// The address is not `ws://127.0.0.1:<port>`.
+    NotLoopback,
+}
+
+impl std::fmt::Display for LocalRelayError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Unreadable => "the local relay's announcement could not be read",
+            Self::NotAnAnnouncement => "the local relay's announcement is not in the expected form",
+            Self::NotLoopback => "the announced address is not ws://127.0.0.1:<port>",
+        })
+    }
+}
+
+impl StdError for LocalRelayError {}
+
+/// The local relay, as this server finds it at the moment it is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalRelay {
+    /// The relay server has announced no listener: it is not running, its
+    /// listener is down, or this server was not told where to look.
+    NotAnnounced,
+    /// The relay server announced this address.
+    Announced(RelayUrl),
+    /// An announcement is present and is not used.
+    Unusable(LocalRelayError),
+}
+
+/// Accept the relay server's announcement only if it names
+/// `ws://127.0.0.1:<port>` and nothing more.
+///
+/// This is the one way a loopback address is admitted in an installed build,
+/// and it admits exactly one shape: the loopback IPv4 literal, a port from 1
+/// to 65535, no path, no credentials. A seed relay or an address found in an
+/// event never reaches this function.
+///
+/// Known limit: the file is trusted to have been written by the relay
+/// server. Another local process that can write the data directory can point
+/// this server at a different loopback port. It cannot forge events: every
+/// event read is verified.
+pub fn parse_local_relay_announcement(text: &str) -> Result<RelayUrl, LocalRelayError> {
+    let announcement: LocalRelayAnnouncement =
+        serde_json::from_str(text).map_err(|_| LocalRelayError::NotAnAnnouncement)?;
+    let port = announcement
+        .address
+        .strip_prefix("ws://127.0.0.1:")
+        .ok_or(LocalRelayError::NotLoopback)?;
+    let canonical = port.bytes().all(|byte| byte.is_ascii_digit()) && !port.starts_with('0');
+    if !canonical || port.parse::<u16>().is_err() {
+        return Err(LocalRelayError::NotLoopback);
+    }
+    RelayUrl::parse(&announcement.address).map_err(|_| LocalRelayError::NotLoopback)
+}
+
+/// Read the relay server's announcement at `path`. Read at each call, not
+/// once: the relay picks a new port whenever it starts.
+pub fn read_local_relay(path: Option<&Path>) -> LocalRelay {
+    let Some(path) = path else {
+        return LocalRelay::NotAnnounced;
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => match parse_local_relay_announcement(&text) {
+            Ok(url) => LocalRelay::Announced(url),
+            Err(error) => LocalRelay::Unusable(error),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => LocalRelay::NotAnnounced,
+        Err(_) => LocalRelay::Unusable(LocalRelayError::Unreadable),
+    }
+}
+
+/// Report the local relay for `nostr_account`: whether it is announced, and
+/// if so whether it answers.
+pub async fn probe_local_relay(local: &LocalRelay) -> Value {
+    match local {
+        LocalRelay::NotAnnounced => json!({
+            "state": "not_announced",
+            "meaning": "the local relay server has announced no listener; reads use the seed relays only",
+        }),
+        LocalRelay::Unusable(error) => json!({
+            "state": "unusable",
+            "reason": error.to_string(),
+        }),
+        LocalRelay::Announced(url) => {
+            let outcome = probe_relay(url).await;
+            let mut report = json!({
+                "address": url.to_string(),
+                "state": outcome.state(),
+            });
+            if let Some(reason) = outcome.reason() {
+                report["reason"] = json!(reason);
+            }
+            report
+        }
     }
 }
 

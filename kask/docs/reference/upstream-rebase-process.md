@@ -169,7 +169,7 @@ Run it locally as the fast loop; CI runs the same script in
 1. `cargo check -p <crate>` — the file compiles.
 2. `cargo test -p <crate> -- <pinning tests>` — all pinning tests pass.
 3. `bash kask/scripts/check-hkask-no-zed-deps.sh` — §13.1 invariant holds
-   (`DIVERGENCE.md:183-188`).
+   (`DIVERGENCE.md:184-189`).
 4. `grep -c "// zed-kask:" <file>` — marker count matches the functional unit
    count (every unit is marked).
 5. `git diff upstream/main -- <file>` — the diff is *only* kask additions (no
@@ -366,12 +366,12 @@ It encodes this process plus:
 - **Deletion D-seam scope note:** Steps 1–7 apply to D-seam *files*; deletion
   D-seams (file column `—` or struck through, e.g. D4, D10) skip to Step 8.
 - **Merge & rebase protocol:** merge-not-rebase convention
-  (`git fetch upstream && git merge upstream/main`, `DIVERGENCE.md:192`),
+  (`git fetch upstream && git merge upstream/main`, `DIVERGENCE.md:193`),
   five conflict classes (D-seam modify/modify, kask-additive no-conflict,
   workspace `Cargo.toml` arrays, modify/delete both directions), commit
   hygiene, and recovery procedures.
 - **Merge-level verification gate ordering** (the `DIVERGENCE.md` runbook,
-  `DIVERGENCE.md:190-231`): §13.1 script (`check-hkask-no-zed-deps.sh`) →
+  `DIVERGENCE.md:191-232`): §13.1 script (`check-hkask-no-zed-deps.sh`) →
   `cargo check -p kask_bridge -p hkask-types -p hkask-mcp-server` →
   isolation script (`check-zed-isolation.sh`) → `./script/clippy` → the full
   verification gate (`cargo fmt --check`, `cargo nextest run -p 'hkask-*' -p

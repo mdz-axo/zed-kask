@@ -1,0 +1,52 @@
+[package]
+name = "nostr_panel"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/nostr_panel.rs"
+
+[dependencies]
+agent-client-protocol.workspace = true
+fs.workspace = true
+anyhow.workspace = true
+acp_thread.workspace = true
+# An event's claimed time, shown as UTC text.
+chrono.workspace = true
+gpui.workspace = true
+# The Nostr servers' ids, tool names and event shape. The panel links
+# neither server: the relay brings an LMDB store and an HTTP listener, the
+# client a relay client, and neither belongs in the editor process.
+hkask-types.workspace = true
+hkask_steer.workspace = true
+hkask_tool_invoker.workspace = true
+log.workspace = true
+hkask_panel_ui.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+# Feature-propagation-only dev-deps: not `use`d in source. Same trap as
+# `media_panel`'s: a build that turns on `remote/test-support` exposes the
+# `Mock` variants of the remote connection types, and the match arms that
+# handle them are gated on the consuming crate's own `test-support`, so all
+# three must be on together.
+project = { workspace = true, features = ["test-support"] }
+remote_connection = { workspace = true, features = ["test-support"] }
+settings.workspace = true
+theme_settings.workspace = true
+theme.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-machete]
+ignored = ["remote_connection"]

@@ -170,7 +170,7 @@ section only defines the resolution precedence.
 `KaskSettings::mcp_env()` emits both `HKASK_DATA_DIR` and
 `HKASK_ARTIFACTS_DIR`; `build_mcp_server_env` filters them through each
 `BuiltinMcpServer.config_env` allowlist before child launch
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-549`). Servers therefore
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-556`). Servers therefore
 receive only the roots they actually resolve.
 
 ## 2. Artifact-class → path mapping
@@ -193,7 +193,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARTIFACT-001
 verified_date: 2026-09-28
-verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,122-156,159-218,277-310; kask/crates/kask_bridge/src/mcp_servers.rs:28-46,49-513
+verified_against: kask/crates/hkask-types/src/agent_paths.rs:65-75,101-103,122-156,159-218,277-310; kask/crates/kask_bridge/src/mcp_servers.rs:28-46,49-520
 status: VERIFIED
 -->
 
@@ -296,7 +296,7 @@ under `mcp/{server_id}/`.
 
 | Class | Decision | Rationale |
 |---|---|---|
-| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials — per-entry `credentials`/`config_env` allowlists on `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:49-407`); server-ID segment enables browse-by-server. |
+| MCP servers | Parallel within class (`mcp/{server_id}/`) | Each server owns distinct DBs and credentials — per-entry `credentials`/`config_env` allowlists on `BUILT_IN_MCP_SERVERS` (`mcp_servers.rs:49-414`); server-ID segment enables browse-by-server. |
 | User skills | Shared (flat `skills/{skill_name}/`) | Skills are user-owned, not server-scoped. The skill tool resolves them through the D28 `GLOBAL_SKILLS_DIR_OVERRIDE` hook (`crates/agent_skills/agent_skills.rs:1314-1324`). |
 | User agent files | Shared (flat `agents/{agent_name}/`) | Agents are user-scoped, not server-scoped (`agent_paths.rs:159`). |
 | Archived chat threads | Shared (flat `threads/`) | Threads are user chat history, not server-scoped. |

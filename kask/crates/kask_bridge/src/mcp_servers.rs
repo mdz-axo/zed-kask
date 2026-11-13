@@ -393,7 +393,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
     BuiltinMcpServer {
         id: "nostr-client",
         binary: "hkask-mcp-nostr-client",
-        description: "Nostr client — reports the Nostr identity configured in settings; holds no key and cannot sign",
+        description: "Nostr client — reads the configured Nostr identity and events from the local relay and the seed relays; holds no key and cannot sign",
         // No credentials, by design, and pinned by
         // `nostr_client_registration_entry_is_pinned`: this server parses
         // untrusted relay text, and a Nostr key cannot be rotated or
@@ -401,6 +401,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         // belongs to the editor process.
         credentials: &[],
         config_env: &[
+            // Data dir — the relay server announces its listener at
+            // `mcp/nostr-relay/listener.json` under it, and this server
+            // reads the announcement there. Without it an operator
+            // HKASK_DATA_DIR override would send the two servers to
+            // different directories and the client would never find the
+            // local relay.
+            "HKASK_DATA_DIR",
             // The public identity and the seed relays, read once at startup
             // by `Config::from_env`. Public data; no tool can change them.
             "HKASK_NOSTR_CLIENT_NPUB",
@@ -1155,8 +1162,9 @@ mod tests {
     /// The Nostr client parses untrusted relay text, and a Nostr key cannot
     /// be rotated or recovered. So the client receives no credential at all:
     /// a credential added to its entry is a design change and must fail here
-    /// first. Its config allowlist is pinned to the two public values
-    /// `Config::from_env` reads.
+    /// first. Its config allowlist is pinned to what `Config::from_env`
+    /// reads: the data dir (where the relay server announces its listener)
+    /// and the two public values.
     #[test]
     fn nostr_client_registration_entry_is_pinned() {
         let server = BUILT_IN_MCP_SERVERS
@@ -1168,9 +1176,29 @@ mod tests {
             server.credentials.is_empty(),
             "the Nostr client holds no key and cannot sign; it receives no credential"
         );
-        let expected_config: &[&str] =
-            &["HKASK_NOSTR_CLIENT_NPUB", "HKASK_NOSTR_CLIENT_SEED_RELAYS"];
+        let expected_config: &[&str] = &[
+            "HKASK_DATA_DIR",
+            "HKASK_NOSTR_CLIENT_NPUB",
+            "HKASK_NOSTR_CLIENT_SEED_RELAYS",
+        ];
         assert_eq!(server.config_env, expected_config);
+    }
+
+    /// The client finds the local relay through a file the relay server
+    /// writes under the data dir. Both must be handed the same data dir, or
+    /// an operator override sends them to different directories.
+    #[test]
+    fn nostr_client_and_relay_are_given_the_same_data_dir() {
+        for id in ["nostr-relay", "nostr-client"] {
+            let server = BUILT_IN_MCP_SERVERS
+                .iter()
+                .find(|server| server.id == id)
+                .unwrap_or_else(|| panic!("{id} is registered"));
+            assert!(
+                server.config_env.contains(&"HKASK_DATA_DIR"),
+                "{id} must be given HKASK_DATA_DIR"
+            );
+        }
     }
 
     /// Operator ruling 2026-11-11: "nostr is not enabled or is disabled on

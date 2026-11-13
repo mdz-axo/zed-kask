@@ -4,6 +4,27 @@
 (§2, §7). Four decisions remain open (§7). Not implemented; nothing here was
 compiled or resolved with cargo.**
 
+**Rulings since, which replace what the sections below say (2026-11-13).**
+The body is kept as written; where it disagrees with these, these hold.
+
+- **Custody.** Asked whether signing is done in the editor process with an
+  approval on every publish, and whether the password is saved, the operator
+  answered: "yes - nostr settings should have nsec and password saved there
+  for use by the curator agent." So the password is saved (§2's "used, not
+  saved" reading and §7 open item 1 are closed the other way), and §6's "for
+  as long as the password is never cached" no longer describes the design.
+  The approval on every publish is what stands between untrusted relay text
+  and the key. Not built: no tool drafts, signs or publishes.
+- **Local relay.** "client is assumed to connect to the local relay as well
+  as other relays. the local relay is intended to offere redundancy and
+  should be a way for us to get to understand nostr better." Built: the
+  relay server announces its address and the client reads it (D105, D106).
+- **Read path and panel.** Built 2026-11-13: seven read tools in the client
+  server and the Nostr panel (D106, D108). §7 open item 3 is decided as:
+  the client reads the local relay and the seed relays only; relays named in
+  events are reported and not contacted. §7's "Panel" point is decided as
+  built.
+
 Reviewed in `curator-nostr-client-review-2026-11-11.md`; its findings are
 cited below as F1–F12 and were not re-verified for this revision. The
 original text of this note is in git at `d2c8c18754`.

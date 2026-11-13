@@ -8232,6 +8232,7 @@ dependencies = [
  "bech32",
  "futures 0.3.34",
  "hkask-bridge-ontology",
+ "hkask-mcp-nostr-relay",
  "hkask-mcp-server",
  "hkask-mcp-test-support",
  "hkask-nostr-core",
@@ -8243,6 +8244,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -12020,6 +12022,33 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "universal-time",
+]
+
+[[package]]
+name = "nostr_panel"
+version = "0.1.0"
+dependencies = [
+ "acp_thread",
+ "agent-client-protocol",
+ "anyhow",
+ "chrono",
+ "fs",
+ "gpui",
+ "hkask-panel-ui",
+ "hkask-steer",
+ "hkask-tool-invoker",
+ "hkask-types",
+ "log",
+ "project",
+ "remote_connection",
+ "serde",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -23034,6 +23063,7 @@ dependencies = [
  "miniprofiler_ui",
  "nix 0.30.1",
  "node_runtime",
+ "nostr_panel",
  "notifications",
  "onboarding",
  "outline",

@@ -2878,6 +2878,7 @@ fn main() {
         .detach();
         kanban_panel::init(cx);
         media_panel::init(cx);
+        nostr_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         // D1/D3: Model-dependent kask wiring lives in the deferred task:

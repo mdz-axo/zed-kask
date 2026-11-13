@@ -53,6 +53,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
         MenuItem::action("Kanban Board", kanban_panel::Toggle),
         MenuItem::action("Media", media_panel::Toggle),
+        MenuItem::action("Nostr", nostr_panel::Toggle),
         MenuItem::separator(),
         MenuItem::action("Diagnostics", diagnostics::Deploy),
         MenuItem::separator(),
