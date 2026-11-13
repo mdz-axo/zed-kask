@@ -13,8 +13,13 @@ The body is kept as written; where it disagrees with these, these hold.
   for use by the curator agent." So the password is saved (§2's "used, not
   saved" reading and §7 open item 1 are closed the other way), and §6's "for
   as long as the password is never cached" no longer describes the design.
-  The approval on every publish is what stands between untrusted relay text
-  and the key. Not built: no tool drafts, signs or publishes.
+  That answer settled the saved key and password. It did not settle the
+  approval, which this note first recorded as if it had.
+- **Approval.** Ruled separately on 2026-11-13: "when the curator publishes
+  the editor shows it and the user approves." This replaces the 2026-11-12
+  reading that the Curator publishes without a prompt. With the password
+  saved, this approval is what stands between untrusted relay text and the
+  key. Not built: no tool drafts, signs or publishes.
 - **Local relay.** "client is assumed to connect to the local relay as well
   as other relays. the local relay is intended to offere redundancy and
   should be a way for us to get to understand nostr better." Built: the
