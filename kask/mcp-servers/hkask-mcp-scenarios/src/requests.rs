@@ -35,6 +35,13 @@ fn match_confidences_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sche
     ]})
 }
 
+fn max_events_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [
+        {"type": "integer", "format": "uint", "minimum": 1},
+        {"type": "null"}
+    ]})
+}
+
 // ── Request types for MCP tools ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -50,7 +57,8 @@ pub struct BuildEventsRequest {
     pub scenario_type: Option<String>,
     /// Natural language context about the subject
     pub context: Option<String>,
-    /// Maximum number of events to generate
+    /// Maximum number of events to generate (at least 1; 0 is refused). Default: 6.
+    #[schemars(schema_with = "max_events_schema")]
     pub max_events: Option<usize>,
 }
 

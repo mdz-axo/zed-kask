@@ -30,7 +30,6 @@
 //! 2026-10-18).
 
 use hkask_types::AnyJsonValue;
-use hkask_types::time::now_rfc3339;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -304,7 +303,19 @@ impl ScenariosServer {
             };
             let deadline = forecast_date.checked_add_months(chrono::Months::new(months))
                 .ok_or_else(|| McpToolError::invalid_argument("forecast horizon overflows date"))?;
-            let prospective = forecast_date == chrono::Utc::now().date_naive();
+            // One clock read under the store lock: the equity journal's
+            // injectable clock, not the wall clock, decides prospective
+            // admission and stamps created_at, so the scored path is
+            // testable through the handlers (SC-25).
+            let (prospective, created_at) = {
+                let store = self
+                    .equity_forecast_store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                crate::require_loaded(store.load_error())?;
+                let now = store.now();
+                (forecast_date == now.date_naive(), now.to_rfc3339())
+            };
             let declaration = (prospective && req.forecast_probability.is_some()).then(|| EquityDeclaration {
                 deadline,
                 resolver: "caller_reported_price_return_at_horizon".to_string(),
@@ -328,7 +339,7 @@ impl ScenariosServer {
                 impact_mappings_ref: req.impact_mappings_ref.clone(),
                 fused_volatility: req.fused_volatility,
                 outcome: None,
-                created_at: now_rfc3339(),
+                created_at,
                 declaration,
             };
             {
@@ -419,9 +430,12 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid outcome_date: {e}")))?;
 
             // Keep validation and journal mutation under one lock so concurrent
-            // conflicting resolutions cannot overwrite each other.
+            // conflicting resolutions cannot overwrite each other. The gate and
+            // the outcome stamp read the store's injectable clock (SC-25), so
+            // the scored path is testable through the handler.
             let mut store = self.equity_forecast_store.lock().unwrap_or_else(|e| e.into_inner());
             crate::require_loaded(store.load_error())?;
+            let now = store.now();
             let mut stored: Option<StoredEquityForecast> = None;
             if let Some(ref forecast_id) = req.forecast_id {
                 let found = store.get(forecast_id).ok_or_else(|| {
@@ -440,8 +454,7 @@ impl ScenariosServer {
                     return Err(McpToolError::invalid_argument("resolution differs from frozen forecast date, horizon or target"));
                 }
                 if let Some(declaration) = &found.declaration {
-                    let today = chrono::Utc::now().date_naive();
-                    if outcome_date != declaration.deadline || today < declaration.deadline {
+                    if outcome_date != declaration.deadline || now.date_naive() < declaration.deadline {
                         return Err(McpToolError::invalid_argument("outcome must resolve at the frozen horizon after it has elapsed"));
                     }
                 }
@@ -499,7 +512,7 @@ impl ScenariosServer {
                     "actual_multiple": req.actual_multiple,
                     "actual_price_change": req.actual_price_change,
                     "return_brier": return_brier,
-                    "recorded_at": now_rfc3339(),
+                    "recorded_at": now.to_rfc3339(),
                 }));
                 store
                     .insert(forecast_id.to_string(), record)

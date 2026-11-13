@@ -54,6 +54,14 @@ fn content(output: &str) -> Value {
 #[tokio::test]
 async fn matured_prospective_forecast_scores_the_frozen_probability() {
     let forecasts = equity_forecast_store();
+    // The store's injectable clock admits the declaration on its forecast_date
+    // (2026-01-15) — the handler freezes the horizon — and matures it for
+    // resolution. No stored record is rewritten to fake an elapsed horizon
+    // (SC-25): admission and resolution both run through the handlers.
+    forecasts
+        .lock()
+        .expect("store")
+        .set_clock(|| "2026-01-15T00:00:00Z".parse().expect("clock"));
     let server = server_using(Arc::clone(&forecasts));
     let persisted = server
         .forecast_persist(Parameters(EquityForecastPersistRequest {
@@ -79,23 +87,12 @@ async fn matured_prospective_forecast_scores_the_frozen_probability() {
     assert_eq!(body["forecast_id"], "pf-1");
     assert_eq!(body["forecast_price_change"], 0.10);
 
-    // Filesystem/store boundary fixture: a declaration originally admitted
-    // on 2026-01-15, now matured. Admission at today's real clock is tested
-    // separately; no test sleeps three months or fabricates outcome timing.
-    {
-        let mut store = forecasts.lock().expect("store");
-        let mut record = store.get("pf-1").expect("persisted").clone();
-        record.created_at = "2026-01-15T00:00:00Z".into();
-        record.declaration = Some(hkask_mcp_scenarios::equity_forecast::EquityDeclaration {
-            deadline: chrono::NaiveDate::from_ymd_opt(2026, 4, 15).expect("deadline"),
-            resolver: "caller_reported_price_return_at_horizon".into(),
-            tolerance: 0.20,
-        });
-        store
-            .insert("pf-1".into(), record)
-            .expect("fixture journal");
-    }
-    // Resolution reads the frozen prior (0.6), not a submitted prior.
+    // Resolution reads the frozen prior (0.6), not a submitted prior. The
+    // clock advances to the frozen deadline first.
+    forecasts
+        .lock()
+        .expect("store")
+        .set_clock(|| "2026-04-15T00:00:00Z".parse().expect("clock"));
     let recorded = server
         .forecast_record(Parameters(EquityForecastRecordRequest {
             symbol: "TEST".to_string(),

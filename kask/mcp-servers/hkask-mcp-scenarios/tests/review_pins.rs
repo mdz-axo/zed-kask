@@ -818,3 +818,100 @@ async fn equity_tools_refuse_dangling_references_and_name_what_they_stored() {
         "outcome_date",
     );
 }
+
+// ── SC-24: max_events 0 asks for no events ──────────────────────────────
+
+#[tokio::test]
+async fn scenario_build_refuses_max_events_zero() {
+    let server = server();
+    refused(
+        wire!(
+            server,
+            scenario_build,
+            json!({"subject": "pins", "max_events": 0})
+        ),
+        InvalidArgument,
+        "max_events",
+    );
+    // One is the floor the prompt can honor: "extract up to 1 key future events".
+    let one = wire!(
+        server,
+        scenario_build,
+        json!({"subject": "pins", "max_events": 1})
+    )
+    .expect("max_events 1 is the minimum, not a refusal");
+    assert_eq!(one["max_events"], 1);
+    // The schema carries the bound the handler enforces.
+    let schemas: std::collections::BTreeMap<String, serde_json::Value> =
+        ScenariosServer::combined_router()
+            .list_all()
+            .into_iter()
+            .map(|tool| {
+                (
+                    tool.name.to_string(),
+                    serde_json::to_value(&tool.input_schema).expect("schema"),
+                )
+            })
+            .collect();
+    assert_eq!(
+        schemas["scenario_build"]["properties"]["max_events"]["anyOf"][0]["minimum"], 1,
+        "max_events declares its floor"
+    );
+}
+
+// ── SC-25: the scored equity path runs on the store's clock ────────────
+
+#[tokio::test]
+async fn the_scored_equity_path_runs_on_the_stores_clock() {
+    fn at(moment: &'static str) -> chrono::DateTime<chrono::Utc> {
+        moment.parse().expect("clock")
+    }
+    let server = server_at(None, before_cutoff);
+    server
+        .equity_forecast_store
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .set_clock(|| at("2026-01-15T09:00:00Z"));
+
+    // Persisted on the store clock's today with a probability: prospective,
+    // and the declaration freezes the horizon from the clock's calendar.
+    let persisted = wire!(
+        server,
+        forecast_persist,
+        json!({"symbol": "PINS", "forecast_date": "2026-01-15", "horizon": "3mo",
+               "forecast_price_change": 0.10, "forecast_probability": 0.6,
+               "forecast_id": "sc-25"})
+    )
+    .expect("persist answers");
+    assert_eq!(persisted["scoring_eligible"], true, "{persisted}");
+    assert_eq!(persisted["deadline"], "2026-04-15");
+
+    // Before the frozen deadline the store's clock gates the resolution.
+    let early = json!({"symbol": "PINS", "forecast_date": "2026-01-15", "horizon": "3mo",
+        "forecast_multiple": 15.0, "forecast_price_change": 0.10,
+        "outcome_date": "2026-04-15", "actual_multiple": 14.0,
+        "actual_price_change": 0.12, "forecast_id": "sc-25"});
+    refused(
+        wire!(server, forecast_record, early.clone()),
+        InvalidArgument,
+        "elapsed",
+    );
+
+    // Advance the clock to the deadline: the frozen prior 0.6 is scored.
+    server
+        .equity_forecast_store
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .set_clock(|| at("2026-04-15T17:00:00Z"));
+    let recorded = wire!(server, forecast_record, early).expect("record answers");
+    assert_eq!(recorded["status"], "recorded", "{recorded}");
+    assert_eq!(recorded["scoring_status"], "scored");
+    // actual 0.12 is within 20% of forecast 0.10 → accurate → Brier (0.6 − 1)² = 0.16.
+    let brier = recorded["brier"]["return_accuracy"]
+        .as_f64()
+        .expect("scored prior");
+    assert!(
+        (brier - 0.16).abs() < 1e-9,
+        "Brier on the frozen 0.6: {recorded}"
+    );
+}

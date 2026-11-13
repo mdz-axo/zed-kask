@@ -709,6 +709,11 @@ impl ScenariosServer {
             let horizon = parse_time_horizon(req.time_horizon.as_deref())?;
             let scenario_type = parse_scenario_type(req.scenario_type.as_deref())?;
             let max_events = req.max_events.unwrap_or(6);
+            if max_events == 0 {
+                return Err(McpToolError::invalid_argument(
+                    "max_events must be at least 1 — 0 would ask for no events; omit it for the default of 6",
+                ));
+            }
             let context_str = req.context.as_deref().unwrap_or("");
 
             let deadline_hint = match horizon {
