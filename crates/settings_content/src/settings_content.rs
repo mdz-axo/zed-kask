@@ -1746,6 +1746,15 @@ pub struct KaskSettingsContent {
 /// Nostr configuration (the `"kask.nostr"` section in settings.json).
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskNostrSettingsContent {
+    /// The public identity the Nostr client server reads for, as an `npub`
+    /// (`"kask.nostr.npub"`). Public data: never put an `nsec` here. The
+    /// client server reports a value it cannot read as an `npub`, in
+    /// `nostr_account`, without repeating it.
+    pub npub: Option<String>,
+    /// Relays the Nostr client server starts from (`"kask.nostr.seed_relays"`).
+    /// Empty or absent: none.
+    #[serde(default)]
+    pub seed_relays: Option<Vec<String>>,
     /// The local relay server's policy (`"kask.nostr.relay"`).
     #[serde(default)]
     pub relay: Option<KaskNostrRelaySettingsContent>,
@@ -2201,5 +2210,56 @@ mod private_inference_local_set_tests {
         ] {
             assert!(!is_ollama_cloud_model_name(name), "{name} is a local entry");
         }
+    }
+}
+
+#[cfg(test)]
+mod nostr_settings_tests {
+    use super::*;
+
+    /// What an operator might type. Deliberately not a key: this layer stores
+    /// the text as written and never decides whether it is a usable `npub`.
+    const PLACEHOLDER_NPUB: &str = "npub-as-typed-in-settings";
+
+    /// expect: the public Nostr identity an operator writes under
+    /// `"kask": { "nostr": … }` survives a parse and a write.
+    /// pre: `npub` and `seed_relays` beside the relay's `relay` section.
+    /// post: both values come back unchanged, and the relay section is kept.
+    #[test]
+    fn nostr_identity_settings_round_trip() {
+        let parsed: KaskSettingsContent = serde_json::from_value(serde_json::json!({
+            "nostr": {
+                "npub": PLACEHOLDER_NPUB,
+                "seed_relays": ["wss://relay.example.com", "wss://other.example.com"],
+                "relay": { "port": 7447 }
+            }
+        }))
+        .expect("kask.nostr parses");
+        let written = serde_json::to_value(&parsed).expect("kask.nostr serializes");
+        assert_eq!(written["nostr"]["npub"], PLACEHOLDER_NPUB);
+        assert_eq!(
+            written["nostr"]["seed_relays"],
+            serde_json::json!(["wss://relay.example.com", "wss://other.example.com"])
+        );
+        assert_eq!(written["nostr"]["relay"]["port"], 7447);
+    }
+
+    /// expect: `kask.nostr` holds public data only. A Nostr key cannot be
+    /// rotated, so no field of this section may ever hold one; a field added
+    /// here fails this test and needs a ruling first.
+    /// pre: the section's generated JSON schema.
+    /// post: its fields are exactly `npub`, `relay` and `seed_relays`.
+    #[test]
+    fn nostr_section_has_exactly_its_three_public_fields() {
+        let schema = serde_json::to_value(schemars::schema_for!(KaskNostrSettingsContent))
+            .expect("schema serializes");
+        let mut fields: Vec<&str> = schema["properties"]
+            .as_object()
+            .expect("the section is an object with properties")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(fields, ["npub", "relay", "seed_relays"]);
     }
 }

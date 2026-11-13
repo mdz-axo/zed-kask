@@ -61,11 +61,11 @@ queued or running work and releases capacity.
 ## MCP Servers (`KaskMcpSettings`)
 
 Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
-The 9 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
+The 10 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers.rs`,
 IDs via `builtin_mcp_server_ids()`):
-`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-relay`,
-`prediction-markets`, `research`, `scenarios`. The crates live under `kask/mcp-servers/`
-(9 `hkask-mcp-*` crates).
+`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-client`,
+`nostr-relay`, `prediction-markets`, `research`, `scenarios`. The crates live under
+`kask/mcp-servers/` (10 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|--------|
@@ -302,10 +302,27 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 
 ## Nostr (`KaskNostrSettings`)
 
-Public data only; no key is stored in settings. One subsection, `relay`
-(`KaskNostrRelaySettings`): the local relay server's policy. The operator sets
-it here or on the Settings > Kask > Nostr page; no agent tool can change it,
-and a change restarts the relay server.
+Public data only; no key is stored in settings, and no field of this section
+may hold one (`nostr_section_has_exactly_its_three_public_fields`).
+
+Two fields name the identity the Nostr client server reads for. They are set
+in `settings.json`; there is no settings-page row for them. No agent tool can
+change them.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
+| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server starts from, comma-joined |
+
+Both variables are emitted for every settings state, so the editor's own
+environment never supplies them. The `npub` is trimmed and the relays are
+trimmed and de-duplicated here; nothing is validated here. The client server
+decides whether the `npub` is usable and reports `configured`,
+`not_configured` or `invalid` in `nostr_account`.
+
+One subsection, `relay` (`KaskNostrRelaySettings`): the local relay server's
+policy. The operator sets it here or on the Settings > Kask > Nostr page; no
+agent tool can change it, and a change restarts the relay server.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
@@ -587,6 +604,8 @@ not an OpenAI-compatible chat endpoint).
 | `HKASK_NOSTR_RELAY_PORT` | nostr-relay | `nostr.relay.port` (always emitted; 0 = a free port at each start) |
 | `HKASK_NOSTR_RELAY_AUTHORS` | nostr-relay | `nostr.relay.allowed_authors`, comma-joined (always emitted; empty admits nothing) |
 | `HKASK_NOSTR_RELAY_SYNC_RELAYS` | nostr-relay | `nostr.relay.sync_relays`, comma-joined (always emitted) |
+| `HKASK_NOSTR_CLIENT_NPUB` | nostr-client | `nostr.npub`, trimmed (always emitted; empty = no identity set) |
+| `HKASK_NOSTR_CLIENT_SEED_RELAYS` | nostr-client | `nostr.seed_relays`, comma-joined (always emitted) |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |

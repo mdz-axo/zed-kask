@@ -350,6 +350,14 @@ pub struct KaskPredictionMarketsSettings {
 /// Nostr configuration (`kask.nostr`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 pub struct KaskNostrSettings {
+    /// The public identity the Nostr client server reads for, as the
+    /// operator wrote it, trimmed. Empty: none set. Delivered as
+    /// `HKASK_NOSTR_CLIENT_NPUB`; the client server decides whether it is a
+    /// usable `npub` and reports what it finds in `nostr_account`.
+    pub npub: String,
+    /// Relays the Nostr client server starts from, trimmed and
+    /// de-duplicated. Delivered as `HKASK_NOSTR_CLIENT_SEED_RELAYS`.
+    pub seed_relays: Vec<String>,
     /// The local relay server's policy.
     pub relay: KaskNostrRelaySettings,
 }
@@ -794,6 +802,7 @@ impl KaskSettings {
         crate::mcp_env::emit_prediction_markets_env(&data_dir, &self.prediction_markets, &mut env);
         crate::mcp_env::emit_media_env(&self.media, &mut env);
         crate::mcp_env::emit_nostr_relay_env(&self.nostr.relay, &mut env);
+        crate::mcp_env::emit_nostr_client_env(&self.nostr, &mut env);
         crate::mcp_env::emit_models_env(&self.models, &mut env);
         crate::mcp_env::emit_curator_distillation_env(&self.memory, &mut env);
         crate::mcp_env::emit_operator_override_env(&mut env);
@@ -1001,6 +1010,8 @@ impl From<KaskNostrRelaySettingsContent> for KaskNostrRelaySettings {
 impl From<KaskNostrSettingsContent> for KaskNostrSettings {
     fn from(c: KaskNostrSettingsContent) -> Self {
         Self {
+            npub: c.npub.unwrap_or_default().trim().to_string(),
+            seed_relays: clean_list(c.seed_relays.unwrap_or_default()),
             relay: c.relay.map(Into::into).unwrap_or_default(),
         }
     }

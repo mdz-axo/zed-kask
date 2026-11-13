@@ -13,7 +13,7 @@
 
 use crate::settings::{
     KaskCorpusSettings, KaskGeneralSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskNostrRelaySettings, KaskPredictionMarketsSettings,
+    KaskModelsSettings, KaskNostrRelaySettings, KaskNostrSettings, KaskPredictionMarketsSettings,
     KaskResearchSettings,
 };
 
@@ -238,6 +238,24 @@ pub(crate) fn emit_nostr_relay_env(
     );
 }
 
+/// The Nostr client server's public identity and seed relays, from
+/// `kask.nostr.npub` and `kask.nostr.seed_relays`.
+///
+/// Both keys are emitted for every settings state, empty included, for the
+/// same reason as the relay's: settings are the only source, so a value left
+/// in the editor's own environment cannot stand in for one the operator
+/// cleared. Public data only; no key is ever emitted here.
+pub(crate) fn emit_nostr_client_env(
+    nostr: &KaskNostrSettings,
+    env: &mut std::collections::HashMap<String, String>,
+) {
+    env.insert("HKASK_NOSTR_CLIENT_NPUB".to_string(), nostr.npub.clone());
+    env.insert(
+        "HKASK_NOSTR_CLIENT_SEED_RELAYS".to_string(),
+        nostr.seed_relays.join(","),
+    );
+}
+
 pub(crate) fn emit_media_env(
     media: &KaskMediaSettings,
     env: &mut std::collections::HashMap<String, String>,
@@ -298,6 +316,8 @@ const SETTINGS_BACKED_CONFIG_ENV_VARS: &[&str] = &[
     "HKASK_NOSTR_RELAY_PORT",
     "HKASK_NOSTR_RELAY_AUTHORS",
     "HKASK_NOSTR_RELAY_SYNC_RELAYS",
+    "HKASK_NOSTR_CLIENT_NPUB",
+    "HKASK_NOSTR_CLIENT_SEED_RELAYS",
     "HKASK_MEDIA_STT_MODEL",
     "HKASK_MEDIA_VISION_MODEL",
     "HKASK_MEDIA_SOUND_ANNOTATION_MODEL",
@@ -849,6 +869,7 @@ mod tests {
                 ]),
                 sync_relays: None,
             }),
+            ..Default::default()
         };
         let nostr: crate::settings::KaskNostrSettings = content.into();
         assert_eq!(nostr.relay.port, 7447);
@@ -885,5 +906,82 @@ mod tests {
             env.get("HKASK_NOSTR_RELAY_SYNC_RELAYS").map(String::as_str),
             Some("wss://nos.lol")
         );
+    }
+
+    const NOSTR_CLIENT_KEYS: [&str; 2] =
+        ["HKASK_NOSTR_CLIENT_NPUB", "HKASK_NOSTR_CLIENT_SEED_RELAYS"];
+
+    /// What an operator might type. Deliberately not a key: settings pass the
+    /// text through as written, and the client server decides whether it is a
+    /// usable `npub`.
+    const PLACEHOLDER_NPUB: &str = "npub-as-typed-in-settings";
+
+    fn nostr_identity_settings() -> KaskSettings {
+        let content: settings_content::KaskSettingsContent =
+            serde_json::from_value(serde_json::json!({
+                "nostr": {
+                    "npub": format!("  {PLACEHOLDER_NPUB} "),
+                    "seed_relays": [" wss://relay.example.com", "", "wss://other.example.com",
+                                    "wss://relay.example.com"]
+                }
+            }))
+            .expect("kask.nostr parses");
+        content.into()
+    }
+
+    /// The key names an operator writes under `"kask": { "nostr": … }` are
+    /// the contract: JSON to the two variables the client server reads. The
+    /// npub is trimmed; the relays are trimmed, de-duplicated and joined
+    /// with commas. Nothing is validated here: the server reports a value it
+    /// cannot use.
+    #[test]
+    fn nostr_settings_json_reaches_the_client_env() {
+        let env = nostr_identity_settings().mcp_env();
+        assert_eq!(
+            env.get("HKASK_NOSTR_CLIENT_NPUB").map(String::as_str),
+            Some(PLACEHOLDER_NPUB)
+        );
+        assert_eq!(
+            env.get("HKASK_NOSTR_CLIENT_SEED_RELAYS")
+                .map(String::as_str),
+            Some("wss://relay.example.com,wss://other.example.com")
+        );
+    }
+
+    /// Only the Nostr client server's config allowlist admits the two
+    /// names; every other server, the relay included, is filtered clear.
+    #[test]
+    fn nostr_settings_identity_reaches_only_the_client_server() {
+        let env = nostr_identity_settings().mcp_env();
+        for key in NOSTR_CLIENT_KEYS {
+            assert!(env.contains_key(key), "the control: {key} is emitted");
+        }
+        for server in crate::BUILT_IN_MCP_SERVERS {
+            let filtered = crate::mcp_servers::filter_config_env_for_server(server.id, &env);
+            for key in NOSTR_CLIENT_KEYS {
+                assert_eq!(
+                    filtered.contains_key(key),
+                    server.id == "nostr-client",
+                    "{key} for server {}",
+                    server.id
+                );
+            }
+        }
+    }
+
+    /// Settings are the only source of the identity. Default settings still
+    /// emit both keys, empty: a key left out would be filled from the
+    /// editor's own environment by `emit_operator_override_env`, and the
+    /// operator clearing the npub in settings would not clear it.
+    #[test]
+    fn nostr_settings_identity_is_emitted_even_when_unset() {
+        let env = KaskSettings::default().mcp_env();
+        for key in NOSTR_CLIENT_KEYS {
+            assert_eq!(env.get(key).map(String::as_str), Some(""), "{key}");
+            assert!(
+                super::SETTINGS_BACKED_CONFIG_ENV_VARS.contains(&key),
+                "{key} must be settings-backed, so the editor's environment cannot supply it"
+            );
+        }
     }
 }
