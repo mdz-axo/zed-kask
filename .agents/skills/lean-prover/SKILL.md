@@ -101,7 +101,8 @@ Act:   Phase 4 — Erase     → Check Prop/Type claims; revise and rerun or rep
 1. Render `lean-prover/lean-prover-refute` with the actual compiler output. For a decidable universal claim, try a specific counterexample as a *separate* `example : ¬ P witness := by decide`; a failed attempt to prove `P witness` is evidence about that instance, not a universal proof of negation. Distinguish false proposition, invalid tactic, missing instance, and missing import.
 2. Run a negative control expected to fail (`example : 1 = 2 := by decide`) and inspect the error, not just its exit status. In a Prop/Type question also test `Exists` elimination into data. See `kask/scripts/test-lean-prover-skill.sh` for runnable controls; give it a Lean binary path.
 3. Call `lisp_eval` to enforce the strict compiler & axiom-policy gate (`LP-1`), the Prop-to-Type boundary (`LP-2`), and workflow bookkeeping:
-   - `LP-1`: `(and (= exit_code 0) (= sorry_warnings 0) (string= completion_status "axiom_free") (not (member "sorryAx" axioms_used)) (not (member "Lean.ofReduceBool" axioms_used)))`
+   - `LP-1` (reads `lean_check`'s own fields — `exit_code`, `diagnostics`, `axioms`, `completion_status` — not a retyped axiom list; on the terminal path bind `diagnostics` to the `--json` lines and `axioms` to the `#print axioms` output line): `(begin (define has (lambda (n h) (and (stringp h) (>= (length h) (length n)) (string-contains n h)))) (define text-of (lambda (d) (if (listp d) (assoc "data" d) d))) (define count-sorry (lambda (ds) (if (is_null ds) 0 (+ (if (has "sorry" (text-of (car ds))) 1 0) (count-sorry (cdr ds)))))) (define audit (if (stringp axioms) axioms "")) (define forbidden (append (if (has "sorryAx" audit) (list "sorryAx") (list)) (if (has "Lean.ofReduceBool" audit) (list "Lean.ofReduceBool") (list)))) (define sorries (count-sorry (if (listp diagnostics) diagnostics (list)))) (define exit-ok (and (numberp exit_code) (= exit_code 0))) (define audit-free (has "does not depend on any axioms" audit)) (define status-ok (and (stringp completion_status) (string= completion_status "axiom_free"))) (list (list "pass" (and exit-ok (= sorries 0) audit-free status-ok)) (list "exit_ok" exit-ok) (list "sorry_diagnostics" sorries) (list "audit_free" audit-free) (list "forbidden_axioms" forbidden) (list "status_ok" status-ok)))`
+   - `LP-1` env: `{ "exit_code": <lean_check exit_code>, "diagnostics": <lean_check diagnostics array>, "axioms": <lean_check axioms string, or null when no theorem was audited>, "completion_status": <lean_check completion_status> }` — returns `{pass, exit_ok, sorry_diagnostics, audit_free, forbidden_axioms, status_ok}`; `pass` requires exit 0, no diagnostic mentioning `sorry`, an audit line reading "does not depend on any axioms", and status `axiom_free`; `forbidden_axioms` names `sorryAx` / `Lean.ofReduceBool` when the audit lists them (a reported field — any "depends on axioms:" line already fails `audit_free`). A null or missing audit is `audit_free=false` (unverified is not axiom-free); a null exit code is `exit_ok=false`.
    - `LP-2`: `(if (and (string= universe "Prop") eliminates_into_type) allows_large_elim true)`
    - Bookkeeping: `(and (= (length obligations) (length checks)) (not (member "unverified" checks)) (not (member "failed" checks)))`
    `Exists` cannot expose its witness as `Nat` by pattern matching (`Exists.casesOn` into `Type` is rejected); `Sigma`/`Subtype` retain data. Proof irrelevance is **not** permission to replace a proof by `sorry` or `trivial`. Always retain the corresponding Lean logs and `#print axioms` output. Converge only when all chosen positive declarations pass `LP-1` and `LP-2`, expected negatives fail for the intended reason, and no outcome remains unverified.
@@ -135,6 +136,23 @@ All receipts executed live through `lisp_eval` (2026-10-01, batch-12 audit):
   `["axioms_present","axioms_present"]` → `true` — the form is a floor, not
   a proof gate; the axiom-policy gate (step 3 statuses, `#print axioms`)
   catches what it cannot.
+
+`LP-1` receipts (env → `.pass`, executed 2026-11-13 through the `hkask_lisp` evaluator; the env shapes are `lean_check`'s own output fields, `crates/agent/src/tools/lean_check_tool.rs:51-58`):
+
+| exit_code | diagnostics | axioms | completion_status | pass | why |
+|---|---|---|---|---|---|
+| 0 | `[]` | `'t' does not depend on any axioms` | `axiom_free` | true | the only passing shape |
+| 0 | `[{"data":"declaration uses 'sorry'"}]` | `'t' depends on axioms: [sorryAx]` | `axioms_present` | false | `sorry_diagnostics` 1, `forbidden_axioms` `["sorryAx"]` |
+| 0 | `[]` | `'t' depends on axioms: [propext, Lean.ofReduceBool]` | `axioms_present` | false | `native_decide` adds a computation axiom — reported, never kernel-only |
+| 1 | `[{"data":"unsolved goals"}]` | null | `failed` | false | `exit_ok` false |
+| 0 | `[]` | null | `checked_not_axiom_audited` | false | no audit line — unverified is not axiom-free (the old form's `(member "sorryAx" null)` passed this case) |
+| null | null | null | null | false | a missing tool result is not a pass |
+| 0 | `["warning: declaration uses sorry"]` (terminal path, plain lines) | `'t' does not depend on any axioms` | `axiom_free` | false | a sorry warning fails even with a clean audit line |
+| 1 | `[]` | `'t' does not depend on any axioms` | `axiom_free` | false | exit code alone fails |
+| 0 | `[]` | `'t' depends on axioms: [propext]` | `axiom_free` | false | any axiom line fails `audit_free`, forbidden or not |
+| 0 | `[]` | `'t' does not depend on any axioms` | `warnings` | false | status must be `axiom_free` |
+
+Before this repair the form bound `axioms_used` as a list; `lean_check` emits `axioms` as a string, so the real output was a type error and a null audit passed the `sorryAx` clause vacuously. The receipts are re-evaluated by `~/Documents/zk-data/skills/lean-prover/2026-11-13-lp1-repair/receipts.sh`.
 
 The skill's form is executed at use time, never anchored in code.
 
