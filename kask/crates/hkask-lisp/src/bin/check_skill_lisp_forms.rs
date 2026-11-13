@@ -5748,6 +5748,91 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_sd_0_recomputes_every_fit_from_the_route_render() {
+        let form = skill_candidate("skill-discovery", "too_many_recommendations");
+        let rec = |name: &str, c: f64, d: f64, t: f64| {
+            json!({"rank": 1, "skill_name": name,
+                   "dimension_scores": {"capability_overlap": c, "description_alignment": d, "trigger_alignment": t}})
+        };
+        let no_boost = json!({"applied": false, "reason": "no epistemic_state supplied"});
+        let gate = |recs: Vec<serde_json::Value>, boost: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"recommendations": recs, "boost_applied": boost, "max_recommendations": 3}),
+            )
+            .unwrap_or_else(|error| panic!("SD-0 failed to evaluate: {error}"))
+        };
+        let boosted = gate(
+            vec![rec("falsifiability", 0.9, 0.8, 0.9)],
+            json!({"applied": true, "reason": "confidence 0.3", "skills": ["falsifiability"]}),
+        );
+        assert_eq!(boosted["verdict"], json!("ok"));
+        assert!(
+            (boosted["best_fit"].as_f64().expect("fit") - 0.9).abs() < 1e-9,
+            "t + 0.2 clamps at 1"
+        );
+        assert_eq!(boosted["coverage"], json!("full"));
+        assert_eq!(boosted["fits"][0]["eligible"], json!(true));
+
+        let partial = gate(vec![rec("a", 0.5, 0.5, 0.5)], no_boost.clone());
+        assert!((partial["best_fit"].as_f64().expect("fit") - 0.5).abs() < 1e-9);
+        assert_eq!(partial["coverage"], json!("partial"));
+        // The band boundaries are exact: 0.79 is partial, 0.80 is full; 0.39 is none.
+        assert_eq!(
+            gate(vec![rec("a", 0.79, 0.79, 0.79)], no_boost.clone())["coverage"],
+            json!("partial")
+        );
+        assert_eq!(
+            gate(vec![rec("a", 0.8, 0.8, 0.8)], no_boost.clone())["coverage"],
+            json!("full")
+        );
+        assert_eq!(
+            gate(vec![rec("a", 0.39, 0.39, 0.39)], no_boost.clone())["coverage"],
+            json!("none")
+        );
+
+        let weak = gate(vec![rec("a", 0.3, 0.2, 0.1)], no_boost.clone());
+        assert!((weak["best_fit"].as_f64().expect("fit") - 0.225).abs() < 1e-9);
+        assert_eq!(weak["coverage"], json!("none"));
+        assert_eq!(weak["eligible_count"], json!(0));
+
+        let mixed = gate(
+            vec![rec("a", 0.3, 0.2, 0.1), rec("b", 0.9, 0.9, 0.9)],
+            no_boost.clone(),
+        );
+        assert_eq!(mixed["coverage"], json!("full"));
+        assert_eq!(mixed["eligible_count"], json!(1));
+        assert_eq!(gate(vec![], no_boost.clone())["coverage"], json!("none"));
+
+        let malformed = gate(vec![rec("a", 1.2, 0.2, 0.1)], no_boost.clone());
+        assert_eq!(malformed["verdict"], json!("malformed_scores"));
+        assert_eq!(malformed["malformed"], json!(["a"]));
+        let four = gate(
+            vec![
+                rec("a", 0.5, 0.5, 0.5),
+                rec("b", 0.5, 0.5, 0.5),
+                rec("c", 0.5, 0.5, 0.5),
+                rec("d", 0.5, 0.5, 0.5),
+            ],
+            no_boost,
+        );
+        assert_eq!(four["verdict"], json!("too_many_recommendations"));
+
+        // The boost lifts only the named skill's trigger term, and only when applied.
+        let named = gate(
+            vec![rec("a", 0.5, 0.5, 0.5), rec("b", 0.5, 0.5, 0.5)],
+            json!({"applied": true, "skills": ["a"]}),
+        );
+        assert!((named["fits"][0]["fit"].as_f64().expect("a") - 0.55).abs() < 1e-9);
+        assert!((named["fits"][1]["fit"].as_f64().expect("b") - 0.5).abs() < 1e-9);
+        let unapplied = gate(
+            vec![rec("a", 0.5, 0.5, 0.5)],
+            json!({"applied": false, "skills": ["a"]}),
+        );
+        assert!((unapplied["fits"][0]["fit"].as_f64().expect("a") - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

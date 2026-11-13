@@ -60,9 +60,10 @@ unverified routing.
 2. Composite fit_score = (capability × 0.50) + (description × 0.25) + (trigger × 0.25).
 3. Rank recommendations by fit_score descending; return at most `max_recommendations` (default 3), only those with fit_score ≥ 0.30.
 4. Classify coverage: `full` (≥1 skill at fit ≥ 0.80), `partial` (best fit ≥ 0.40 and < 0.80), `none` (best fit < 0.40).
-   **D over P:** the three dimension scores are judgments (P); the composite, the +0.20 boost, the 0.30 floor and the band are arithmetic (D). Recompute them from the route output with `lisp_eval` before acting on it:
-   - form: `(let ((fit (min 1 (max 0 (+ (* 0.5 c) (* 0.25 d) (* 0.25 (min 1 (+ t boost)))))))) (list fit (>= fit 0.3) (cond ((>= best 0.8) "full") ((>= best 0.4) "partial") (t "none"))))`
-   - env: `{ "c": <capability>, "d": <description>, "t": <trigger>, "boost": <0.2 if the epistemic boost applies, else 0>, "best": <the highest recomputed fit> }`
+   **D over P:** the three dimension scores are judgments (P); the composite, the +0.20 boost, the 0.30 floor and the band are arithmetic (D). Recompute them over the whole route output in one `lisp_eval` call (`SD-0`) before acting on it:
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define num (lambda (obj key) (let ((v (assoc key obj))) (if (and (numberp v) (>= v 0) (<= v 1)) v nil)))) (define recs (if (listp recommendations) recommendations (list))) (define boost (if (and (listp boost_applied) (eq (assoc "applied" boost_applied) t)) 0.2 0)) (define boosted (if (and (listp boost_applied) (listp (assoc "skills" boost_applied))) (assoc "skills" boost_applied) (list))) (define fit-of (lambda (r) (let ((d (assoc "dimension_scores" r))) (if (not (listp d)) nil (let ((c (num d "capability_overlap")) (de (num d "description_alignment")) (tr (num d "trigger_alignment"))) (if (or (is_null c) (is_null de) (is_null tr)) nil (let ((b (if (member (text-of r "skill_name") boosted) boost 0))) (min 1 (max 0 (+ (* 0.5 c) (* 0.25 de) (* 0.25 (min 1 (+ tr b))))))))))))) (define rows (lambda (rs) (if (is_null rs) (list) (cons (list (list "skill_name" (text-of (car rs) "skill_name")) (list "fit" (fit-of (car rs))) (list "eligible" (and (numberp (fit-of (car rs))) (>= (fit-of (car rs)) 0.3)))) (rows (cdr rs)))))) (define table (rows recs)) (define malformed (lambda (ts) (if (is_null ts) (list) (if (numberp (assoc "fit" (car ts))) (malformed (cdr ts)) (cons (text-of (car ts) "skill_name") (malformed (cdr ts))))))) (define best-of (lambda (ts acc) (if (is_null ts) acc (best-of (cdr ts) (if (and (numberp (assoc "fit" (car ts))) (> (assoc "fit" (car ts)) acc)) (assoc "fit" (car ts)) acc))))) (define best (best-of table 0)) (define eligible (lambda (ts) (if (is_null ts) 0 (+ (if (eq (assoc "eligible" (car ts)) t) 1 0) (eligible (cdr ts)))))) (define cap (if (numberp max_recommendations) max_recommendations 3)) (list (list "verdict" (cond ((not (is_null (malformed table))) "malformed_scores") ((> (length recs) cap) "too_many_recommendations") (t "ok"))) (list "fits" table) (list "best_fit" best) (list "coverage" (cond ((is_null recs) "none") ((>= best 0.8) "full") ((>= best 0.4) "partial") (t "none"))) (list "eligible_count" (eligible table)) (list "boost" boost) (list "malformed" (malformed table))))`
+   - env: `{ "recommendations": <the route render's recommendations array, with each dimension_scores object>, "boost_applied": <the route render's boost_applied object — its `skills` list names the skills the boost applied to>, "max_recommendations": <the cap, default 3> }`
+   - returns `fits` (per skill: the recomputed `fit` and whether it clears the 0.30 floor), `best_fit`, `coverage` (`full` ≥ 0.80, `partial` ≥ 0.40, else `none`; `none` for an empty list), `eligible_count`, and `verdict` `ok` | `malformed_scores` (a dimension missing or outside 0–1 — named) | `too_many_recommendations`. The boost is applied only to the skills `boost_applied.skills` names, and only when `applied` is true.
 5. If coverage is partial or none, emit `uncovered_capabilities` (the detect-gap input): each with `capability`, `task_pattern`, `closest_skill`, `gap_type` (coverage|feature|epistemic).
 6. `epistemic_state` is optional and self-reported by the caller; no skill or tool measures it today. When it is provided with confidence < 0.5, apply a +0.20 boost to trigger-alignment for certainty-finding skills; clamp to [0.0, 1.0]. Record `boost_applied` (true/false) and its reason in the output so the boost can be checked.
 7. Do not recommend skill-discovery as a match — it is a meta-skill.
@@ -147,18 +148,7 @@ Template context variables (from each template's [inference] contract):
 
 All receipts executed live through `lisp_eval` (2026-10-01, batch-10 audit):
 
-- Route composite, full with the boost clamp exercised: `{c: 0.9, d: 0.8,
-  t: 0.9, boost: 0.2, best: 0.85}` → `[0.9, true, "full"]` (t+boost = 1.1
-  clamps at 1; the band reads `best`).
-- Route composite, none-band (the cond-else branch, where `t` does double
-  duty as the env binding and the else truth constant): `{c: 0.5, d: 0.5,
-  t: 0.5, boost: 0, best: 0.399}` → `[0.5, true, "none"]` — the else branch
-  evaluates correctly with `t` bound.
-- Route composite, floor-fail under partial: `{c: 0.3, d: 0.2, t: 0.1, boost: 0,
-  best: 0.6}` → `[0.225, false, "partial"]` — the 0.30 floor fails this skill's
-  fit while the coverage band reads partial from `best` (two different
-  inputs: `fit` is THIS skill's recomputed score, `best` is the highest
-  recomputed fit across the catalog).
+- Route composite `SD-0` (`scientific_gate_sd_0_` in `check-skill-lisp-forms.sh`, over the authored form): one boosted skill at 0.9/0.8/0.9 → fit 0.9 (the +0.20 clamps at 1), `full`; 0.5/0.5/0.5 → 0.5, `partial`; 0.3/0.2/0.1 → 0.225 below the floor, `none`; the same beside a 0.9/0.9/0.9 skill → `full` with the weak one ineligible; an empty list → `none`; a dimension of 1.2 → `malformed_scores` naming the skill; four recommendations against a cap of three → `too_many_recommendations`; a boost named for one skill lifts only that skill's trigger term.
 - Evaluate, install: all 2s (16 checks) → `[32, "install"]`.
 - Evaluate, safety-0 reject: one safety 0 with total 30 ≥ threshold 24 →
   `[30, "reject"]` — the safety gate dominates the total, deterministically.
