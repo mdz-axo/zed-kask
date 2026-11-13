@@ -21,7 +21,7 @@
 
 pub use hkask_bridge_ontology::dc_bibo::{DATASET, REPORT};
 pub use hkask_bridge_ontology::pko::{
-    PROCEDURE, STEP, STEP_EXECUTION, STEP_VERIFICATION, WAS_GENERATED_BY,
+    PROCEDURE, PROCEDURE_EXECUTION, STEP, STEP_EXECUTION, STEP_VERIFICATION, WAS_GENERATED_BY,
 };
 
 use hkask_bridge_ontology::dc_bibo::DcConcept;
@@ -52,8 +52,10 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         "selection_record" => Some(STEP_VERIFICATION),
         // Reading lineage traces what generated each variant.
         "lineage_read" => Some(WAS_GENERATED_BY),
-        // Querying the population observes procedures already executed.
-        "population_query" => Some(PROCEDURE),
+        // Querying the population is itself an execution: a read over the
+        // procedures the registry holds, stamped as the other servers stamp
+        // their list/status reads (operator ruling 2026-11-13, EX-A1).
+        "population_query" => Some(PROCEDURE_EXECUTION),
         _ => None,
     }
 }
@@ -118,6 +120,13 @@ mod tests {
         assert_eq!(tool_to_pko("fitness_record"), Some(STEP_EXECUTION));
         assert_eq!(tool_to_pko("selection_record"), Some(STEP_VERIFICATION));
         assert_eq!(tool_to_pko("lineage_read"), Some(WAS_GENERATED_BY));
+        // The population read is an execution, not the Procedure the
+        // declaration specifies (operator ruling 2026-11-13).
+        assert_eq!(tool_to_pko("population_query"), Some(PROCEDURE_EXECUTION));
+        assert_ne!(
+            tool_to_pko("population_query"),
+            tool_to_pko("experiment_propose")
+        );
     }
 
     /// The constants this server emits are the shared crate's, never
