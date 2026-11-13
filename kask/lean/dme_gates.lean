@@ -1,172 +1,227 @@
 /-
-zed-kask research pin (2026-11-08): machine-checked properties of the
-direct-model-edit skill's deterministic gates — DME-0 (the config gate),
-DME-2 (the surface budget), DME-4 (the convergence check). The Lean-prover
-strand of the skill's creation purpose, commissioned by the operator after
-the 2026-11-07 anchoring audit (research run 8353bc04dabb5e6b): the audit
-found the skill's editing-method core faithfully anchored on the published
-case while the gate apparatus was original-but-unlabeled; the remediation
-labeled the apparatus, and this pin delivers the machine-checked treatment
-of the gates' properties that the skill's Constraints section names as the
-open work of its generalization layer.
+zed-kask research pin (2026-11-08, restated 2026-11-12): machine-checked
+properties of the direct-model-edit skill's deterministic gates — DME-0
+(run settings against one named vendor-card row), DME-2 (the surface
+budget), DME-3 (the attribution verdict and its noise floor), DME-4 (the
+convergence check).
 
 Core Lean 4 only, no Mathlib (lake-manifest packages = []), like every pin in
-this project; checked with the pinned Lake toolchain
-(leanprover/lean4:v4.34.0) via lean_check; axiom-audited with #print axioms
-— the theorem-flag audits report dme0_matches_iff [propext, Quot.sound],
-withinBudget_scale [propext], convergedDec_iff [propext, Classical.choice,
-Quot.sound]: only Lean's standard axioms, no sorry, no native_decide
-(Lean.ofReduceBool absent). The negative controls
-(dme_gates_negative_control.lean) must FAIL to check and do: decide
-refutes all three closed false claims.
+this project; checked with the pinned toolchain (leanprover/lean4:v4.34.0).
+No sorry, no native_decide. The negative controls
+(dme_gates_negative_control.lean) must FAIL to check: decide refutes every
+closed false claim there.
 
 STATED ASSUMPTIONS (the modeling boundary):
-1. These definitions pin the GATES' SEMANTICS as specified in
-   .agents/skills/direct-model-edit/SKILL.md — the DME-0/DME-2/DME-4 forms
-   and their regression cases — not the lisp_eval binary. The deployed
-   gates are checked separately: parse-verified by check_skill_lisp_forms,
-   their expected values pinned in the skill's Regression case section. No
-   behavioral claim about any model is made or needed here.
-2. DME-0's config values are abstract over any type with decidable
-   equality: the gate's properties are value-type-independent, and the
-   deployed six fields (mode, temperature, top_p, top_k, presence_penalty,
-   token_limit — in the form's diff order) are one instance, indexed 0-5
-   here. A config is a value function; the gate reads only the six
-   indices, which is why every statement about "all fields" is bounded by
-   i < 6.
+1. These definitions pin the GATES' DECISION RULES as specified in
+   .agents/skills/direct-model-edit/SKILL.md and carried by
+   kask/crates/dme-harness/gates/dme-0.lisp and dme-3.lisp — not the
+   lisp_eval binary, not dme-measure.jq, and not the input checks those
+   forms run first. The deployed forms are checked separately by their
+   declared cases (cargo test -p hkask-lisp --test dme_gates). No behavioral
+   claim about any model is made or needed here.
+2. DME-0 compares nine recorded settings, indexed 0-8 in the form's order
+   (enable_thinking, temperature, top_p, top_k, min_p, presence_penalty,
+   repetition_penalty, cap, penalty_last_n). The run states every one; the
+   card side states a value or is silent (Option). Indices 1-6 are the
+   sampling settings, whose card values the measuring module reads from the
+   quoted card text. Agreement is an abstract boolean relation: the form's
+   equality on the mode flag and its 1e-6 relative tolerance on numbers are
+   instances. Nothing is assumed of it — in particular not transitivity,
+   which a tolerance does not have.
 3. DME-2's 0.1% cap is pinned as exact natural arithmetic (edited * 1000
-   <= total, the cross-multiplied form of edited <= total * 0.001): exact
-   by construction. The deployed lisp form computes the budget by float
-   multiplication (* total_weights 0.001), which agrees with this
-   predicate on integer surfaces at the deployed magnitudes (the anchor's
-   800,000,000 -> 800,000); any float-vs-exact divergence at other
-   magnitudes is a property of the deployed implementation, not of the
-   cap pinned here.
-4. DME-4's decider models the lisp form's arithmetic exactly — the length
+   <= total, the cross-multiplied form of edited <= total * 0.001). The
+   deployed lisp form computes the budget by float multiplication, which
+   agrees with this predicate on integer surfaces at the deployed
+   magnitudes (752,393,024 -> 752,393.024).
+4. DME-3's rule is modeled over three signs (an established loss, no
+   established change, an established gain) for the net change, the change
+   among answers that finished before the edit, and the change in
+   truncation. "Established" is modeled as est: an abstract significance
+   test sig AND a net change above 1.0 point of all answers. The pin proves
+   the floor, the verdict table and the 1.0-point band on finished answers
+   for every sig; it says nothing about the
+   sign test's arithmetic, which the Rust test checks against exact
+   integers.
+5. DME-4's decider models the lisp form's arithmetic exactly — the length
    >= 3 guard, then equality of the lookups at xs[len-1], xs[len-2],
-   xs[len-3] — with the lookup equality carried by optEq (a structural
-   equality on the Option lookups: `some` values compare by their
-   payload, matching the form's `=` on the values nth returns; the guard
-   makes all three lookups `some`, and the main theorem
-   (convergedDec_iff) makes that faithfulness exact).
+   xs[len-3] — with the lookup equality carried by optEq.
 -/
 
 namespace DmeGates
 
--- ── DME-0: the six-field config gate ─────────────────────────────────────────
+-- ── DME-0: run settings against one named vendor-card row ────────────────────
 
-variable {V : Type} [DecidableEq V]
+variable {V : Type}
 
-/-- The six card-config fields the DME-0 form diffs, in the form's order
-(SKILL.md, the DME-0 form): 0 = mode, 1 = temperature, 2 = top_p, 3 =
-top_k, 4 = presence_penalty, 5 = token_limit. -/
-def fields : List Nat := [0, 1, 2, 3, 4, 5]
+/-- The nine settings the DME-0 form compares, in the form's order. -/
+def fields : List Nat := [0, 1, 2, 3, 4, 5, 6, 7, 8]
 
-/-- The DME-0 diff: the fields whose run-config and card-config values
-differ, in the form's field order. -/
-def configDiff (run card : Nat → V) : List Nat :=
-  fields.filter (fun i => decide (run i ≠ card i))
+/-- A setting has moved when the card row states a value and the run's
+value does not agree with it. A setting the card is silent on never moves. -/
+def movedAt (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) (i : Nat) : Bool :=
+  match card i with
+  | none => false
+  | some c => !agree (run i) c
 
-/-- The DME-0 verdict: `.matches` when the diff is empty, else `.differs`
-carrying the diff (the lisp form's `config-matches-proceed` /
-`config-differs-rerun-at-card-config`). -/
-inductive ConfigVerdict (V : Type) where
-  | matches : ConfigVerdict V
-  | differs : List Nat → ConfigVerdict V
+/-- The form's third result: the moved settings, in field order. -/
+def moved (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) : List Nat :=
+  fields.filter (movedAt agree run card)
 
-def dme0Verdict (run card : Nat → V) : ConfigVerdict V :=
-  match configDiff run card with
-  | [] => .matches
-  | diffs => .differs diffs
+/-- The form's fourth result: the settings the card row does not state. -/
+def silent (card : Nat → Option V) : List Nat :=
+  fields.filter (fun i => (card i).isNone)
 
-/-- Every one of the six fields is a member of the diff's domain. -/
-theorem mem_fields {i : Nat} (h : i < 6) : i ∈ fields := by
-  have hd : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 ∨ i = 4 ∨ i = 5 := by omega
-  rcases hd with rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+/-- The six sampling settings, whose card values the measuring module reads
+from the quoted card text (indices 1-6). -/
+def sampling : List Nat := [1, 2, 3, 4, 5, 6]
 
-/-- Membership in the diff's domain is exactly the six fields. -/
-theorem fields_lt {i : Nat} (h : i ∈ fields) : i < 6 := by
+/-- The sampling settings the quoted card text does not state. -/
+def samplingSilent (card : Nat → Option V) : List Nat :=
+  sampling.filter (fun i => (card i).isNone)
+
+/-- The DME-0 verdict (`card-quote-states-no-sampling-setting`,
+`settings-match-card-row`, `settings-match-on-stated-settings-only`,
+`settings-differ-from-card-row`). -/
+inductive SettingsVerdict where
+  | statesNoSampling : SettingsVerdict
+  | matchesRow : SettingsVerdict
+  | matchesStatedOnly : SettingsVerdict
+  | differs : List Nat → SettingsVerdict
+
+def dme0Verdict (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) :
+    SettingsVerdict :=
+  if samplingSilent card = sampling then .statesNoSampling
+  else
+    match moved agree run card with
+    | [] => if samplingSilent card = [] then .matchesRow else .matchesStatedOnly
+    | m => .differs m
+
+theorem mem_fields {i : Nat} (h : i < 9) : i ∈ fields := by
+  have hd : i = 0 ∨ i = 1 ∨ i = 2 ∨ i = 3 ∨ i = 4 ∨ i = 5 ∨ i = 6 ∨ i = 7 ∨ i = 8 := by omega
+  rcases hd with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+theorem fields_lt {i : Nat} (h : i ∈ fields) : i < 9 := by
   simp [fields] at h
   omega
 
-/-- The diff names exactly the moved fields — no more, no less. -/
-theorem mem_configDiff_iff (run card : Nat → V) {i : Nat} :
-    i ∈ configDiff run card ↔ i < 6 ∧ run i ≠ card i := by
-  simp only [configDiff, List.mem_filter]
-  constructor
-  · rintro ⟨hf, hd⟩
-    exact ⟨fields_lt hf, decide_eq_true_iff.mp hd⟩
-  · rintro ⟨hlt, hne⟩
-    exact ⟨mem_fields hlt, decide_eq_true hne⟩
+theorem movedAt_iff (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) (i : Nat) :
+    movedAt agree run card i = true ↔ ∃ c, card i = some c ∧ agree (run i) c = false := by
+  unfold movedAt
+  cases card i with
+  | none => simp
+  | some c => simp
 
-/-- The diff preserves the form's field order (the regression case's
-["mode", "temperature", "top_p"] ordering depends on it). -/
-theorem configDiff_sublist (run card : Nat → V) :
-    (configDiff run card).Sublist fields :=
+/-- The moved list names exactly the settings the card row states and the
+run does not agree with — no more, no less. -/
+theorem mem_moved_iff (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) {i : Nat} :
+    i ∈ moved agree run card ↔ i < 9 ∧ ∃ c, card i = some c ∧ agree (run i) c = false := by
+  simp only [moved, List.mem_filter]
+  constructor
+  · rintro ⟨hf, hm⟩
+    exact ⟨fields_lt hf, (movedAt_iff agree run card i).mp hm⟩
+  · rintro ⟨hlt, hm⟩
+    exact ⟨mem_fields hlt, (movedAt_iff agree run card i).mpr hm⟩
+
+/-- The silent list names exactly the settings the card row does not state. -/
+theorem mem_silent_iff (card : Nat → Option V) {i : Nat} :
+    i ∈ silent card ↔ i < 9 ∧ card i = none := by
+  simp only [silent, List.mem_filter]
+  constructor
+  · rintro ⟨hf, hs⟩
+    exact ⟨fields_lt hf, Option.isNone_iff_eq_none.mp hs⟩
+  · rintro ⟨hlt, hn⟩
+    exact ⟨mem_fields hlt, Option.isNone_iff_eq_none.mpr hn⟩
+
+/-- Both lists keep the form's field order. -/
+theorem moved_sublist (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) :
+    (moved agree run card).Sublist fields :=
   List.filter_sublist
 
-/-- The gate reports `.matches` exactly when all six fields are equal. -/
-theorem dme0_matches_iff (run card : Nat → V) :
-    dme0Verdict run card = ConfigVerdict.matches ↔ ∀ i, i < 6 → run i = card i := by
+theorem silent_sublist (card : Nat → Option V) : (silent card).Sublist fields :=
+  List.filter_sublist
+
+/-- A setting the vendor does not state is never reported as moved (the
+case the six-field gate crashed on). -/
+theorem moved_not_silent (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V)
+    {i : Nat} (hm : i ∈ moved agree run card) : i ∉ silent card := by
+  intro hs
+  obtain ⟨_, c, hc, _⟩ := (mem_moved_iff agree run card).mp hm
+  have hn := ((mem_silent_iff card).mp hs).2
+  rw [hn] at hc
+  cases hc
+
+/-- Nothing moved exactly when the run agrees with every setting the card
+row states. -/
+theorem moved_nil_iff (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) :
+    moved agree run card = [] ↔
+      ∀ i, i < 9 → ∀ c, card i = some c → agree (run i) c = true := by
   constructor
-  · intro h i hlt
-    by_cases hne : run i = card i
-    · exact hne
-    · have hm : i ∈ configDiff run card := (mem_configDiff_iff run card).mpr ⟨hlt, hne⟩
-      simp only [dme0Verdict] at h
-      cases hdiff : configDiff run card with
-      | nil =>
-        rw [hdiff] at hm
-        simp at hm
-      | cons d ds =>
-        rw [hdiff] at h
-        simp at h
+  · intro h i hlt c hc
+    cases hb : agree (run i) c with
+    | true => rfl
+    | false =>
+      have hm : i ∈ moved agree run card := (mem_moved_iff agree run card).mpr ⟨hlt, c, hc, hb⟩
+      rw [h] at hm
+      cases hm
   · intro h
-    have hd : configDiff run card = [] := by
-      cases hcl : configDiff run card with
-      | nil => rfl
-      | cons d ds =>
-        have hm : d ∈ configDiff run card := by
-          rw [hcl]
-          exact List.mem_cons_self
-        obtain ⟨hlt, hne⟩ := (mem_configDiff_iff run card).mp hm
-        exact absurd (h d hlt) hne
-    simp only [dme0Verdict, hd]
-
-/-- No false alarm: a `.differs` verdict always carries a nonempty list. -/
-theorem dme0_differs_nonempty (run card : Nat → V) {diffs : List Nat}
-    (h : dme0Verdict run card = ConfigVerdict.differs diffs) : diffs ≠ [] := by
-  cases diffs with
-  | nil =>
-    simp only [dme0Verdict] at h
-    cases hdiff : configDiff run card with
-    | nil =>
-      rw [hdiff] at h
-      simp at h
+    cases hl : moved agree run card with
+    | nil => rfl
     | cons d ds =>
-      rw [hdiff] at h
-      simp at h
-  | cons d ds =>
-    intro hc
-    cases hc
+      have hm : d ∈ moved agree run card := by
+        rw [hl]
+        exact List.mem_cons_self
+      obtain ⟨hlt, c, hc, hb⟩ := (mem_moved_iff agree run card).mp hm
+      rw [h d hlt c hc] at hb
+      cases hb
 
-/-- The `.differs` list is the diff: its members are exactly the moved
-fields. -/
-theorem dme0_differs_mem (run card : Nat → V) {diffs : List Nat} {i : Nat}
-    (h : dme0Verdict run card = ConfigVerdict.differs diffs) :
-    i ∈ diffs ↔ i < 6 ∧ run i ≠ card i := by
-  have hd : diffs = configDiff run card := by
-    simp only [dme0Verdict] at h
-    cases hdiff : configDiff run card with
+/-- A full match needs every sampling setting stated by the quote and none
+moved: a quote that states only some settings can never return it. -/
+theorem dme0_matchesRow_iff (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V) :
+    dme0Verdict agree run card = SettingsVerdict.matchesRow ↔
+      samplingSilent card = [] ∧ moved agree run card = [] := by
+  unfold dme0Verdict
+  by_cases h1 : samplingSilent card = sampling
+  · simp [h1, sampling]
+  · cases hm : moved agree run card with
     | nil =>
-      rw [hdiff] at h
-      simp at h
+      by_cases h2 : samplingSilent card = []
+      · simp [h2, sampling]
+      · simp [h1, h2]
+    | cons d ds => simp [h1]
+
+/-- A quote that states no sampling setting is refused, whatever the run. -/
+theorem dme0_statesNoSampling_iff (agree : V → V → Bool) (run : Nat → V)
+    (card : Nat → Option V) :
+    dme0Verdict agree run card = SettingsVerdict.statesNoSampling ↔
+      samplingSilent card = sampling := by
+  unfold dme0Verdict
+  by_cases h1 : samplingSilent card = sampling
+  · simp [h1]
+  · cases hm : moved agree run card with
+    | nil =>
+      by_cases h2 : samplingSilent card = []
+      · simp [h2, sampling]
+      · simp [h1, h2]
+    | cons d ds => simp [h1]
+
+/-- No false alarm: a `differs` verdict carries the moved list, and that
+list is nonempty. -/
+theorem dme0_differs_is_moved (agree : V → V → Bool) (run : Nat → V) (card : Nat → Option V)
+    {m : List Nat} (h : dme0Verdict agree run card = SettingsVerdict.differs m) :
+    m = moved agree run card ∧ m ≠ [] := by
+  unfold dme0Verdict at h
+  by_cases h1 : samplingSilent card = sampling
+  · simp [h1] at h
+  · cases hl : moved agree run card with
+    | nil =>
+      by_cases h2 : samplingSilent card = []
+      · simp [h2, hl, sampling] at h
+      · simp [h1, h2, hl] at h
     | cons d ds =>
-      rw [hdiff] at h
-      simp at h
-      exact h.symm
-  rw [hd]
-  exact mem_configDiff_iff run card
+      simp [h1, hl] at h
+      refine ⟨h.symm, ?_⟩
+      rw [← h]
+      simp
 
 -- ── DME-2: the 0.1% surface budget ────────────────────────────────────────────
 
@@ -174,10 +229,10 @@ theorem dme0_differs_mem (run card : Nat → V) {diffs : List Nat} {i : Nat}
 cross-multiplied form of `edited ≤ total * 0.001` (the 0.1% cap). -/
 def withinBudget (total edited : Nat) : Prop := edited * 1000 ≤ total
 
-/-- The anchor regression case (SKILL.md, Regression case): 131,072 of
-800,000,000 passes — kernel-checked arithmetic. -/
-theorem anchor_withinBudget : withinBudget 800000000 131072 := by
-  show 131072000 ≤ 800000000
+/-- The anchor regression case (SKILL.md, Regression case): 131,072 of the
+measured 752,393,024 weights passes — kernel-checked arithmetic. -/
+theorem anchor_withinBudget : withinBudget 752393024 131072 := by
+  show 131072000 ≤ 752393024
   decide
 
 /-- Shrinking the surface preserves passing (SKILL.md Step 4: "shrink the
@@ -200,6 +255,130 @@ theorem withinBudget_scale (k t e : Nat) (hk : 0 < k) :
   · intro h
     have h' : k * (e * 1000) ≤ k * t := Nat.mul_le_mul_left k h
     rwa [Nat.mul_assoc]
+
+-- ── DME-3: the attribution verdict and its noise floor ───────────────────────
+
+/-- What a paired comparison establishes: a loss, nothing, or a gain. -/
+inductive Sign where
+  | down : Sign
+  | flat : Sign
+  | up : Sign
+  deriving DecidableEq
+
+/-- The forms' `est`: of `n` answers, `b` changed for the better and `c` for
+the worse. A change is established when the significance test `sig` passes
+AND the net change is more than 1.0 point of all answers
+(`100 * |b - c| > n`, with `|b - c|` written in truncated subtraction). -/
+def est (sig : Nat → Nat → Bool) (b c n : Nat) : Sign :=
+  if sig b c = true ∧ n < 100 * ((b - c) + (c - b)) then
+    (if c < b then Sign.up else Sign.down)
+  else Sign.flat
+
+/-- The noise floor: a net change within 1.0 point of all answers is never
+established, whatever the significance test says. -/
+theorem est_floor (sig : Nat → Nat → Bool) (b c n : Nat)
+    (h : 100 * ((b - c) + (c - b)) ≤ n) : est sig b c n = Sign.flat := by
+  unfold est
+  split
+  · rename_i hc
+    exact absurd hc.2 (Nat.not_lt.mpr h)
+  · rfl
+
+/-- Predeclared case F13: 20 rescues and no regressions in 2,000 answers is
+exactly 1.0 point — not established, for every significance test. -/
+theorem est_floor_f13 (sig : Nat → Nat → Bool) : est sig 20 0 2000 = Sign.flat :=
+  est_floor sig 20 0 2000 (by decide)
+
+/-- An established gain has more answers improving than worsening. -/
+theorem est_up_lt (sig : Nat → Nat → Bool) (b c n : Nat) (h : est sig b c n = Sign.up) :
+    c < b := by
+  unfold est at h
+  split at h
+  · split at h
+    · assumption
+    · cases h
+  · cases h
+
+/-- Nothing is established without the significance test. -/
+theorem est_needs_sig (sig : Nat → Nat → Bool) (b c n : Nat) (h : sig b c = false) :
+    est sig b c n = Sign.flat := by
+  unfold est
+  split
+  · rename_i hc
+    rw [h] at hc
+    cases hc.1
+  · rfl
+
+/-- The DME-3 verdicts, in the form's order. -/
+inductive Attribution where
+  | netChangeNotEstablished : Attribution
+  | netLossEstablished : Attribution
+  | gainIncludesFinishedAnswers : Attribution
+  | netGainSourceUnresolved : Attribution
+  | unblockingWithLossOnFinishedAnswers : Attribution
+  | mostlyUnblocking : Attribution
+  | unblockingWithUnresolvedChangeOnFinishedAnswers : Attribution
+  deriving DecidableEq
+
+/-- The form's `cond`, clause for clause: `net` over all answers, `fin` over
+answers that finished before the edit, `unb` over truncation, and `band`:
+the finished-answer net change is within 1.0 point of all answers. -/
+def attributeGain (net fin unb : Sign) (band : Bool) : Attribution :=
+  match net, fin, unb, band with
+  | .flat, _, _, _ => .netChangeNotEstablished
+  | .down, _, _, _ => .netLossEstablished
+  | .up, .up, _, _ => .gainIncludesFinishedAnswers
+  | .up, .down, .up, _ => .unblockingWithLossOnFinishedAnswers
+  | .up, .flat, .up, true => .mostlyUnblocking
+  | .up, .flat, .up, false => .unblockingWithUnresolvedChangeOnFinishedAnswers
+  | .up, _, _, _ => .netGainSourceUnresolved
+
+/-- The whole rule over the four paired counts the gate reads: answers that
+went truncated→correct (`hc`), finished-wrong→correct (`wc`),
+correct→truncated (`ch`), correct→finished-wrong (`cw`), of `n` answers. -/
+def judge (sig : Nat → Nat → Bool) (hc wc ch cw n : Nat) : Attribution :=
+  attributeGain (est sig (hc + wc) (ch + cw) n) (est sig wc cw n) (est sig hc ch n)
+    (decide (100 * ((wc - cw) + (cw - wc)) ≤ n))
+
+/-- `mostly-unblocking` exactly when the net gain and the truncation gain are
+established, the finished-answer change is not established, AND that change
+is within the 1.0-point band. -/
+theorem attribute_mostly_iff (net fin unb : Sign) (band : Bool) :
+    attributeGain net fin unb band = Attribution.mostlyUnblocking ↔
+      net = Sign.up ∧ unb = Sign.up ∧ fin = Sign.flat ∧ band = true := by
+  cases net <;> cases fin <;> cases unb <;> cases band <;> decide
+
+/-- Without an established net gain, no verdict that names a gain is
+returned. -/
+theorem attribute_no_gain (net fin unb : Sign) (band : Bool) (h : net ≠ Sign.up) :
+    attributeGain net fin unb band = Attribution.netChangeNotEstablished ∨
+      attributeGain net fin unb band = Attribution.netLossEstablished := by
+  cases net <;> cases fin <;> cases unb <;> cases band <;> simp_all [attributeGain]
+
+/-- An established loss among finished answers is never hidden under
+`mostly-unblocking`. -/
+theorem attribute_loss_visible (net unb : Sign) (band : Bool) :
+    attributeGain net Sign.down unb band ≠ Attribution.mostlyUnblocking := by
+  cases net <;> cases unb <;> cases band <;> decide
+
+/-- A finished-answer change outside the band is never read as "no change":
+60 gained against 42 lost of 500 answers is 3.6 points, so the verdict is
+not `mostly-unblocking` for any significance test. -/
+theorem judge_outside_band_not_mostly (sig : Nat → Nat → Bool) :
+    judge sig 6 60 0 42 500 ≠ Attribution.mostlyUnblocking := by
+  intro h
+  have hb := ((attribute_mostly_iff _ _ _ _).mp h).2.2.2
+  simp at hb
+
+/-- The anchor's published counts — 576 truncated answers rescued, 3
+finished-wrong answers rescued, 5 regressions, of 1,152 — are
+`mostly-unblocking` for every significance test that accepts 579 against 5
+and 576 against 0. The finished-answer change (3 against 5) is inside the
+band, so no assumption about it is needed. -/
+theorem anchor_mostlyUnblocking (sig : Nat → Nat → Bool)
+    (h1 : sig 579 5 = true) (h2 : sig 576 0 = true) :
+    judge sig 576 3 0 5 1152 = Attribution.mostlyUnblocking := by
+  simp [judge, est, h1, h2, attributeGain]
 
 -- ── DME-4: the convergence check ─────────────────────────────────────────────
 

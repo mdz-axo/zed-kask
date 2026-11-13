@@ -1,4 +1,4 @@
-{# goal: Localize a diagnosed failure mode to weights: contrast internal activations across progressing and failing trajectories to isolate the direction, layer, and columns that causally precede the failure. #}
+{# goal: Localize a diagnosed failure mode to weights: contrast internal activations across progressing and failing trajectories to isolate a candidate direction, its layers and columns, and plan the intervention runs that test it. #}
 [inference]
 contract:
   input:
@@ -8,17 +8,18 @@ contract:
     localization_notes: string
   output:
     candidate_directions: array
-    causal_evidence: object
+    contrast_evidence: object
     selected_site: object
+    intervention_plan: object
 ---
 
 You are localizing a diagnosed behavioral failure to specific weights. The route verdict said blocker — a failure mode the model falls into, not a capability it lacks. Now find where in the network that failure lives, by contrast, not by intuition.
 
 ## Doctrine
 
-In the anchor case, the looping Qwen model was probed by comparing its internals across two trajectory classes: answers that progressed normally, and answers that fell into repetition. The comparison isolated a single internal direction — a consistent pattern across the model's numbers — that reliably appeared immediately before repetition started, written by the MLPs of two layers. The direction, not the layer, is the unit of the edit: the loop direction was subtracted from the output columns that write it, "much like removing a behavior by deleting a single direction."
+In the anchor case, the looping Qwen model was probed by comparing internals across two classes: progress and repetition. The comparison isolated a direction per layer, written by the MLPs of layers 15 and 19 (two vectors, absolute cosine 0.849), built from four pairs of short texts. The direction, not the layer, is the unit of the edit.
 
-Localization by contrast has a causal evidence bar: the candidate direction must precede the failure onset, must be present in failing trajectories, and must be absent (or arrive late) in progressing ones. A direction that appears in both classes is a shared feature, not a cause.
+Contrast finds a candidate; it does not show a cause. A direction present in failing trajectories and absent in progressing ones is correlated with the failure. The anchor supported "targeted" by intervention: a strength series, layer-isolation tests, and a norm-matched random direction. This template ends with the plan for those runs; the DME-2c and DME-2d gates read their results.
 
 ## Target
 
@@ -38,9 +39,10 @@ Localization by contrast has a causal evidence bar: the candidate direction must
 ## Localization process
 
 1. **Align the two classes** on comparable prompts — same family, differing outcome. Contrast at matched positions (same layer, same module type), never across unrelated contexts.
-2. **Find the divergence point**: the earliest site where the failing trajectory's internals depart from the progressing one — where the failure direction is first written and read.
-3. **Confirm the direction**: the candidate must be consistent across failing examples (the same direction, not just any difference), and it must precede the failure's onset, not merely accompany it.
-4. **Enumerate the writing sites**: which layers, which module (MLP vs attention), how many output columns carry the direction. Fewer columns is a smaller, safer edit surface.
+2. **Find the divergence point**: the earliest site where the failing trajectory's internals depart from the progressing one.
+3. **Check consistency**: the candidate must be the same direction across failing examples, not just any difference.
+4. **Enumerate the writing sites**: which layers, which module (MLP vs attention), how many output columns carry the direction. Fewer columns is a smaller edit surface.
+5. **Plan the intervention runs**: a control edit with a seeded random direction at the same site and strength, and at least two further strengths of the candidate direction.
 
 ## Output requirements
 
@@ -51,28 +53,34 @@ Respond with a JSON object:
   "candidate_directions": [
     {
       "description": "loop direction written by MLP outputs of two layers",
-      "present_in": "failing trajectories, immediately before repetition",
+      "present_in": "failing trajectories",
       "absent_in": "progressing trajectories",
       "writing_sites": [{"layer": 15, "module": "mlp", "columns": 64}]
     }
   ],
-  "causal_evidence": {
+  "contrast_evidence": {
     "divergence_point": "…",
     "consistency_across_failing": "…",
-    "order_confirmed": "the candidate direction must precede failure onset"
+    "captures_used": ["…"]
   },
   "selected_site": {
     "layers": [15, 19],
     "module": "mlp",
     "columns": 64,
-    "direction_source": "mean difference across the trajectory classes"
+    "direction_source": "unit-norm mean difference between the failing and progressing captures, per layer"
+  },
+  "intervention_plan": {
+    "control": "same layers, tensor, trigger and alpha; direction seeded",
+    "strengths": [1, 2, 3],
+    "layer_isolation": "each layer edited alone"
   }
 }
 ```
 
 ## Constraints
 
-- The direction must be validated against both trajectory classes — an uncontrasted "suspicious activation" is not a localization.
+- The direction must be contrasted against both trajectory classes — an uncontrasted "suspicious activation" is not a localization.
+- Call the direction a candidate. Only the DME-2c and DME-2d results can support calling it specific.
 - Prefer the smallest writing surface that carries the whole direction: fewer layers, fewer columns.
-- A direction present in both classes is a shared feature, not a cause — discard it or re-derive the contrast.
-- Every claim in `causal_evidence` names the captures it came from.
+- A direction present in both classes is a shared feature — discard it or re-derive the contrast.
+- Every claim in `contrast_evidence` names the captures it came from.

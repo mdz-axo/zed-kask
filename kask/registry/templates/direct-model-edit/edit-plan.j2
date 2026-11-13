@@ -1,4 +1,4 @@
-{# goal: Plan the minimal weight edit: choose the smallest parameter surface that removes the localized failure direction while preserving every other capability, under an explicit budget of edited weights and forward passes. #}
+{# goal: Plan the minimal weight edit: choose the smallest parameter surface for the candidate direction and name the preservation set whose baseline is measured before the edit, under an explicit budget of edited weights and forward passes. #}
 [inference]
 contract:
   input:
@@ -13,13 +13,15 @@ contract:
     preservation_plan: object
 ---
 
-You are planning a direct weight edit — the surgical step between localization and verification. The route verdict said blocker; the localization isolated a direction at specific sites. Now decide exactly which weights change, by how much, and what must not move.
+You are planning a direct weight edit — the step between localization and verification. The route verdict said blocker; the localization isolated a candidate direction at specific sites. Now decide exactly which weights change, by how much, and what is measured to show nothing else moved.
 
 ## Doctrine
 
-The anchor edit was subtraction: a single loop direction, removed from 64 output columns in each of two MLP layers — 131,072 weights of roughly 800 million, about 0.016% of the model, chosen as the smallest surface that carries the whole direction. The operation follows from the diagnosis: removing the direction "is much like removing a behavior by deleting a single direction." Subtractive edits on a localized direction are the default; additive edits (grafting, amplifying) need a preservation plan, because they can create new behavior instead of removing old.
+The anchor edit addressed 64 output columns in each of two MLP layers — 131,072 weights of 752,393,024, about 0.017% of the language model. The source describes it as subtraction; as released it was applied at strength 6, which reverses the component along the direction and amplifies it five-fold. A label does not say what an edit does. The harness applies `W ← W − alpha · direction · kᵀ` with an absolute `alpha`; after the edit, the DME-3 gate reads the operation class from the edit receipts (the sign of `alpha` times the trigger's recorded weights).
 
-The edit is not blind, and it is not a single guess. The anchor's edit came out of a budgeted search: propose the edit, test it against practice problems, keep what works. The budget of forward passes is part of the plan — and the plan reports every budget point tried, because gains can be non-smooth (the anchor's jump landed at the 50-pass budget, barely visible at 10 or 25).
+Every edit can remove or create behavior. So every plan names a preservation set — practice problems disjoint from the target set — and its baseline is measured before the edit, under the same config and on the same model file as the target run, on at least 60 answers with enough correct ones that a loss could be detected. A plan in words is not a baseline.
+
+The edit is not a single guess. The anchor's edit came out of a budgeted search; the plan reports every budget point tried, because gains can be non-smooth (the anchor's jump landed at the 50-pass budget, barely visible at 10 or 25).
 
 ## Target
 
@@ -36,10 +38,10 @@ The edit is not blind, and it is not a single guess. The anchor's edit came out 
 
 ## Planning process
 
-1. **Choose the operation**: subtractive removal of the localized direction from the site's output columns by default. Anything additive fills `preservation_plan.risked_new_behavior` with the new behavior it risks creating — the DME-2b gate downstream refuses an additive plan whose slot is blank.
-2. **Size the surface**: the fewest columns and layers that carry the whole direction. The DME-2 gate (downstream, in `lisp_eval`) caps the surface at 0.1% of total weights — plan under it, and record where the surface arithmetic came from.
-3. **Plan for preserving every other capability**: enumerate what must NOT change — unrelated benchmarks, style, refusal behavior — and the mechanism that protects each (site locality, direction specificity, magnitude scaling). The anchor's non-math benchmark moved only because the loop it removed was not math-specific; a plan that expects zero movement everywhere is hiding the mechanism.
-4. **Stage the verification**: which practice problems re-run, at which budget points, with which counts recorded (correct-complete / wrong-complete / hit-limit), and which sibling control model runs the same recipe.
+1. **Write the edit as the harness takes it**: layers, tensor, trigger (columns, channels or dense), `alpha`, and the direction file. One spec per direction; a per-layer direction is one spec per layer, applied in order.
+2. **Size the surface**: the fewest columns and layers that carry the whole direction. The DME-2 gate caps the surface at 0.1% of total weights — plan under it, and record where the surface arithmetic came from.
+3. **Name the preservation set**: which problems (disjoint from the target set), how many, and which other behaviors are checked by hand. The DME-2b gate refuses a set that overlaps the target set, has fewer than 60 answers, has too few correct answers to show a loss, or was probed under a different config or model file than the target run.
+4. **Stage the verification**: the same problems, seeds, config and server build before and after; the control and strength-series arms; the sibling control model.
 
 ## Output requirements
 
@@ -48,23 +50,22 @@ Respond with a JSON object:
 ```json
 {
   "edit_spec": {
-    "operation": "subtract",
     "layers": [15, 19],
-    "module": "mlp",
-    "columns": 64,
-    "direction": "mean difference across the trajectory classes",
-    "magnitude": "full removal of the direction from each selected output column"
+    "tensor": "ffn_down",
+    "trigger": {"kind": "columns", "count": 64},
+    "alpha": 1.0,
+    "direction": "per-layer unit-norm contrast vector (file)"
   },
   "surface_check": {
     "edited_weights": 131072,
-    "total_weights": 800000000,
+    "total_weights": 752393024,
     "budget_source": "computed downstream by the DME-2 gate in lisp_eval, never asserted here"
   },
   "preservation_plan": {
-    "protected": ["IFEval", "refusal behavior", "style"],
-    "mechanism": "site-local subtraction of a direction orthogonal to the protected behaviors",
-    "risked_new_behavior": "",
-    "control_sibling": {"name": "…", "nonfinish_rate": "…", "expected_delta": "approximately zero"}
+    "preservation_set": "practice problems disjoint from the target set, by problem id range",
+    "answers": 96,
+    "also_checked_by_hand": ["refusal behavior", "style"],
+    "control_sibling": {"name": "…", "nonfinish_rate": "…"}
   }
 }
 ```
@@ -72,6 +73,6 @@ Respond with a JSON object:
 ## Constraints
 
 - The `surface_check` numbers are recomputed by the DME-2 gate — never present them as already-passed.
-- The surface is the smallest that carries the whole direction — trimming further "to be safe" that leaves the direction half-removed is a worse plan, not a safer one.
-- Additive operations carry a stated risk of new behavior in `preservation_plan.risked_new_behavior`; subtractive ones carry a stated risk of removing shared features. Name yours.
-- The forward-pass budget is part of the plan, not an afterthought — and every budget point tried is reported.
+- Do not label the operation. DME-3 reads the class from the edit receipts after the edit.
+- The preservation baseline is a probe run, measured before the edit. Its rows go to DME-2b now and to DME-3 after the edit.
+- The forward-pass budget is part of the plan — and every budget point tried is reported.

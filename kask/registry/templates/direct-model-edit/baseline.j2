@@ -1,4 +1,4 @@
-{# goal: Ground a direct weight-edit task: audit the target model's baseline behavior and sampling configuration against its vendor model card before any weight is touched. #}
+{# goal: Ground a direct weight-edit task: read the measured baseline answer classes, choose the vendor-card row the run follows and quote it verbatim, before any weight is touched. #}
 [inference]
 contract:
   input:
@@ -9,18 +9,18 @@ contract:
     benchmark_name: string
   output:
     baseline_observation: object
-    card_config: object
+    card_row: object
     suspected_failure_mode: object
     route_recommendation: object
 ---
 
-You are grounding a direct weight-edit task. Before any weight of the target model is touched, establish what the model actually does under the current harness — measured, not assumed — and whether the sampling configuration itself explains the reported bug.
+You are grounding a direct weight-edit task. Before any weight of the target model is touched, establish what the model actually does under the current harness — measured, not assumed — and which row of the vendor card the run is meant to follow.
 
 ## Doctrine
 
-Measure before you diagnose. In the anchor case, a Qwen reasoning model reported as "bad at math" was finishing almost no math answers at all: 85 of its first 96 practice answers ran to the token limit. The "math bug" was a completion bug. A baseline audit that counts answer classes — correct-and-complete, wrong-but-complete, non-terminating — is the ground every later step stands on; the baseline counts ARE the model's measured behavior.
+Measure before you diagnose. In the anchor case, a Qwen reasoning model reported as "bad at math" was finishing almost no math answers at all: 85 of its first 96 practice answers ran to the token limit. The "math bug" was a completion bug. The harness's class counts — correct-and-complete, wrong-but-complete, hit-limit — are the ground every later step stands on.
 
-The vendor model card is part of the ground. The anchor ran its target in thinking mode — the exact condition the vendor card warns is prone to repetitive loops — at a lower temperature than the card recommends. A bug that disappears at the card's recommended settings is a settings bug, not a weight bug, and no weight edit should be attempted to fix it.
+The vendor model card is part of the ground. A card can recommend several sampling rows (the Qwen3.5-0.8B card has four: thinking or non-thinking, text or vision-language). The anchor ran its target in thinking mode — the condition the card warns is prone to repetitive loops — at settings that match none of the card's rows. A bug that disappears at a card row's settings is a settings bug, not a weight bug.
 
 ## Target
 
@@ -37,7 +37,7 @@ The vendor model card is part of the ground. The anchor ran its target in thinki
 {{ run_config | tojson }}
 ```
 
-## Baseline counts (measured by the harness)
+## Baseline counts (from `dme-harness summary`)
 
 ```json
 {{ baseline_counts | tojson }}
@@ -51,9 +51,9 @@ The vendor model card is part of the ground. The anchor ran its target in thinki
 
 ## Audit process
 
-1. **Classify every answer** in the baseline: `answers_correct_complete` (finished and right), `answers_wrong_complete` (finished and wrong — genuine reasoning errors), `answers_hit_limit` (ran to the token limit without finishing). Do not average them into one score — the classes route differently.
-2. **Record the card's recommended configuration** for all six fields — mode, temperature, top-p, top-k, presence penalty, output token limit — read from `model_card_notes`, as the `card_config` object. Never diff the fields yourself: the DME-0 `lisp_eval` gate downstream diffs every field deterministically.
-3. **Read the suspected failure mode from the classes, not the score**: a dominant `answers_hit_limit` class is a blocker (loops or stalls); a dominant `answers_wrong_complete` class is a capability gap; a mixed or thin baseline is under-evidenced and needs more practice answers before any route verdict.
+1. **Read the classes, not a score**: a dominant `hit_limit` class is a blocker (loops or stalls); a dominant `wrong_complete` class is a capability gap; a mixed or thin baseline needs more practice answers before any route verdict. Copy the counts; compute no shares — DME-1 derives them.
+2. **Choose one card row and quote it** as `card_row`: the row for the mode the deployment will use. Give the card's own name for the row; a `source_quote` that is the card's line for that row, copied character for character from the card text above; the row's mode as `enable_thinking`; the card's default mode as `default_enable_thinking`; and `cap` and `penalty_last_n` only when the card states them (otherwise `null`). Do not transcribe temperature, top_p, top_k, min_p, presence_penalty or repetition_penalty: DME-0 reads those six values out of your quote, so the quote must contain them.
+3. **Do not compare the settings yourself.** The operator copies `card_row` into the run config file; the harness embeds it in every row; DME-0 finds the quote in the saved card and compares its values with what the server applied.
 
 ## Output requirements
 
@@ -62,12 +62,16 @@ Respond with a JSON object:
 ```json
 {
   "baseline_observation": {
-    "answers_total": 96,
-    "class_shares": {"correct_complete": 0.09, "wrong_complete": 0.04, "hit_limit": 0.87},
+    "counts": {"correct_complete": 7, "wrong_complete": 4, "hit_limit": 85},
     "what_the_model_actually_does": "…"
   },
-  "card_config": {
-    "mode": "non-thinking", "temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5, "token_limit": 32768
+  "card_row": {
+    "row": "Non-thinking, VL tasks",
+    "source_quote": "…the card's line for this row, verbatim, with its sampling values…",
+    "enable_thinking": false,
+    "default_enable_thinking": false,
+    "cap": 32768,
+    "penalty_last_n": null
   },
   "suspected_failure_mode": {
     "mode": "looping",
@@ -77,13 +81,14 @@ Respond with a JSON object:
   "route_recommendation": {
     "route": "blocker-removal-route",
     "rationale": "…",
-    "config_first": true
+    "settings_first": true
   }
 }
 ```
 
 ## Constraints
 
-- The counts come from the harness; the shares and the DME-1 route verdict are computed downstream in `lisp_eval` — never assert a route this template's outputs do not support.
-- Record all six card-recommended fields in `card_config` — the DME-0 gate downstream diffs every one; an unexamined config delta is the most common false "weight bug".
+- The counts come from the harness; shares and the DME-1 route verdict are computed downstream in `lisp_eval` — never assert a route this template's outputs do not support.
+- `source_quote` is copied character for character from the card text. A paraphrase, or a sentence from anywhere other than the card, fails DME-0.
+- `card_row` carries no sampling value. A value typed here would be a transcription; DME-0 takes the values from the quote.
 - A baseline measured on fewer answers than the harness printed is a broken ground — record the mismatch, do not paper over it.

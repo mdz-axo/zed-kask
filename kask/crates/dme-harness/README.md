@@ -3,8 +3,9 @@
 Operator ruling 2026-11-06: the Python replication workspace is retired and
 archived; the live-replication harness is Rust + bash. This crate is that
 instrument. The anchor case (MIT CSAIL "Sparks of Weight-Space Programming":
-one direction, subtracted from 64 output columns per layer of Qwen3.5-0.8B,
-131,072 weights ≈ 0.016%) is replicated with our own measured receipts.
+a direction per layer, applied to 64 output columns per layer of Qwen3.5-0.8B,
+131,072 weights addressed ≈ 0.017% of the language model) is replicated with our
+own measured receipts.
 
 ## Modes
 
@@ -29,6 +30,24 @@ The edit trigger has three spellings: `channels` (the evenly-spread
 indicator special case), `dense` (the per-column weight file k, optional
 covdiag whitening), and `columns` (the sha-bound explicit column list —
 k = indicator(S), the paper-faithful mechanism).
+
+## The gates
+
+`gates/` holds what decides over this instrument's files. The instrument
+measures; it decides nothing.
+
+| file | what it is |
+|---|---|
+| `pre-emit.lisp` | the gate over a `convert` manifest, run before an edit is emitted |
+| `dme-measure.jq` | reads probe rows, `summary` output and edit receipts and prints the env for one skill gate: class counts, the table of two runs paired by problem id and seed, the recorded facts that differ between runs, the receipt chain. No thresholds, no verdicts |
+| `dme-0.lisp`, `dme-2b.lisp`, `dme-2c.lisp`, `dme-2d.lisp`, `dme-3.lisp` | the direct-model-edit skill's measured gates; each is one complete `lisp_eval` form over the env `dme-measure.jq` prints |
+| `dme-gate-cases.gen.jq`, `dme-gate-fixture.json` | the gates' declared cases: the generator builds each env with `dme-measure.jq` itself; the fixture holds verbatim excerpts of archived harness output |
+
+`cargo test -p hkask-lisp --test dme_gates` builds every case with `jq` (required)
+and evaluates it through the
+interpreter `lisp_eval` uses. The skill
+(`.agents/skills/direct-model-edit/SKILL.md`) gives the `jq` command for each
+gate.
 
 ## The routes
 

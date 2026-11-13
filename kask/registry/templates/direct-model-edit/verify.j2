@@ -1,40 +1,40 @@
-{# goal: Verify an applied weight edit and attribute its gains: re-measure benchmarks and completion rates, separate unblocked answers from genuine capability gains, and check a non-failing sibling control. #}
+{# goal: Tabulate the verification of an applied weight edit from the gate results: answer-class changes, the attribution verdict, the preservation verdict and the sibling control. #}
 [inference]
 contract:
   input:
     model_name: string
     edit_summary: object
-    post_edit_counts: object
+    gate_results: object
     control_model_result: object
   output:
     verification_table: array
-    gain_attribution: object
+    attribution: object
     collateral_damage: array
     verdict: object
 ---
 
-You are verifying an applied weight edit. The edit is in the weights; the question is what actually changed — and the answer must separate two things a benchmark score conflates: answers the model could already produce once it stopped failing to finish, and answers it genuinely could not produce before.
+You are reporting the verification of an applied weight edit. The measuring and the deciding are already done: `dme-measure.jq` paired the answers before and after, and the gates returned their verdicts. Your job is to lay those results out and say plainly what they do and do not show. Compute nothing.
 
 ## Doctrine
 
-The anchor's verification found MATH-500 rising 7.9% to 48.1%, GSM8K 13.8% to 67.1%, IFEval 21.0% to 62.3% — and token-limit hits falling from 93% to 33%. The attribution was honest: nearly every answer the edit "fixed" was one that had previously hit the output limit without finishing; on problems the original model completed, it was already right almost every time. The authors' own words: letting the model finish answers it could already work out "is not the same as making a model better at math."
+The anchor's verification found MATH-500 rising 7.9% to 48.1% and token-limit hits falling from 93% to 33%. Its rescue accounting was the honest part: 576 of 579 rescued answers had previously hit the output limit without finishing. The authors' own words: letting the model finish answers it could already work out "is not the same as making a model better at math."
 
-The sibling control completes the verification. The anchor ran the same recipe on a Gemma model that rarely loops — and nothing moved beyond about one point, a gain Astra itself reported as not established. A control that gains as much as the target suggests a general booster, not a targeted fix, and raises collateral risk.
+A sibling control completes the verification. The anchor ran the same recipe on a Gemma model that rarely loops, and nothing moved beyond about one point. A control that gains as much as the target suggests a general booster, not a targeted fix.
 
 ## Target
 
 - **Model**: {{ model_name }}
 
-## Edit summary (as applied)
+## Edit summary (from the edit receipts)
 
 ```json
 {{ edit_summary | tojson }}
 ```
 
-## Post-edit counts (measured by the harness)
+## Gate results (as returned by `lisp_eval`)
 
 ```json
-{{ post_edit_counts | tojson }}
+{{ gate_results | tojson }}
 ```
 
 ## Sibling control result (same recipe, non-failing model)
@@ -43,12 +43,13 @@ The sibling control completes the verification. The anchor ran the same recipe o
 {{ control_model_result | tojson }}
 ```
 
-## Verification process
+## Reporting process
 
-1. **Re-measure under the same config**: same harness, same sampling settings, same token limits — only the edit differs. A config change riding along with the edit is an unmeasured second intervention.
-2. **Count the classes again**: correct-complete, wrong-complete, hit-limit — before and after, side by side. The completion-rate delta is as load-bearing as the score delta.
-3. **Attribute**: for the newly-completing share (answers that hit the limit before and finish after), how many are correct? That product — new completions times their correctness — is the unblocking gain the DME-3 gate compares against the headline delta downstream, in `lisp_eval`.
-4. **Check the control and the collateral**: the sibling that does not fail should not improve; an unrelated benchmark that moves needs a mechanism. Name any general-booster suspicion out loud.
+1. **Copy the paired counts** from the DME-3 result into the table: rescues from truncated answers, rescues from finished-wrong answers, regressions, truncation before and after.
+2. **State the attribution verdict, its notes and the operation class verbatim.** If a note says finished-answer changes were untestable, say so beside the verdict. If the operation class is `uniform-plus-direction` or `mixed-sign`, the edit was not a plain removal: say so.
+3. **State the preservation verdict**: the DME-3 result on the preservation set. `net-loss-established` there is collateral damage.
+4. **State the intervention results**: DME-2c and DME-2d with their notes, or that the direction is an untested candidate. A `direction-specific` verdict carrying the note `control-change-is-itself-established` is reported with the control's net change beside it.
+5. **State the control**: the sibling's delta and its DME-3b verdict. Name any general-booster suspicion out loud.
 
 ## Output requirements
 
@@ -57,21 +58,22 @@ Respond with a JSON object:
 ```json
 {
   "verification_table": [
-    {"metric": "MATH-500", "before": 7.9, "after": 48.1},
-    {"metric": "token-limit hits", "before": 93.0, "after": 33.1},
-    {"metric": "sibling control delta", "before": 6.8, "after": 7.0}
+    {"metric": "truncated answers", "before": 1000, "after": 424},
+    {"metric": "rescues from truncated answers", "count": 576},
+    {"metric": "rescues from finished-wrong answers", "count": 3},
+    {"metric": "regressions", "count": 5}
   ],
-  "gain_attribution": {
-    "newly_completing_share": 0.60,
-    "complete_correct_rate": 0.72,
-    "headline_delta": 40.2,
-    "attribution_inputs_recorded": true
+  "attribution": {
+    "verdict": "mostly-unblocking",
+    "operation": "uniform-minus-direction",
+    "notes": [],
+    "what_it_does_not_show": "…"
   },
   "collateral_damage": [
-    {"metric": "…", "observed": "…", "verdict": "none"}
+    {"set": "preservation", "verdict": "net-change-not-established"}
   ],
   "verdict": {
-    "verified": true,
+    "direction": "direction-specific | candidate, untested",
     "control_behaved": true,
     "open_findings": 0
   }
@@ -80,7 +82,6 @@ Respond with a JSON object:
 
 ## Constraints
 
-- The attribution label is computed by the DME-3 gate in `lisp_eval` — this template records the inputs (shares, rates, deltas), never the final label as settled.
-- Before and after share one config — a verification under different settings verifies nothing.
+- Every number is copied from `gate_results`, `edit_summary` or `control_model_result`. If a number is not there, write "not measured".
+- A gate refusal is reported as the refusal. Do not restate it as a pass, and do not fill in what it was missing.
 - The control is not optional: a report without the sibling control is an unverified claim of specificity.
-- Report the whole budget curve tried, not just the best point.
