@@ -33,7 +33,6 @@ fn server_using(
         WebID::new(),
         Arc::new(Mutex::new(ForecastStore::new(None))),
         forecasts,
-        Mutex::new(None),
         Mutex::new(ProjectStore::new(None)),
     )
 }
@@ -86,7 +85,6 @@ async fn matured_prospective_forecast_scores_the_frozen_probability() {
     {
         let mut store = forecasts.lock().expect("store");
         let mut record = store.get("pf-1").expect("persisted").clone();
-        record.schema_version = 2;
         record.created_at = "2026-01-15T00:00:00Z".into();
         record.declaration = Some(hkask_mcp_scenarios::equity_forecast::EquityDeclaration {
             deadline: chrono::NaiveDate::from_ymd_opt(2026, 4, 15).expect("deadline"),
@@ -120,7 +118,7 @@ async fn matured_prospective_forecast_scores_the_frozen_probability() {
         "Brier on the stored prior 0.6: {body}"
     );
     assert!(
-        body["brier"]["combined"]
+        body["brier"]["return_accuracy"]
             .as_f64()
             .is_some_and(|b| (b - 0.16).abs() < 1e-9),
         "combined Brier: {body}"
@@ -172,7 +170,10 @@ async fn forecast_record_without_a_persisted_probability_is_explicitly_unscored(
         .await
         .expect("record answers");
     let body = content(&recorded);
-    assert!(body["brier"]["combined"].is_null(), "no declared p: {body}");
+    assert!(
+        body["brier"]["return_accuracy"].is_null(),
+        "no declared p: {body}"
+    );
     assert_eq!(body["scoring_status"], "unscored");
     assert!(body["unscored_reason"].as_str().is_some(), "reason: {body}");
 }
@@ -373,7 +374,7 @@ async fn equity_backdated_and_identityless_observations_are_unscored() {
                 .expect("observation"),
         );
         assert_eq!(body["scoring_status"], "unscored");
-        assert!(body["brier"]["combined"].is_null());
+        assert!(body["brier"]["return_accuracy"].is_null());
         assert!(body["unscored_reason"].is_string());
         assert!(body["gaps"]["return_gap"].is_number());
     }

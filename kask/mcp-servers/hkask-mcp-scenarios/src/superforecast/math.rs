@@ -122,8 +122,13 @@ pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, Sc
         return Err(ScenarioError::NoEvents);
     }
 
-    // Validate all events
+    // Validate all events. Ids key every map below, so a blank or repeated
+    // id is refused by name before it can surface as a false cycle.
+    let mut seen_ids = HashSet::new();
     for event in events {
+        if event.id.trim().is_empty() || !seen_ids.insert(event.id.as_str()) {
+            return Err(ScenarioError::DuplicateEvent(event.id.clone()));
+        }
         event.validate()?;
     }
 
@@ -167,9 +172,6 @@ pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, Sc
             hkask_forecast::combine_independent_channels(&all_parents_true)
         };
 
-        // Build path from root to this node
-        let paths = build_path(id, events);
-
         // Certainty distance: |P - 0.5| × 2 — how far from coin-flip
         // (1 = most certain, 0 = coin-flip). The sensitivity ranking
         // inverts this to rank uncertainty.
@@ -178,7 +180,6 @@ pub(crate) fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, Sc
         nodes.push(EventTreeNode {
             event: (*event).clone(),
             marginal_probability: marginal,
-            paths,
             certainty_distance,
         });
 
@@ -277,52 +278,39 @@ fn topological_sort(events: &[ScenarioEvent]) -> Result<Vec<String>, ScenarioErr
     Ok(sorted)
 }
 
-/// Build all paths from root events to a given event ID.
-/// For single-parent events, returns one path. For multi-parent events,
-/// returns one path per parent (recursively collected).
-fn build_path(target_id: &str, events: &[ScenarioEvent]) -> Vec<Vec<String>> {
-    let event_map: HashMap<&str, &ScenarioEvent> =
-        events.iter().map(|e| (e.id.as_str(), e)).collect();
-
-    // Recursively collect all paths from an event to root nodes.
-    fn collect_paths(
-        current: &str,
-        event_map: &HashMap<&str, &ScenarioEvent>,
-        visited: &mut HashSet<String>,
-    ) -> Vec<Vec<String>> {
-        // Guard against cycles (should not happen after topological sort)
-        if !visited.insert(current.to_string()) {
-            return vec![vec![current.to_string()]];
+/// Whether every node's parents are independent of one another, which is
+/// what the marginalization assumes: the underlying undirected graph has no
+/// cycle. When false, a node whose parents share an ancestor gets an
+/// approximate marginal.
+pub(crate) fn parents_are_independent(events: &[ScenarioEvent]) -> bool {
+    let index: HashMap<&str, usize> = events
+        .iter()
+        .enumerate()
+        .map(|(i, event)| (event.id.as_str(), i))
+        .collect();
+    let mut root: Vec<usize> = (0..events.len()).collect();
+    fn find(root: &mut [usize], mut node: usize) -> usize {
+        while root[node] != node {
+            root[node] = root[root[node]];
+            node = root[node];
         }
-
-        let event = match event_map.get(current) {
-            Some(e) => e,
-            None => return vec![vec![current.to_string()]],
-        };
-
-        if event.depends_on.is_empty() {
-            return vec![vec![current.to_string()]];
-        }
-
-        let mut all_paths = Vec::new();
+        node
+    }
+    for (child, event) in events.iter().enumerate() {
         for dep in &event.depends_on {
             for parent_id in &dep.parent_event_ids {
-                let parent_paths = collect_paths(parent_id, event_map, visited);
-                for parent_path in parent_paths {
-                    let mut full_path = parent_path;
-                    full_path.push(current.to_string());
-                    all_paths.push(full_path);
+                let Some(&parent) = index.get(parent_id.as_str()) else {
+                    continue;
+                };
+                let (a, b) = (find(&mut root, parent), find(&mut root, child));
+                if a == b {
+                    return false;
                 }
+                root[a] = b;
             }
         }
-        all_paths
     }
-
-    let mut paths = collect_paths(target_id, &event_map, &mut HashSet::new());
-    if paths.is_empty() {
-        paths.push(vec![target_id.to_string()]);
-    }
-    paths
+    true
 }
 
 // ── Sensitivity: which events drive outcome variance ───────────────────────
@@ -354,7 +342,9 @@ pub(crate) fn structure_framing_document(
     answers: &serde_json::Value,
 ) -> Result<FramingDocument, ScenarioError> {
     if subject.trim().is_empty() {
-        return Err(ScenarioError::EmptyInput("subject".into()));
+        return Err(ScenarioError::InvalidInput(
+            "subject must be non-empty".into(),
+        ));
     }
     let get_str = |key: &str| -> String {
         answers
@@ -375,20 +365,33 @@ pub(crate) fn structure_framing_document(
             .unwrap_or_default()
     };
 
-    let time_horizon = match get_str("time_horizon").to_lowercase().as_str() {
-        "tactical" | "12-18 months" | "tactical (12-18 months)" => TimeHorizon::Tactical,
-        "strategic" | "3-5 years" | "strategic (3-5 years)" => TimeHorizon::Strategic,
-        "long-term" | "7-10 years" | "long-term (7-10 years)" => TimeHorizon::LongTerm,
-        _ => TimeHorizon::Strategic,
+    if !answers.is_object() {
+        return Err(ScenarioError::InvalidInput(
+            "answers must be a JSON object keyed by the framing fields".into(),
+        ));
+    }
+    // The two closed vocabularies are the ones scenario_frame's own template
+    // names. An absent key takes the default; a value outside the set is
+    // refused, never silently replaced by the default.
+    let time_horizon = match answers.get("time_horizon").and_then(|v| v.as_str()) {
+        None => TimeHorizon::Strategic,
+        Some(value) => TimeHorizon::parse(value).ok_or_else(|| {
+            ScenarioError::InvalidInput(format!(
+                "time_horizon '{value}' must be one of: {}",
+                crate::requests::TIME_HORIZONS.join(", ")
+            ))
+        })?,
     };
-
-    let use_case = match get_str("use_case").to_lowercase().as_str() {
-        "strategic decision" | "strategic_decision" => UseCase::StrategicDecision,
-        "investment thesis" | "investment_thesis" => UseCase::InvestmentThesis,
-        "monitoring dashboard" | "monitoring_dashboard" => UseCase::MonitoringDashboard,
-        "landscape exploration" | "landscape_exploration" => UseCase::LandscapeExploration,
-        "contingency planning" | "contingency_planning" => UseCase::ContingencyPlanning,
-        _ => UseCase::LandscapeExploration,
+    let use_case = match answers.get("use_case").and_then(|v| v.as_str()) {
+        None => UseCase::LandscapeExploration,
+        Some(value) => serde_json::from_value::<UseCase>(serde_json::Value::String(
+            value.to_owned(),
+        ))
+        .map_err(|_| {
+            ScenarioError::InvalidInput(format!(
+                "use_case '{value}' must be one of: strategic_decision, investment_thesis, monitoring_dashboard, landscape_exploration, contingency_planning"
+            ))
+        })?,
     };
 
     let stakeholders: Vec<StakeholderConfig> = answers
@@ -397,9 +400,10 @@ pub(crate) fn structure_framing_document(
         .map(|arr| {
             arr.iter()
                 .map(|s| StakeholderConfig {
+                    // A bare string is the stakeholder's role.
                     role: s
-                        .get("role")
-                        .and_then(|v| v.as_str())
+                        .as_str()
+                        .or_else(|| s.get("role").and_then(|v| v.as_str()))
                         .unwrap_or("unknown")
                         .to_string(),
                     primary_concern: s
@@ -467,7 +471,6 @@ mod tests {
             sub_questions: Vec::new(),
             base_rate: None,
             reference_class: None,
-            brier_score: None,
             update_count: 0,
         }
     }

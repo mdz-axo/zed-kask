@@ -19,7 +19,8 @@ pub(crate) use forecast::{bayesian_update, brier_score, outside_view_adjustment}
 // independent of the stateful orchestration that remains in this file).
 mod math;
 pub(crate) use math::{
-    build_event_tree, calibrate_from_fermi, sensitivity_ranking, structure_framing_document,
+    build_event_tree, calibrate_from_fermi, parents_are_independent, sensitivity_ranking,
+    structure_framing_document,
 };
 
 // ── Assessment (Chermack + Dragonfly-Eye + Calibration + Triage) ────────────

@@ -58,7 +58,6 @@ fn event(id: &str, probability: f64, depends_on: Vec<EventDependency>) -> Scenar
         sub_questions: Vec::new(),
         base_rate: None,
         reference_class: None,
-        brier_score: None,
         update_count: 0,
     }
 }

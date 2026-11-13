@@ -64,12 +64,12 @@ pub(crate) fn compose_market_tree(
     dependency_specs: &[DependencySpec],
 ) -> Result<(EventTree, Vec<CompositionWarning>), ScenarioError> {
     if records.is_empty() {
-        return Err(ScenarioError::EmptyInput(
+        return Err(ScenarioError::InvalidInput(
             "compose_market_tree requires at least one market record".into(),
         ));
     }
     if match_confidences.len() != records.len() {
-        return Err(ScenarioError::EmptyInput(format!(
+        return Err(ScenarioError::InvalidInput(format!(
             "match_confidences length {} must equal records length {} (use None per entry for direct lookups)",
             match_confidences.len(),
             records.len()

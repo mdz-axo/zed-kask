@@ -76,13 +76,11 @@ fn set_clock(server: &ScenariosServer, clock: fn() -> chrono::DateTime<chrono::U
 
 fn make_server() -> ScenariosServer {
     let forecast_store = Arc::new(Mutex::new(clocked_store(None)));
-    let tree_cache = Mutex::new(None);
     let project_store = Mutex::new(ProjectStore::new(None));
     ScenariosServer::new(
         WebID::new(),
         forecast_store,
         equity_forecast_store(),
-        tree_cache,
         project_store,
     )
 }
@@ -92,7 +90,6 @@ fn file_backed_server(path: &std::path::Path) -> ScenariosServer {
         WebID::new(),
         Arc::new(Mutex::new(clocked_store(Some(path.to_path_buf())))),
         equity_forecast_store(),
-        Mutex::new(None),
         Mutex::new(ProjectStore::new(None)),
     )
 }
@@ -104,7 +101,6 @@ fn project_backed_server(path: &std::path::Path) -> ScenariosServer {
         WebID::new(),
         Arc::new(Mutex::new(clocked_store(None))),
         equity_forecast_store(),
-        Mutex::new(None),
         Mutex::new(ProjectStore::new(Some(path.to_path_buf()))),
     )
 }
@@ -168,7 +164,7 @@ fn framing_answers() -> serde_json::Value {
         "in_scope": ["margins"],
         "out_of_scope": ["M&A"],
         "stakeholders": ["board"],
-        "use_case": "capital allocation",
+        "use_case": "investment_thesis",
         "success_criteria": ["clear thesis"],
         "constraints": ["no leverage"],
         "surfaced_assumptions": ["stable demand"],
@@ -414,7 +410,6 @@ fn independent_event(identifier: &str, name: &str, probability: f64) -> Scenario
         sub_questions: vec![],
         base_rate: None,
         reference_class: None,
-        brier_score: None,
         update_count: 0,
     }
 }
@@ -490,11 +485,11 @@ async fn scenario_quantify_resolves_single_independent_event() {
         (node["marginal_probability"].as_f64().unwrap_or(-1.0) - 0.3).abs() < 1e-9,
         "the root's marginal equals its prior with no parents, got: {parsed}"
     );
-    // Quantifying caches the tree so a subsequent status reflects it.
+    // Quantifying stores the tree so a subsequent status reflects it.
     let status = invoke_tool!(server, scenario_status, StatusRequest {});
     assert!(
         status.get("event_tree").is_some_and(|tree| !tree.is_null()),
-        "scenario_quantify must populate the tree cache, got: {status}"
+        "scenario_quantify must store the tree scenario_status shows, got: {status}"
     );
 }
 
@@ -871,11 +866,6 @@ async fn scenario_assess_unreported_metrics_withhold_dependent_phases() {
             serde_json::Value::Null,
             "{phase} depends on unreported metrics — its score must be null (insufficient data), not zero-derived, got: {parsed}"
         );
-        assert_eq!(
-            parsed["phase_scores"][phase],
-            serde_json::Value::Null,
-            "phase_scores[{phase}] must be null too, got: {parsed}"
-        );
         let gaps = parsed["phases"][phase]["gaps"]
             .as_array()
             .unwrap_or_else(|| panic!("{phase} must carry gaps, got: {parsed}"))
@@ -1159,15 +1149,9 @@ async fn scenario_score_scores_the_tree_marginal_not_the_prior() {
         (recorded - 0.56).abs() < 1e-9,
         "the journal records the marginal 0.56, got {recorded}"
     );
-    assert_eq!(
-        resolved["scored_from_marginal"].as_bool(),
-        Some(true),
-        "the v3 marker distinguishes marginal records from prior-era records, got: {resolved}"
-    );
-    assert_eq!(
-        resolved["schema_version"].as_u64(),
-        Some(5),
-        "schema v5, got: {resolved}"
+    assert!(
+        resolved["declaration"]["resolution_at"].is_string(),
+        "eligibility rests on the stored declaration, got: {resolved}"
     );
 }
 
@@ -1449,8 +1433,8 @@ async fn synthesis_equal_weights_do_not_invent_or_reward_historical_loss() {
     use hkask_mcp_scenarios::requests::SynthesizeRequest;
     let req: SynthesizeRequest = serde_json::from_value(serde_json::json!({
         "event_id":"event", "perspectives":[
-            {"source":"a", "probability":0.2, "fermi_sub_questions":[], "historical_brier":0.001},
-            {"source":"b", "probability":0.8, "fermi_sub_questions":[]}
+            {"source":"a", "probability":0.2, "historical_brier":0.001},
+            {"source":"b", "probability":0.8}
         ]
     }))
     .expect("request");
@@ -2394,27 +2378,16 @@ async fn scenario_update_rejects_an_out_of_range_prior() {
 #[tokio::test]
 async fn scenario_synthesize_averages_perspectives() {
     let server = make_server();
-    let sub = || SubQuestion {
-        question: "What is the base rate?".into(),
-        estimate: 0.5,
-        confidence: 0.5,
-    };
     let perspectives = vec![
         Perspective {
             source: "bull".into(),
             probability: 0.8,
-            fermi_sub_questions: vec![sub()],
-            base_rate: None,
-            reference_class: None,
             rationale: None,
             historical_brier: None,
         },
         Perspective {
             source: "bear".into(),
             probability: 0.4,
-            fermi_sub_questions: vec![sub()],
-            base_rate: None,
-            reference_class: None,
             rationale: None,
             historical_brier: None,
         },
@@ -2517,12 +2490,13 @@ async fn forecast_record_scores_a_standalone_outcome() {
             forecast_id: None,
         }
     );
-    assert_eq!(parsed["status"], "recorded");
+    // No forecast_id: nothing is stored, and the status says so.
+    assert_eq!(parsed["status"], "computed_only");
     assert_eq!(parsed["gaps"]["narrative"], "return_drove_gap");
     // No prospectively stored probability: the raw loss is unscored, never
     // silently certified.
     assert_eq!(parsed["scoring_status"], "unscored");
-    assert!(parsed["brier"]["combined"].is_null());
+    assert!(parsed["brier"]["return_accuracy"].is_null());
 }
 
 #[tokio::test]

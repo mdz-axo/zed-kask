@@ -182,7 +182,6 @@ mod tests {
             hkask_types::WebID::new(),
             Arc::new(Mutex::new(crate::superforecast::ForecastStore::new(None))),
             Arc::new(Mutex::new(crate::superforecast::JournalStore::new(None))),
-            Mutex::new(None),
             Mutex::new(crate::superforecast::ProjectStore::new(None)),
         );
         let response = server

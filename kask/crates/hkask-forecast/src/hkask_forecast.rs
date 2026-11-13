@@ -60,9 +60,9 @@ impl FermiQuestion {
 // ── Fermi decomposition ────────────────────────────────────────────────────
 
 /// Fermi decomposition calibration. Weighted average of sub-question
-/// estimates by confidence. Returns Err if any sub-question has a non-finite
-/// estimate or confidence, or if all confidence weights are zero.
-/// Returns Ok(0.5) if sub_questions is empty (neutral prior).
+/// estimates by confidence. Returns Err if any sub-question has an estimate
+/// or confidence outside [0, 1]. Returns Ok(0.5), the neutral prior, when
+/// sub_questions is empty or every confidence weight is zero.
 #[must_use = "calibration result should be used or the error handled"]
 pub fn calibrate_from_fermi(questions: &[FermiQuestion]) -> Result<f64, ForecastError> {
     if questions.is_empty() {
@@ -118,22 +118,22 @@ pub fn outside_view_adjustment(
 
 // ── Bayesian updating ──────────────────────────────────────────────────────
 
-/// Standard Bayesian update: posterior = prior × likelihood / evidence_rate.
-///
-/// If `evidence_base_rate` is zero or negative, the Bayesian ratio is undefined
-/// (division by zero yields ±∞ or `NaN`; a negative base rate yields a
-/// sign-flipped posterior that `clamp` would push to 0.01 — the wrong answer
-/// for impossible evidence). This is treated as "evidence is impossible under
-/// the model": the prior is returned unchanged (clamped) rather than letting
-/// `NaN` or a nonsensical negative posterior escape. Callers should pass a
-/// genuine positive base rate; the guard is a fail-safe, not a license to pass
-/// zero or negative.
+/// Bayes' theorem for one hypothesis: P(H|E) = P(E|H) × P(H) / P(E), exact
+/// and unclamped (a prior of 0 or 1 stays there). Returns `None` when the
+/// inputs cannot belong to one probability model: an input outside [0, 1] or
+/// non-finite, P(E) = 0, or P(E|H) × P(H) > P(E) (the joint P(E and H)
+/// cannot exceed P(E)).
 #[must_use = "posterior probability should be used"]
-pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate: f64) -> f64 {
-    if evidence_base_rate <= 0.0 {
-        return prior.clamp(0.01, 0.99);
-    }
-    (evidence_likelihood * prior / evidence_base_rate).clamp(0.01, 0.99)
+pub fn bayesian_update(
+    prior: f64,
+    evidence_likelihood: f64,
+    evidence_base_rate: f64,
+) -> Option<f64> {
+    let unit = |p: f64| p.is_finite() && (0.0..=1.0).contains(&p);
+    let joint = evidence_likelihood * prior;
+    let valid = unit(prior) && unit(evidence_likelihood) && unit(evidence_base_rate);
+    (valid && evidence_base_rate > 0.0 && joint <= evidence_base_rate + 1e-12)
+        .then(|| (joint / evidence_base_rate).min(1.0))
 }
 
 // ── Conditional-tree marginalization ────────────────────────────────────────
@@ -150,7 +150,8 @@ pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate:
 /// clamp to `[0, 1]`.
 ///
 /// Cost is `O(2^n)`; callers must ensure `parent_marginals.len()` is small
-/// (the scenarios server and the graph widget both guard fan-in upstream).
+/// (the scenarios server's event validation and the posterior engine both
+/// refuse more than 20 parents in one group).
 /// This is the single source of truth for the joint-marginalization formula —
 /// `hkask-mcp-scenarios::superforecast::compute_marginal_probabilities` and
 /// `hkask-graph-widget::propagate::recompute_marginals` both delegate here so the
@@ -400,8 +401,7 @@ pub fn volatility_regime(prices: &[f64]) -> VolatilityRegime {
 //
 // The risk axis of the three-axes specification: probability-weighted risk
 // measures over scenario-tree branches. Pure math over caller-supplied branch
-// returns; this module turns them into risk measures and factor
-// exposures. Time and return stay simple by design; the complexity budget
+// returns. Time and return stay simple by design; the complexity budget
 // lives here.
 
 /// One branch of a scenario tree with its probability and the company's
@@ -437,7 +437,7 @@ pub struct ScenarioRiskMeasure {
 /// the mass is reported so the caller can decide whether the residual is a
 /// hold-out branch). Returns None when no branch has positive probability —
 /// a risk measure over zero mass is undefined, never fabricated.
-#[must_use = "risk measure should feed valuation or factor analysis"]
+#[must_use = "risk measure should feed valuation"]
 pub fn scenario_risk_measure(branches: &[BranchOutcome]) -> Option<ScenarioRiskMeasure> {
     let mass: f64 = branches.iter().map(|b| b.probability).sum();
     if mass <= 0.0 {
@@ -459,42 +459,6 @@ pub fn scenario_risk_measure(branches: &[BranchOutcome]) -> Option<ScenarioRiskM
         branch_count: branches.len(),
         probability_mass: mass,
     })
-}
-
-/// Scenario factor exposure: the company's return sensitivity to a single
-/// scenario node (factor), in the APT loading sense.
-///
-/// Construction: the factor is the node's binary outcome; the loading is the difference in the
-/// company's branch return between branches where the node is true and
-/// branches where it is false, probability-weighted:
-///
-///   β(node) = E[r | node true] − E[r | node false]
-///
-/// This is the cash-flow sensitivity of company value to the node's outcome
-/// — elicited by revaluation, not estimated by covariance with an indicator
-/// (indicators over mutually exclusive branches are collinear).
-///
-/// Returns None when either conditioning set has zero probability mass.
-#[must_use = "loading should feed factor-exposure analysis"]
-pub fn scenario_node_loading(branches: &[BranchOutcome], node_true: &[bool]) -> Option<f64> {
-    if node_true.len() != branches.len() {
-        return None;
-    }
-    let (mut mass_true, mut mass_false) = (0.0, 0.0);
-    let (mut ret_true, mut ret_false) = (0.0, 0.0);
-    for (branch, &is_true) in branches.iter().zip(node_true.iter()) {
-        if is_true {
-            mass_true += branch.probability;
-            ret_true += branch.probability * branch.branch_return;
-        } else {
-            mass_false += branch.probability;
-            ret_false += branch.probability * branch.branch_return;
-        }
-    }
-    if mass_true <= 0.0 || mass_false <= 0.0 {
-        return None;
-    }
-    Some(ret_true / mass_true - ret_false / mass_false)
 }
 
 /// Fuse realized market volatility with scenario-implied volatility.
@@ -628,29 +592,32 @@ mod tests {
     // ── Bayesian update ─────────────────────────────────────────────
 
     #[test]
-    fn bayesian_update_computes_odds_ratio() {
+    fn bayesian_update_is_exact_bayes() {
         // prior 0.5, likelihood 0.8, base rate 0.4 → 0.8·0.5/0.4 = 1.0.
-        assert!(close(bayesian_update(0.5, 0.8, 0.4), 1.0_f64.min(0.99)));
+        assert!(close(bayesian_update(0.5, 0.8, 0.4).unwrap(), 1.0));
         // prior 0.3, likelihood 0.2, base rate 0.5 → 0.12.
-        assert!(close(bayesian_update(0.3, 0.2, 0.5), 0.12));
+        assert!(close(bayesian_update(0.3, 0.2, 0.5).unwrap(), 0.12));
+        // prior 0.3, likelihood 0.8, base rate 0.5 → 0.48.
+        assert!(close(bayesian_update(0.3, 0.8, 0.5).unwrap(), 0.48));
     }
 
     #[test]
-    fn bayesian_update_clamps_posterior_to_open_interval() {
-        // Extreme inputs must not produce exactly 0 or 1.
-        let posterior = bayesian_update(0.99, 1.0, 0.01);
-        assert!((0.01..=0.99).contains(&posterior));
+    fn bayesian_update_keeps_certainty_and_impossibility() {
+        // A prior of 0 stays 0 and a prior of 1 stays 1 under coherent
+        // evidence; evidence the hypothesis rules out drives the posterior to 0.
+        assert_eq!(bayesian_update(0.0, 0.8, 0.5), Some(0.0));
+        assert_eq!(bayesian_update(1.0, 0.5, 0.5), Some(1.0));
+        assert_eq!(bayesian_update(0.5, 0.0, 0.5), Some(0.0));
     }
 
     #[test]
-    fn bayesian_update_zero_base_rate_returns_clamped_prior_not_nan() {
-        // The fail-safe guard: impossible evidence returns the clamped prior,
-        // never NaN or a sign-flipped value.
-        let posterior = bayesian_update(0.7, 0.9, 0.0);
-        assert!(close(posterior, 0.7));
-        assert!(!posterior.is_nan());
-        let negative = bayesian_update(0.7, 0.9, -0.5);
-        assert!(close(negative, 0.7));
+    fn bayesian_update_refuses_inputs_no_probability_model_admits() {
+        // P(E|H)·P(H) = 0.81 > P(E) = 0.5: the ratio would be 1.62.
+        assert_eq!(bayesian_update(0.9, 0.9, 0.5), None);
+        assert_eq!(bayesian_update(0.7, 0.9, 0.0), None);
+        assert_eq!(bayesian_update(0.7, 0.9, -0.5), None);
+        assert_eq!(bayesian_update(1.2, 0.5, 0.5), None);
+        assert_eq!(bayesian_update(f64::NAN, 0.5, 0.5), None);
     }
 
     // ── Fermi decomposition ─────────────────────────────────────────
@@ -835,51 +802,6 @@ mod tests {
             }])
             .is_none()
         );
-    }
-
-    // ── Scenario factor loading ────────────────────────────
-
-    #[test]
-    fn scenario_node_loading_is_conditional_return_difference() {
-        // β = E[r | true] − E[r | false] = 0.8 − 0.2 = 0.6.
-        let branches = [
-            BranchOutcome {
-                probability: 0.5,
-                branch_return: 0.8,
-            },
-            BranchOutcome {
-                probability: 0.5,
-                branch_return: 0.2,
-            },
-        ];
-        let loading =
-            scenario_node_loading(&branches, &[true, false]).expect("both sets have mass");
-        assert!(close(loading, 0.6));
-    }
-
-    #[test]
-    fn scenario_node_loading_rejects_length_mismatch() {
-        let branches = [BranchOutcome {
-            probability: 1.0,
-            branch_return: 0.5,
-        }];
-        assert!(scenario_node_loading(&branches, &[true, false]).is_none());
-    }
-
-    #[test]
-    fn scenario_node_loading_none_when_one_side_has_no_mass() {
-        // All branches true → the false conditioning set is empty.
-        let branches = [
-            BranchOutcome {
-                probability: 0.5,
-                branch_return: 0.8,
-            },
-            BranchOutcome {
-                probability: 0.5,
-                branch_return: 0.2,
-            },
-        ];
-        assert!(scenario_node_loading(&branches, &[true, true]).is_none());
     }
 
     // ── Volatility fusion ──────────────────────────────────────

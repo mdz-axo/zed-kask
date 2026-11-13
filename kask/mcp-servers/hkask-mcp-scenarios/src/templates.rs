@@ -222,7 +222,6 @@ pub(crate) fn generate_brainstorm_protocol(
     BrainstormProtocol {
         subject: subject.to_string(),
         time_horizon: time_horizon.to_string(),
-        research_context: research_context.to_string(),
         personas,
         rounds,
         pipeline: vec![

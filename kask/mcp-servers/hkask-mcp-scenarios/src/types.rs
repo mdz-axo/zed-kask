@@ -35,6 +35,9 @@ pub(crate) enum ScenarioError {
     #[error("cycle detected in event dependency graph")]
     CycleDetected,
 
+    #[error("event id '{0}' is blank or appears more than once; event ids must be unique")]
+    DuplicateEvent(String),
+
     #[error("event '{0}' not found")]
     EventNotFound(String),
 
@@ -45,11 +48,13 @@ pub(crate) enum ScenarioError {
     #[error("cannot synthesize: fewer than 2 perspectives provided")]
     InsufficientPerspectives,
 
-    #[error("no stored forecasts found for calibration")]
+    #[error(
+        "no resolved, scoring-eligible forecast to calibrate on: declare with scenario_declare, then resolve with scenario_score after the cutoff"
+    )]
     NoForecastData,
 
-    #[error("empty input: {0}")]
-    EmptyInput(String),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 // ── Framing (Chermack Phase 1 + Schwartz Stage 1) ──────────────────────────
@@ -147,6 +152,11 @@ pub enum TimeHorizon {
 }
 
 impl TimeHorizon {
+    /// The wire spelling (`tactical`, `strategic`, `long_term`), or `None`.
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(value.to_owned())).ok()
+    }
+
     pub fn display(&self) -> &'static str {
         match self {
             Self::Tactical => "12-18 months",
@@ -172,16 +182,9 @@ pub enum ScenarioType {
 }
 
 impl ScenarioType {
-    /// Snake-case category label matching the serde serialization, used as
-    /// the `category` on `StoredForecastRecord` so per-domain calibration
-    /// can group resolved history by scenario type.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::CompanyUpdate => "company_update",
-            Self::CompanyAnalysis => "company_analysis",
-            Self::EmergingEconomic => "emerging_economic",
-            Self::EconomicPotential => "economic_potential",
-        }
+    /// The wire spelling, or `None`.
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        serde_json::from_value(serde_json::Value::String(value.to_owned())).ok()
     }
 }
 
@@ -252,8 +255,6 @@ pub struct ScenarioEvent {
     pub base_rate: Option<f64>,
     /// Reference class description
     pub reference_class: Option<String>,
-    /// Brier score (populated after outcome is known)
-    pub brier_score: Option<f64>,
     /// How many Bayesian update cycles
     pub update_count: u64,
 }
@@ -298,19 +299,14 @@ pub struct SubQuestion {
 // ── Dragonfly-Eye Synthesis (P1) ───────────────────────────────────────────
 
 /// A single perspective on an event — one analyst's probability estimate
-/// with their Fermi decomposition and rationale.
+/// and rationale.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Perspective {
     /// Who or what produced this perspective (analyst name, agent ID, model name)
     pub source: String,
     /// Calibrated probability for this event (0.0–1.0)
     pub probability: f64,
-    /// Fermi decomposition sub-questions backing this estimate
-    pub fermi_sub_questions: Vec<SubQuestion>,
-    /// Outside-view base rate for this perspective
-    pub base_rate: Option<f64>,
-    /// Reference class description
-    pub reference_class: Option<String>,
     /// Free-text rationale for this estimate
     pub rationale: Option<String>,
     /// Historical raw loss retained as context only; never used as a weight.
@@ -340,36 +336,24 @@ pub(crate) struct DragonflySynthesis {
 // ── Calibration Tracking (P2) ──────────────────────────────────────────────
 
 /// A single stored forecast awaiting or having received an outcome.
+///
+/// Scoring eligibility is decided by the record's own evidence, never by a
+/// version marker: a record is scored only when `declaration` is present and
+/// `ScenarioDeclaration::is_prospective` holds. Older files carry keys this
+/// type no longer names (`schema_version`, `scored_from_marginal`,
+/// `category`); they are ignored on read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredForecastRecord {
-    /// Schema version for deserialization (current: 5).
-    /// Old files without this field default to 0.
-    /// v2 adds `category` for per-domain calibration.
-    /// v3 scores the tree MARGINAL (PR-02): `probability` is the node's
-    /// resolved marginal at scoring time, marked by `scored_from_marginal`.
-    /// v2-and-earlier records hold the caller-supplied prior.
-    /// v5 admits complete declarations with exact resolution timestamps.
-    /// Date-only v4 declarations remain history, not prospective evidence.
-    #[serde(default)]
-    pub schema_version: u32,
     pub forecast_id: String,
     pub event_id: String,
     pub event_name: String,
     pub subject: String,
+    /// The tree's resolved marginal at declaration time.
     pub probability: f64,
-    /// v3 marker: `probability` is the tree's resolved marginal, not the
-    /// caller-supplied prior (PR-02). Defaults false on older records.
-    #[serde(default)]
-    pub scored_from_marginal: bool,
     pub created_at: NaiveDate,
     /// None = still pending, Some = outcome known
     pub outcome: Option<bool>,
     pub resolved_at: Option<NaiveDate>,
-    /// Domain category (e.g. "Politics", "Sports") for per-domain calibration.
-    /// `None` for records that predate the field (schema v0/v1) or for
-    /// forecasts with no natural category. Does not authorize bias correction.
-    #[serde(default)]
-    pub category: Option<String>,
     /// Frozen prospective declaration. Missing on provenance-limited history.
     #[serde(default)]
     pub declaration: Option<ScenarioDeclaration>,
@@ -493,8 +477,6 @@ pub(crate) struct BrainstormProtocol {
     pub subject: String,
     /// Time horizon
     pub time_horizon: String,
-    /// Research context (from web search)
-    pub research_context: String,
     /// Personas configured for this session
     pub personas: Vec<PersonaConfig>,
     /// Rounds in the protocol
@@ -575,8 +557,6 @@ pub(crate) struct ProjectAssessment {
 /// Score for a single phase of the scenario project.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct PhaseScore {
-    /// Phase name
-    pub phase: String,
     /// Score 0-1; null when the phase's dependent metrics were not reported
     /// (insufficient data — the gaps name the missing metrics).
     pub score: Option<f64>,
@@ -594,10 +574,6 @@ pub(crate) struct EventTreeNode {
     pub event: ScenarioEvent,
     /// Resolved marginal probability after applying all dependencies
     pub marginal_probability: f64,
-    /// All paths from root nodes to this node (event ID chains).
-    /// For single-parent events, this is a one-element Vec.
-    /// For multi-parent events, each parent produces a separate path.
-    pub paths: Vec<Vec<String>>,
     /// Certainty distance: |P − 0.5| × 2, scaled to [0, 1] — 1 = most
     /// certain, 0 = a coin flip. The sensitivity ranking inverts this
     /// (1 − certainty_distance) to rank uncertainty.
@@ -615,8 +591,8 @@ pub struct EventTree {
     pub root_ids: Vec<String>,
     /// Topologically sorted node IDs
     pub topo_order: Vec<String>,
-    /// Approximate probability that all events occur, using parent-true
-    /// conditionals. Multi-parent nodes use the documented average proxy.
+    /// Probability that every event occurs: root priors times each dependent
+    /// node's all-parents-true conditional (groups combined by noisy-OR).
     pub joint_probability: f64,
 }
 
@@ -626,9 +602,9 @@ pub struct EventTree {
 ///
 /// One project per subject by default: `scenario_frame_document` defaults
 /// the project id to the subject, and re-running a subject's project
-/// updates it in place. Carries the framing document (Phase 1 evidence),
-/// the last quantified tree (the durable tree cache), and the assessment
-/// history (Phase 5 evidence).
+/// updates it in place. Carries the framing document (Phase 1 evidence) and
+/// the last quantified tree. Older files carry an `assessment_history` key
+/// that no tool ever read; it is ignored on load.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ScenarioProject {
     /// The project key — defaults to the subject.
@@ -639,25 +615,17 @@ pub(crate) struct ScenarioProject {
     /// The structured framing document (Chermack Phase 1 evidence).
     #[serde(default)]
     pub framing_document: Option<FramingDocument>,
-    /// The last quantified/propagated tree — the durable tree cache (the
-    /// documented default a restarted server reads via
-    /// `ProjectStore::last_tree()`).
+    /// The project's last quantified or propagated tree. `scenario_status`
+    /// shows the most recently stored one (`ProjectStore::last_tree`).
     #[serde(default)]
     pub last_tree: Option<EventTree>,
-    /// One record per `scenario_assess` call (Phase 5 history).
+    /// When `last_tree` was stored. Orders the projects' trees so the most
+    /// recently quantified one is the tree `scenario_status` shows, across
+    /// restarts. Absent on records written before this field existed.
     #[serde(default)]
-    pub assessment_history: Vec<AssessmentRecord>,
+    pub last_tree_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: NaiveDate,
     pub updated_at: NaiveDate,
-}
-
-/// One `scenario_assess` call's headline result, for the project's history.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AssessmentRecord {
-    pub date: NaiveDate,
-    /// The overall score; `None` when every phase was withheld as
-    /// insufficient data.
-    pub overall_score: Option<f64>,
 }
 
 // ── Cross-Validation ────────────────────────────────────────────────────
@@ -708,6 +676,10 @@ pub(crate) struct SubQuestionDivergence {
 
 // ── Validation ─────────────────────────────────────────────────────────────
 
+/// Most parents one dependency group may name: the conditional table has
+/// 2^n rows, and `hkask_forecast::posterior` refuses more than this.
+pub(crate) const MAX_GROUP_PARENTS: usize = 20;
+
 impl ScenarioEvent {
     /// Derive the certainty tier from the current probability.
     /// Always consistent — no stale-field divergence possible.
@@ -744,6 +716,18 @@ impl ScenarioEvent {
                         ),
                     ));
                 }
+            }
+            // The table has 2^n rows; the shared posterior engine refuses
+            // more than 20 parents in one group, so refuse them here too
+            // (and before the shift below can overflow).
+            if dep.parent_event_ids.len() > MAX_GROUP_PARENTS {
+                return Err(ScenarioError::InvalidDependency(
+                    self.name.clone(),
+                    format!(
+                        "{} parents in one dependency group exceeds the limit of {MAX_GROUP_PARENTS}",
+                        dep.parent_event_ids.len()
+                    ),
+                ));
             }
             // Validate conditionals length = 2^n
             let expected_len = 1usize << dep.parent_event_ids.len();

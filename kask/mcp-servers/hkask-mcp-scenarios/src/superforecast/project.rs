@@ -4,15 +4,16 @@
 //! `ForecastStore` compaction pattern: synced same-directory tempfile,
 //! rename, then directory sync on Unix). Projects are low-volume by
 //! design — created once per subject, updated occasionally — so a
-//! per-write full snapshot needs no journal. A corrupt or unreadable
-//! snapshot degrades to an empty store with a warning, never a silent
-//! partial load.
+//! per-write full snapshot needs no journal. A snapshot that cannot be read
+//! back leaves the store unloaded (`load_error`) and every write refused:
+//! the next snapshot would replace the file and drop every project in it.
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use super::store::{unloaded_error, unloaded_reason};
 use crate::types::{EventTree, ScenarioProject};
 
 /// File-backed store for scenario project records.
@@ -20,10 +21,8 @@ use crate::types::{EventTree, ScenarioProject};
 pub struct ProjectStore {
     projects: HashMap<String, ScenarioProject>,
     snapshot_path: Option<PathBuf>,
-    /// The most recently updated project — the durable tree cache's key
-    /// (PR-07): `ProjectStore::last_tree()` is the documented default a
-    /// restarted server reads.
-    last_project_id: Option<String>,
+    /// Set when the snapshot exists and did not load.
+    load_error: Option<String>,
 }
 
 impl ProjectStore {
@@ -33,47 +32,39 @@ impl ProjectStore {
         let mut store = Self {
             projects: HashMap::new(),
             snapshot_path,
-            last_project_id: None,
+            load_error: None,
         };
         store.load();
         store
     }
 
-    /// Load: a corrupt or unreadable snapshot degrades to an empty store
-    /// with a warning — the same posture as `ForecastStore::load`, so a
-    /// data failure is never indistinguishable from "no projects yet".
     fn load(&mut self) {
-        let Some(path) = &self.snapshot_path else {
+        let Some(path) = self.snapshot_path.clone() else {
             return;
         };
         if !path.exists() {
             return;
         }
-        match fs::read_to_string(path) {
-            Ok(data) => match serde_json::from_str::<HashMap<String, ScenarioProject>>(&data) {
-                Ok(projects) => {
-                    // JSON object order is not load-bearing; recover the
-                    // last-updated pointer from the records' own
-                    // `updated_at` timestamps.
-                    self.last_project_id = projects
-                        .values()
-                        .max_by_key(|project| project.updated_at)
-                        .map(|project| project.project_id.clone());
-                    self.projects = projects;
-                }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.scenarios",
-                    %error,
-                    "Project snapshot is corrupt — starting from an empty project store; \
-                     persisted framing documents and trees are unavailable this session"
-                ),
-            },
-            Err(error) => tracing::warn!(
-                target: "hkask.mcp.scenarios",
-                %error,
-                "Project snapshot is unreadable — starting from an empty project store"
-            ),
+        let loaded = fs::read_to_string(&path)
+            .map_err(|error| format!("cannot be read ({error})"))
+            .and_then(|data| {
+                serde_json::from_str::<HashMap<String, ScenarioProject>>(&data)
+                    .map_err(|error| format!("does not parse ({error})"))
+            });
+        match loaded {
+            Ok(projects) => self.projects = projects,
+            Err(what) => {
+                let reason = unloaded_reason(&path, &what);
+                tracing::warn!(target: "hkask.mcp.scenarios", %reason, "Project store did not load");
+                self.load_error = Some(reason);
+            }
         }
+    }
+
+    /// Why the snapshot did not load, when it did not. While this is set the
+    /// store holds no projects and every write is refused.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
     }
 
     /// Look up a project by id.
@@ -82,19 +73,29 @@ impl ProjectStore {
     }
 
     /// Insert or update a project and publish the snapshot atomically.
-    /// Sets the store's last-updated pointer — the durable tree cache.
     pub(crate) fn upsert(&mut self, project: ScenarioProject) -> io::Result<()> {
-        self.last_project_id = Some(project.project_id.clone());
+        if let Some(reason) = &self.load_error {
+            return Err(unloaded_error(reason));
+        }
         self.projects.insert(project.project_id.clone(), project);
         self.persist()
     }
 
-    /// The last-updated project's tree — the durable tree cache (PR-07).
-    /// `None` when no project carries a tree yet.
+    /// The most recently stored tree across all projects: the tree
+    /// `scenario_status` shows, in this session and after a restart. Trees
+    /// stored before `last_tree_at` existed order by their project's
+    /// `updated_at` date, then by project id.
     pub fn last_tree(&self) -> Option<EventTree> {
-        self.last_project_id
-            .as_ref()
-            .and_then(|id| self.projects.get(id))
+        self.projects
+            .values()
+            .filter(|project| project.last_tree.is_some())
+            .max_by(|a, b| {
+                (a.last_tree_at, a.updated_at, &a.project_id).cmp(&(
+                    b.last_tree_at,
+                    b.updated_at,
+                    &b.project_id,
+                ))
+            })
             .and_then(|project| project.last_tree.clone())
     }
 

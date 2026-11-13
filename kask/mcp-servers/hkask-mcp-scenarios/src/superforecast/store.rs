@@ -7,6 +7,10 @@
 //! After `JOURNAL_COMPACT_THRESHOLD` record mutations, automatic compaction
 //! publishes a full snapshot; failure leaves the complete journal recoverable.
 //!
+//! A snapshot or journal that cannot be read back completely leaves the store
+//! unloaded (`load_error`): every write is refused, because the next snapshot
+//! would replace the file and drop the records that failed to load.
+//!
 //! The generic `JournalStore<T>` core (Phase A P1 of the
 //! companies/FMP/EODHD/FIBO removal plan) is the one implementation of the
 //! journal+snapshot machinery — the equity forecast store (from the retired
@@ -30,6 +34,19 @@ enum JournalEntry<T> {
 }
 
 const JOURNAL_COMPACT_THRESHOLD: usize = 100;
+
+/// The refusal a write returns while the store's files have not loaded.
+pub(crate) fn unloaded_error(reason: &str) -> io::Error {
+    io::Error::other(reason.to_owned())
+}
+
+/// What to tell the caller when `path` did not load.
+pub(crate) fn unloaded_reason(path: &Path, what: &str) -> String {
+    format!(
+        "{} {what}; a write now would replace it and lose its records. Repair the file or move it aside, then restart the server",
+        path.display()
+    )
+}
 /// File-backed persistence using append-only journal + periodic snapshot compaction.
 /// Each mutation appends one complete event. A batch publishes all members
 /// together after syncing the event; loading decodes the entire batch first.
@@ -41,6 +58,11 @@ pub struct JournalStore<T> {
     journal_path: Option<PathBuf>,
     journal_count: usize,
     clock: fn() -> chrono::DateTime<chrono::Utc>,
+    /// Set when the snapshot or journal did not load completely.
+    load_error: Option<String>,
+    /// The journal ends in a line with no newline (an append cut short).
+    /// The next write compacts first, so nothing is appended after it.
+    journal_has_tail: bool,
 }
 
 impl<T> Default for JournalStore<T> {
@@ -51,7 +73,17 @@ impl<T> Default for JournalStore<T> {
             journal_path: None,
             journal_count: 0,
             clock: chrono::Utc::now,
+            load_error: None,
+            journal_has_tail: false,
         }
+    }
+}
+
+impl<T> JournalStore<T> {
+    /// Why the store's files did not load, when they did not. While this is
+    /// set the in-memory records are incomplete and every write is refused.
+    pub fn load_error(&self) -> Option<&str> {
+        self.load_error.as_deref()
     }
 }
 
@@ -81,71 +113,75 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
         store
     }
     /// Load: snapshot first, then replay journal on top (last write wins).
-    /// Every failure arm is surfaced: a corrupt snapshot otherwise presents as
-    /// an empty store, and the calibration feedback loop reads "no history"
-    /// as "no forecasts yet" — a data failure indistinguishable from no data.
+    /// A file that does not read back completely sets `load_error`: the store
+    /// then refuses writes, since a corrupt snapshot otherwise presents as an
+    /// empty store and the next snapshot would replace the file for good.
     fn load(&mut self) {
-        if let Some(ref path) = self.data_path
+        if let Some(path) = self.data_path.clone()
             && path.exists()
         {
-            match fs::read_to_string(path) {
+            match fs::read_to_string(&path) {
                 Ok(data) => match serde_json::from_str::<HashMap<String, T>>(&data) {
                     Ok(records) => self.records = records,
-                    Err(error) => tracing::warn!(
-                        target: "hkask.mcp.scenarios",
-                        %error,
-                        "Forecast snapshot is corrupt — replaying the journal only; \
-                         calibration history is degraded this session"
-                    ),
+                    Err(error) => self.fail_load(&path, &format!("does not parse ({error})")),
                 },
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.scenarios",
-                    %error,
-                    "Forecast snapshot is unreadable — replaying the journal only; \
-                     calibration history is degraded this session"
-                ),
+                Err(error) => self.fail_load(&path, &format!("cannot be read ({error})")),
             }
         }
-        if let Some(ref jp) = self.journal_path
-            && jp.exists()
+        if let Some(journal_path) = self.journal_path.clone()
+            && journal_path.exists()
         {
-            match fs::read_to_string(jp) {
+            match fs::read_to_string(&journal_path) {
                 Ok(data) => {
-                    let mut skipped_lines = 0usize;
-                    for line in data.lines() {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() {
-                            continue;
-                        }
-                        match serde_json::from_str::<JournalEntry<T>>(trimmed) {
-                            Ok(JournalEntry::Record { key, record }) => {
-                                self.records.insert(key, record);
-                                self.journal_count += 1;
-                            }
-                            Ok(JournalEntry::Batch { records }) => {
-                                self.journal_count += records.len();
-                                self.records.extend(records);
-                            }
-                            Err(_) => skipped_lines += 1,
+                    // Every acknowledged append ends in a newline. Whatever
+                    // follows the last newline is an append cut short.
+                    let complete_len = data.rfind('\n').map_or(0, |index| index + 1);
+                    let (complete, tail) = data.split_at(complete_len);
+                    let lines = complete.lines().map(str::trim).filter(|l| !l.is_empty());
+                    for (index, line) in lines.enumerate() {
+                        match serde_json::from_str::<JournalEntry<T>>(line) {
+                            Ok(entry) => self.replay(entry),
+                            Err(error) => self.fail_load(
+                                &journal_path,
+                                &format!("line {} does not parse ({error})", index + 1),
+                            ),
                         }
                     }
-                    if skipped_lines > 0 {
-                        tracing::warn!(
-                            target: "hkask.mcp.scenarios",
-                            skipped_lines,
-                            "Journal lines failed to replay and were skipped — those \
-                             records are lost to recall this session"
-                        );
+                    if !tail.trim().is_empty() {
+                        self.journal_has_tail = true;
+                        // A whole record that lost only its newline is kept;
+                        // a fragment was never acknowledged and is dropped.
+                        match serde_json::from_str::<JournalEntry<T>>(tail.trim()) {
+                            Ok(entry) => self.replay(entry),
+                            Err(_) => tracing::warn!(
+                                target: "hkask.mcp.scenarios",
+                                "Journal ends in an unfinished line; it was never acknowledged and is ignored"
+                            ),
+                        }
                     }
                 }
-                Err(error) => tracing::warn!(
-                    target: "hkask.mcp.scenarios",
-                    %error,
-                    "Forecast journal is unreadable — snapshot-only state; records \
-                     journaled after the last compaction are lost this session"
-                ),
+                Err(error) => self.fail_load(&journal_path, &format!("cannot be read ({error})")),
             }
         }
+    }
+
+    fn replay(&mut self, entry: JournalEntry<T>) {
+        match entry {
+            JournalEntry::Record { key, record } => {
+                self.records.insert(key, record);
+                self.journal_count += 1;
+            }
+            JournalEntry::Batch { records } => {
+                self.journal_count += records.len();
+                self.records.extend(records);
+            }
+        }
+    }
+
+    fn fail_load(&mut self, path: &Path, what: &str) {
+        let reason = unloaded_reason(path, what);
+        tracing::warn!(target: "hkask.mcp.scenarios", %reason, "Store did not load");
+        self.load_error.get_or_insert(reason);
     }
     /// Append a complete mutation; a declaration batch occupies one journal line.
     fn save_entries(&self, records: &[(String, T)]) -> io::Result<()> {
@@ -179,8 +215,16 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
     /// Compaction may fail after publication; all members remain recoverable,
     /// so the caller can finish snapshot publication with an identical retry.
     pub(crate) fn insert_batch(&mut self, records: Vec<(String, T)>) -> io::Result<()> {
+        if let Some(reason) = &self.load_error {
+            return Err(unloaded_error(reason));
+        }
         if records.is_empty() {
             return Ok(());
+        }
+        if self.journal_has_tail {
+            // Publish what loaded and empty the journal, so this append
+            // does not land after the unfinished line.
+            self.compact()?;
         }
         self.save_entries(&records)?;
         self.journal_count += records.len();
@@ -201,6 +245,9 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
         self.compact()
     }
     fn compact(&mut self) -> io::Result<()> {
+        if let Some(reason) = &self.load_error {
+            return Err(unloaded_error(reason));
+        }
         if let Some(snapshot_path) = &self.data_path {
             let parent = snapshot_path
                 .parent()
@@ -230,6 +277,7 @@ impl<T: for<'de> serde::Deserialize<'de> + serde::Serialize> JournalStore<T> {
             }
         }
         self.journal_count = 0;
+        self.journal_has_tail = false;
         Ok(())
     }
     pub fn len(&self) -> usize {
@@ -274,6 +322,8 @@ mod forecast_accessors {
                 journal_path: None,
                 journal_count: 0,
                 clock: self.clock,
+                load_error: None,
+                journal_has_tail: false,
             }
         }
     }

@@ -17,7 +17,7 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 
 | Tool | Description |
 |---|---|
-| `scenario_status` | Return the current scenario-server state snapshot. |
+| `scenario_status` | Return forecast counts, the calibration summary, recent forecasts, the most recently stored tree, and any store file that did not load. |
 | `scenario_frame` | Start the seven-turn framing conversation. |
 | `scenario_frame_document` | Convert framing answers into a typed document, persisted under the project record (id defaults to the subject). |
 | `scenario_brainstorm` | Produce a four-round scenario brainstorming protocol. |
@@ -28,9 +28,9 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 | Tool | Description |
 |---|---|
 | `scenario_quantify` | Resolve event probabilities, dependency order, and sensitivity. |
-| `scenario_propagate` | Update one event's prior and recompute the tree, with a per-node journal. |
+| `scenario_propagate` | Update one root event's prior and recompute the tree, with a per-node journal. |
 | `scenario_recompute_posteriors` | Recompute posteriors under evidence, in both directions (shared engine with the graph widget). |
-| `scenario_update` | Apply a one-off Bayesian update (stateless — returns the posterior). |
+| `scenario_update` | Apply a one-off Bayesian update, exact and unclamped (stateless — returns the posterior; incoherent inputs are refused). |
 | `scenario_calibrate` | Estimate probability with Fermi and outside/inside views; no automatic historical correction. |
 | `scenario_synthesize` | Combine perspectives with explicit equal weights (dragonfly-eye); raw historical loss is context only. |
 
@@ -43,7 +43,7 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 | `scenario_calibration` | Calculate a calibration curve from stored forecasts. |
 | `scenario_triage` | Classify a question as well_specified, goldilocks, or needs_refinement. |
 | `scenario_cross_validate` | Compare independent probability estimates. |
-| `scenario_assess` | Assess a scenario project across five phases, anchored on its project record. |
+| `scenario_assess` | Assess a scenario project across five phases, anchored on its project record. Reads only. |
 
 ### Market bridges
 
@@ -55,7 +55,7 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 
 - Declaration requires `resolution_at: {event_id: RFC3339 timestamp}` with exactly the declared IDs. Its UTC date must match the event's descriptive `deadline`. Admission requires `declared_at < resolution_at`; resolution requires `now >= resolution_at`. Legitimate subsecond and same-day horizons are allowed. A server-owned clock timestamps admission; callers cannot backdate it.
 - The complete declaration is synced as one journal event before any membership is published. Automatic compaction failure may return an error after that durable admission; identical same-ID retry finishes snapshot publication, even after cutoff, without changing the original timestamp, event set or probabilities. Changed membership, cutoff, resolver or probabilities conflict. Revisions use a new `forecast_id`; `scenario_update` remains a stateless calculation.
-- Scenario resolution reads stored probabilities and checks the stored admission timestamp against the cutoff. Nonmatching outcomes are listed explicitly, not scored. Legacy records without precise cutoffs (including date-only v4 declarations) remain readable and unscored; no retrospective eligibility is invented. New records use schema version 5; historical single-record journal entries remain readable alongside complete-batch journal events.
+- Scenario resolution reads stored probabilities and checks the stored admission timestamp against the cutoff. Nonmatching outcomes are listed explicitly, not scored. Legacy records without precise cutoffs (including date-only v4 declarations) remain readable and unscored; no retrospective eligibility is invented. Eligibility is read from the stored declaration, not from a version marker; historical single-record journal entries remain readable alongside complete-batch journal events.
 - Equity `forecast_persist` admits scoring only with a declared probability on the forecast date. The return-accuracy proposition uses a frozen 20% relative tolerance (absolute return band for a zero target), calendar-month horizon, and caller-reported return at that horizon. Resolution must occur after that horizon and match the frozen target/date. No-id `forecast_record` still reports observed gaps, unscored.
 - Resolver names document source rules; caller tools do not authenticate independent evidence. Eligibility is not proof the outcome is true, probabilities are calibrated, or forecasting is useful.
 - Loss uses the binary convention `mean((p-y)^2)` on eligible resolved declarations, one weight per event/version. No matched reference is declared, so no skill comparison is claimed. History counts remain distinct from eligible sample counts.
@@ -67,6 +67,8 @@ Twenty-two registered tools (pinned against the live `combined_router()` by
 - Scenario calculations are explicit inputs and outputs; external research remains an input to `scenario_build`'s `context` field, rather than hidden server-side collection.
 - Framing guidance does not require session-order tracking: supplied answers can go directly to `scenario_frame_document`, including after a restart or for another project. Input validation and persisted-state requirements still apply.
 - Each tool outcome is recorded through the MCP tool context, supporting P9 feedback and inspection.
+- Every tool refuses an argument it does not name, and a value outside a closed vocabulary (time horizon, scenario type, match confidence, framing use case) is refused naming the set.
+- A store file that does not read back completely is never replaced: calls that depend on it return `failed_precondition` naming the file, and `scenario_status` lists it in `store_errors`.
 
 ## Related documentation
 

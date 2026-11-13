@@ -1,18 +1,52 @@
 use hkask_types::AnyJsonValue;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
 
 use crate::types::{Perspective, ScenarioEvent, SubQuestion};
 
+// ── Closed vocabularies ─────────────────────────────────────────────────────
+// One list per vocabulary: the schema enumerates it and the refusal names it.
+
+pub(crate) const TIME_HORIZONS: &[&str] = &["tactical", "strategic", "long_term"];
+pub(crate) const SCENARIO_TYPES: &[&str] = &[
+    "company_update",
+    "company_analysis",
+    "emerging_economic",
+    "economic_potential",
+];
+pub(crate) const MATCH_CONFIDENCES: &[&str] = &["high", "medium", "low"];
+
+fn optional_enum(names: &[&str]) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": names}, {"type": "null"}]})
+}
+
+fn time_horizon_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_enum(TIME_HORIZONS)
+}
+
+fn scenario_type_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_enum(SCENARIO_TYPES)
+}
+
+fn match_confidences_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"anyOf": [
+        {"type": "array", "items": {"anyOf": [{"type": "string", "enum": MATCH_CONFIDENCES}, {"type": "null"}]}},
+        {"type": "null"}
+    ]})
+}
+
 // ── Request types for MCP tools ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BuildEventsRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
-    /// Time horizon for the scenario
+    /// Time horizon for the scenario. Default: strategic.
+    #[schemars(schema_with = "time_horizon_schema")]
     pub time_horizon: Option<String>,
-    /// Scenario type
+    /// Scenario type. Default: company_analysis.
+    #[schemars(schema_with = "scenario_type_schema")]
     pub scenario_type: Option<String>,
     /// Natural language context about the subject
     pub context: Option<String>,
@@ -21,10 +55,12 @@ pub struct BuildEventsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BrainstormRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
-    /// Time horizon: "tactical", "strategic", or "long_term"
+    /// Time horizon. Default: strategic.
+    #[schemars(schema_with = "time_horizon_schema")]
     pub time_horizon: Option<String>,
     /// Raw text from web searches about this subject
     pub research_context: Option<String>,
@@ -35,6 +71,7 @@ pub struct BrainstormRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FrameRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
@@ -45,6 +82,7 @@ pub struct FrameRequest {
 
 /// Request to structure a completed framing conversation into a FramingDocument.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FrameDocumentRequest {
     /// Subject for the scenario project
     pub subject: String,
@@ -63,6 +101,7 @@ pub struct FrameDocumentRequest {
 
 /// One dependency edge for `scenario_from_markets_set`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct DependencySpecRequest {
     /// Child market id (the `market_id` of the conditioned market).
     pub child_market_id: String,
@@ -77,11 +116,13 @@ pub(crate) struct DependencySpecRequest {
 /// Request for `scenario_propagate`: update one event's prior and recompute
 /// the whole tree.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PropagateRequest {
     /// The current tree's events (e.g. from a prior
     /// scenario_from_markets_set / scenario_quantify output).
     pub events: Vec<ScenarioEvent>,
-    /// ID of the event whose prior is being revised.
+    /// ID of the root event (one with no depends_on) whose prior is being
+    /// revised.
     pub event_id: String,
     /// The new prior probability in [0, 1].
     pub new_prior: f64,
@@ -90,13 +131,16 @@ pub struct PropagateRequest {
 /// Request for `scenario_from_markets_set`: compose N market records into a
 /// dependent event tree.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MarketsSetBridgeRequest {
     /// Annotated MarketRecords from hkask-mcp-prediction-markets. Typed as
     /// [`AnyJsonValue`] because `MarketRecord` is defined in the
     /// prediction-markets crate and does not derive `JsonSchema`.
     pub market_records: AnyJsonValue,
     /// Optional per-record match confidences ("high"/"medium"/"low" or null),
-    /// parallel to the records array. Omit for direct lookups.
+    /// parallel to the records array. Omit for direct lookups. "low"
+    /// withholds that record's base rate.
+    #[schemars(schema_with = "match_confidences_schema")]
     pub match_confidences: Option<Vec<Option<String>>>,
     /// Caller-authored dependency edges. Omit for a flat (independent) tree.
     pub dependency_specs: Option<Vec<DependencySpecRequest>>,
@@ -105,6 +149,7 @@ pub(crate) struct MarketsSetBridgeRequest {
 /// Request for `scenario_recompute_posteriors`: recompute the event tree's
 /// posterior probabilities under evidence, in both directions.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PosteriorsRequest {
     /// The event tree — the same valid tree `scenario_quantify` accepts
     /// (probabilities in [0,1], conditional lengths 2^parents, no cycles).
@@ -116,6 +161,7 @@ pub struct PosteriorsRequest {
 
 /// One evidence entry for `scenario_recompute_posteriors`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PosteriorEvidenceEntry {
     /// The event the evidence attaches to (must be among the request's events).
     pub event_id: String,
@@ -132,32 +178,36 @@ pub struct PosteriorEvidenceEntry {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CrossValidateRequest {
     /// Event or question identifier
     pub event_id: String,
     /// Label for the first estimate source (e.g., 'superforecasting_skill')
     pub source_a: String,
-    /// First probability estimate (0.0-1.0)
+    /// First probability estimate, in [0, 1]
     pub estimate_a: f64,
     /// Fermi sub-questions for estimate A
     pub sub_questions_a: Vec<SubQuestion>,
     /// Label for the second estimate source (e.g., 'scenario_calibrate')
     pub source_b: String,
-    /// Second probability estimate (0.0-1.0)
+    /// Second probability estimate, in [0, 1]
     pub estimate_b: f64,
     /// Fermi sub-questions for estimate B
     pub sub_questions_b: Vec<SubQuestion>,
-    /// Review threshold (default 0.15). Divergence above this triggers review.
+    /// Review threshold in [0, 1] (default 0.15). Divergence above this
+    /// triggers review.
     pub review_threshold: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QuantifyRequest {
     /// Events to quantify
     pub events: Vec<ScenarioEvent>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateRequest {
     /// Forecast record ID
     pub forecast_id: String,
@@ -175,6 +225,7 @@ pub struct UpdateRequest {
 
 /// One outcome entry for `ScoreRequest`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OutcomeEntry {
     /// The event ID this outcome refers to.
     pub event_id: String,
@@ -184,6 +235,7 @@ pub struct OutcomeEntry {
 
 /// Prospective declaration; probability and proposition cannot be rewritten at resolution.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeclareRequest {
     pub forecast_id: String,
     pub events: Vec<ScenarioEvent>,
@@ -196,6 +248,7 @@ pub struct DeclareRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScoreRequest {
     /// Forecast record ID
     pub forecast_id: String,
@@ -208,20 +261,22 @@ pub struct ScoreRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CalibrateRequest {
     /// The forecast question
     pub question: String,
     /// Fermi sub-questions
     pub sub_questions: Vec<SubQuestion>,
-    /// Reference class description
+    /// Reference class description (a label; it does not enter the math)
     pub reference_class: Option<String>,
-    /// Base rate from outside view
+    /// Base rate from the outside view, in [0, 1]. Requires reference_count.
     pub base_rate: Option<f64>,
-    /// Number of reference cases considered
+    /// Number of reference cases behind base_rate. Requires base_rate.
     pub reference_count: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SynthesizeRequest {
     /// Event ID to synthesize perspectives for
     pub event_id: String,
@@ -230,12 +285,14 @@ pub struct SynthesizeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CalibrationRequest {
     /// Optional: filter to a specific subject
     pub subject: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TriageRequest {
     /// The forecasting question to triage
     pub question: String,
@@ -253,6 +310,7 @@ pub struct TriageRequest {
 /// assessment lists them in `unreported_metrics` and withholds the phase
 /// scores that depend on them as insufficient data (null).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AssessRequest {
     /// Project identifier — the project record created by
     /// scenario_frame_document (where the id defaults to the subject).
@@ -261,15 +319,16 @@ pub struct AssessRequest {
     pub project_id: String,
     /// How many perspectives were engaged
     pub perspective_count: Option<usize>,
-    /// Disagreement score from dragonfly-eye synthesis
+    /// Disagreement score from scenario_synthesize, in [0, 1]
     pub disagreement_score: Option<f64>,
     /// Total events in the scenario tree
     pub event_count: Option<usize>,
-    /// How many events have conditional dependencies
+    /// How many events have conditional dependencies (at most event_count)
     pub events_with_dependencies: Option<usize>,
     /// How many strategies were generated
     pub strategies_generated: Option<usize>,
-    /// How many strategies were actually implemented
+    /// How many strategies were actually implemented (at most
+    /// strategies_generated)
     pub strategies_implemented: Option<usize>,
     /// Observable learning events (free-text descriptions)
     pub learning_events: Option<String>,
@@ -279,4 +338,5 @@ pub struct AssessRequest {
 
 /// Empty request for scenario_status (no parameters needed).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StatusRequest {}

@@ -1,7 +1,7 @@
 ---
 title: "Scenarios MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-10-28
+last_updated: 2026-11-12
 version: "0.41.0"
 status: "Active"
 domain: "Composition"
@@ -14,7 +14,7 @@ mds_categories: [composition, lifecycle]
 **Tools:** 22 — `scenario_frame`, `scenario_frame_document`, `scenario_brainstorm`, `scenario_build`, `scenario_quantify`, `scenario_propagate`, `scenario_recompute_posteriors`, `scenario_calibrate`, `scenario_update`, `scenario_synthesize`, `scenario_cross_validate`, `scenario_declare`, `scenario_score`, `scenario_calibration`, `scenario_assess`, `scenario_triage`, `scenario_status`, `scenario_from_markets_set`, `forecast_persist`, `forecast_record`, `forecast_list`, `scenario_risk_measure`. The direct market-record bridge is `scenario_from_markets_set`; a single record is passed as a set of one. The four forecast tools were ported from the retired companies server (2026-10-18).
 **Auto-start:** Yes by default with the full built-in set; operators can disable the fleet or this server through `kask.mcp` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:254-268,700-710`).
 
-Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_22_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1726`).
+Tool count is pinned against the live `combined_router()` by `tool_surface_is_exactly_22_registered_tools` (the `mod tests` pin in `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs:1773`).
 
 ## Pipeline Architecture (DIAG-RF-005)
 
@@ -111,9 +111,9 @@ full derivation is in git history — see the Redesign record):
 | DependencyEdge | parent ids + bitmap-ordered conditional table, length 2^\|parents\| | MAIA path dependence; Bayesian-network CPT | `depends_on` |
 | EventTree | marginals, topological order, joint = P(all events occur) | MAIA template; Tetlock inside view | `scenario_quantify` and the market bridges |
 | Perspective + Synthesis | explicitly equal-weight aggregation with disagreement score | Tetlock dragonfly-eye | `scenario_synthesize` |
-| ForecastRecord + journal | append-only journal + snapshot; prospectively frozen tree marginals and timestamp cutoffs (schema v5) | Tetlock record/score | `ForecastStore` — `scenario_declare` freezes records; `scenario_score` records matching outcomes |
-| CalibrationObservation | eligible-history bins, signed probability error with sample/bin scope and isotonic diagnostic; no confidence or calibration certificate | Tetlock calibration | `scenario_calibration` |
-| ScenarioProject | the spine: framing document, trees, assessment history, journal linkage | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
+| ForecastRecord + journal | append-only journal + snapshot; prospectively frozen tree marginals and timestamp cutoffs | Tetlock record/score | `ForecastStore` — `scenario_declare` freezes records; `scenario_score` records matching outcomes |
+| CalibrationObservation | eligible-history bins, signed probability error with sample/bin scope and Wilson intervals per bin; no confidence or calibration certificate | Tetlock calibration | `scenario_calibration` |
+| ScenarioProject | the spine: framing document and the last quantified tree per project | Chermack's unit of assessment | `ProjectStore` (see Project persistence) |
 | Narrative / Implications / Indicators | quadrant stories, strategies, early-warning indicators | Schwartz steps 5–8 | the skill layer (`scenario-planning` templates) — a ruled contract, not a server primitive |
 | ImpactMapping | per-node yes/no DCF deltas; 2^N paths weighted by probability | MAIA "events drive the financial forecast" | caller-authored impact mappings consumed by the skill layer (the former `scenario_impact_valuation` tool retired with the companies server; the shared `hkask_forecast` risk core survives) |
 | MarketBridge | market records → root events with provenance and gates | prediction-market base rates as priors | `scenario_from_markets_set` |
@@ -126,42 +126,42 @@ full derivation is in git history — see the Redesign record):
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_frame` | Start a conversational framing session: a 7-turn protocol with behavioral-psychology openings and improv mode guidance. Run FIRST, before `scenario_brainstorm`. | `subject` |
-| `scenario_frame_document` | Structure completed framing answers into a typed `FramingDocument` and persist it under the scenario project record (id defaults to the subject; a re-run updates in place). Feeds `scenario_brainstorm`. | `subject`, answers JSON, optional `project_id` |
+| `scenario_frame_document` | Structure completed framing answers into a typed `FramingDocument` and persist it under the scenario project record (id defaults to the subject; a re-run updates in place). `answers` must be a JSON object; `time_horizon` and `use_case` are closed sets and any other value is refused. Feeds `scenario_brainstorm`. | `subject`, answers JSON, optional `project_id` |
 
 ### Ideation (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_brainstorm` | Generate a 4-round structured brainstorming protocol (DIVERGE → GROUND → LINK → PRUNE) with persona rotation, temperature guidance, and quality gates. | `frame` (FramingDocument) |
+| `scenario_brainstorm` | Generate a 4-round structured brainstorming protocol (DIVERGE → GROUND → LINK → PRUNE) with persona rotation, temperature guidance, and quality gates. | `subject`, optional `time_horizon` (tactical / strategic / long_term), `research_context`, `personas`, `start_round` |
 
 ### Structuring (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_build` | Build a scenario event-tree scaffold from web research: returns an extraction template (event schema, dependency format, certainty tiers, Tetlock's 10 commandments) the LLM fills against `research_text`. | `frame`, `research_text` |
+| `scenario_build` | Build a scenario event-tree scaffold from web research: returns an extraction template (event schema, dependency format, certainty tiers, Tetlock's 10 commandments) the LLM fills against `context`. The returned `event_template` is a valid `scenario_quantify` event once its id and deadline are filled. | `subject`, optional `time_horizon`, `scenario_type`, `context`, `max_events` |
 
 ### Market bridges (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates, duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
+| `scenario_from_markets_set` | Compose a set of prediction-market records into a validated `EventTree` with caller-authored dependency edges; per-record gates (a closed market is refused; a low reliability tier or a `low` match confidence withholds the base rate), duplicate-question flags, cycle and CPT-size rejection; returns resolved tree (marginals, joint probability) plus warnings. | `market_records`, `match_confidences`, `dependency_specs` |
 
 ### Computation (5)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_quantify` | Quantify an event tree: topological sort, marginal probabilities via conditional propagation, joint probability, per-event variance contribution, sensitivity ranking; detects cycles and missing parents. | `events` JSON |
-| `scenario_propagate` | Update one event's prior and propagate through the tree: descendant marginals and joint probability recomputed; returns the updated tree plus a per-node before/after propagation journal (tâtonnement record). CPTs untouched. | `events`, `event_id`, `new_prior` |
-| `scenario_recompute_posteriors` | Condition binary polytrees using edge-excluding factor messages in the shared `hkask_forecast::posterior` engine; the graph widget uses the same implementation. Boolean observations and likelihood ratios are applied once. Fractional observed probabilities are fixed marginal constraints fitted within 1e-12; incompatible, numerically unresolved or unsatisfied evidence returns an error, never an estimate. Multiply-connected DAGs retain the forward-only path with an explicit limitation note. | `events`, `evidence` (one of `observed_probability` / `occurred` / `likelihood_ratio` per entry) |
-| `scenario_calibrate` | Fermi decomposition → outside view → inside view, without automatic historical-bias adjustment; returns calibrated probability, bounds, and certainty tier. | Fermi sub-questions, base rate |
-| `scenario_update` | Bayesian update: P(H\|E) = P(E\|H) × P(H) / P(E); returns posterior and update magnitude. | `prior`, `likelihood`, `evidence_base_rate` |
+| `scenario_quantify` | Quantify an event tree: topological sort, marginal probabilities via conditional propagation under parent independence, joint probability, per-event certainty distance, sensitivity ranking; rejects cycles, blank or repeated event ids, missing parents and more than 20 parents in one group. `approximation_note` is set when an event's parents share an ancestor. Stores the tree in the project record. | `events` JSON |
+| `scenario_propagate` | Update one root event's prior and propagate through the tree: descendant marginals and joint probability recomputed; returns the updated tree plus a per-node before/after propagation journal. An event with parents has no prior and is refused. CPTs untouched. | `events`, `event_id`, `new_prior` |
+| `scenario_recompute_posteriors` | Condition binary polytrees using edge-excluding factor messages in the shared `hkask_forecast::posterior` engine; the graph widget uses the same implementation. Boolean observations and likelihood ratios are applied once. Fractional observed probabilities are fixed marginal constraints fitted within 1e-12; incompatible, numerically unresolved or unsatisfied evidence returns an error, never an estimate. Multiply-connected DAGs retain the forward-only path with an explicit limitation note. | `events`, `evidence` (one of `observed_probability` / `occurred` / `likelihood_ratio` per entry; at most one entry per event) |
+| `scenario_calibrate` | Fermi decomposition → outside view → inside view, without automatic historical-bias adjustment; returns the estimate, a confidence and the certainty tier. The outside view needs `base_rate` in [0, 1] and `reference_count` together. | Fermi sub-questions, `base_rate` + `reference_count` |
+| `scenario_update` | Bayesian update: P(H\|E) = P(E\|H) × P(H) / P(E), exact and unclamped; inputs with P(E\|H) × P(H) > P(E) are refused. Returns posterior and update magnitude; stores nothing. | `prior_probability`, `evidence_likelihood`, `evidence_base_rate` |
 
 ### Aggregation (2)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
 | `scenario_synthesize` | Dragonfly-eye synthesis (Tetlock Stage 5): explicit equal-weight aggregation of ≥2 perspectives; unmatched historical loss is not a defensible weight; disagreement score and strongest dissent. | `perspectives` |
-| `scenario_cross_validate` | Cross-validate an LLM estimate against a server-computed estimate per sub-question; flags for review when overall divergence exceeds threshold (default 0.15). | two estimate sets |
+| `scenario_cross_validate` | Cross-validate an LLM estimate against a server-computed estimate per sub-question; flags for review when overall divergence exceeds threshold (default 0.15). Estimates and threshold must be in [0, 1]. | two estimate sets |
 
 ### Tracking (2)
 
@@ -175,14 +175,14 @@ full derivation is in git history — see the Redesign record):
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_assess` | Chermack Phase-5 project assessment anchored on the project record: Preparation from the framing document, event/dependency counts from the stored tree, calibration scoped to the project's subject; caller metrics override the derived values. Unknown project id → not found. | `project_id` + optional overrides |
+| `scenario_assess` | Chermack Phase-5 project assessment anchored on the project record: Preparation from the framing document, event/dependency counts from the stored tree, calibration scoped to the project's subject; caller metrics override the derived values and are range-checked. Unknown project id → not found. Reads only. | `project_id` + optional overrides |
 | `scenario_triage` | Triage a forecasting question (Tetlock Commandment 1): clarity, data availability, resolution criteria → well_specified / goldilocks / needs_refinement. | `question` |
 
 ### Independent (1)
 
 | Tool | Description | Key params |
 |------|-------------|------------|
-| `scenario_status` | Current server state: pipeline overview, calibration curve, cached event tree. | — |
+| `scenario_status` | Current server state: forecast counts, calibration summary, the 20 most recently declared forecasts, the most recently stored event tree (read from the project store), and `store_errors` naming any store file that did not load. | — |
 
 ## Key paths
 
@@ -214,13 +214,13 @@ changed event membership/proposition/probability/cutoff/resolver conflicts. Snap
 failure leaves the complete journal recoverable by identical retry, never a partly
 admitted manifest. `scenario_score` only resolves exact frozen events/resolver;
 it never creates a forecast at resolution or scores submitted probabilities.
-Schema v5 carries precise timestamps. Older date-only/undeclared records stay
+A record is scored only when its stored declaration carries a cutoff later than
+its `declared_at`; no version marker decides it. Older date-only/undeclared records stay
 provenance-limited unscored history; no retrospective admission. Replays do not
 add independent event weight; changed forecasts need new IDs.
 Raw binary Brier loss is not calibration, and no automatic historical-bias
-correction is applied. Murphy (1973), DOI
-`10.1175/1520-0450(1973)012<0595:ANVPOT>2.0.CO;2`, separates reliability,
-resolution and uncertainty. Compare references on matched cases/weights/horizons;
+correction is applied. The server computes no reliability/resolution/uncertainty
+decomposition. Compare references on matched cases/weights/horizons;
 report admission, resolution, exclusions and dependence, not universal bands.
 Durability ordering — verified by regression (`kask/mcp-servers/hkask-mcp-scenarios/tests/tool_behavior.rs`):
 
@@ -249,8 +249,8 @@ a prior snapshot file at that path. It is design-reviewed, not test-pinned.
 
 ## Project persistence
 
-Scenario projects (the framing document, the last quantified tree, the
-assessment history) persist in `ProjectStore`
+Scenario projects (the framing document and the last quantified tree)
+persist in `ProjectStore`
 (`kask/mcp-servers/hkask-mcp-scenarios/src/superforecast/project.rs`):
 a single `projects.json` snapshot under the server's data dir
 (`{kask_data_dir}/mcp/scenarios/projects.json`), published by atomic
@@ -260,11 +260,27 @@ journal (projects are low-volume by design).
 - `scenario_frame_document` creates/updates the project (id defaults
   to the subject; a re-run updates in place) and persists the framing
   document — Chermack Phase 1 evidence.
-- The tree-caching tools (`scenario_quantify`, `scenario_propagate`)
-  persist the tree into the project record — the durable tree cache.
-  `ProjectStore::last_tree()` is the documented default a restarted server
-  reads when its in-memory cache is empty, so the tree survives a server
-  restart (pinned by `quantified_tree_survives_a_server_restart`).
+- `scenario_quantify` and `scenario_propagate` store the tree in the
+  project record with the time it was stored. `scenario_status` shows the
+  most recently stored tree across all projects (`ProjectStore::last_tree()`),
+  in the same session and after a restart; there is no in-memory copy
+  (pinned by `status_shows_the_most_recently_stored_tree_after_a_restart`).
+- A store file that does not read back completely (`projects.json`, a
+  forecast snapshot, or a journal line other than an unfinished last one)
+  leaves that store unloaded: reads and writes that depend on it return
+  `failed_precondition` naming the file, and nothing is written, because
+  the next snapshot would replace the file. `scenario_status` still
+  answers and lists the files in `store_errors` (pinned by
+  `an_unreadable_project_file_is_never_overwritten`,
+  `an_unreadable_forecast_snapshot_is_never_overwritten`,
+  `a_damaged_journal_line_blocks_writes_and_an_unfinished_last_line_does_not`).
+- Stored shapes carry no version marker. Files written by earlier builds
+  read under the current one (extra keys such as `schema_version`,
+  `scored_from_marginal`, `category`, `brier_score`, `paths` and
+  `assessment_history` are ignored; pinned by
+  `records_written_before_this_change_still_read_and_score`). The reverse
+  does not hold for `projects.json`: a build from before 2026-11-12
+  requires `paths` on every tree node and treats a newer file as corrupt.
 - `scenario_assess` is anchored on the project record: an unknown
   project id is `not_found` naming it; event/dependency counts derive
   from the stored tree, Preparation from the framing document, and the
@@ -302,7 +318,7 @@ axioms. Stated assumptions: the `OrdField` class fields (the theorems
 are parametric), parent independence (the same factorization the Rust
 makes — its approximation character under shared ancestry is pinned
 by `correlated_parents_keep_the_documented_independence_approximation`),
-exact arithmetic (the f64 clamp is not modeled), and `none` = the
+exact arithmetic (f64 rounding is not modeled), and `none` = the
 server's validation rejection. The property layer pins the f64
 implementation against two independent oracles; the Lean pin proves
 the contract for every ordered field — contract proven, implementation

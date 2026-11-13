@@ -431,31 +431,26 @@ pub(crate) fn assess_project(input: &AssessInput) -> ProjectAssessment {
         project_id: project_id.to_string(),
         subject: subject.to_string(),
         preparation: PhaseScore {
-            phase: "Phase 1: Preparation".into(),
             score: prep_score,
             strengths: prep_strengths,
             gaps: prep_gaps,
         },
         exploration: PhaseScore {
-            phase: "Phase 2: Exploration".into(),
             score: exp_score,
             strengths: exp_strengths,
             gaps: exp_gaps,
         },
         development: PhaseScore {
-            phase: "Phase 3: Development".into(),
             score: dev_score,
             strengths: dev_strengths,
             gaps: dev_gaps,
         },
         implementation: PhaseScore {
-            phase: "Phase 4: Implementation".into(),
             score: impl_score,
             strengths: impl_strengths,
             gaps: impl_gaps,
         },
         project_assessment: PhaseScore {
-            phase: "Phase 5: Project Assessment".into(),
             score: Some(assess_score),
             strengths: assess_strengths,
             gaps: assess_gaps,
@@ -488,7 +483,7 @@ pub(crate) fn synthesize_perspectives(
         .iter()
         .any(|p| !(0.0..=1.0).contains(&p.probability))
     {
-        return Err(ScenarioError::EmptyInput(
+        return Err(ScenarioError::InvalidInput(
             "perspective probability must be finite and in [0,1]".into(),
         ));
     }

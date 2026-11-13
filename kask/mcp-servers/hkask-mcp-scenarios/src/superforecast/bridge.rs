@@ -137,7 +137,7 @@ pub(crate) fn convert_market_record(
         record.status,
         hkask_mcp_prediction_markets::types::MarketStatus::Open
     ) {
-        return Err(ScenarioError::EmptyInput(format!(
+        return Err(ScenarioError::InvalidInput(format!(
             "market '{}' is not open (status: {:?}) — a resolved or closed market is not a forecast",
             record.market_id, record.status
         )));
@@ -178,7 +178,7 @@ pub(crate) fn convert_market_record(
         // A forecasting artifact with a fabricated deadline is worse than an
         // error (same no-fabrication posture as the contract's
         // resolved_outcome gate).
-        ScenarioError::EmptyInput(format!(
+        ScenarioError::InvalidInput(format!(
             "market '{}' has unparsable deadline '{}' ({e}) — refusing to fabricate one",
             record.market_id, record.deadline
         ))
@@ -201,7 +201,6 @@ pub(crate) fn convert_market_record(
             "{} market-implied probability (tier: {:?}, method: {:?})",
             record.series, record.reliability_tier, record.probability_method
         )),
-        brier_score: None,
         update_count: 0,
     };
     Ok((event, warnings))
