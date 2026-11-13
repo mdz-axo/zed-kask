@@ -120,6 +120,10 @@ pub struct MemoryRecallRequest {
     /// The term to match on `ontology_axis` (e.g. `bibo:Article` for
     /// `dc_type`, `omc` for `ontology_namespace`). Requires `ontology_axis`.
     pub ontology_value: Option<String>,
+    /// Maximum h_mems to return per scope, newest first (default 100;
+    /// values outside 1-500 are clamped). `total` and `limit_reached` in
+    /// the response say what the limit cut.
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -299,8 +303,9 @@ mod tests {
 /// Insert a new semantic memory into the curator's store.
 ///
 /// The memory starts at confidence 0.5 (the floor — NOT the model's
-/// self-assessed confidence). Confidence is calibrated by subsequent
-/// Brier-scored outcomes, not by self-assessment.
+/// self-assessed confidence). No process raises or lowers it afterwards
+/// except a `memory_update` call: goal and forecast scores do not write
+/// confidence (memory-system-specification.md §11, row 4).
 ///
 /// Evidence-grounding: the `evidence_h_mem_id` field must cite a specific
 /// episodic h_mem ID that supports this memory. The tool rejects inserts

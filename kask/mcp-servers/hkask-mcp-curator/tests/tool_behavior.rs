@@ -453,6 +453,7 @@ async fn memory_recall_ontology_axis_without_value_is_rejected() {
             recall_shape: MemoryRecallType::default(),
             ontology_axis: Some("dc_type".to_string()),
             ontology_value: None,
+            limit: None,
         }))
         .await
         .expect_err("ontology_axis without ontology_value must be rejected");
@@ -479,6 +480,7 @@ async fn memory_recall_rejects_unknown_ontology_axis() {
             recall_shape: MemoryRecallType::default(),
             ontology_axis: Some("bogus_axis".to_string()),
             ontology_value: Some("whatever".to_string()),
+            limit: None,
         }))
         .await
         .expect_err("an unknown ontology_axis must be rejected");
@@ -508,6 +510,7 @@ async fn memory_recall_empty_entity_returns_zero_counts() {
             recall_shape: MemoryRecallType::Both,
             ontology_axis: None,
             ontology_value: None,
+            limit: None,
         }
     );
 
@@ -1047,6 +1050,7 @@ async fn public_call_contexts_never_receive_private_rows() {
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
+            limit: None,
         }
     );
 
@@ -1085,6 +1089,7 @@ async fn private_call_contexts_receive_their_private_rows() {
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
+            limit: None,
         })),
     )
     .await
@@ -1378,6 +1383,7 @@ async fn memory_citation_round_trip_from_tool_surface() {
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
+            limit: None,
         }
     );
     assert!(
@@ -1511,6 +1517,7 @@ async fn memory_insert_stamps_model_inference_and_recall_surfaces_the_tier() {
             recall_shape: MemoryRecallType::EntityWide,
             ontology_axis: None,
             ontology_value: None,
+            limit: None,
         }
     );
     let h_mems = recalled["entity_wide"]["h_mems"]
@@ -4222,4 +4229,158 @@ async fn a_model_mismatch_sweep_with_a_dead_embedder_deletes_nothing() {
         "the dry run's identity probe is an embedding call: {envelope}"
     );
     assert!(envelope["content"]["identity_probe_error"].is_null());
+}
+
+/// CU-16: `curator_memory_recall` is bounded and says what the bound cut.
+/// Before, both forms returned every match: an axis recall on the value
+/// ingest stamps on every turn chunk returned all stored turns in one
+/// response. The count of matches is `total`; `limit_reached` is true when
+/// the response holds fewer.
+#[tokio::test]
+async fn recall_is_bounded_and_reports_what_the_bound_cut() {
+    let (server, memory) = make_server_with_embeddings();
+    for index in 0..3 {
+        let h_mem = hkask_storage::HMem::new(
+            "zz-probe:bounded",
+            &format!("fact{index}"),
+            serde_json::Value::String(format!("value {index}")),
+            WebID::new(),
+        )
+        .with_ontology(hkask_types::HMemOntology {
+            dc_type: "zz-type".to_string(),
+            ..Default::default()
+        });
+        memory.store(h_mem).expect("seed");
+    }
+
+    let by_axis = invoke_tool!(
+        server,
+        curator_memory_recall,
+        wire(
+            serde_json::json!({"ontology_axis": "dc_type", "ontology_value": "zz-type", "limit": 2})
+        )
+    );
+    assert_eq!(by_axis["count"], 2, "{by_axis}");
+    assert_eq!(by_axis["total"], 3);
+    assert_eq!(by_axis["limit_reached"], true);
+
+    let by_entity = invoke_tool!(
+        server,
+        curator_memory_recall,
+        wire(
+            serde_json::json!({"entity": "zz-probe:bounded", "recall_shape": "entity_wide", "limit": 2})
+        )
+    );
+    assert_eq!(by_entity["entity_wide"]["count"], 2, "{by_entity}");
+    assert_eq!(by_entity["entity_wide"]["total"], 3);
+    assert_eq!(by_entity["entity_wide"]["limit_reached"], true);
+
+    let whole = invoke_tool!(
+        server,
+        curator_memory_recall,
+        wire(serde_json::json!({"entity": "zz-probe:bounded", "recall_shape": "entity_wide"}))
+    );
+    assert_eq!(whole["entity_wide"]["count"], 3);
+    assert_eq!(whole["entity_wide"]["limit_reached"], false);
+}
+
+/// CU-17: only the rows a recall returns count as recalled. Before, entity
+/// recall reset the decay clock of every row under the entity before the
+/// provenance filter ran, so a public call refreshed a private-marked row it
+/// was never shown (and a row the fallback's limit cut was refreshed too).
+#[tokio::test]
+async fn recall_resets_the_decay_clock_of_returned_rows_only() {
+    let (server, memory) = make_server_with_embeddings();
+    let stale = chrono::Utc::now() - chrono::Duration::days(20);
+    let mut public = hkask_storage::HMem::new(
+        "zz-probe:touch",
+        "public_fact",
+        serde_json::Value::String("shown".to_string()),
+        WebID::new(),
+    );
+    public.recalled_at = stale;
+    let public_id = public.id;
+    memory.store(public).expect("seed public");
+    let mut private = hkask_storage::HMem::new(
+        "zz-probe:touch",
+        "private_fact",
+        serde_json::Value::String("not shown".to_string()),
+        WebID::new(),
+    )
+    .with_inference_provenance(hkask_types::InferenceProvenance::PrivateInference);
+    private.recalled_at = stale;
+    let private_id = private.id;
+    memory.store(private).expect("seed private");
+
+    let recall = invoke_tool!(
+        server,
+        curator_memory_recall,
+        wire(serde_json::json!({"entity": "zz-probe:touch", "recall_shape": "entity_wide"}))
+    );
+    assert_eq!(recall["entity_wide"]["count"], 1, "{recall}");
+    assert_eq!(recall["entity_wide"]["excluded_private_rows"], 1);
+
+    let recalled_at = |id: &hkask_storage::HMemId| {
+        memory
+            .get_by_id(id)
+            .expect("read")
+            .expect("row")
+            .recalled_at
+    };
+    assert!(
+        (chrono::Utc::now() - recalled_at(&public_id)).num_seconds() < 60,
+        "the returned row was recalled: its clock is reset"
+    );
+    assert!(
+        (recalled_at(&private_id) - stale).num_seconds().abs() < 2,
+        "a row the call was not shown is not refreshed by it: {}",
+        recalled_at(&private_id)
+    );
+}
+
+/// CU-18: the pooling rule the description states, at the wire. 0.5 leaves
+/// the stored confidence unchanged, a value above 0.5 raises it and a value
+/// below lowers it; the result is the log-odds sum.
+#[tokio::test]
+async fn memory_update_pools_log_odds_as_described() {
+    let (server, memory) = make_server_with_embeddings();
+    let seed = |attribute: &str| {
+        let h_mem = hkask_storage::HMem::new(
+            "zz-probe:pooling",
+            attribute,
+            serde_json::Value::String(format!("value for {attribute}")),
+            WebID::new(),
+        )
+        .with_confidence(hkask_types::Confidence::new(0.8));
+        let id = h_mem.id.to_string();
+        memory.store(h_mem).expect("seed");
+        id
+    };
+    let pooled = |prior: f64, input: f64| {
+        let logit = |p: f64| (p / (1.0 - p)).ln();
+        1.0 / (1.0 + (-(logit(prior) + logit(input))).exp())
+    };
+
+    for (attribute, input) in [("neutral", 0.5), ("agree", 0.8), ("disagree", 0.2)] {
+        let id = seed(attribute);
+        let updated = invoke_tool!(
+            server,
+            memory_update,
+            wire(serde_json::json!({"h_mem_id": id, "new_confidence": input}))
+        );
+        let combined = updated["combined_confidence"].as_f64().expect("combined");
+        assert!(
+            (combined - pooled(0.8, input)).abs() < 1e-9,
+            "{attribute}: got {combined}, expected {}",
+            pooled(0.8, input)
+        );
+        assert_eq!(updated["previous_confidence"], 0.8);
+        let replacement = updated["h_mem_id"].as_str().expect("replacement id");
+        assert_ne!(replacement, id, "the row is replaced");
+        let stored = memory
+            .get_by_id(&replacement.parse().expect("id"))
+            .expect("read")
+            .expect("replacement row");
+        assert!((stored.confidence.value() - combined).abs() < 1e-9);
+    }
 }

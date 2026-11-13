@@ -31,7 +31,7 @@ The server reads from the same `agents/curator/curator.db` the editor writes
 turn chunks to — one store, two processes, no sync
 (`kask/crates/kask_bridge/src/mcp_servers.rs:129`). `HKASK_WEBID` is mapped to
 this server only, so its writes carry the curator's identity
-(`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1909`), and the path
+(`kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1938`), and the path
 resolution finds the same root the editor uses (`open_curator_stores`,
 `kask/mcp-servers/hkask-mcp-curator/src/db.rs:381`).
 
@@ -54,18 +54,23 @@ resolution finds the same root the editor uses (`open_curator_stores`,
 
 Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs`.
 
-- **Recall and consult** — `curator_semantic_search` (`:580`),
-  `curator_federated_search` (`:654`, sealed corpus sources in one
-  source-aware retrieval), `curator_memory_recall` (`:838`),
-  `curator_consult` (`:960`), `curator_ping` (`:397`).
+- **Recall and consult** — `curator_semantic_search` (`:600`),
+  `curator_federated_search` (`:675`, sealed corpus sources in one
+  source-aware retrieval), `curator_memory_recall` (`:859`),
+  `curator_consult` (`:989`), `curator_ping` (`:417`).
   - Each of the three query tools makes one embedding call per request.
   - `curator_memory_recall` takes an `entity` **or** an `ontology_axis`
-    with `ontology_value`, never both. Entity recall resets the returned
-    rows' decay clocks; axis recall does not.
+    with `ontology_value`, never both. It returns at most `limit` h_mems
+    per scope (default 100, at most 500), newest first, with `total` and
+    `limit_reached`. Entity recall resets the decay clocks of the rows it
+    returns, and only those; axis recall resets none.
+  - `memory_insert` stores at confidence 0.5; nothing changes a stored
+    confidence afterwards except `memory_update` (goal and forecast scores
+    do not write it).
   - Results carry each h_mem's `provenance` tier (`tool_observed` |
     `model_inference`).
   - A public call context never receives a private-marked row. Every read
-    that returns rows applies one filter (`admitted`, `:146`) and reports
+    that returns rows applies one filter (`admitted`, `:152`) and reports
     `excluded_private_rows` when it excluded any; rows gated out by the
     embedding model are reported as `model_mismatch_excluded`.
   - `perspective_scoped` returns rows whose perspective is the curator's
@@ -74,9 +79,9 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
     scope is empty for rows written by current code.
   - `curator_ping` reports `status: ok` when both stores are open and
     `degraded` with the reason when one is not.
-- **Memory writes** — `memory_insert` (`:1291`), `memory_update`
-  (`:1411`), `memory_resolve_contradiction` (`:1467`),
-  `curator_report_skill_use_issue` (`:1197`).
+- **Memory writes** — `memory_insert` (`:1320`), `memory_update`
+  (`:1440`), `memory_resolve_contradiction` (`:1496`),
+  `curator_report_skill_use_issue` (`:1226`).
   - Every write embeds its passage before it commits; the row and its vector
     land in one transaction or neither lands.
   - `memory_insert` requires an existing h_mem id as evidence, stores at
@@ -93,18 +98,18 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
     stored.
   - `curator_report_skill_use_issue` stores the report at confidence 0.5
     and returns its `h_mem_id`, which `memory_insert` accepts as evidence.
-- **Maintenance** — `curator_memory_prune` (`:1557`, age-gated;
+- **Maintenance** — `curator_memory_prune` (`:1586`, age-gated;
   default scope is turn storage; `prefixes` or `all_layers` widen it),
-  `curator_memory_dedup` (`:1648`, scans the newest `limit` rows
+  `curator_memory_dedup` (`:1677`, scans the newest `limit` rows
   and says `limit_reached` when older rows may remain),
-  `curator_memory_backfill_embeddings` (`:1686`),
-  `curator_memory_extract` (`:1736`, lists one thread's turns by
+  `curator_memory_backfill_embeddings` (`:1715`),
+  `curator_memory_extract` (`:1765`, lists one thread's turns by
   its complete id; read-only).
   - Only the backfill tool has a `dry_run`. In `model_mismatch` mode a dry
     run still makes one embedding call (the identity probe). A real
     `model_mismatch` sweep whose probe fails stops before deleting anything.
-- **Regulation surfaces** — `reg_query` (`:1110`, oldest first, with
-  `limit_reached`), `curator_algedonic_log` (`:1072`, newest
+- **Regulation surfaces** — `reg_query` (`:1139`, oldest first, with
+  `limit_reached`), `curator_algedonic_log` (`:1101`, newest
   first, at most 500, with `limit_reached`). `phase` is the stored word
   (`sense`, `compute`, `compare`, `act`).
 
@@ -122,7 +127,7 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
 The open failure is recorded once (`open_failure`,
 `kask/mcp-servers/hkask-mcp-curator/src/db.rs:361`) and repeated by every
 store-backed tool; embedding failures are classified by `embed_error`
-(`:200`).
+(`:206`).
 
 ## Background pass
 
@@ -149,7 +154,7 @@ Both halves read one thread's rows by exact entity
   the 90-day default, and a malformed value warns naming the value rather
   than silently falling back.
 - **Credentials**: `HKASK_DB_PASSPHRASE` is declared **required**: when it
-  does not resolve, startup fails (`hkask_mcp_curator.rs:1917`; the canonical
+  does not resolve, startup fails (`hkask_mcp_curator.rs:1946`; the canonical
   2-tier chain at `kask/crates/hkask-mcp-server/src/server/credentials.rs:76`).
   A passphrase that resolves but does not fit the database does not stop
   startup: the server runs with both stores down, re-attempts the open on

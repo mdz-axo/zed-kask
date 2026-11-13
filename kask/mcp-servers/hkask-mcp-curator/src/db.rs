@@ -329,7 +329,7 @@ impl CuratorDb {
 }
 
 /// Resolve the memory decay constant from `HKASK_MEMORY_LIFE_DAYS`. Absent →
-/// the store default (180). Malformed values warn naming the value and fall
+/// the store default (90). Malformed values warn naming the value and fall
 /// back to the default — never a silent fallback.
 pub(crate) fn memory_life_days_from_env() -> f64 {
     match std::env::var("HKASK_MEMORY_LIFE_DAYS") {

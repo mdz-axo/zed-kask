@@ -38,6 +38,12 @@ use types::*;
 
 const SERVER_NAME: &str = "hkask-mcp-curator";
 
+/// `curator_memory_recall`'s default and largest result bound. Turn storage
+/// is stamped with one process value per chunk, so an axis recall can match
+/// every stored turn; the bound keeps one call from returning them all.
+const RECALL_DEFAULT_LIMIT: usize = 100;
+const RECALL_MAX_LIMIT: usize = 500;
+
 /// The most events one `curator_algedonic_log` call returns.
 const ALGEDONIC_LOG_LIMIT: u64 = 500;
 
@@ -302,18 +308,22 @@ fn h_mem_with_distance(t: &hkask_storage::HMem, distance: &f64) -> serde_json::V
     fragment
 }
 
-/// One exact-entity recall leg: run `query` and return the leg as one JSON
-/// object — hits under count/h_mems (`take` capping the serialized hits;
-/// `valid_from` adding the perspective-scoped observed-at field). A store
-/// error is the call's typed error, never a field inside a success.
-/// `fallback_reason` names the semantic-recall degradation so the exact
-/// fallback reads as degraded, not as matches.
+/// One exact-entity recall leg: run `query` (an UNTOUCHED store read) and
+/// return the leg as one JSON object — hits under count/h_mems, at most
+/// `take` of them, with `total` and `limit_reached` saying what the bound
+/// cut (`valid_from` adds the perspective-scoped observed-at field). Only
+/// the rows returned count as recalled: their decay clocks are reset here,
+/// after the provenance filter and the bound, so a row the call may not
+/// see, or did not receive, is not refreshed by it. A store error is the
+/// call's typed error, never a field inside a success. `fallback_reason`
+/// names the semantic-recall degradation so the exact fallback reads as
+/// degraded, not as matches.
 fn exact_recall_leg(
     memory: &hkask_memory::MemoryStore,
     query: impl FnOnce(
         &hkask_memory::MemoryStore,
     ) -> Result<Vec<hkask_storage::HMem>, hkask_memory::MemoryStoreError>,
-    take: Option<usize>,
+    take: usize,
     valid_from: bool,
     fallback_reason: Option<&str>,
 ) -> Result<serde_json::Value, McpToolError> {
@@ -323,10 +333,18 @@ fn exact_recall_leg(
     // never silently dropped (an empty leg with exclusions reads as
     // filtered, not as "no memory found").
     let (h_mems, excluded_private) = admitted(h_mems);
-    let hits = match take {
-        Some(limit) => h_mems.iter().take(limit).collect::<Vec<_>>(),
-        None => h_mems.iter().collect::<Vec<_>>(),
-    };
+    let total = h_mems.len();
+    let hits = h_mems.iter().take(take).collect::<Vec<_>>();
+    for hit in &hits {
+        if let Err(error) = memory.touch_recall(&hit.id) {
+            tracing::warn!(
+                target: "hkask.mcp.curator",
+                %error,
+                h_mem_id = %hit.id,
+                "Failed to reset the decay clock of a recalled h_mem"
+            );
+        }
+    }
     let serialized: Vec<serde_json::Value> = hits
         .into_iter()
         .map(|t| {
@@ -339,6 +357,8 @@ fn exact_recall_leg(
         .collect();
     let mut leg = json!({});
     leg["count"] = json!(serialized.len());
+    leg["total"] = json!(total);
+    leg["limit_reached"] = json!(total > take);
     if excluded_private > 0 {
         leg["excluded_private_rows"] = json!(excluded_private);
     }
@@ -608,8 +628,7 @@ impl CuratorServer {
                         result["excluded_private_rows"] = json!(recall.excluded_private);
                     }
                     if recall.excluded_model_mismatch > 0 {
-                        result["model_mismatch_excluded"] =
-                            json!(recall.excluded_model_mismatch);
+                        result["model_mismatch_excluded"] = json!(recall.excluded_model_mismatch);
                     }
                     if let Some(note) = degradation_note(
                         recall.resolution_failures,
@@ -624,22 +643,24 @@ impl CuratorServer {
                 // able to tell "no similar memories" from "semantic recall
                 // unavailable" (the unwrap_or(0) trap).
                 Err(reason) => {
-                    let exact = memory
-                        .query_deduped(&req.query)
-                        .map_err(|e| map_memory_store_error(e, "Semantic recall failed"))?;
-                    // M5: the fallback leg filters too — degradation and
-                    // the privacy boundary compose.
-                    let (exact, excluded_private) = admitted(exact);
-                    let serialized: Vec<serde_json::Value> =
-                        exact.iter().take(limit).map(h_mem_fragment).collect();
+                    // The fallback is the same exact-entity leg consult
+                    // uses: filtered, bounded, and only the returned rows
+                    // count as recalled.
+                    let leg = exact_recall_leg(
+                        &memory,
+                        |memory| memory.query_deduped_untouched(&req.query),
+                        limit,
+                        false,
+                        Some(&reason.to_string()),
+                    )?;
                     let mut result = json!({
-                        "count": serialized.len(),
+                        "count": leg["count"],
                         "mode": "entity_exact",
-                        "note": format!("semantic recall unavailable — fell back to exact-entity lookup: {reason}"),
-                        "results": serialized,
+                        "note": leg["note"],
+                        "results": leg["h_mems"],
                     });
-                    if excluded_private > 0 {
-                        result["excluded_private_rows"] = json!(excluded_private);
+                    if let Some(excluded) = leg.get("excluded_private_rows") {
+                        result["excluded_private_rows"] = excluded.clone();
                     }
                     Ok(result)
                 }
@@ -833,7 +854,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Recall the Curator's memory by exact entity, or along an ontology axis. Give `entity` (with `recall_shape`: `perspective_scoped` for rows whose perspective is the curator, `entity_wide` for every h_mem of the entity, or `both`), or give `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) with `ontology_value` — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace. Exactly one of the two. Entity recall counts as a use: it resets the returned rows' decay clocks. Axis recall does not."
+        description = "Recall the Curator's memory by exact entity, or along an ontology axis. Give `entity` (with `recall_shape`: `perspective_scoped` for rows whose perspective is the curator, `entity_wide` for every h_mem of the entity, or `both`), or give `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) with `ontology_value` — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace. Exactly one of the two. Returns at most `limit` h_mems, newest first (default 100, at most 500); `total` and `limit_reached` say what the bound cut. Entity recall counts as a use: it resets the returned rows' decay clocks. Axis recall does not."
     )]
     pub async fn curator_memory_recall(
         &self,
@@ -841,6 +862,10 @@ impl CuratorServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "curator_memory_recall", async {
             let recall_shape = req.recall_shape.clone();
+            let limit = req
+                .limit
+                .unwrap_or(RECALL_DEFAULT_LIMIT)
+                .clamp(1, RECALL_MAX_LIMIT);
             let entity = req.entity.as_deref().filter(|entity| !entity.is_empty());
             if req.ontology_axis.is_none() && req.ontology_value.is_some() {
                 return Err(McpToolError::invalid_argument(
@@ -881,8 +906,10 @@ impl CuratorServer {
                 // M5: the same partition as the recall legs — public call
                 // contexts never receive private-marked rows.
                 let (h_mems, excluded_private) = admitted(h_mems);
+                let total = h_mems.len();
                 let serialized: Vec<serde_json::Value> = h_mems
                     .iter()
+                    .take(limit)
                     .map(|t| {
                         let mut fragment = h_mem_fragment(t);
                         fragment["ontology"] = json!(t.ontology);
@@ -893,6 +920,8 @@ impl CuratorServer {
                     "ontology_axis": axis,
                     "ontology_value": value,
                     "count": serialized.len(),
+                    "total": total,
+                    "limit_reached": total > limit,
                     "h_mems": serialized,
                 });
                 if excluded_private > 0 {
@@ -914,8 +943,8 @@ impl CuratorServer {
             {
                 result["perspective_scoped"] = exact_recall_leg(
                     &memory,
-                    |memory| memory.query_for_deduped(entity, self.webid),
-                    None,
+                    |memory| memory.query_for_deduped_untouched(entity, self.webid),
+                    limit,
                     true,
                     None,
                 )?;
@@ -925,8 +954,8 @@ impl CuratorServer {
             {
                 result["entity_wide"] = exact_recall_leg(
                     &memory,
-                    |memory| memory.query_deduped(entity),
-                    None,
+                    |memory| memory.query_deduped_untouched(entity),
+                    limit,
                     false,
                     None,
                 )?;
@@ -1044,15 +1073,15 @@ impl CuratorServer {
                     let reason = reason.to_string();
                     result["entity_wide_fragments"] = exact_recall_leg(
                         &memory,
-                        |memory| memory.query_deduped(&req.query),
-                        Some(limit),
+                        |memory| memory.query_deduped_untouched(&req.query),
+                        limit,
                         false,
                         Some(&reason),
                     )?;
                     result["perspective_scoped_fragments"] = exact_recall_leg(
                         &memory,
-                        |memory| memory.query_for_deduped(&req.query, self.webid),
-                        Some(limit),
+                        |memory| memory.query_for_deduped_untouched(&req.query, self.webid),
+                        limit,
                         true,
                         Some(&reason),
                     )?;
@@ -1274,8 +1303,8 @@ impl CuratorServer {
     /// Insert a new memory into the curator's store.
     ///
     /// The memory starts at confidence 0.5 (the floor — NOT the model's
-    /// self-assessed confidence). Confidence is calibrated by subsequent
-    /// Brier-scored outcomes, not by self-assessment.
+    /// self-assessed confidence). Nothing changes it afterwards except a
+    /// `memory_update` call.
     ///
     /// The value's text is embedded under the entity (the entity_ref
     /// invariant) so `curator_semantic_search` finds the memory by meaning,
@@ -1286,7 +1315,7 @@ impl CuratorServer {
     /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 — calibrated by outcomes, not self-assessment. An existing memory for the same entity and attribute with a different value refuses the insert, naming it. The response carries the new h_mem_id."
+        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 whatever the caller believes; nothing changes it afterwards except memory_update. An existing memory for the same entity and attribute with a different value refuses the insert, naming it. The response carries the new h_mem_id."
     )]
     pub async fn memory_insert(
         &self,
