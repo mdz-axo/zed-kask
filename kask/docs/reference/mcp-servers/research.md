@@ -633,7 +633,11 @@ Three changes from the zk-reference retrieval sweep's lessons:
   the profiles of configured providers only, so the profile of an
   unconfigured provider is no longer returned anywhere; and `web_ping`
   runs every provider's health check, which on a fully keyed server is
-  nine paid requests (source read, not executed with keys).
+  seven paid search requests: Brave 1, Tavily 1, SerpAPI 3 (one per
+  engine), Exa 2 (search and find-similar). Counted from the provider
+  registrations and `health_check_all`; not executed with keys. This
+  paragraph said nine until it was recounted: nine was the count before
+  `web_browse` was removed.
 
 ## Provider selection & closed-vocabulary boundary (2026-10-09)
 
