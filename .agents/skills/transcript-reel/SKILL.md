@@ -197,12 +197,10 @@ for short informal recordings. Budget ~$0.02 per intake for the
 
 ### Convergence
 
-11. Gate — call `lisp_eval` with (`TR-2`):
-    - form: `(and (eq reel_exists 1) (> clip_count 0) (< rejection_rate 0.3) (= unlocated_summary_quotes 0))`
-    - env: `{ "reel_exists": <1 if render_edl returned a media path>,
-              "clip_count": <EDL keep-op count>,
-              "rejection_rate": <paragraph pass rejection_rate>,
-              "unlocated_summary_quotes": <count of summary quotes that failed educt_locate> }`
+11. Gate — call `lisp_eval` with (`TR-2`) over the tool responses as returned:
+    - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rendered (and (listp render) (stringp (assoc "output" render)) (> (length (assoc "output" render)) 0))) (define clips (if (and (listp render) (numberp (assoc "clips" render))) (assoc "clips" render) 0)) (define stats (if (listp paragraph_pass) (assoc "pass_stats" paragraph_pass) nil)) (define rate (if (and (listp stats) (numberp (assoc "rejection_rate" stats))) (assoc "rejection_rate" stats) nil)) (define locates (if (listp locate_results) locate_results (list))) (define unlocated (lambda (rs) (if (is_null rs) (list) (if (and (string= (text-of (car rs) "status") "located") (numberp (assoc "count" (car rs))) (> (assoc "count" (car rs)) 0)) (unlocated (cdr rs)) (cons (text-of (car rs) "quote") (unlocated (cdr rs))))))) (define problems (append (if rendered (list) (list "reel_not_rendered")) (if (> clips 0) (list) (list "no_clips")) (if (is_null rate) (list "paragraph_pass_stats_missing") (if (< rate 0.3) (list) (list "paragraph_rejection_rate_high"))) (if (is_null (unlocated locates)) (list) (list "summary_quotes_unlocated")))) (list (list "verdict" (if (is_null problems) "converged" "reenter")) (list "problems" problems) (list "clips" clips) (list "rejection_rate" rate) (list "unlocated_quotes" (unlocated locates)) (list "quotes_checked" (length locates))))`
+    - env: `{ "render": <the educt_render_edl response (its output path and clips), or null if it failed>, "paragraph_pass": <the educt_paragraph_pass response (its pass_stats)>, "locate_results": <one educt_locate response per summary quote, each with the quote added as "quote"> }`
+    - `converged`, or `reenter` with `problems`: `reel_not_rendered`, `no_clips`, `paragraph_pass_stats_missing`, `paragraph_rejection_rate_high` (at or above 0.3), `summary_quotes_unlocated` (the quotes whose locate status is not `located` with a positive count — named).
     If the reel is empty or the passes rejected heavily, re-enter at
     the failing phase (sharper highlight request, or corrections
     first) rather than delivering a broken reel. Bound: at most 2
@@ -214,16 +212,18 @@ for short informal recordings. Budget ~$0.02 per intake for the
 All receipts executed live through `lisp_eval` (2026-10-01, batch-14 audit),
 over the Convergence form:
 
-- Green: `{reel_exists: 1, clip_count: 5, rejection_rate: 0.1}` → `true` —
-  the reel rendered with clips and the passes accepted.
-- Empty reel: `clip_count: 0` → `false` — a highlight selection with no
-  keep-ops re-enters the highlight phase (a sharper request); in practice
-  `educt_render_edl` rejects an empty clip plan outright, so this state
-  fails at the first conjunct — the receipt pins the form's behavior
-  regardless.
-- Heavy rejection: `rejection_rate: 0.45` (the paragraph pass rejected
-  heavily) → `false` — re-enter at Phase 2 (corrections first), never
-  deliver a broken reel.
+- Green: a render with `output` and `clips` 5, a paragraph pass with
+  `rejection_rate` 0.1, two quotes `located` with counts 1 and 2 →
+  `converged`.
+- A quote whose locate response is `no_match` → `reenter`,
+  `summary_quotes_unlocated` naming it — fix the quote, never the
+  transcript.
+- An empty output with `clips` 0, or a null render → `reenter`
+  (`reel_not_rendered`, `no_clips`); in practice `educt_render_edl`
+  rejects an empty clip plan outright.
+- `rejection_rate` 0.3 → `reenter` (`paragraph_rejection_rate_high`) —
+  re-enter at Phase 2 (corrections first), never deliver a broken reel; a
+  paragraph pass with no `pass_stats` → `paragraph_pass_stats_missing`.
 
 The skill's form is executed at use time, never anchored in code.
 

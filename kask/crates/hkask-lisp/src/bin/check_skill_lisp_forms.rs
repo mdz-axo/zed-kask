@@ -5678,6 +5678,76 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_tr_2_reads_the_render_the_pass_stats_and_the_locate_responses() {
+        let form = skill_candidate("transcript-reel", "summary_quotes_unlocated");
+        let render =
+            json!({"output": "/g/reel.mp4", "clips": 5, "clip_plan": [], "gallery_asset_id": "a1"});
+        let pass = |rate: serde_json::Value| json!({"layer_id": "l", "pass_stats": {"attempts": 10, "rejections": 1, "rejection_rate": rate}});
+        let locate = |quote: &str, status: &str, count: u64| json!({"quote": quote, "status": status, "count": count, "ranges": []});
+        let gate = |render: serde_json::Value,
+                    pass: serde_json::Value,
+                    locates: Vec<serde_json::Value>| {
+            eval_sandboxed(
+                &form,
+                &json!({"render": render, "paragraph_pass": pass, "locate_results": locates}),
+            )
+            .unwrap_or_else(|error| panic!("TR-2 failed to evaluate: {error}"))
+        };
+        let green = gate(
+            render.clone(),
+            pass(json!(0.1)),
+            vec![
+                locate("the Cinderella curve", "located", 1),
+                locate("second", "located", 2),
+            ],
+        );
+        assert_eq!(green["verdict"], json!("converged"));
+        assert_eq!(green["clips"], json!(5));
+        assert_eq!(green["quotes_checked"], json!(2));
+
+        let missed = gate(
+            render.clone(),
+            pass(json!(0.1)),
+            vec![locate("x", "no_match", 0)],
+        );
+        assert_eq!(missed["problems"], json!(["summary_quotes_unlocated"]));
+        assert_eq!(missed["unlocated_quotes"], json!(["x"]));
+        // A located status with a zero count is not a location either.
+        assert_eq!(
+            gate(
+                render.clone(),
+                pass(json!(0.1)),
+                vec![locate("y", "located", 0)]
+            )["problems"],
+            json!(["summary_quotes_unlocated"])
+        );
+
+        let empty = gate(json!({"output": "", "clips": 0}), pass(json!(0.1)), vec![]);
+        assert_eq!(empty["problems"], json!(["reel_not_rendered", "no_clips"]));
+        assert_eq!(
+            gate(serde_json::Value::Null, pass(json!(0.1)), vec![])["problems"],
+            json!(["reel_not_rendered", "no_clips"])
+        );
+
+        assert_eq!(
+            gate(render.clone(), pass(json!(0.3)), vec![])["problems"],
+            json!(["paragraph_rejection_rate_high"])
+        );
+        assert_eq!(
+            gate(render.clone(), pass(json!(0.29)), vec![])["verdict"],
+            json!("converged")
+        );
+        assert_eq!(
+            gate(render.clone(), serde_json::Value::Null, vec![])["problems"],
+            json!(["paragraph_pass_stats_missing"])
+        );
+        assert_eq!(
+            gate(render, json!({"layer_id": "l"}), vec![])["problems"],
+            json!(["paragraph_pass_stats_missing"])
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",
