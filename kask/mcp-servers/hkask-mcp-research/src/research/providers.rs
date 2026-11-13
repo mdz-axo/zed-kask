@@ -25,7 +25,7 @@ pub(crate) use crossref::title_matches_exactly;
 pub(crate) use exa::ExaProvider;
 pub(crate) use firecrawl::FirecrawlProvider;
 pub(crate) use openalex::OpenAlexProvider;
-pub(crate) use raw_fetch::{RawFetchProvider, truncate_str};
+pub(crate) use raw_fetch::{RawFetchProvider, extraction_is_complete, truncate_str};
 pub(crate) use semantic_scholar::SemanticScholarProvider;
 pub(crate) use serapi::{SerapiProvider, SerpEngine};
 pub(crate) use tavily::TavilyProvider;

@@ -389,6 +389,16 @@ refused with a typed error instead of holding the call. No tree is built:
 html5ever's tree builder took 326 ms for 16,000 nested `<div>` and 7 ms
 for 16,000 side by side, and nesting depth is chosen by the page.
 
+Every RawFetch extraction says what the text was taken from, in
+`metadata.extracted_from`: `html`, `pdf_text_layer`, or `body_as_served`
+(a non-HTML text body returned unchanged). The under-500-characters note
+is not attached to the last two: they are complete however short. Before,
+a PDF whose whole text layer is "Dummy PDF file" came back with a note
+saying the extract chain "returned a page shell, not PDF text", and was
+left out of the cache. A short `html` extraction still carries the note.
+An extraction that came from Firecrawl carries Firecrawl's own metadata
+and no `extracted_from`.
+
 Not changed: the size of a fetched body is bounded only by the 30-second
 request timeout, and a page that needs script to render still yields
 little text, reported by the existing under-500-characters note.

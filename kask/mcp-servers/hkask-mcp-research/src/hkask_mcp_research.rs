@@ -784,7 +784,15 @@ impl ResearchServer {
             // `validate_extraction` above.
             const MIN_SUBSTANTIVE_CONTENT_CHARS: usize = 500;
             let content_chars = extracted.content.trim().chars().count();
-            let degraded = fmt == "markdown" && content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
+            // Nor is it a test for a PDF text layer or a body returned as
+            // served: those are complete however short. A PDF whose whole
+            // text is 14 characters was reported as "a page shell, not PDF
+            // text" (measured 2026-11-12).
+            let degraded = fmt == "markdown"
+                && content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS
+                && !crate::research::providers::extraction_is_complete(
+                    extracted.metadata.as_ref(),
+                );
             let note = degraded.then(|| {
                 // A degraded PDF URL: the chain returned a page shell, not
                 // PDF text (the local extractor errored and a scraper leg

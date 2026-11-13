@@ -376,6 +376,80 @@ async fn web_search_surfaces_provider_skips() {
     );
 }
 
+/// Stub that answers the way RawFetch does for a PDF with a short text
+/// layer, and for a short plain-text body.
+struct ShortCompletePool;
+
+#[async_trait]
+impl WebSearchPort for ShortCompletePool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        no_provider!("No search provider configured.")
+    }
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    }
+    async fn extract(
+        &self,
+        url: &str,
+        _opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        let (content, from) = if url.ends_with(".pdf") {
+            ("Dummy PDF file", "pdf_text_layer")
+        } else {
+            ("User-agent: *\nDisallow:\n", "body_as_served")
+        };
+        Ok(ExtractedContent {
+            url: url.to_string(),
+            content: content.to_string(),
+            format: "markdown".to_string(),
+            metadata: Some(serde_json::json!({ "extracted_from": from })),
+        })
+    }
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+    fn provider_fingerprint(&self) -> String {
+        "stub-short-complete".to_string()
+    }
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
+/// expect: a PDF whose whole text layer is short, and a short body
+/// returned as served, are complete extractions: no degradation note, and
+/// the response says what the text was taken from. Measured 2026-11-12: a
+/// PDF containing only "Dummy PDF file" came back with a note saying the
+/// chain "returned a page shell, not PDF text".
+#[tokio::test]
+async fn web_extract_does_not_report_a_short_complete_extraction_as_degraded() {
+    let server = make_server_with_pool(Arc::new(ShortCompletePool));
+    for (url, from) in [
+        ("https://example.com/papers/dummy.pdf", "pdf_text_layer"),
+        ("https://example.com/robots.txt", "body_as_served"),
+    ] {
+        let response = server
+            .web_extract(decode(serde_json::json!({ "url": url })).expect("decode"))
+            .await
+            .expect("extracts");
+        let json = parse_envelope(&response);
+        assert!(json.get("note").is_none(), "{url}: {json}");
+        assert_eq!(json["metadata"]["extracted_from"], from, "{url}: {json}");
+    }
+}
+
 /// Stub whose extraction returns a thin page shell for a PDF URL — pins
 /// the PDF-specific degradation note (the JS-shell guess is wrong for a
 /// PDF; the note names the corpus convert route — observed 2026-11-01:

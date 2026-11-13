@@ -153,6 +153,27 @@ impl RawFetchProvider {
     }
 }
 
+/// Metadata key naming what the returned text was taken from. RawFetch
+/// sets it on every extraction.
+pub(crate) const EXTRACTED_FROM: &str = "extracted_from";
+/// The text of an HTML page. A short result can mean the page needs
+/// script to render.
+pub(crate) const FROM_HTML: &str = "html";
+/// The whole text layer of a PDF.
+pub(crate) const FROM_PDF_TEXT_LAYER: &str = "pdf_text_layer";
+/// A non-HTML text body, returned unchanged.
+pub(crate) const FROM_BODY_AS_SERVED: &str = "body_as_served";
+
+/// Whether an extraction is the complete text of what was fetched, however
+/// short: a PDF text layer or a body returned as served. A short HTML
+/// extraction is not known to be complete.
+pub(crate) fn extraction_is_complete(metadata: Option<&serde_json::Value>) -> bool {
+    metadata
+        .and_then(|metadata| metadata.get(EXTRACTED_FROM))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|from| matches!(from, FROM_PDF_TEXT_LAYER | FROM_BODY_AS_SERVED))
+}
+
 /// How a fetched body is turned into text.
 #[derive(Debug, PartialEq, Eq)]
 enum BodyKind {
@@ -210,7 +231,7 @@ fn extract_pdf_content(
         url: final_url.to_string(),
         content: text,
         format: "markdown".to_string(),
-        metadata: None,
+        metadata: Some(serde_json::json!({ EXTRACTED_FROM: FROM_PDF_TEXT_LAYER })),
     })
 }
 
@@ -291,9 +312,12 @@ impl WebExtractProvider for RawFetchProvider {
                     url: final_url.to_string(),
                     content: page.text,
                     format: "markdown".to_string(),
-                    metadata: page
-                        .title
-                        .map(|title| serde_json::json!({ "title": title })),
+                    metadata: Some(match page.title {
+                        Some(title) => {
+                            serde_json::json!({ EXTRACTED_FROM: FROM_HTML, "title": title })
+                        }
+                        None => serde_json::json!({ EXTRACTED_FROM: FROM_HTML }),
+                    }),
                 })
             }
             // Text that is not HTML is returned as served: parsing it as
@@ -302,7 +326,7 @@ impl WebExtractProvider for RawFetchProvider {
                 url: final_url.to_string(),
                 content: body,
                 format: "markdown".to_string(),
-                metadata: None,
+                metadata: Some(serde_json::json!({ EXTRACTED_FROM: FROM_BODY_AS_SERVED })),
             }),
             BodyKind::NotText => Err(WebError::ProviderError(format!(
                 "RawFetch cannot extract text from content type {}",
@@ -435,7 +459,7 @@ mod tests {
         );
         assert_eq!(
             extracted.metadata,
-            Some(serde_json::json!({"title": "Example Domains"}))
+            Some(serde_json::json!({"extracted_from": "html", "title": "Example Domains"}))
         );
 
         // main_content_only=false keeps the navigation and the footer.
@@ -471,7 +495,10 @@ mod tests {
             extracted.content,
             "line one\n  indented <not a tag>\nline three\n"
         );
-        assert_eq!(extracted.metadata, None);
+        assert_eq!(
+            extracted.metadata,
+            Some(serde_json::json!({"extracted_from": "body_as_served"}))
+        );
 
         let (url, _) = http_fixture(typed_response("image/png", "\u{fffd}PNG\r\n")).await;
         let error = provider
@@ -562,6 +589,17 @@ mod tests {
             extracted.content
         );
         assert!(!extracted.content.starts_with("%PDF-"));
+        // The caller is told the text is the PDF's text layer, which is
+        // what keeps a short one from being reported as a failed fetch.
+        assert_eq!(
+            extracted.metadata,
+            Some(serde_json::json!({"extracted_from": "pdf_text_layer"}))
+        );
+        assert!(extraction_is_complete(extracted.metadata.as_ref()));
+        assert!(!extraction_is_complete(Some(
+            &serde_json::json!({"extracted_from": "html"})
+        )));
+        assert!(!extraction_is_complete(None));
     }
 
     /// expect: "A scanned PDF (no text layer) surfaces the corpus OCR route,
