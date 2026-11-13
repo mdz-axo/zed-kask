@@ -12,7 +12,7 @@ mkdir -p "$fixture/crates/a/src" "$fixture/crates/dir/sub" "$fixture/kask/docs" 
 printf 'fn live_symbol() {}\n' > "$fixture/crates/a/src/x.rs"
 printf '// y\n' > "$fixture/crates/a/src/y.rs"
 printf '// z\n' > "$fixture/crates/dir/sub/z.rs"
-printf 'docs mention docs_only_symbol\n' > "$fixture/kask/docs/note.md"
+printf 'docs mention docs_only_symbol\n' > "$fixture/kask/docs/note.txt"
 printf '// k\n' > "$fixture/kask/crates/k/src/k.rs"
 printf 'root file\n' > "$fixture/.rules"
 cat > "$fixture/DIVERGENCE.md" <<'DOC'
