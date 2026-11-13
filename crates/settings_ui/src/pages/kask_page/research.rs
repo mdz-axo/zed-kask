@@ -1,4 +1,4 @@
-//! Research sub-page — research database path (feed substrate + run ledger).
+//! Research sub-page — research database path (the research-run ledger).
 
 use super::*;
 
@@ -39,9 +39,9 @@ pub(crate) fn render_research_page(
                 .child(SettingsSectionHeader::new("Research"))
                 .child(
                     Label::new(
-                        "The research server provides web search, extraction, and RSS feed \
-                         management. Configure the research database path for the feed \
-                         substrate and the research-run ledger. When empty, the server \
+                        "The research server provides web search, extraction, evidence \
+                         scoring and paper lookup. Configure the research database path \
+                         for the research-run ledger. When empty, the server \
                          defaults to <data-dir>/mcp/research/research.db (databases stay in \
                          the internal data dir; artifact files go to \
                          ~/Documents/zk-data/).",
@@ -57,8 +57,8 @@ pub(crate) fn render_research_page(
                 .child(Label::new("Research Database Path"))
                 .child(
                     Label::new(
-                        "SQLite database path for the feed substrate and research-run \
-                         ledger. Leave empty to use the server default \
+                        "SQLite database path for the research-run ledger. \
+                         Leave empty to use the server default \
                          (<data-dir>/mcp/research/research.db).",
                     )
                     .size(LabelSize::Small)

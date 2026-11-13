@@ -637,9 +637,9 @@ pub(crate) fn kask_page() -> SettingsPage {
             r#type: Default::default(),
             json_path: Some("kask.research"),
             description: Some(
-                "Configure the research MCP server: RSS database path for persistent feed storage.".into(),
+                "Configure the research MCP server: database path for the research-run ledger.".into(),
             ),
-            search_aliases: &["research", "rss", "feed", "web search", "leap"],
+            search_aliases: &["research", "web search", "research run", "ledger"],
             in_json: true,
             files: USER,
             render: render_research_page,
