@@ -336,7 +336,7 @@ carrying a concept URI string (e.g. `"pplan:Step"`, `"sumo:Corporation"`,
 
 | Server | JSON key | Value example | Evidence |
 |---|---|---|---|
-| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:887-888` |
+| curator | `"ontology"` | per-template | `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:914-915` |
 | media | `"ontology"` | `"omc:CreativeWork"` | `kask/mcp-servers/hkask-mcp-media/src/media_block.rs:19-25` |
 | scenarios | `"ontology"` | per-tool | `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs` |
 

@@ -166,11 +166,11 @@ vocabulary is the one notable absence.
 | sense / observe / Sensor / SensorBus | `hkask-regulation/src/sensor_provider.rs:27-29` (trait `Sensor`, `observe`), `:45` (`SensorBus`); stage `sense` `cybernetics_loop/cycle.rs:336` |
 | Signal / set_point / Deviation | `hkask-regulation/src/loops/signals.rs:248-252` (`Deviation { signal, magnitude, direction }`); `:259` (`value - set_point`); `set_points.rs:396` `load_set_points` (0.80 default `:71`) |
 | advisory / act / escalate | `cybernetics_loop/cycle.rs:440` `compute`, `:456` `act`, `:789` `escalate_exhausted_checks`; `route_action_as_alert` `:575` |
-| algedonic | `hkask-regulation/src/algedonic.rs:1-3` ("algedonic (pain/pleasure) feedback for cybernetic control"), `:247` `AlgedonicManager`, `:88` review-board sink; `kask_bridge/src/algedonic_board.rs:1-2`, `algedonic_log_bridge.rs`; `hkask-mcp-curator/src/hkask_mcp_curator.rs:1199` `curator_algedonic_log` |
+| algedonic | `hkask-regulation/src/algedonic.rs:1-3` ("algedonic (pain/pleasure) feedback for cybernetic control"), `:247` `AlgedonicManager`, `:88` review-board sink; `kask_bridge/src/algedonic_board.rs:1-2`, `algedonic_log_bridge.rs`; `hkask-mcp-curator/src/hkask_mcp_curator.rs:1101` `curator_algedonic_log` |
 | RegulationRecord / Span / SpanKind | `hkask-types/src/event.rs:16-28` (record: span, phase, observation, regulation, outcome, visibility), `:364-369` (`Span`), `:411-443` (`SpanKind`, 11 typed `reg.*` variants) |
 | curator memory / h_mem | `hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`; `kask_bridge/src/memory/ingest.rs`; curator tools `hkask_mcp_curator.rs` (insert/update/extract/prune/dedup) |
 | drift | `hkask-regulation/src/metacognition.rs:358+` (skill-outcome/operator-feedback drift sense) |
-| feedback | `crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`; `hkask_mcp_curator.rs:1197` `curator_report_skill_use_issue` (the companies server's `result_feedback` retired with the server, 2026-10-18) |
+| feedback | `crates/agent/src/tools/record_skill_feedback_tool.rs:69-90`; `hkask_mcp_curator.rs:1226` `curator_report_skill_use_issue` (the companies server's `result_feedback` retired with the server, 2026-10-18) |
 | Brier / calibration | `hkask-forecast/src/hkask_forecast.rs:190/:196`; `hkask-mcp-prediction-markets/src/calibration.rs:134`; optional goal forecasts in the canonical `GOAL_INTERFACE.md`; no routine goal score |
 | toast / AlertSink | `hkask-regulation/src/metacognition.rs:61` `AlertEvent`, `:78` `AlertSink`; `crates/zed/src/main.rs` (`ToastAlertSink` and its `AlertSink` implementation), wired `:1117` |
 | loop-quality telemetry (coalesced) | `cybernetics_loop.rs:887-940` — "Coalesce only semantically identical persistent deviation/advisory cycles. Changed values, clearing, and rollout measurements always emit" |
@@ -192,7 +192,7 @@ degrad 420, feedback 351, drift 198, h_mem 1160, brier 203, calibration
 | R2 | `.log_err()` Result idiom | def `crates/gpui_util/src/lib.rs:222/:245`; 250 scoped sites (agent 20, agent_ui 115, zed 115) | A, B |
 | R3 | kask `tracing` macros | 558 warn sites (kask/crates 202, mcp-servers 356) + 9 in zed main's kask sections; child subscriber `hkask-mcp-server/src/server/transport.rs:42-46` (stderr writer, EnvFilter default info) | A (children), B |
 | R4 | child stderr → host forward | `kask/crates/hkask-mcp/src/runtime.rs` (`info!(target: "hkask.mcp.child")`, per line) | A |
-| R5 | persisted RegulationRecords → curator.db archive | `hkask-types/src/event.rs:16-28`; `kask_bridge/src/memory/curator_stores.rs:38-45` `open_curator_regulation_archive`, skill outcomes `:63/:74`; readback `reg_query` `hkask_mcp_curator.rs:1234` | A, B, C |
+| R5 | persisted RegulationRecords → curator.db archive | `hkask-types/src/event.rs:16-28`; `kask_bridge/src/memory/curator_stores.rs:38-45` `open_curator_regulation_archive`, skill outcomes `:63/:74`; readback `reg_query` `hkask_mcp_curator.rs:1139` | A, B, C |
 | R6 | algedonic events → in-memory log + board cards | `algedonic.rs` (manager, cap, `AlgedonicLogApproachingCap` `:563-564`); `kask_bridge/src/algedonic_board.rs:1-2` (kanban cards; CONDITION/CONTEXT markers `:16-17`) | A → C |
 | R7 | alert channel → GPUI toasts | `metacognition.rs:150/:167`; `crates/zed/src/main.rs` (`ToastAlertSink` channel drainer), wired `:1117` | B |
 | R8 | curator memory h_mems | `memory_store.rs:288/:331/:447`; turn ingestion `crates/agent/src/thread.rs:3019-3086` → `curator:thread:{id}` chunks | B → C |
@@ -503,7 +503,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 ### L10 — Memory recall/ingest cycle — audited; recall failure-signal contract deferred to the operator
 - **Crate/path:** `kask/crates/hkask-memory` + `kask/mcp-servers/hkask-mcp-curator`
-- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1568` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
+- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1765` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
 - **Participants:** `federated_recall.rs`, `recall_dedup.rs`, `salience.rs`, `bayesian.rs`; zed-side injection `kask_bridge/src/memory.rs`, `context_injector.rs`
 - **Trigger:** turn-end extraction; recall queries; prune/decay cycles
 - **Hands off to:** L1 (context injection), L2 (ledger), therapy/consolidation skills
