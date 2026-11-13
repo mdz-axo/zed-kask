@@ -367,26 +367,22 @@ impl MediaServer {
         Ok(access)
     }
 
-    /// Return the ffmpeg runner or an error if ffmpeg is not installed.
+    /// Return the ffmpeg runner, or the missing-binary refusal: absent state
+    /// with a remedy, never `unavailable` (a retry cannot succeed).
     fn require_ffmpeg(&self) -> Result<&FfmpegRunner, McpToolError> {
         if self.ffmpeg.available {
             Ok(&self.ffmpeg)
         } else {
-            Err(McpToolError::unavailable(
-                "ffmpeg not found on system PATH — video tools unavailable.",
-            ))
+            Err(map_media_error(MediaError::FfmpegUnavailable))
         }
     }
 
-    /// Return the yt-dlp runner or an error if yt-dlp is not installed.
+    /// Return the yt-dlp runner, or the missing-binary refusal.
     fn require_yt_dlp(&self) -> Result<&YtDlpRunner, McpToolError> {
         if self.ytdlp.available {
             Ok(&self.ytdlp)
         } else {
-            Err(McpToolError::unavailable(
-                "yt-dlp not found on system PATH — video_fetch unavailable. \
-                 Install via: pip install yt-dlp  (or apt install yt-dlp on Ubuntu 24.04+)",
-            ))
+            Err(map_media_error(MediaError::YtDlpUnavailable))
         }
     }
 
@@ -2414,6 +2410,377 @@ mod tool_behavior_tests {
             "format": "wav",
         });
         assert_durable_audio_asset(&content, &store, &expected, "audio_capture")?;
+        Ok(())
+    }
+
+    /// A generated audio fixture (ffmpeg lavfi sine) in the container and
+    /// codec the extension and arguments select.
+    async fn sine_fixture(
+        path: &std::path::Path,
+        seconds: u32,
+        codec_args: &[&str],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let source = format!("sine=frequency=440:duration={seconds}");
+        let mut args = vec!["-y", "-v", "error", "-f", "lavfi", "-i", source.as_str()];
+        args.extend_from_slice(codec_args);
+        args.push(path.to_str().ok_or("fixture path is not UTF-8")?);
+        let output = tokio::process::Command::new("ffmpeg")
+            .args(&args)
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        Ok(())
+    }
+
+    /// The audio codec and duration ffprobe reads from a published file.
+    async fn probed_audio(
+        content: &serde_json::Value,
+    ) -> Result<(String, f32), Box<dyn std::error::Error>> {
+        let output = content["output"].as_str().ok_or("missing durable output")?;
+        let probe = video::ffmpeg::FfmpegRunner::detect().probe(output).await?;
+        Ok((probe.audio_codec, probe.duration_secs))
+    }
+
+    /// dcterms:identifier: `MediaServer::audio_trim`
+    /// expect: The WAV I get back from a trim plays: it holds PCM of the length I asked for, whatever the source codec.
+    /// pre: real mp3, 24-bit and 16-bit sources.
+    /// post: mp3 decodes to 16-bit PCM; a 24-bit source keeps its sample format; each result is 1.000 s, not a packet-rounded 1.024 s.
+    #[tokio::test]
+    async fn audio_trim_publishes_pcm_of_the_requested_length()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+        for (name, codec_args, expected_codec) in [
+            ("zz.mp3", &["-c:a", "libmp3lame"][..], "pcm_s16le"),
+            (
+                "zz24.wav",
+                &["-ar", "48000", "-c:a", "pcm_s24le"][..],
+                "pcm_s24le",
+            ),
+            (
+                "zz16.wav",
+                &["-ar", "16000", "-c:a", "pcm_s16le"][..],
+                "pcm_s16le",
+            ),
+        ] {
+            let source = gallery_root.path().join(name);
+            sine_fixture(&source, 3, codec_args).await?;
+            let content = content_of(
+                &server
+                    .audio_trim(crate::test_support::wire(serde_json::json!({
+                        "audio_url": source, "start_sec": 0.5, "end_sec": 1.5,
+                    }))?)
+                    .await?,
+            );
+            let (codec, duration) = probed_audio(&content).await?;
+            assert_eq!(codec, expected_codec, "{name}");
+            assert!((duration - 1.0).abs() < 0.002, "{name}: {duration} s");
+        }
+        Ok(())
+    }
+
+    /// expect: A range I cannot have is refused before anything is published.
+    /// post: a start past the end of the media, and an end beyond what a 32-bit float holds, are
+    /// invalid_argument on the direct tools as they are on the queued ones; no asset is created.
+    #[tokio::test]
+    async fn trims_outside_the_media_or_the_number_range_are_refused()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let source = gallery_root.path().join("zz.wav");
+        sine_fixture(&source, 2, &["-ar", "16000"]).await?;
+        let generated_before = std::fs::read_dir(crate::assets::generated_assets_dir())?.count();
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+
+        let past_end = server
+            .audio_trim(crate::test_support::wire(serde_json::json!({
+                "audio_url": source, "start_sec": 50.0, "end_sec": 60.0,
+            }))?)
+            .await
+            .expect_err("a start past the end publishes nothing");
+        assert_eq!(past_end.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            past_end.message.contains("past the end"),
+            "{}",
+            past_end.message
+        );
+
+        let overflow = serde_json::json!({"start_sec": 0.0, "end_sec": 1e39});
+        let mut trim = overflow.clone();
+        trim["audio_url"] = serde_json::json!(source);
+        let mut clip = overflow;
+        clip["video_url"] = serde_json::json!(source);
+        for error in [
+            server
+                .audio_trim(crate::test_support::wire(trim)?)
+                .await
+                .expect_err("an infinite end is refused"),
+            server
+                .video_clip(crate::test_support::wire(clip)?)
+                .await
+                .expect_err("an infinite end is refused"),
+        ] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+            assert!(error.message.contains("finite"), "{}", error.message);
+        }
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            generated_before
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::audio_concat`
+    /// expect: Recordings in different codecs and sample rates join into one WAV of their combined length.
+    /// pre: a 16 kHz PCM wav, a 48 kHz 24-bit wav and an mp3, 2 s each.
+    /// post: 16-bit PCM, 6 s (the raw-packet join gave 16.5 s for two of these); a single mp3 becomes PCM too.
+    #[tokio::test]
+    async fn audio_concat_decodes_mixed_sources_into_one_pcm_wav()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let pcm16 = gallery_root.path().join("zz16.wav");
+        let pcm24 = gallery_root.path().join("zz24.wav");
+        let mp3 = gallery_root.path().join("zz.mp3");
+        sine_fixture(&pcm16, 2, &["-ar", "16000", "-c:a", "pcm_s16le"]).await?;
+        sine_fixture(&pcm24, 2, &["-ar", "48000", "-c:a", "pcm_s24le"]).await?;
+        sine_fixture(&mp3, 2, &["-c:a", "libmp3lame"]).await?;
+        let server = server_with_gallery(store, gallery.id, gallery_root.path());
+
+        let joined = content_of(
+            &server
+                .audio_concat(crate::test_support::wire(
+                    serde_json::json!({"audio_urls": [pcm16, pcm24, mp3]}),
+                )?)
+                .await?,
+        );
+        let (codec, duration) = probed_audio(&joined).await?;
+        assert_eq!(codec, "pcm_s16le");
+        assert!((duration - 6.0).abs() < 0.1, "{duration} s");
+
+        let single = content_of(
+            &server
+                .audio_concat(crate::test_support::wire(
+                    serde_json::json!({"audio_urls": [mp3]}),
+                )?)
+                .await?,
+        );
+        let (codec, duration) = probed_audio(&single).await?;
+        assert_eq!(codec, "pcm_s16le", "a single input is decoded, not renamed");
+        assert!((duration - 2.0).abs() < 0.1, "{duration} s");
+        Ok(())
+    }
+
+    /// expect: Without ffmpeg installed I am told to install it, not to retry later.
+    /// post: direct and queued edits are failed_precondition naming the binary.
+    #[tokio::test]
+    async fn a_missing_ffmpeg_is_a_failed_precondition_naming_the_binary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let source = root.path().join("zz.wav");
+        std::fs::write(&source, b"zz")?;
+        let mut server = make_server();
+        server.ffmpeg.available = false;
+        let direct = server
+            .audio_trim(crate::test_support::wire(serde_json::json!({
+                "audio_url": source, "start_sec": 0.0, "end_sec": 1.0,
+            }))?)
+            .await
+            .expect_err("no ffmpeg");
+        let queued = server
+            .job_submit(crate::test_support::wire(serde_json::json!({
+                "op": "audio_concat",
+                "params": serde_json::json!({"audio_urls": [source]}).to_string(),
+            }))?)
+            .await
+            .expect_err("no ffmpeg");
+        for error in [direct, queued] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+            assert!(
+                error.message.contains("install ffmpeg"),
+                "{}",
+                error.message
+            );
+        }
+        let fetch = map_media_error(MediaError::YtDlpUnavailable);
+        assert_eq!(fetch.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(
+            fetch.message.contains("install yt-dlp"),
+            "{}",
+            fetch.message
+        );
+        Ok(())
+    }
+
+    /// A server over the gallery with the fake capture binary and a port
+    /// whose transcription either answers or fails.
+    #[cfg(unix)]
+    fn capture_server(
+        store: Arc<GalleryStore>,
+        gallery_id: String,
+        gallery_root: &std::path::Path,
+        artifacts_root: &std::path::Path,
+        port: Arc<dyn hkask_types::ports::InferencePort>,
+    ) -> Result<MediaServer, Box<dyn std::error::Error>> {
+        Ok(MediaServer::new(
+            hkask_types::WebID::new(),
+            port,
+            Arc::new(std::sync::Mutex::new(Some(GalleryState {
+                path: gallery_root.to_path_buf(),
+                mode: GalleryMode::ReadOnly,
+                gallery_id: Some(gallery_id),
+            }))),
+            store,
+            templates::create_env()?,
+            fake_successful_ffmpeg(artifacts_root)?,
+            video::ytdlp::YtDlpRunner::detect(),
+            jobs::new_job_store(),
+            None,
+            Default::default(),
+        ))
+    }
+
+    /// dcterms:identifier: `MediaServer::record_and_transcribe`
+    /// expect: The recording I asked to keep is a durable gallery asset with its transcript beside it.
+    /// pre: a capture-capable runner; a transcription port that answers.
+    /// post: the response names a file under the generated gallery that survives the server, a gallery
+    /// row and lineage for it, and the bundle under `transcript` keyed to that same file.
+    /// [P1] Constraining: the recording never stays in the runner's scratch directory, which is removed at exit.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn record_and_transcribe_publishes_the_recording_and_returns_its_transcript()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server = capture_server(
+            store.clone(),
+            gallery.id,
+            gallery_root.path(),
+            artifacts.path(),
+            Arc::new(MockInferencePort {
+                response: String::new(),
+                media_response: serde_json::json!({
+                    "text": "zz probe words", "duration": 1.0, "model": "mock-stt",
+                    "words": [{"word": " zz", "start": 0.0, "end": 0.4}, {"word": " probe", "start": 0.4, "end": 0.8}]
+                })
+                .to_string(),
+                media_response_is_json: true,
+                audio_urls: heard.clone(),
+            }),
+        )?;
+        let content = content_of(
+            &server
+                .record_and_transcribe(crate::test_support::wire(
+                    serde_json::json!({"duration_secs": 1.0}),
+                )?)
+                .await?,
+        );
+        drop(server);
+
+        let expected = serde_json::json!({
+            "duration_secs": 1.0, "sample_rate": 16000, "channels": 1, "format": "wav",
+        });
+        let (output, _asset_id, _hint) =
+            assert_durable_audio_asset(&content, &store, &expected, "record_and_transcribe")?;
+        assert_eq!(content["status"], "captured");
+        assert_eq!(content["transcript"]["full_text"], "zz probe words");
+        assert_eq!(content["transcript"]["words"][0]["word"], "zz");
+        assert_eq!(
+            content["transcript"]["audio_path"],
+            output.to_string_lossy().as_ref(),
+            "the bundle is keyed to the published recording"
+        );
+        assert_eq!(
+            heard.lock().map_err(|error| error.to_string())?.as_slice(),
+            [Some(output.to_string_lossy().into_owned())],
+            "the published file is what was transcribed, not an inline payload"
+        );
+        Ok(())
+    }
+
+    /// dcterms:identifier: `MediaServer::record_and_transcribe`
+    /// expect: When transcription fails I still have my recording, as a durable asset, and I am told why.
+    /// post: status partial, the typed transcription error, no transcript, and the file on disk after teardown.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn record_and_transcribe_keeps_the_recording_when_transcription_fails()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = capture_server(
+            store.clone(),
+            gallery.id,
+            gallery_root.path(),
+            artifacts.path(),
+            Arc::new(NoopInferencePort),
+        )?;
+        let content = content_of(
+            &server
+                .record_and_transcribe(crate::test_support::wire(
+                    serde_json::json!({"duration_secs": 1.0, "language": "en"}),
+                )?)
+                .await?,
+        );
+        drop(server);
+
+        assert_eq!(content["status"], "partial");
+        assert!(content.get("transcript").is_none());
+        assert!(
+            content["transcript_error"]["kind"].is_string()
+                && content["transcript_error"]["error"].is_string(),
+            "the failure is typed, not a JSON string inside a string: {}",
+            content["transcript_error"]
+        );
+        let output =
+            std::path::PathBuf::from(content["output"].as_str().ok_or("missing durable output")?);
+        assert!(output.starts_with(crate::assets::generated_assets_dir()));
+        assert!(output.is_file(), "the recording outlives the server");
+        let asset_id = content["gallery_asset_id"]
+            .as_str()
+            .ok_or("missing asset id")?;
+        assert_eq!(store.get_by_id(asset_id)?.media_type, "audio");
+        Ok(())
+    }
+
+    /// expect: A capture shorter than the tenth of a second ffmpeg is told about is refused.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn capture_durations_outside_the_stated_range_are_refused()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (_env_lock, artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_fake_ffmpeg(
+            store.clone(),
+            gallery.id.clone(),
+            gallery_root.path(),
+            artifacts.path(),
+        )?;
+        for duration in [0.04, 0.0, -1.0, 3600.5] {
+            let capture = server
+                .audio_capture(crate::test_support::wire(
+                    serde_json::json!({"duration_secs": duration}),
+                )?)
+                .await
+                .expect_err("out-of-range capture is refused");
+            assert_eq!(capture.kind, hkask_types::McpErrorKind::InvalidArgument);
+            assert!(
+                capture.message.contains("between 0.1 and 3600"),
+                "{}",
+                capture.message
+            );
+            let record = server
+                .record_and_transcribe(crate::test_support::wire(
+                    serde_json::json!({"duration_secs": duration}),
+                )?)
+                .await
+                .expect_err("out-of-range recording is refused");
+            assert_eq!(record.kind, hkask_types::McpErrorKind::InvalidArgument);
+        }
+        assert_eq!(store.count_assets(&gallery.id)?, 0);
         Ok(())
     }
 

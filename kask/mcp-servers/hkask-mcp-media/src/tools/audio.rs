@@ -3,6 +3,9 @@ use crate::*;
 
 const CAPTURE_SAMPLE_RATE: u32 = 16_000;
 const CAPTURE_CHANNELS: u32 = 1;
+/// ffmpeg receives the duration with one decimal place; anything shorter
+/// would be sent as `-t 0.0`.
+const MIN_CAPTURE_DURATION_SECS: f32 = 0.1;
 
 #[cfg(test)]
 #[derive(Clone)]
@@ -360,8 +363,9 @@ impl MediaServer {
                 .transcribe_to_bundle(&audio_url, &language, model.as_deref())
                 .await?;
 
-            Ok(serde_json::to_value(&bundle)
-                .unwrap_or_else(|_| serde_json::json!({"error": "Failed to serialize bundle"})))
+            serde_json::to_value(&bundle).map_err(|error| {
+                McpToolError::internal(format!("encode transcript bundle: {error}"))
+            })
         })
         .await
     }
@@ -394,6 +398,47 @@ impl MediaServer {
         .await
     }
 
+    /// Record from the default input and publish the recording as a durable
+    /// WAV gallery asset. Shared by `audio_capture` and
+    /// `record_and_transcribe`, so both leave the recording in the generated
+    /// gallery rather than in the runner's scratch directory, which is
+    /// removed when the server exits.
+    async fn capture_and_publish(
+        &self,
+        op: &str,
+        duration_secs: f32,
+    ) -> Result<serde_json::Value, McpToolError> {
+        if !(MIN_CAPTURE_DURATION_SECS..=hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS)
+            .contains(&duration_secs)
+        {
+            return Err(McpToolError::invalid_argument(format!(
+                "duration_secs must be between {MIN_CAPTURE_DURATION_SECS} and {} (1 hour).",
+                hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
+            )));
+        }
+        #[cfg(test)]
+        pause_after_audio_admission().await?;
+        self.require_ffmpeg()?;
+        let effective_params = AudioCaptureEffectiveParams {
+            duration_secs,
+            sample_rate: CAPTURE_SAMPLE_RATE,
+            channels: CAPTURE_CHANNELS,
+        };
+        let path = self
+            .ffmpeg
+            .capture_audio(effective_params.duration_secs)
+            .await
+            .map_err(map_media_error)?;
+        crate::assets::publish_local_media(
+            &self.gallery_store,
+            &path,
+            op,
+            "captured",
+            crate::assets::LocalMediaFormat::Wav,
+            &effective_params,
+        )
+    }
+
     #[tool(
         description = "Capture audio from the default system microphone and publish a canonical durable WAV asset optimized for STT transcription (16 kHz mono)."
     )]
@@ -403,43 +448,14 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_capture", async {
             let _admission = self.admit_heavy_operation()?;
-            if duration_secs <= 0.0
-                || duration_secs > hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "duration_secs must be between 0.1 and {} (1 hour).",
-                    hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
-                )));
-            }
-
-            #[cfg(test)]
-            pause_after_audio_admission().await?;
-            self.require_ffmpeg()?;
-            let effective_params = AudioCaptureEffectiveParams {
-                duration_secs,
-                sample_rate: CAPTURE_SAMPLE_RATE,
-                channels: CAPTURE_CHANNELS,
-            };
-            let path = self
-                .ffmpeg
-                .capture_audio(effective_params.duration_secs)
+            self.capture_and_publish("audio_capture", duration_secs)
                 .await
-                .map_err(map_media_error)?;
-
-            crate::assets::publish_local_media(
-                &self.gallery_store,
-                &path,
-                "audio_capture",
-                "captured",
-                crate::assets::LocalMediaFormat::Wav,
-                &effective_params,
-            )
         })
         .await
     }
 
     #[tool(
-        description = "Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript. Use for meetings, notes, or any recording you want to keep."
+        description = "Record audio from the microphone, publish it as a durable WAV gallery asset, and transcribe it in one call. Returns the published recording (output, gallery_asset_id) with the synchronized TranscriptBundle under transcript. If transcription fails the recording is kept and the response carries status partial with transcript_error. The transcript is not stored: pass transcript to educt_store_transcript."
     )]
     pub async fn record_and_transcribe(
         &self,
@@ -450,99 +466,38 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "record_and_transcribe", async {
             let _admission = self.admit_heavy_operation()?;
-            if duration_secs <= 0.0
-                || duration_secs > hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "duration_secs must be between 0.1 and {} (1 hour).",
-                    hkask_types::media_limits::MAX_CAPTURE_DURATION_SECS
-                )));
-            }
-
-            self.require_ffmpeg()?;
-
-            let audio_path = self
-                .ffmpeg
-                .capture_audio(duration_secs)
-                .await
-                .map_err(map_media_error)?;
-
-            let audio_data = std::fs::read(&audio_path).map_err(|e| {
-                hkask_mcp_server::map_io_error(e, "Failed to read captured audio")
-            })?;
-            let b64 =
-                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_data);
-            let audio_uri = format!("data:audio/wav;base64,{}", b64);
-
-            let transcribe_result = {
-                let media_params = hkask_types::MediaGenerateParams {
-                    audio_url: Some(audio_uri.clone()),
-                    language: language.clone(),
-                    ..Default::default()
-                };
-                self.vision_port
-                    .media_generate("transcribe", &media_params)
-                    .await
-                    .map_err(|e| classify_inference_error("Transcription failed", e))
-            };
-
-            match transcribe_result {
-                Ok(raw) => {
-                    let audio_path_str = audio_path.display().to_string();
-                    let bundle = transcript_bundle_from_raw(
-                        &raw,
-                        audio_path_str,
-                        language.clone(),
-                        duration_secs as f64,
-                    );
-
-                    let result = serde_json::to_value(&bundle).unwrap_or_else(|_| {
-                        serde_json::json!({"error": "Failed to serialize bundle"})
-                    });
-                    let args = serde_json::json!({
-                        "duration_secs": duration_secs,
-                        "language": language,
-                    });
-                    Ok(crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "record_and_transcribe",
-                        "audio",
-                        args,
-                        None,
-                    ))
+            let mut result = self
+                .capture_and_publish("record_and_transcribe", duration_secs)
+                .await?;
+            let recording = result
+                .get("output")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    McpToolError::internal("published recording carries no output path")
+                })?
+                .to_string();
+            // The published file goes through the same path as every other
+            // transcription, so a long recording gets the upload
+            // preconditioning instead of one oversized inline payload.
+            match self.transcribe_to_bundle(&recording, &language, None).await {
+                Ok(bundle) => {
+                    result["transcript"] = serde_json::to_value(&bundle).map_err(|error| {
+                        McpToolError::internal(format!("encode transcript bundle: {error}"))
+                    })?;
                 }
-                Err(e) => {
-                    let result = serde_json::json!({
-                        "status": "partial",
-                        "duration_secs": duration_secs,
-                        "audio_path": audio_path.display().to_string(),
-                        "audio_format": "wav",
-                        "sample_rate": 16000,
-                        "channels": 1,
-                        "transcript_error": e.to_json_string(),
-                        "message": "Audio captured successfully but transcription failed. The audio file is saved and can be transcribed later."
-                    });
-                    let args = serde_json::json!({
-                        "duration_secs": duration_secs,
-                        "language": language,
-                    });
-                    Ok(crate::media_block::enrich_with_omc_and_provenance(
-                        result,
-                        "record_and_transcribe",
-                        "audio",
-                        args,
-                        None,
-                    ))
+                Err(error) => {
+                    result["status"] = serde_json::json!("partial");
+                    result["transcript_error"] =
+                        serde_json::json!({"error": error.message, "kind": error.kind.to_string()});
                 }
             }
+            Ok(result)
         })
         .await
     }
 
-    /// Trim an audio file to specified start/end times. Uses ffmpeg stream
-    /// copy for fast, lossless trimming.
     #[tool(
-        description = "Trim an audio file to specified start/end times and publish a canonical durable WAV asset using lossless ffmpeg stream copy."
+        description = "Trim an audio file, or the audio track of a video, to start/end seconds and publish a durable PCM WAV asset. A PCM source is copied bit-exact; any other codec is decoded to 16-bit PCM. A start at or past the end of the media is refused."
     )]
     pub async fn audio_trim(
         &self,
@@ -554,11 +509,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "audio_trim", async {
             let _admission = self.admit_heavy_operation()?;
-            if start_sec < 0.0 || end_sec <= start_sec {
-                return Err(McpToolError::invalid_argument(
-                    "start_sec must be >= 0 and end_sec must be > start_sec",
-                ));
-            }
+            crate::tools::jobs::validate_trim(start_sec, end_sec)?;
             ensure_local_input_exists(&audio_url)?;
             #[cfg(test)]
             pause_after_audio_admission().await?;
@@ -593,10 +544,8 @@ impl MediaServer {
         .await
     }
 
-    /// Concatenate multiple audio files into one. Uses the ffmpeg concat
-    /// demuxer for fast, lossless joining.
     #[tool(
-        description = "Concatenate audio files and publish one canonical durable WAV asset using the lossless ffmpeg concat demuxer."
+        description = "Concatenate audio files in order and publish one durable 16-bit PCM WAV asset. Every input is decoded and resampled to the first input's sample rate and channel layout, so mixed codecs and rates join correctly."
     )]
     pub async fn audio_concat(
         &self,
@@ -663,6 +612,67 @@ mod tests {
             refused.message.contains("shorter ranges"),
             "the refusal names the remediation: {refused:?}"
         );
+    }
+
+    /// expect: A misspelled argument to an audio, transcription or search
+    /// tool is refused, not dropped: `langauge` must not transcribe in the
+    /// provider's default language as though I had asked for nothing.
+    #[test]
+    fn audio_and_search_tools_refuse_an_argument_they_do_not_declare() {
+        use crate::test_support::{live_input_schema, wire};
+        let misspelled = wire::<TranscribeAndStoreRequest>(
+            serde_json::json!({"audio_url": "a.wav", "langauge": "ja"}),
+        )
+        .err()
+        .expect("an undeclared key is refused");
+        assert!(misspelled.to_string().contains("langauge"), "{misspelled}");
+        assert!(
+            wire::<TranscribeBundleRequest>(serde_json::json!({"audio_url": "a.wav", "zz": 1}))
+                .is_err()
+        );
+        assert!(
+            wire::<AudioTrimRequest>(
+                serde_json::json!({"audio_url": "a.wav", "start_sec": 0, "end_sec": 1, "end": 2})
+            )
+            .is_err()
+        );
+        assert!(
+            wire::<AudioConcatRequest>(serde_json::json!({"audio_urls": [], "urls": []})).is_err()
+        );
+        assert!(
+            wire::<RecordAndTranscribeRequest>(
+                serde_json::json!({"duration_secs": 1.0, "duration": 5})
+            )
+            .is_err()
+        );
+        assert!(
+            wire::<AudioCaptureRequest>(serde_json::json!({"duration_secs": 1.0, "zz": 1}))
+                .is_err()
+        );
+        assert!(
+            wire::<crate::types::YoutubeSearchRequest>(
+                serde_json::json!({"query": "zz", "limit": 5})
+            )
+            .is_err(),
+            "a guessed `limit` must not silently fall back to the default page size"
+        );
+        for tool in [
+            "transcribe_bundle",
+            "transcribe_and_store",
+            "audio_capture",
+            "record_and_transcribe",
+            "audio_trim",
+            "audio_concat",
+            "video_clip",
+            "video_concat",
+            "youtube_search",
+        ] {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
     }
 
     /// Whisper-style providers prefix tokens with the separator

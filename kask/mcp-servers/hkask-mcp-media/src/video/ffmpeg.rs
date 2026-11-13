@@ -366,6 +366,19 @@ fn discard_clip_intermediate(path: &std::path::Path) {
     }
 }
 
+/// The PCM encoder for a WAV output: the source's own sample format when it
+/// is one a WAV container carries, otherwise 16-bit.
+fn wav_pcm_codec(source_audio_codec: Option<&str>) -> &'static str {
+    match source_audio_codec {
+        Some("pcm_u8") => "pcm_u8",
+        Some("pcm_s24le") => "pcm_s24le",
+        Some("pcm_s32le") => "pcm_s32le",
+        Some("pcm_f32le") => "pcm_f32le",
+        Some("pcm_f64le") => "pcm_f64le",
+        _ => "pcm_s16le",
+    }
+}
+
 /// ffmpeg runner with availability detection.
 #[derive(Debug, Clone)]
 pub struct FfmpegRunner {
@@ -1867,6 +1880,23 @@ impl FfmpegRunner {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
         }
+        // The output is published as WAV, so its payload must be PCM. The
+        // stream copy this replaced wrapped mp3/aac in a RIFF header that
+        // players and STT uploads refuse, and cut PCM at packet boundaries
+        // (a 1.0 s request returned 1.024 s). Decoding cuts on the sample; a
+        // PCM source is re-written in its own sample format, which keeps the
+        // samples bit-identical. A failed probe falls back to 16-bit PCM.
+        let probe = self.probe(input).await.ok();
+        if let Some(probe) = &probe
+            && start_sec >= probe.duration_secs
+        {
+            return Err(crate::MediaError::RangeOutsideMedia {
+                input: input.to_string(),
+                start_sec,
+                duration_secs: probe.duration_secs,
+            });
+        }
+        let codec = wav_pcm_codec(probe.as_ref().map(|probe| probe.audio_codec.as_str()));
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
         let duration = end_sec - start_sec;
@@ -1878,8 +1908,9 @@ impl FfmpegRunner {
             .arg(format!("{:.3}", duration))
             .arg("-i")
             .arg(input)
-            .arg("-c")
-            .arg("copy")
+            .arg("-vn")
+            .arg("-c:a")
+            .arg(codec)
             .arg(output.path());
         Self::run_to_completion(command, "audio trim").await?;
 
@@ -1888,8 +1919,14 @@ impl FfmpegRunner {
         Ok(output)
     }
 
-    /// Concatenate multiple audio files into one.
-    /// Uses the concat demuxer for fast, lossless joining.
+    /// Concatenate audio files into one 16-bit PCM WAV, in order.
+    ///
+    /// Every input is decoded and joined through the concat filter, which
+    /// resamples to the first input's rate and layout. The concat demuxer
+    /// with stream copy this replaced appended each input's raw packets
+    /// under the first input's header: an mp3 after a wav became noise, a
+    /// 48 kHz file after a 16 kHz one played at a third of its speed, and
+    /// a single input was copied verbatim under a `.wav` name.
     pub async fn audio_concat(&self, audio_paths: &[String]) -> Result<PathBuf, crate::MediaError> {
         if !self.available {
             return Err(crate::MediaError::FfmpegUnavailable);
@@ -1901,19 +1938,22 @@ impl FfmpegRunner {
         }
         self.ensure_temp_dir()?;
         let output = RollbackOwnedOutput::new(self.output_path("wav"));
-        if audio_paths.len() == 1 {
-            std::fs::copy(&audio_paths[0], output.path())
-                .map_err(|e| crate::MediaError::Io(format!("copy single audio: {e}")))?;
-            return Ok(output.commit());
+        let mut command = Command::new(&self.ffmpeg_path);
+        let mut graph = String::new();
+        for (index, path) in audio_paths.iter().enumerate() {
+            command.arg("-i").arg(path);
+            graph.push_str(&format!("[{index}:a:0]"));
         }
-
-        let list_path = RollbackOwnedOutput::new(self.output_path("txt"));
-        let list_content: String = audio_paths
-            .iter()
-            .map(|p| format!("file '{}'\n", p))
-            .collect();
-        self.concat_via_list(&list_path, &list_content, &output, "audio concat")
-            .await?;
+        graph.push_str(&format!("concat=n={}:v=0:a=1[out]", audio_paths.len()));
+        command
+            .arg("-filter_complex")
+            .arg(graph)
+            .arg("-map")
+            .arg("[out]")
+            .arg("-c:a")
+            .arg("pcm_s16le")
+            .arg(output.path());
+        Self::run_to_completion(command, "audio concat").await?;
 
         let output = output.commit();
         tracing::info!(target: "hkask.mcp.media.ffmpeg", clip_count = audio_paths.len(), output = %output.display(), "Audio concatenated");

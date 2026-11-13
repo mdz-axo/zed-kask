@@ -345,4 +345,24 @@ mod tests {
             "family/model"
         );
     }
+
+    /// expect: A misspelled filter is refused, not ignored into an
+    /// unfiltered list that looks like the answer to my question.
+    #[test]
+    fn model_tools_refuse_an_argument_they_do_not_declare() {
+        use crate::test_support::{live_input_schema, wire};
+        let misspelled = wire::<ModelListRequest>(serde_json::json!({"provdier": "openrouter"}))
+            .err()
+            .expect("an undeclared key is refused");
+        assert!(misspelled.to_string().contains("provdier"), "{misspelled}");
+        assert!(wire::<ModelInfoRequest>(serde_json::json!({"model_id": "a/b", "zz": 1})).is_err());
+        assert!(wire::<ModelListRequest>(serde_json::json!({})).is_ok());
+        for tool in ["model_list", "model_info"] {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
+    }
 }

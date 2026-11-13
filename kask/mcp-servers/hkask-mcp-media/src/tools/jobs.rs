@@ -5,21 +5,13 @@
 //! media — and, when submitted against a recording (R5), stores and links
 //! the finished transcript to that recording on completion.
 use crate::types::{
-    JobCancelRequest, JobListPayload, JobListRequest, JobRecord, JobStatusRequest, JobSubmitRequest,
+    JOB_STATUSES, JobCancelRequest, JobListPayload, JobListRequest, JobRecord, JobStatusRequest,
+    JobSubmitRequest, RESEARCH_OPS,
 };
 use crate::*;
 
 pub const JOB_HISTORY_SCOPE: &str = "ephemeral_process_local";
 pub const JOB_RESTART_BEHAVIOR: &str = "Job history is ephemeral and process-local; records are lost when the media server restarts and older terminal records may be removed by bounded retention.";
-
-const JOB_STATUSES: &[&str] = &[
-    "queued",
-    "running",
-    "cancelling",
-    "completed",
-    "failed",
-    "cancelled",
-];
 
 /// Decode and validate the one current `job_list` wire contract.
 ///
@@ -75,8 +67,10 @@ fn map_job_store_error(error: crate::jobs::JobStoreError) -> McpToolError {
         crate::jobs::JobStoreError::NotFound(_) => {
             McpToolError::not_found(format!("{error}. {JOB_RESTART_BEHAVIOR}"))
         }
+        // The job id is well formed and known; the job's state forbids the
+        // transition.
         crate::jobs::JobStoreError::AlreadyTerminal { .. } => {
-            McpToolError::invalid_argument(error.to_string())
+            McpToolError::failed_precondition(error.to_string())
         }
         crate::jobs::JobStoreError::LockPoisoned { .. }
         | crate::jobs::JobStoreError::Duplicate(_)
@@ -112,8 +106,6 @@ enum ResearchJob {
     VideoConcat(VideoConcatRequest),
 }
 
-const RESEARCH_OPS: &str = "transcribe, audio_trim, audio_concat, video_clip, video_concat";
-
 impl ResearchJob {
     fn parse(op: &str, params: &str) -> Result<Self, McpToolError> {
         fn decode<T: serde::de::DeserializeOwned>(params: &str) -> Result<T, McpToolError> {
@@ -130,7 +122,8 @@ impl ResearchJob {
             "video_clip" => Ok(Self::VideoClip(decode(params)?)),
             "video_concat" => Ok(Self::VideoConcat(decode(params)?)),
             _ => Err(McpToolError::invalid_argument(format!(
-                "unsupported research op '{op}' — job_submit accepts {RESEARCH_OPS}"
+                "unsupported research op '{op}' — job_submit accepts {}",
+                RESEARCH_OPS.join(", ")
             ))),
         }
     }
@@ -280,7 +273,10 @@ impl ResearchJob {
     }
 }
 
-fn validate_trim(start_sec: f32, end_sec: f32) -> Result<(), McpToolError> {
+/// The one range check for every trim and clip entry point, direct or queued.
+/// JSON numbers beyond `f32` decode to infinity, which ffmpeg rejects only
+/// after it has been spawned.
+pub(crate) fn validate_trim(start_sec: f32, end_sec: f32) -> Result<(), McpToolError> {
     if !start_sec.is_finite() || !end_sec.is_finite() || start_sec < 0.0 || end_sec <= start_sec {
         return Err(McpToolError::invalid_argument(
             "start_sec must be finite and >= 0; end_sec must be finite and > start_sec",
@@ -529,6 +525,14 @@ impl MediaServer {
         Parameters(JobListRequest { status, limit }): Parameters<JobListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "job_list", async {
+            if let Some(status) = status.as_deref()
+                && !JOB_STATUSES.contains(&status)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown status '{status}' — job_list filters by one of {}",
+                    JOB_STATUSES.join(", ")
+                )));
+            }
             let limit = limit.unwrap_or(hkask_types::media_limits::DEFAULT_JOB_LIST_LIMIT);
             validate_item_count(
                 "limit",
@@ -738,7 +742,7 @@ mod tests {
                 .err()
                 .expect("creative job rejected");
             assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
-            assert!(error.message.contains(RESEARCH_OPS));
+            assert!(error.message.contains(&RESEARCH_OPS.join(", ")));
         }
         for (op, params) in [
             ("transcribe", r#"{"audio_url":"recording.wav"}"#),
@@ -1318,6 +1322,118 @@ mod tests {
             .get("test-job-1")?
             .ok_or_else(|| "inserted record missing".to_string())?;
         assert_eq!(job.op, "generate_image");
+        Ok(())
+    }
+
+    /// expect: A status filter I mistype is refused naming the statuses,
+    /// never answered with an empty queue that reads as "no such jobs".
+    /// pre: one completed job is recorded.
+    /// post: the real status finds it; a near-miss status is invalid_argument;
+    /// the input schema enumerates the same six statuses.
+    #[tokio::test]
+    async fn job_list_refuses_a_status_outside_the_closed_set()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::{live_input_schema, wire};
+        let server = server(stt())?;
+        server.job_store.insert_record_for_test(JobRecord {
+            id: "zz-done".into(),
+            op: "audio_trim".into(),
+            status: "completed".into(),
+            created_at: "2026-11-12T00:00:00Z".into(),
+            completed_at: Some("2026-11-12T00:00:01Z".into()),
+            result: None,
+            error: None,
+            source: None,
+        })?;
+        let found = payload(
+            &server
+                .job_list(wire(serde_json::json!({"status": "completed"}))?)
+                .await?,
+        );
+        assert_eq!(found["total"], 1);
+        let error = server
+            .job_list(wire(serde_json::json!({"status": "compleeted"}))?)
+            .await
+            .expect_err("a status outside the set is refused");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        for status in JOB_STATUSES {
+            assert!(error.message.contains(status), "{}", error.message);
+        }
+        let schema = live_input_schema("job_list");
+        assert_eq!(
+            schema["properties"]["status"]["anyOf"][0]["enum"],
+            serde_json::json!(JOB_STATUSES)
+        );
+        Ok(())
+    }
+
+    /// expect: A misspelled argument is refused at the boundary instead of
+    /// being dropped and the call answered as if it had not been sent.
+    #[test]
+    fn job_tools_refuse_an_argument_they_do_not_declare() {
+        use crate::test_support::{live_input_schema, wire};
+        let misspelled = wire::<JobListRequest>(serde_json::json!({"statsu": "running"}))
+            .err()
+            .expect("an undeclared key is refused");
+        assert!(misspelled.to_string().contains("statsu"), "{misspelled}");
+        assert!(wire::<JobStatusRequest>(serde_json::json!({"job_id": "a", "zz": 1})).is_err());
+        assert!(wire::<JobCancelRequest>(serde_json::json!({"job_id": "a", "zz": 1})).is_err());
+        assert!(
+            wire::<JobSubmitRequest>(
+                serde_json::json!({"op": "audio_trim", "params": "{}", "zz": 1})
+            )
+            .is_err()
+        );
+        // The inner request is held to the same rule: params is the request
+        // of the selected operation, not a bag.
+        let inner = ResearchJob::parse(
+            "audio_trim",
+            r#"{"audio_url":"a.wav","start_sec":0,"end_sec":1,"zz_unknown":true}"#,
+        )
+        .err()
+        .expect("an undeclared inner key is refused");
+        assert_eq!(inner.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(inner.message.contains("zz_unknown"), "{}", inner.message);
+        for tool in ["job_submit", "job_list", "job_status", "job_cancel"] {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
+        assert_eq!(
+            live_input_schema("job_submit")["properties"]["op"]["enum"],
+            serde_json::json!(RESEARCH_OPS)
+        );
+    }
+
+    /// expect: Cancelling a job that already finished tells me its state
+    /// forbids it; my job id was not malformed.
+    #[tokio::test]
+    async fn cancelling_a_finished_job_is_a_failed_precondition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let server = server(stt())?;
+        server.job_store.insert_record_for_test(JobRecord {
+            id: "zz-done".into(),
+            op: "audio_trim".into(),
+            status: "completed".into(),
+            created_at: "2026-11-12T00:00:00Z".into(),
+            completed_at: Some("2026-11-12T00:00:01Z".into()),
+            result: None,
+            error: None,
+            source: None,
+        })?;
+        let error = server
+            .job_cancel(wire(serde_json::json!({"job_id": "zz-done"}))?)
+            .await
+            .expect_err("a finished job cannot be cancelled");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        assert!(
+            error.message.contains("already completed"),
+            "{}",
+            error.message
+        );
         Ok(())
     }
 }

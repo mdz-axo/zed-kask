@@ -585,7 +585,8 @@ mod tests {
 
     /// Per-variant classification pin (the canonical ruling 2026-10-05,
     /// the error.rs classification-tests discipline): the encoder's Media
-    /// arm re-enters the canonical media mapping, a model download failure
+    /// arm re-enters the canonical media mapping (a missing ffmpeg is
+    /// absent state with a remedy, not an outage), a model download failure
     /// is a transient outage, and integrity/runtime failures are server
     /// faults. Under the deleted blanket mapping every encoder failure
     /// surfaced as `unavailable` — a corrupted model read as a retryable
@@ -594,13 +595,13 @@ mod tests {
     fn voice_encoder_errors_classify_per_variant() {
         use hkask_types::McpErrorKind;
 
-        let unavailable = map_voice_encoder_error(VoiceEncoderError::Media(
+        let missing_binary = map_voice_encoder_error(VoiceEncoderError::Media(
             crate::MediaError::FfmpegUnavailable,
         ));
         assert_eq!(
-            unavailable.kind,
-            McpErrorKind::Unavailable,
-            "{unavailable:?}"
+            missing_binary.kind,
+            McpErrorKind::FailedPrecondition,
+            "{missing_binary:?}"
         );
 
         let download =

@@ -28,11 +28,11 @@ pub enum MediaError {
     Template(String),
 
     /// ffmpeg not installed on the system.
-    #[error("ffmpeg not available")]
+    #[error("ffmpeg not found on PATH — install ffmpeg to use the media processing tools")]
     FfmpegUnavailable,
 
     /// yt-dlp not installed on the system (video_fetch unavailable).
-    #[error("yt-dlp not available")]
+    #[error("yt-dlp not found on PATH — install yt-dlp to use video_fetch")]
     YtDlpUnavailable,
 
     #[error("yt-dlp extractor failed: {0}")]
@@ -60,6 +60,16 @@ pub enum MediaError {
     /// container class measured at zero incidence here).
     #[error("Media duration unavailable for {input}: {reason}")]
     DurationUnavailable { input: String, reason: String },
+
+    /// A requested range starts at or after the end of the probed media.
+    /// Without this refusal ffmpeg exits 0 and writes a header-only file,
+    /// which was then published as a finished asset.
+    #[error("start_sec {start_sec} is at or past the end of {input} (duration {duration_secs} s)")]
+    RangeOutsideMedia {
+        input: String,
+        start_sec: f32,
+        duration_secs: f32,
+    },
 
     /// Vision LLM API errors.
     #[error("{0}")]
@@ -119,19 +129,24 @@ impl From<GalleryStoreError> for MediaError {
 ///   whose required state is absent — the message names the state and the
 ///   remedy: "Use gallery_organize first")
 /// - `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template` → `internal` (system error)
-/// - `FfmpegUnavailable`, `YtDlpUnavailable` → `unavailable` (system unavailable)
+/// - `FfmpegUnavailable`, `YtDlpUnavailable` → `failed_precondition` (install the binary)
+/// - `DurationUnavailable`, `RangeOutsideMedia` → `invalid_argument`
 pub fn map_media_error(e: MediaError) -> McpToolError {
     match e {
         MediaError::ImageNotFound(_) => McpToolError::not_found(e.to_string()),
         MediaError::GalleryNotInitialized => McpToolError::failed_precondition(e.to_string()),
+        // A missing binary is absent state with a remedy (install it), not a
+        // transient outage: retrying later cannot succeed.
         MediaError::FfmpegUnavailable | MediaError::YtDlpUnavailable => {
-            McpToolError::unavailable(e.to_string())
+            McpToolError::failed_precondition(e.to_string())
         }
         MediaError::YtDlpAuthorization(_) => McpToolError::permission_denied(e.to_string()),
         MediaError::YtDlpVideoUnavailable(_) => McpToolError::not_found(e.to_string()),
         MediaError::YtDlpExtractor(_) => McpToolError::unavailable(e.to_string()),
         MediaError::YtDlpFailed(_) => McpToolError::internal(e.to_string()),
-        MediaError::DurationUnavailable { .. } => McpToolError::invalid_argument(e.to_string()),
+        MediaError::DurationUnavailable { .. } | MediaError::RangeOutsideMedia { .. } => {
+            McpToolError::invalid_argument(e.to_string())
+        }
         MediaError::Io(_)
         | MediaError::FfmpegFailed(_)
         | MediaError::VisionApi(_)

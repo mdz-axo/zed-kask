@@ -539,17 +539,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "video_clip", async {
             let _admission = self.admit_heavy_operation()?;
-            if start_sec < 0.0 || end_sec <= 0.0 {
-                return Err(McpToolError::invalid_argument(
-                    "timestamps must be non-negative",
-                ));
-            }
-
-            if start_sec >= end_sec {
-                return Err(McpToolError::invalid_argument(
-                    "start_sec must be less than end_sec.",
-                ));
-            }
+            crate::tools::jobs::validate_trim(start_sec, end_sec)?;
             self.admit_local_media_inputs(std::slice::from_ref(&video_url))
                 .await?;
 

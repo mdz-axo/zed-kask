@@ -457,6 +457,7 @@ fn default_canvas() -> String {
 // ── Video request types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoClipRequest {
     pub video_url: String,
     pub start_sec: f32,
@@ -481,6 +482,7 @@ pub struct VideoAddCaptionRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VideoConcatRequest {
     pub video_urls: Vec<String>,
 }
@@ -508,6 +510,7 @@ fn default_max_frames() -> u32 {
 // ── Audio request types ──────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TranscribeBundleRequest {
     /// URL or base64 data URI of the audio to transcribe.
     pub audio_url: String,
@@ -532,6 +535,7 @@ pub struct TranscribeBundleRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TranscribeAndStoreRequest {
     /// URL or local path of the audio/video to transcribe (local paths and
     /// file:// URIs naming existing files are read directly).
@@ -549,14 +553,16 @@ pub struct TranscribeAndStoreRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AudioCaptureRequest {
-    /// Duration to record in seconds (max 3600 = 1 hour).
+    /// Duration to record in seconds (0.1 to 3600 = 1 hour).
     pub duration_secs: f32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecordAndTranscribeRequest {
-    /// Duration to record in seconds (max 3600 = 1 hour).
+    /// Duration to record in seconds (0.1 to 3600 = 1 hour).
     pub duration_secs: f32,
     /// Optional ISO 639-1 language code for transcription.
     pub language: Option<String>,
@@ -602,7 +608,7 @@ pub struct MediaModelInfo {
     pub name: String,
     /// Provider name (e.g. "deepinfra", "openrouter").
     pub provider: String,
-    /// Media modality: "image", "video", "audio", or "vision".
+    /// Media modality: "audio" (speech-to-text) or "vision".
     pub modality: String,
     /// Supported research operations, such as transcription or visual analysis.
     pub capabilities: Vec<String>,
@@ -613,6 +619,7 @@ pub struct MediaModelInfo {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelListRequest {
     /// Optional provider filter (e.g. "deepinfra", "openrouter").
     /// If omitted, lists models from all providers.
@@ -620,6 +627,7 @@ pub struct ModelListRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelInfoRequest {
     /// The model id to look up (the full prefixed name returned by `model_list`).
     pub model_id: String,
@@ -663,11 +671,41 @@ pub struct JobListPayload {
     pub restart_behavior: String,
 }
 
+/// The research operations `job_submit` accepts — the schema's enumeration
+/// and the refusal text read this one list.
+pub const RESEARCH_OPS: [&str; 5] = [
+    "transcribe",
+    "audio_trim",
+    "audio_concat",
+    "video_clip",
+    "video_concat",
+];
+
+/// Every status a job record can carry — the `job_list` filter's closed set.
+pub const JOB_STATUSES: [&str; 6] = [
+    "queued",
+    "running",
+    "cancelling",
+    "completed",
+    "failed",
+    "cancelled",
+];
+
+fn research_op_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "string", "enum": RESEARCH_OPS})
+}
+
+fn optional_job_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [{"type": "string", "enum": JOB_STATUSES}, {"type": "null"}]})
+}
+
 /// Request to submit a new async research media job.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JobSubmitRequest {
     /// The research operation: "transcribe", "audio_trim", "audio_concat",
     /// "video_clip", or "video_concat".
+    #[schemars(schema_with = "research_op_schema")]
     pub op: String,
     /// JSON-serialized request for the selected research operation, with its source fields.
     pub params: String,
@@ -675,15 +713,18 @@ pub struct JobSubmitRequest {
 
 /// Request to list research media jobs.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JobListRequest {
     /// Optional status filter: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
+    #[schemars(schema_with = "optional_job_status_schema")]
     pub status: Option<String>,
-    /// Maximum number of jobs to return (default: 20).
+    /// Maximum number of jobs to return (default 20, maximum 256).
     pub limit: Option<usize>,
 }
 
 /// Request to get the status of a specific job.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JobStatusRequest {
     /// The job id (returned by `job_submit`).
     pub job_id: String,
@@ -691,6 +732,7 @@ pub struct JobStatusRequest {
 
 /// Request to cancel a running job.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JobCancelRequest {
     /// The job id to cancel.
     pub job_id: String,
@@ -792,6 +834,7 @@ pub struct VideoInfoRequest {
 
 /// Request to trim an audio file to specified start/end times.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AudioTrimRequest {
     /// URL or path of the audio file to trim.
     pub audio_url: String,
@@ -803,6 +846,7 @@ pub struct AudioTrimRequest {
 
 /// Request to concatenate multiple audio files into one.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AudioConcatRequest {
     /// List of audio file URLs or paths to concatenate, in order.
     pub audio_urls: Vec<String>,
@@ -812,6 +856,7 @@ pub struct AudioConcatRequest {
 
 /// Request to search YouTube metadata through SerpApi.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct YoutubeSearchRequest {
     /// YouTube search query.
     pub query: String,

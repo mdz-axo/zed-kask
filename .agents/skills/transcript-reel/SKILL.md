@@ -42,10 +42,13 @@ Reduct.video — the transcript bundled with its video as one linked artifact: c
 ### Phase 1 — Capture and store
 
 1. If recording now: call `record_and_transcribe` with the duration.
-   It returns the audio path and a synchronized TranscriptBundle — then
-   call `educt_store_transcript` with the returned bundle to obtain the
-   transcript id the later phases anchor to (record_and_transcribe does
-   not store it itself).
+   It publishes the recording as a gallery asset (`output`,
+   `gallery_asset_id`) and returns the synchronized TranscriptBundle under
+   `transcript` — then call `educt_store_transcript` with that bundle and
+   the `gallery_asset_id` to obtain the transcript id the later phases
+   anchor to (record_and_transcribe does not store it itself). A response
+   with `status: partial` kept the recording but has no transcript: call
+   `transcribe_and_store` on its `output`.
    If the media already exists: call `transcribe_and_store` with the
    audio/video path or URL (plus the gallery asset id if the media is
    indexed). It transcribes and stores the bundle server-side in one

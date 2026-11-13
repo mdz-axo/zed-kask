@@ -39,7 +39,7 @@ The table below is a partial quick-reference.
 | `video_caption` | Generate a description of video content by extracting keyframes and analyzing them with a vision LLM |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset (16kHz mono) |
-| `record_and_transcribe` | Record audio from microphone and transcribe it in one call. Returns linked audio file path and transcript |
+| `record_and_transcribe` | Record audio from the microphone, publish it as a durable WAV gallery asset, and transcribe it in one call. Returns the published recording with the transcript under `transcript` |
 
 ## Research annotations and recording retrieval
 

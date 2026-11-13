@@ -141,7 +141,7 @@ resolves its model per-call, then the tagging setting
 
 **System dependencies:**
 
-- **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `McpToolError::unavailable("ffmpeg not found on system PATH — video tools unavailable.")` when absent (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:323-331`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:928` (`video_info`)).
+- **ffmpeg** — required by all local video tools and `audio_trim`/`audio_concat`. `require_ffmpeg` returns `failed_precondition` naming the binary to install when it is absent (a missing binary is not a transient outage) (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:370-378`). `video_info` additionally uses ffprobe, bundled with ffmpeg (`kask/mcp-servers/hkask-mcp-media/src/tools/processing.rs:928` (`video_info`)).
 - **SerpApi** — required by `youtube_search` for structured discovery metadata. Search never invokes `yt-dlp`; missing credentials return `permission_denied` naming `HKASK_SERPAPI_API_KEY`.
 - **yt-dlp** — required only by `video_fetch` to retrieve media bytes for durable local publication from platform URLs (YouTube, Vimeo). It is not used for search or metadata. `require_yt_dlp` returns `unavailable` with install instructions when absent.
 - **Vision-capable provider** — required by describe/analyze/caption tools. `require_vision` resolves `HKASK_MEDIA_VISION_MODEL` (`kask.models.media_vision_model`) and returns `permission_denied` naming `HKASK_MEDIA_VISION_MODEL` when unset (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:347-355`).
@@ -518,10 +518,10 @@ causal error and removes the generated file and coupled gallery row/lineage.
 |------|-------------|
 | `transcribe_bundle` | Transcribe audio or video into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
 | `audio_capture` | Capture audio from the default microphone and publish it as a canonical durable WAV asset (16 kHz mono); callers cannot select an output path. |
-| `record_and_transcribe` | Record from microphone and transcribe in one call; returns linked audio file path and transcript. |
+| `record_and_transcribe` | Record from the microphone, publish the recording as a durable WAV gallery asset, and transcribe it; returns the published recording (`output`, `gallery_asset_id`) with the `TranscriptBundle` under `transcript`. A failed transcription keeps the recording and returns `status: partial` with a typed `transcript_error`. |
 | `transcribe_and_store` | Transcribe audio or video AND store the `TranscriptBundle` server-side in one call, keyed to its recording when a gallery asset id is supplied, returning only the transcript summary (id, words_count, has_word_timings, gallery_asset_id when linked) — the ingest entry point when the educt layers will be used afterwards. |
-| `audio_trim` | Trim an audio file to start/end times and publish the result as a canonical durable WAV asset; ffmpeg stream copy is fast and lossless. |
-| `audio_concat` | Concatenate audio files and publish one canonical durable WAV asset; ffmpeg uses the lossless concat demuxer. |
+| `audio_trim` | Trim an audio file, or the audio track of a video, to start/end seconds and publish a durable PCM WAV asset. A PCM source keeps its sample format and samples; any other codec is decoded to 16-bit PCM. A start at or past the end of the media is refused. |
+| `audio_concat` | Concatenate audio files in order and publish one durable 16-bit PCM WAV asset; every input is decoded and resampled to the first input's sample rate and channel layout. |
 
 ### Model browser (`kask/mcp-servers/hkask-mcp-media/src/tools/models.rs`, 2 tools)
 
@@ -540,7 +540,7 @@ files and gallery rows, releases its slot, and only then returns terminal
 cancellation. Panic and task abort become terminal `failed` states and release
 the slot. `job_list` returns the strict object `{ jobs, total, limit, has_more,
 history_scope, restart_behavior }`, newest first, with optional request status
-and limit. Legacy arrays, missing fields, incoherent counts, and unknown statuses
+and limit (a status outside the six is refused naming them). Legacy arrays, missing fields, incoherent counts, and unknown statuses
 fail decoding. The history scope is explicitly
 `ephemeral_process_local`; `job_list`, `job_status`, and `job_cancel` all expose
 that restart limitation. `parse_job_list_response` consumes the shared wire
@@ -635,7 +635,7 @@ Non-tool modules hold the shared implementation: `assets.rs` provides rollback-a
 
 | Mapper | Classification |
 |--------|----------------|
-| `map_media_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:108`) | `ImageNotFound` → `not_found` (caller-named image missing); `GalleryNotInitialized` → `failed_precondition` (absent state, remedy named — canonical classification, operator ruling 2026-10-05); `FfmpegUnavailable`, `YtDlpUnavailable`, `YtDlpExtractor` → `unavailable`; `YtDlpAuthorization` → `permission_denied`; `YtDlpVideoUnavailable` → `not_found`; `YtDlpFailed`, `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template`, `AssetPersistence`, `SidecarNotFound`, `SidecarInvalid`, `FaceRegistration` → `internal` |
+| `map_media_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:134`) | `ImageNotFound` → `not_found` (caller-named image missing); `GalleryNotInitialized` → `failed_precondition` (absent state, remedy named — canonical classification, operator ruling 2026-10-05); `FfmpegUnavailable`, `YtDlpUnavailable` → `failed_precondition` (install the binary); `DurationUnavailable`, `RangeOutsideMedia` → `invalid_argument`; `YtDlpExtractor` → `unavailable`; `YtDlpAuthorization` → `permission_denied`; `YtDlpVideoUnavailable` → `not_found`; `YtDlpFailed`, `Io`, `FfmpegFailed`, `VisionApi`, `VisionParse`, `Template`, `AssetPersistence`, `SidecarNotFound`, `SidecarInvalid`, `FaceRegistration` → `internal` |
 | `map_gallery_store_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:136`) | `NotFound` → `not_found`; infra errors → shared `map_infra_error`; `InvalidMode`, `InvalidPath`, `Conflict` → `invalid_argument` (caller-fixable) |
 | `map_image_open_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:154`) | missing file → `not_found`; permission failure → `permission_denied`; other I/O and decode failures → `internal` |
 | `classify_inference_error` (`kask/mcp-servers/hkask-mcp-media/src/error.rs:196-209`) | typed `InferenceError::NotConfigured`/`Auth` → `permission_denied` (missing or rejected credential, matching the canonical missing-credential pattern); `Model` → `invalid_argument`; `Overloaded` → `rate_limited`; `Timeout` → `timeout`; every other failure → `unavailable` |

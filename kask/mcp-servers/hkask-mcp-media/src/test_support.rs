@@ -70,6 +70,25 @@ macro_rules! media_inference_stub {
 
 pub(crate) use media_inference_stub;
 
+/// Decode JSON arguments into a handler's parameters exactly as the tool
+/// boundary does, so a pin exercises what a caller can send: a misspelled
+/// key, a number beyond the field's range, an absent optional.
+pub fn wire<T: serde::de::DeserializeOwned>(
+    arguments: serde_json::Value,
+) -> Result<rmcp::handler::server::wrapper::Parameters<T>, serde_json::Error> {
+    serde_json::from_value(arguments).map(rmcp::handler::server::wrapper::Parameters)
+}
+
+/// The live input schema of one registered tool, as `tools/list` serves it.
+pub fn live_input_schema(tool: &str) -> serde_json::Value {
+    let tools = crate::MediaServer::combined_router().list_all();
+    let entry = tools
+        .iter()
+        .find(|entry| entry.name == tool)
+        .unwrap_or_else(|| panic!("{tool} is not a registered tool"));
+    serde_json::to_value(&entry.input_schema).expect("input schema serializes")
+}
+
 /// The read-only organize request the gallery lifecycle tests share —
 /// each test rebuilt the same closure (or inline block) to capture its
 /// directory before the helper (2026-10-09 ratchet pass).
