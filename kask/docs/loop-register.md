@@ -503,7 +503,7 @@ the spec's minimum list, recorded below rather than narrowed away.
 
 ### L10 — Memory recall/ingest cycle — audited; recall failure-signal contract deferred to the operator
 - **Crate/path:** `kask/crates/hkask-memory` + `kask/mcp-servers/hkask-mcp-curator`
-- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:288` `store`, `:331` `query_deduped`, `:447` `touch_recall`, `:261` `with_ledger`; consolidation `kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1765` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1557`, `:1730-1751`), `distillation.rs`, `forgetting.rs`
+- **Entry point:** `kask/crates/hkask-memory/src/memory_store.rs:492` `store`, `:542` `query_deduped`, `:659` `touch_recall`, `:384` `with_ledger`; consolidation `kask/crates/hkask-memory/src/consolidation_service.rs::MemoryConsolidator::consolidate`; curator ingest `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs:1765` `curator_memory_extract` (turn-discovery contract `thread_turns.rs`, cited at `:1647`, `:1756-1775`), `distillation.rs`, `forgetting.rs`
 - **Participants:** `federated_recall.rs`, `recall_dedup.rs`, `salience.rs`, `bayesian.rs`; zed-side injection `kask_bridge/src/memory.rs`, `context_injector.rs`
 - **Trigger:** turn-end extraction; recall queries; prune/decay cycles
 - **Hands off to:** L1 (context injection), L2 (ledger), therapy/consolidation skills
