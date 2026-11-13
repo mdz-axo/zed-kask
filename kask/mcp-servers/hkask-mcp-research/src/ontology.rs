@@ -49,12 +49,11 @@ pub(crate) fn tool_to_pko(tool_name: &str) -> Option<PkoConcept> {
         "finish_research_run" => Some(STEP_EXECUTION),
         "get_research_run" => Some(PROCEDURE_EXECUTION),
         "annotate_research_run" => Some(STEP_EXECUTION),
-        // Web search/extract/browse/find-similar/ping: searches and
-        // extractions observe external providers — steps executing that
-        // read; browse drives an interactive session; find-similar reads
-        // provider recommendations; ping verifies liveness.
+        // Web search/extract/find-similar/ping: searches and extractions
+        // observe external providers — steps executing that read;
+        // find-similar reads provider recommendations; ping verifies
+        // liveness.
         "web_search" | "web_extract" => Some(STEP_EXECUTION),
-        "web_browse" => Some(STEP_EXECUTION),
         "web_find_similar" => Some(PROCEDURE_EXECUTION),
         "web_ping" => Some(PROCEDURE_EXECUTION),
         // Bibliographic resolution: resolving a paper reference to a
@@ -79,8 +78,8 @@ pub(crate) fn tool_to_dc(tool_name: &str) -> Option<DcConcept> {
     match tool_name {
         // Reads: run manifests, searches, extractions, readings,
         // liveness — reports.
-        "get_research_run" | "web_search" | "web_extract" | "web_browse" | "web_find_similar"
-        | "web_ping" | "resolve_paper" | "evaluate_evidence" | "cite_sources" => Some(REPORT),
+        "get_research_run" | "web_search" | "web_extract" | "web_find_similar" | "web_ping"
+        | "resolve_paper" | "evaluate_evidence" | "cite_sources" => Some(REPORT),
         // Writes: run lifecycle events and annotations — datasets.
         "begin_research_run" | "finish_research_run" | "annotate_research_run" => Some(DATASET),
         _ => None,
@@ -142,7 +141,7 @@ mod tests {
         use crate::research::cache::ResponseCache;
         use crate::research::providers::{CrossrefCandidate, ProviderSearchOutput, WebSearchPort};
         use crate::research::types::{
-            BrowseResult, CompoundSearchResult, ExtractOptions, ExtractedContent, PaperMetadata,
+            CompoundSearchResult, ExtractOptions, ExtractedContent, PaperMetadata,
             ProviderHealthEntry, ProviderRecommendation, RateLimiter, SearchQuery, SearchStrategy,
             WebError,
         };
@@ -175,14 +174,7 @@ mod tests {
             ) -> Result<ExtractedContent, WebError> {
                 Err(WebError::NoProvider)
             }
-            async fn browse(
-                &self,
-                _url: &str,
-                _instruction: &str,
-                _timeout: Duration,
-            ) -> Result<BrowseResult, WebError> {
-                Err(WebError::NoProvider)
-            }
+
             async fn health_check(&self) -> Vec<ProviderHealthEntry> {
                 Vec::new()
             }

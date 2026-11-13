@@ -1,4 +1,4 @@
-use super::{WebBrowseProvider, WebError, WebExtractProvider};
+use super::{WebError, WebExtractProvider};
 use crate::research::strip_html;
 use crate::research::types::*;
 use async_trait::async_trait;
@@ -278,57 +278,6 @@ impl WebExtractProvider for RawFetchProvider {
         }
     }
 }
-#[async_trait]
-impl WebBrowseProvider for RawFetchProvider {
-    fn kind(&self) -> &str {
-        "rawfetch"
-    }
-
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        // SSRF validation is at the pool boundary (browse_with_fallback) for
-        // the initial URL, and at this transport for every redirect hop.
-        let resp = self
-            .client
-            .get(url)
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!(
-                    "RawFetch browse request failed: {}",
-                    super::reqwest_error_detail(&e)
-                ))
-            })?;
-        let status = resp.status();
-        let final_url = resp.url().clone();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| WebError::ProviderError(format!("RawFetch browse read error: {e}")))?;
-        if !status.is_success() {
-            return Err(WebError::ProviderError(format!(
-                "RawFetch browse error {status}: {}",
-                hkask_inference::openai_compat::sanitize_error_body(&body)
-            )));
-        }
-        Ok(BrowseResult {
-            url: final_url.to_string(),
-            content: strip_html::strip_html(&body),
-            instruction: Some(instruction.to_string()),
-            actions_taken: vec!["raw_fetch".to_string()],
-        })
-    }
-
-    async fn health(&self) -> Result<(), WebError> {
-        // Delegate to the extract health check (same logic)
-        WebExtractProvider::health(self).await
-    }
-}
 
 pub(crate) fn truncate_str(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
@@ -582,31 +531,6 @@ mod tests {
             origin_hits.load(Ordering::SeqCst),
             1,
             "exactly the initial request is made"
-        );
-    }
-
-    /// expect: "The same gate applies when browsing, not only extracting." [P4]
-    #[tokio::test]
-    async fn browse_redirect_to_loopback_literal_is_rejected() {
-        let (sentinel_url, sentinel_hits) = http_fixture(content_response("sentinel-body")).await;
-        let (origin_url, _origin_hits) =
-            http_fixture(redirect_response(&format!("{sentinel_url}/sentinel"))).await;
-
-        let provider = RawFetchProvider::new().expect("provider");
-        let error = provider
-            .browse(
-                &format!("{origin_url}/page"),
-                "extract",
-                Duration::from_secs(5),
-            )
-            .await
-            .expect_err("browse redirect to loopback must be rejected");
-
-        assert!(error.to_string().contains("Loopback"), "{error}");
-        assert_eq!(
-            sentinel_hits.load(Ordering::SeqCst),
-            0,
-            "no sentinel request"
         );
     }
 

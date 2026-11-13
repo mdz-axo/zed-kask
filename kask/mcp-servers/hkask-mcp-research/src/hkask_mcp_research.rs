@@ -28,17 +28,17 @@ use crate::evidence_service::{
     validate_extraction,
 };
 use crate::research::{
-    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
-    CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    DEFAULT_PROFILE, EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest,
-    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest,
-    GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH,
-    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH,
-    NewResearchRun, PingOutput, ProviderProfileOutput, ProviderRecommendation, RateLimiter,
-    RerankInfo, RerankOutcome, ResolvePaperRequest, ResponseCache, RunSourceRecord, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, WebError,
-    WebSearchPort, build_provider_pool, cache_key, llm_rerank, normalize_closed_vocab,
-    parse_closed_vocab, parse_closed_vocab_const, provider_profile, score_evidence_set,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, CiteSourcesRequest,
+    DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, DEFAULT_PROFILE, EvaluateEvidenceRequest,
+    ExtractOptions, ExtractOutput, ExtractRequest, FindSimilarOutput, FindSimilarRequest,
+    FindSimilarResultOutput, FinishResearchRunRequest, GetResearchRunRequest,
+    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES,
+    MAX_QUERY_LENGTH, MAX_URL_LENGTH, NewResearchRun, PingOutput, ProviderProfileOutput,
+    ProviderRecommendation, RateLimiter, RerankInfo, RerankOutcome, ResolvePaperRequest,
+    ResponseCache, RunSourceRecord, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
+    SearchResultOutput, SearchStrategy, WebError, WebSearchPort, build_provider_pool, cache_key,
+    llm_rerank, normalize_closed_vocab, parse_closed_vocab, parse_closed_vocab_const,
+    provider_profile, score_evidence_set,
 };
 
 // ── Constants ──
@@ -269,24 +269,13 @@ impl ResearchServer {
             // Intent is a closed vocabulary, not a free string: the scorer
             // silently maps an unrecognized intent to no-bonus generic
             // ranking, so a typo would read as a successful request routed
-            // under the intended lens. parse_closed_vocab normalizes
-            // emission noise and rejects unknown values up front.
+            // under the intended lens. The parse normalizes emission noise
+            // and rejects unknown values up front, against the same list
+            // the input schema publishes (`INTENTS`).
             let intent = match req.intent.as_deref() {
                 Some(raw) => Some(
-                    parse_closed_vocab(
-                        "intent",
-                        raw,
-                        &[
-                            (&["news"], "news"),
-                            (&["academic"], "academic"),
-                            (&["semantic"], "semantic"),
-                            (&["research"], "research"),
-                            (&["freshness"], "freshness"),
-                            (&["general"], "general"),
-                            (&["transcript"], "transcript"),
-                        ],
-                    )
-                    .map_err(McpToolError::from)?,
+                    parse_closed_vocab_const("intent", raw, crate::research::types::INTENTS)
+                        .map_err(McpToolError::from)?,
                 ),
                 None => None,
             };
@@ -875,62 +864,6 @@ impl ResearchServer {
         .await
     }
 
-    #[tool(description = "Interactive browsing of JS-heavy pages via headless browser")]
-    pub async fn web_browse(
-        &self,
-        Parameters(BrowseRequest {
-            url,
-            instruction,
-            timeout_secs,
-        }): Parameters<BrowseRequest>,
-    ) -> Result<String, McpToolError> {
-        execute_tool(self, "web_browse", async {
-            self.rate_limiter.check("web_browse")?;
-
-            // Not cached: web_browse skips the response cache (unlike
-            // web_search and web_extract). Browsed content is interactive and
-            // session-specific; a cached snapshot would mislead on re-browse.
-            tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
-
-            if url.len() > MAX_URL_LENGTH {
-                return Err(McpToolError::invalid_argument(format!(
-                    "url exceeds maximum length of {} characters",
-                    MAX_URL_LENGTH
-                )));
-            }
-            if let Some(ref instr) = instruction
-                && instr.len() > MAX_INSTRUCTION_LENGTH
-            {
-                return Err(McpToolError::invalid_argument(format!(
-                    "instruction exceeds maximum length of {} characters",
-                    MAX_INSTRUCTION_LENGTH
-                )));
-            }
-
-            validate_tool_url_with_dns(&url).await?;
-
-            let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
-            let timeout =
-                Duration::from_secs(timeout_secs.unwrap_or(30)).min(Duration::from_secs(120));
-
-            self.pool
-                .browse(&url, &instr, timeout)
-                .await
-                .map(|result| {
-                    let output = BrowseOutput {
-                        url: result.url,
-                        content: result.content,
-                        instruction: result.instruction,
-                        actions_taken: result.actions_taken,
-                    };
-                    serde_json::to_value(&output)
-                        .unwrap_or_else(|_| serde_json::json!({ "error": "serialization failed" }))
-                })
-                .map_err(McpToolError::from)
-        })
-        .await
-    }
-
     // ═══════════════════ Research-run ledger ═══════════════════
 
     #[tool(
@@ -1514,124 +1447,24 @@ impl ResearchServer {
     // ═══════════════════ Citation ═══════════════════
 
     #[tool(
-        description = "Generate citations from retrieved sources. Normalizes web_search/web_extract results into a canonical citation record and emits citations in the requested style (apa, bibtex, chicago, json). Deterministic formatting — no LLM relay."
+        description = "Format sources as an APA 7 reference list. Each source needs a title and a url or doi; authors, published, site_name, the journal fields and retrieved are optional. Deterministic formatting, no model call. What the tool applies: authors inverted with initials (an author given as a string is a group name and is kept as written), '&' before the last of 2 to 20 authors and the first 19 plus the last for 21 or more; the title in the author position when no author is given; '(n.d.)' when no date is given; the site name left out when it is the same as a single group author; a DOI written as https://doi.org/…; 'Retrieved Month D, YYYY, from' only when `retrieved` is given; entries alphabetized by first author, earliest first, with letter suffixes for the same author and year. What it does not do: it does not re-case a title (APA wants sentence case for page and article titles, and that needs knowledge of proper nouns) and it does not look anything up. Italics are markdown asterisks. A `published` value that is not YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 timestamp is refused, naming the source: a search result's 'published' can be '4 days ago' or 'January 13, 2026' and must be converted first. Returns {references: [{source_index, reference}], count, notes}; `source_index` is the position in the request, since the list is reordered."
     )]
     pub async fn cite_sources(
         &self,
-        Parameters(CiteSourcesRequest { sources, style }): Parameters<CiteSourcesRequest>,
+        Parameters(CiteSourcesRequest { sources }): Parameters<CiteSourcesRequest>,
     ) -> Result<String, McpToolError> {
-        execute_tool(
-            self,
-            "cite_sources",
-            async {
-                if sources.is_empty() {
-                    return Err(McpToolError::invalid_argument("sources must not be empty"));
-                }
-                // Style is a closed vocabulary: parse_closed_vocab normalizes
-                // emission noise (quoted/padded/case variants) and rejects
-                // unknown values with a teaching error (the shared
-                // closed-vocabulary contract).
-                let style = parse_closed_vocab(
-                    "style",
-                    &style,
-                    &[
-                        (&["apa"], CiteStyle::Apa),
-                        (&["bibtex"], CiteStyle::Bibtex),
-                        (&["chicago"], CiteStyle::Chicago),
-                        (&["json"], CiteStyle::Json),
-                    ],
-                )
-                .map_err(McpToolError::from)?;
-
-                let citations: Vec<String> = sources
-                    .iter()
-                    .map(|s| {
-                        let authors = s.authors.as_ref().and_then(|a| {
-                            if a.is_empty() {
-                                None
-                            } else {
-                                Some(a.join(", "))
-                            }
-                        });
-                        let year = s
-                            .published
-                            .as_deref()
-                            .and_then(|p| p.get(..4))
-                            .unwrap_or("n.d.");
-                        let title = s.title.clone().unwrap_or_else(|| {
-                            s.url.split('/').nth(3).unwrap_or("Untitled").to_string()
-                        });
-
-                        match style {
-                            CiteStyle::Apa => {
-                                let author_part = authors.unwrap_or_else(|| {
-                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
-                                });
-                                format!(
-                                    "{author_part} ({year}). {title}. Retrieved from {url}",
-                                    author_part = author_part,
-                                    year = year,
-                                    title = title,
-                                    url = s.url,
-                                )
-                            }
-                            CiteStyle::Bibtex => {
-                                let key = s
-                                    .source
-                                    .as_deref()
-                                    .unwrap_or("unknown")
-                                    .split('.')
-                                    .next()
-                                    .unwrap_or("unknown");
-                                let author_field = authors.unwrap_or_else(|| {
-                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
-                                });
-                                format!(
-                                    "@misc{{{key}_{year},\n  author = {{{author_field}}},\n  title = {{{title}}},\n  year = {{{year}}},\n  url = {{{url}}}\n}}",
-                                    key = key,
-                                    year = year,
-                                    author_field = author_field,
-                                    title = title,
-                                    url = s.url,
-                                )
-                            }
-                            CiteStyle::Chicago => {
-                                let author_part = authors.unwrap_or_else(|| {
-                                    s.source.clone().unwrap_or_else(|| "Anonymous".to_string())
-                                });
-                                format!(
-                                    "{author_part}. \"{title}.\" Accessed {url}.",
-                                    author_part = author_part,
-                                    title = title,
-                                    url = s.url,
-                                )
-                            }
-                            CiteStyle::Json => serde_json::json!({
-                                "url": s.url,
-                                "title": title,
-                                "authors": s.authors,
-                                "published": s.published,
-                                "source": s.source,
-                                "year": year,
-                            })
-                            .to_string(),
-                        }
-                    })
-                    .collect();
-
-                let mut result = serde_json::json!({
-                    "style": serde_json::to_value(&style).unwrap_or_default(),
-                    "count": citations.len(),
-                    "citations": citations,
-                });
-                // Ontology-concept key: the dcterms:references concept labels
-                // this result (citations were generated). Routed through the
-                // fixture-guarded bridge constant, not a string literal.
-                result[hkask_bridge_ontology::dc_bibo::REFERENCES] =
-                    serde_json::json!("citations_generated");
-                Ok(result)
-            },
-        )
+        execute_tool(self, "cite_sources", async {
+            if sources.is_empty() {
+                return Err(McpToolError::invalid_argument("sources must not be empty"));
+            }
+            let list = crate::research::apa::reference_list(&sources)
+                .map_err(McpToolError::invalid_argument)?;
+            Ok(serde_json::json!({
+                "count": list.references.len(),
+                "references": list.references,
+                "notes": list.notes,
+            }))
+        })
         .await
     }
 }
@@ -1838,6 +1671,29 @@ mod tool_surface_tests {
                 "duplication",
                 serde_json::json!(["semantic"]),
             ),
+            (
+                "web_search",
+                "intent",
+                serde_json::json!([
+                    "news",
+                    "academic",
+                    "semantic",
+                    "research",
+                    "freshness",
+                    "general",
+                    "transcript"
+                ]),
+            ),
+            (
+                "web_search",
+                "freshness",
+                serde_json::json!(["day", "week", "month", "year"]),
+            ),
+            (
+                "web_extract",
+                "format",
+                serde_json::json!(["markdown", "json"]),
+            ),
         ] {
             let tool = tools
                 .iter()
@@ -1848,39 +1704,72 @@ mod tool_surface_tests {
             assert_eq!(schema["properties"][field]["anyOf"][1]["type"], "null");
         }
         // Required closed-vocabulary fields carry the enum directly (no
-        // null arm): cite_sources style.
-        let cite = tools
-            .iter()
-            .find(|tool| tool.name == "cite_sources")
-            .expect("cite_sources registered");
-        let cite_schema = serde_json::to_value(&cite.input_schema).expect("tool input schema");
-        assert_eq!(
-            cite_schema["properties"]["style"]["enum"],
-            serde_json::json!(["apa", "bibtex", "chicago", "json"])
-        );
+        // null arm), read from the constant the handler validates against.
+        for (name, field, values) in [
+            (
+                "finish_research_run",
+                "status",
+                crate::research::runs::FINISH_STATUSES,
+            ),
+            (
+                "annotate_research_run",
+                "verification_state",
+                crate::research::runs::VERIFICATION_STATES,
+            ),
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .expect("tool registered");
+            let schema = serde_json::to_value(&tool.input_schema).expect("tool input schema");
+            assert_eq!(
+                schema["properties"][field]["enum"],
+                serde_json::json!(values),
+                "{name}.{field}"
+            );
+        }
+    }
+
+    /// expect: every tool that takes arguments publishes a closed schema
+    /// (`additionalProperties: false`), so a client can see before calling
+    /// that an unknown argument is refused. `web_ping` takes none.
+    #[test]
+    fn every_tool_schema_is_closed_to_unknown_arguments() {
+        for tool in ResearchServer::tool_router().list_all() {
+            if tool.name == "web_ping" {
+                continue;
+            }
+            let schema = serde_json::to_value(&tool.input_schema).expect("tool input schema");
+            assert_eq!(
+                schema["additionalProperties"],
+                serde_json::json!(false),
+                "{} must refuse unknown arguments in its schema",
+                tool.name
+            );
+        }
     }
 
     include!(concat!(env!("OUT_DIR"), "/tool_names.gen.rs"));
     hkask_mcp_server::tool_surface_pin!(
         ResearchServer::tool_router(),
         "tool_router",
-        12,
-        tool_surface_is_exactly_12_registered_tools,
+        11,
+        tool_surface_is_exactly_11_registered_tools,
     );
 
-    /// expect: the feed tools removed on 2026-11-12 (operator decision) are
-    /// not served: no registered tool name starts with `rss_`.
+    /// expect: the tools removed on 2026-11-12 (operator decisions) are not
+    /// served: no `rss_` feed tool, and no `web_browse`.
     #[test]
-    fn no_feed_tool_is_registered() {
-        let feed_tools: Vec<String> = ResearchServer::tool_router()
+    fn no_removed_tool_is_registered() {
+        let removed: Vec<String> = ResearchServer::tool_router()
             .list_all()
             .into_iter()
             .map(|tool| tool.name.to_string())
-            .filter(|name| name.starts_with("rss_"))
+            .filter(|name| name.starts_with("rss_") || name == "web_browse")
             .collect();
         assert!(
-            feed_tools.is_empty(),
-            "feed tools are registered: {feed_tools:?}"
+            removed.is_empty(),
+            "removed tools are registered: {removed:?}"
         );
     }
 
@@ -1892,8 +1781,8 @@ mod tool_surface_tests {
         let tools = ResearchServer::tool_router().list_all();
         assert_eq!(
             tools.len(),
-            12,
-            "approved surface: 12 registered tools (pinned by tool_surface_is_exactly_12_registered_tools)"
+            11,
+            "approved surface: 11 registered tools (pinned by tool_surface_is_exactly_11_registered_tools)"
         );
         for tool in tools {
             let schema =

@@ -5,6 +5,7 @@
 //! provider pool with RRF fusion, content extraction, headless browsing,
 //! response caching, and rate limiting.
 
+pub mod apa;
 pub(crate) mod breaker;
 pub mod cache;
 pub mod db;
@@ -21,7 +22,7 @@ use std::collections::HashMap;
 use providers::{
     ArxivProvider, BraveProvider, CrossrefProvider, FirecrawlProvider, OpenAlexProvider,
     RawFetchProvider, SemanticScholarProvider, SerapiProvider, SerpEngine, TavilyProvider,
-    WebBrowseProvider, WebExtractProvider, WebSearchProvider,
+    WebExtractProvider, WebSearchProvider,
 };
 
 // ── Re-exports ──
@@ -34,15 +35,14 @@ pub(crate) use providers::{ExaProvider, ProviderPool, WebSearchPort};
 pub(crate) use runs::{NewResearchRun, RunSourceRecord};
 pub(crate) use types::RateLimiter;
 pub(crate) use types::{
-    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseOutput, BrowseRequest,
-    CiteSourcesRequest, CiteStyle, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    EvaluateEvidenceRequest, ExtractOptions, ExtractOutput, ExtractRequest, FindSimilarOutput,
-    FindSimilarRequest, FindSimilarResultOutput, FinishResearchRunRequest, GetResearchRunRequest,
-    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderProfileOutput,
-    ProviderRecommendation, RerankInfo, RerankOutcome, ResolvePaperRequest, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, WebError,
-    llm_rerank, normalize_closed_vocab, parse_closed_vocab, parse_closed_vocab_const,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, CiteSourcesRequest,
+    DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS, EvaluateEvidenceRequest, ExtractOptions,
+    ExtractOutput, ExtractRequest, FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput,
+    FinishResearchRunRequest, GetResearchRunRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS,
+    MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput,
+    ProviderProfileOutput, ProviderRecommendation, RerankInfo, RerankOutcome, ResolvePaperRequest,
+    SearchMetadata, SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy,
+    WebError, llm_rerank, normalize_closed_vocab, parse_closed_vocab, parse_closed_vocab_const,
     provider_profile,
 };
 
@@ -62,7 +62,6 @@ pub(crate) fn build_provider_pool(
 
     let mut search_providers: Vec<Box<dyn WebSearchProvider>> = Vec::new();
     let mut extract_providers: Vec<Box<dyn WebExtractProvider>> = Vec::new();
-    let mut browse_providers: Vec<Box<dyn WebBrowseProvider>> = Vec::new();
 
     // Optional Semantic Scholar key: the keyless free tier shares a ~1
     // req/s global pool (the 2026-11-01 rate-limit storm); a free key from
@@ -91,13 +90,10 @@ pub(crate) fn build_provider_pool(
     if let Some(ref key) = firecrawl_api_key {
         let fc = FirecrawlProvider::new(Some(key.clone()))?;
         search_providers.push(Box::new(fc.clone()));
-        extract_providers.push(Box::new(fc.clone()));
-        browse_providers.push(Box::new(fc));
+        extract_providers.push(Box::new(fc));
     }
     if let Some(ref key) = tavily_api_key {
-        let tavily = TavilyProvider::new(key.clone())?;
-        search_providers.push(Box::new(tavily.clone()));
-        browse_providers.push(Box::new(tavily));
+        search_providers.push(Box::new(TavilyProvider::new(key.clone())?));
     }
     if let Some(ref key) = serpapi_api_key {
         search_providers.push(Box::new(SerapiProvider::new(key.clone())?));
@@ -113,7 +109,6 @@ pub(crate) fn build_provider_pool(
     }
     if let Some(ref exa) = exa_provider {
         search_providers.push(Box::new(exa.clone()));
-        browse_providers.push(Box::new(exa.clone()));
     }
 
     extract_providers.push(Box::new(RawFetchProvider::new()?));
@@ -127,7 +122,6 @@ pub(crate) fn build_provider_pool(
     Ok(ProviderPool::new(
         search_providers,
         extract_providers,
-        browse_providers,
         exa_provider,
         Some(openalex_provider),
         Some(crossref_provider),

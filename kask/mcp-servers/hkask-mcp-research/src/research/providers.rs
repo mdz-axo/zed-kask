@@ -275,12 +275,6 @@ pub trait WebSearchPort: Send + Sync {
     ) -> Result<ProviderSearchOutput, WebError>;
     async fn extract(&self, url: &str, opts: &ExtractOptions)
     -> Result<ExtractedContent, WebError>;
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError>;
     async fn health_check(&self) -> Vec<ProviderHealthEntry>;
     fn provider_fingerprint(&self) -> String;
     /// Kinds of all configured search providers (e.g. ["brave", "exa"]).
@@ -321,18 +315,6 @@ pub(crate) trait WebExtractProvider: Send + Sync {
     async fn health(&self) -> Result<(), WebError>;
 }
 
-#[async_trait]
-pub(crate) trait WebBrowseProvider: Send + Sync {
-    fn kind(&self) -> &str;
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError>;
-    async fn health(&self) -> Result<(), WebError>;
-}
-
 /// The extract chain order for a URL. PDF URLs get the local deterministic
 /// extractor (RawFetch + pdf-extract) FIRST: the chain is first-Ok-wins, and
 /// a third-party scraper's thin page-shell would win before the local leg
@@ -354,7 +336,6 @@ fn extract_chain_order<'a>(
 pub(crate) struct ProviderPool {
     pub(crate) search_providers: Vec<Box<dyn WebSearchProvider>>,
     pub(crate) extract_providers: Vec<Box<dyn WebExtractProvider>>,
-    pub(crate) browse_providers: Vec<Box<dyn WebBrowseProvider>>,
     pub(crate) exa: Option<ExaProvider>,
     /// The OpenAlex provider, held typed (the `exa` pattern) for paper-id
     /// resolution — a direct lookup, not a pool search.
@@ -453,7 +434,6 @@ impl ProviderPool {
     pub(crate) fn new(
         search_providers: Vec<Box<dyn WebSearchProvider>>,
         extract_providers: Vec<Box<dyn WebExtractProvider>>,
-        browse_providers: Vec<Box<dyn WebBrowseProvider>>,
         exa: Option<ExaProvider>,
         openalex: Option<OpenAlexProvider>,
         crossref: Option<CrossrefProvider>,
@@ -461,7 +441,6 @@ impl ProviderPool {
         Self {
             search_providers,
             extract_providers,
-            browse_providers,
             exa,
             openalex,
             crossref,
@@ -896,24 +875,6 @@ impl ProviderPool {
         try_fallback!(&ordered, extract, url, opts)
     }
 
-    pub async fn browse_with_fallback(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        // SSRF defense-in-depth: validate once at the pool boundary.
-        validate_provider_url(url).await?;
-        if self.browse_providers.is_empty() {
-            return Err(WebError::NoProviderConfigured(
-                "No browse provider configured. Set HKASK_FIRECRAWL_API_KEY, \
-                 HKASK_TAVILY_API_KEY, or HKASK_EXA_API_KEY to use web_browse."
-                    .to_string(),
-            ));
-        }
-        try_fallback!(&self.browse_providers, browse, url, instruction, timeout)
-    }
-
     /// Score each configured search provider against a query + intent hint,
     /// returning ranked recommendations. This is the metacognitive surface:
     /// `web_search` calls it on every tool-selected path — the `intent`
@@ -1051,17 +1012,9 @@ impl ProviderPool {
             .collect()
     }
 
-    pub fn browse_provider_kinds(&self) -> Vec<String> {
-        self.browse_providers
-            .iter()
-            .map(|p| p.kind().to_string())
-            .collect()
-    }
-
     pub fn provider_fingerprint(&self) -> String {
         let mut kinds: Vec<String> = self.search_provider_kinds();
         kinds.extend(self.extract_provider_kinds());
-        kinds.extend(self.browse_provider_kinds());
         if self.exa.is_some() {
             kinds.push("exa-similar".into());
         }
@@ -1082,7 +1035,6 @@ impl ProviderPool {
         }
         health_them!("search", &self.search_providers);
         health_them!("extract", &self.extract_providers);
-        health_them!("browse", &self.browse_providers);
         if let Some(ref exa) = self.exa {
             let r = WebSearchProvider::health(exa).await;
             entries.push(health_entry("exa-similar".into(), "find_similar", r));
@@ -1239,15 +1191,6 @@ impl WebSearchPort for ProviderPool {
         self.extract_with_fallback(url, opts).await
     }
 
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        self.browse_with_fallback(url, instruction, timeout).await
-    }
-
     async fn resolve_paper_id(
         &self,
         id: &crate::research::paper_id::PaperId,
@@ -1343,29 +1286,6 @@ mod tests {
         }
     }
 
-    /// Browse-surface stub — same fixed kind, for the pool-surface pin.
-    struct StubBrowseProvider {
-        kind: &'static str,
-    }
-
-    #[async_trait]
-    impl WebBrowseProvider for StubBrowseProvider {
-        fn kind(&self) -> &str {
-            self.kind
-        }
-        async fn browse(
-            &self,
-            _url: &str,
-            _instruction: &str,
-            _timeout: std::time::Duration,
-        ) -> Result<BrowseResult, WebError> {
-            Err(WebError::NoProvider)
-        }
-        async fn health(&self) -> Result<(), WebError> {
-            Ok(())
-        }
-    }
-
     /// A brave+tavily stub pool — the shared fixture of the scorer and
     /// quick-pick tests.
     fn brave_tavily_pool() -> ProviderPool {
@@ -1374,7 +1294,6 @@ mod tests {
                 Box::new(StubProvider { kind: "brave" }),
                 Box::new(StubProvider { kind: "tavily" }),
             ],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -1387,7 +1306,6 @@ mod tests {
     fn brave_pool_and_query() -> (ProviderPool, SearchQuery) {
         let pool = ProviderPool::new(
             vec![Box::new(StubProvider { kind: "brave" })],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -1441,7 +1359,6 @@ mod tests {
                 calls: calls.clone(),
             })],
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -1492,7 +1409,6 @@ mod tests {
                 kind: "flaky",
                 calls: calls.clone(),
             })],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -1608,7 +1524,7 @@ mod tests {
 
     /// R-03 pin (mcp-tool-review): health entries carry the pool surface
     /// they serve. The same provider kind registers once per surface it
-    /// serves (firecrawl: search+extract+browse; tavily/exa: search+browse)
+    /// serves (firecrawl: search+extract; exa: search+find_similar)
     /// — without the label, the ping's health list shows indistinguishable
     /// duplicate kinds and the caller cannot tell which registration is
     /// unhealthy.
@@ -1617,19 +1533,17 @@ mod tests {
         let pool = ProviderPool::new(
             vec![Box::new(StubProvider { kind: "stub" })],
             vec![Box::new(StubExtractProvider { kind: "stub" })],
-            vec![Box::new(StubBrowseProvider { kind: "stub" })],
             None,
             None,
             None,
         );
         let entries = pool.health_check_all().await;
-        assert_eq!(entries.len(), 3, "one entry per surface registration");
+        assert_eq!(entries.len(), 2, "one entry per surface registration");
         let surfaces: Vec<&str> = entries.iter().map(|e| e.surface.as_str()).collect();
         assert!(surfaces.contains(&"search"), "surfaces: {surfaces:?}");
         assert!(surfaces.contains(&"extract"), "surfaces: {surfaces:?}");
-        assert!(surfaces.contains(&"browse"), "surfaces: {surfaces:?}");
         // The distinguishability contract: every (kind, surface) pair is
-        // unique — three same-kind registrations are three distinct rows.
+        // unique — two same-kind registrations are two distinct rows.
         let mut pairs: Vec<(&str, &str)> = entries
             .iter()
             .map(|e| (e.kind.as_str(), e.surface.as_str()))
@@ -1657,7 +1571,6 @@ mod tests {
                 Box::new(StubProvider { kind: "brave" }),
             ],
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -1684,7 +1597,6 @@ mod tests {
                 }),
             ],
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -1710,7 +1622,6 @@ mod tests {
                     kind: "semantic_scholar",
                 }),
             ],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -1774,7 +1685,6 @@ mod tests {
                 }),
             ],
             Vec::new(),
-            Vec::new(),
             None,
             None,
             None,
@@ -1809,7 +1719,6 @@ mod tests {
                 Box::new(StubProvider { kind: "arxiv" }),
                 Box::new(StubProvider { kind: "exa" }),
             ],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -1851,14 +1760,7 @@ mod tests {
     fn score_providers_ranks_configured_above_unconfigured() {
         // Build a pool with only Brave configured (no API keys for others).
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(
-            vec![Box::new(brave)],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), None, None, None);
         let recs = pool.score_providers("test query", None);
         // Brave (configured) should rank first; others get the +10 unconfigured penalty.
         assert_eq!(recs[0].kind, "brave");
@@ -1938,14 +1840,7 @@ mod tests {
     #[test]
     fn score_providers_no_live_penalty_below_sample_threshold() {
         let brave = StubProvider { kind: "brave" };
-        let pool = ProviderPool::new(
-            vec![Box::new(brave)],
-            Vec::new(),
-            Vec::new(),
-            None,
-            None,
-            None,
-        );
+        let pool = ProviderPool::new(vec![Box::new(brave)], Vec::new(), None, None, None);
         // Record 2 failures (below the 3-sample threshold).
         {
             let mut agg = pool.performance.lock().unwrap();
@@ -2013,7 +1908,6 @@ mod tests {
                     calls: scholar_calls.clone(),
                 }),
             ],
-            Vec::new(),
             Vec::new(),
             None,
             None,
@@ -2112,7 +2006,7 @@ mod tests {
     /// recommendation.
     #[test]
     fn poisoned_performance_channel_surfaces_the_degradation_in_every_recommendation() {
-        let pool = ProviderPool::new(vec![], vec![], vec![], None, None, None);
+        let pool = ProviderPool::new(vec![], vec![], None, None, None);
         // Poison the channel: a panic while holding the lock poisons the
         // std Mutex permanently — the exact degraded state under test.
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2139,7 +2033,7 @@ mod tests {
     /// the two states were indistinguishable before.
     #[test]
     fn live_stats_degraded_distinguishes_poisoned_channel_from_thin_samples() {
-        let pool = ProviderPool::new(vec![], vec![], vec![], None, None, None);
+        let pool = ProviderPool::new(vec![], vec![], None, None, None);
         // Healthy, below MIN_SAMPLES_FOR_LIVE: not degraded, live fields None.
         let healthy = pool.score_providers("query", None);
         assert!(

@@ -1,8 +1,7 @@
-use super::{ProviderSearchOutput, WebBrowseProvider, WebError, WebSearchProvider, truncate_str};
+use super::{ProviderSearchOutput, WebError, WebSearchProvider, truncate_str};
 use crate::research::types::*;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) struct ExaProvider {
@@ -27,18 +26,13 @@ impl ExaProvider {
         op: &str,
         path: &str,
         payload: serde_json::Value,
-        timeout: Option<Duration>,
     ) -> Result<serde_json::Value, WebError> {
-        let mut request = self
+        let resp = self
             .client
             .post(format!("{EXA_API_BASE}{path}"))
             .header("x-api-key", &self.api_key)
             .header("Content-Type", "application/json")
-            .json(&payload);
-        if let Some(timeout) = timeout {
-            request = request.timeout(timeout);
-        }
-        let resp = request
+            .json(&payload)
             .send()
             .await
             .map_err(|e| WebError::ProviderUnavailable(format!("Exa {op} failed: {e}")))?;
@@ -138,7 +132,7 @@ impl ExaProvider {
             "contents": { "text": { "maxCharacters": 300 } },
         });
         let parsed = self
-            .exa_post("findSimilar", "/findSimilar", payload, None)
+            .exa_post("findSimilar", "/findSimilar", payload)
             .await?;
         Ok(Self::parse_search_results(&parsed))
     }
@@ -165,49 +159,8 @@ impl WebSearchProvider for ExaProvider {
         if !query.exclude_domains.is_empty() {
             payload["excludeDomains"] = serde_json::json!(query.exclude_domains);
         }
-        let parsed = self.exa_post("search", "/search", payload, None).await?;
+        let parsed = self.exa_post("search", "/search", payload).await?;
         Ok(Self::parse_search_results(&parsed))
-    }
-
-    async fn health(&self) -> Result<(), WebError> {
-        self.health_probe().await
-    }
-}
-
-/// Exa's `/contents` endpoint returns page text — a browse substitute for
-/// content-rich pages. Not a headless browser: no JS execution. Wired as a
-/// `WebBrowseProvider` so `web_browse` falls back across Firecrawl → Tavily → Exa.
-#[async_trait]
-impl WebBrowseProvider for ExaProvider {
-    fn kind(&self) -> &str {
-        "exa"
-    }
-
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        // SSRF validation is at the pool boundary (browse_with_fallback).
-        // Exa's /contents endpoint takes URLs and returns their text content.
-        let payload = serde_json::json!({
-            "urls": [url],
-            "contents": { "text": { "maxCharacters": 10000 } },
-        });
-        let parsed = self
-            .exa_post("browse", "/contents", payload, Some(timeout))
-            .await?;
-
-        // Exa /contents returns {"results": [{"url": ..., "text": ...}]}
-        let content = parsed["results"]
-            .as_array()
-            .and_then(|arr| arr.first())
-            .and_then(|item| item["text"].as_str())
-            .unwrap_or("")
-            .to_string();
-
-        Ok(BrowseResult::extracted(url, content, instruction))
     }
 
     async fn health(&self) -> Result<(), WebError> {

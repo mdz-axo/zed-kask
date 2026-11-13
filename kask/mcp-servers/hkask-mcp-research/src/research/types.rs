@@ -28,7 +28,6 @@ pub(crate) const RRF_K: u64 = 60;
 pub(crate) const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 30;
 pub(crate) const MAX_QUERY_LENGTH: usize = 400;
 pub(crate) const MAX_URL_LENGTH: usize = 2048;
-pub(crate) const MAX_INSTRUCTION_LENGTH: usize = 2000;
 pub(crate) const MAX_JSON_PROMPT_LENGTH: usize = 4000;
 pub(crate) const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 
@@ -130,12 +129,8 @@ pub static PROVIDER_PROFILES: &[ProviderProfile] = &[
         kind: "firecrawl",
         cost_per_call_usd: 0.005,
         latency_tier: LatencyTier::Medium,
-        strengths: &[
-            "search + extract + browse",
-            "markdown output",
-            "JS-heavy pages",
-        ],
-        weaknesses: &["smaller search index", "higher latency on browse"],
+        strengths: &["search + extract", "markdown output", "JS-heavy pages"],
+        weaknesses: &["smaller search index"],
         best_for: &["general", "semantic"],
     },
     ProviderProfile {
@@ -240,11 +235,43 @@ fn duplication_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     ]})
 }
 
-fn cite_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    json_schema!({"type": "string", "enum": ["apa", "bibtex", "chicago", "json"]})
+fn optional_enum(values: &[&str]) -> schemars::Schema {
+    json_schema!({"anyOf": [{"type": "string", "enum": values}, {"type": "null"}]})
+}
+
+/// The canonical intent spellings, shared by the schema and the boundary parse.
+pub(crate) const INTENTS: &[&str] = &[
+    "news",
+    "academic",
+    "semantic",
+    "research",
+    "freshness",
+    "general",
+    "transcript",
+];
+
+fn intent_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_enum(INTENTS)
+}
+
+fn freshness_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_enum(&["day", "week", "month", "year"])
+}
+
+fn extract_format_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_enum(&["markdown", "json"])
+}
+
+fn finish_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": crate::research::runs::FINISH_STATUSES})
+}
+
+fn verification_state_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    json_schema!({"type": "string", "enum": crate::research::runs::VERIFICATION_STATES})
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchRequest {
     pub query: String,
     pub num_results: Option<u32>,
@@ -255,6 +282,10 @@ pub struct SearchRequest {
     pub include_domains: Option<Vec<String>>,
     /// Host denylist applied at the same server boundary.
     pub exclude_domains: Option<Vec<String>>,
+    /// Restrict results to the last `day`, `week`, `month` or `year`.
+    /// Applied by Brave and by SerpAPI's Google engine; the other
+    /// providers ignore it.
+    #[schemars(schema_with = "freshness_schema")]
     pub freshness: Option<String>,
     /// Accepted values: `quick`, `web` (alias `semantic`), `news`,
     /// `deep` (alias `research`). Other values are rejected.
@@ -270,6 +301,7 @@ pub struct SearchRequest {
     /// `provider_recommendations` (as on every tool-selected path) and
     /// the choice in `selected_provider`. The former two-step
     /// web_recommend_provider + web_search(provider) pattern, folded in.
+    #[schemars(schema_with = "intent_schema")]
     pub intent: Option<String>,
     /// Explicit provider override: "tavily", "brave", "exa", "firecrawl",
     /// "serpapi", and the free scholarly providers "openalex", "arxiv",
@@ -292,6 +324,7 @@ pub struct SearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindSimilarRequest {
     pub url: String,
     pub num_results: Option<u32>,
@@ -301,12 +334,14 @@ pub struct FindSimilarRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExtractRequest {
     pub url: String,
     /// Accepted values: `markdown` or `json`. PDF URLs extract their text
     /// layer locally (pdf-extract); a scanned PDF with no text layer
     /// surfaces an error naming the corpus OCR route — never successful
     /// Markdown, and raw PDF bytes are never returned as content.
+    #[schemars(schema_with = "extract_format_schema")]
     pub format: Option<String>,
     pub json_prompt: Option<String>,
     /// Optional JSON Schema describing the structured output to extract.
@@ -322,25 +357,21 @@ pub struct ExtractRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BrowseRequest {
-    pub url: String,
-    pub instruction: Option<String>,
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BeginResearchRunRequest {
     /// The research question the run addresses.
     pub question: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetResearchRunRequest {
     /// The run identifier returned by `begin_research_run`.
     pub run_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FinishResearchRunRequest {
     /// The run identifier returned by `begin_research_run`.
     pub run_id: String,
@@ -348,12 +379,14 @@ pub struct FinishResearchRunRequest {
     /// `completed`/`partial` require at least one server-recorded source
     /// (a run-scoped web_search/web_extract/web_find_similar/resolve_paper
     /// call); finish as `blocked` or `failed` when no source was recorded.
+    #[schemars(schema_with = "finish_status_schema")]
     pub status: String,
     /// Optional closing note (why the run ended in this state).
     pub note: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AnnotateResearchRunRequest {
     /// The run identifier returned by `begin_research_run`.
     pub run_id: String,
@@ -362,12 +395,14 @@ pub struct AnnotateResearchRunRequest {
     /// web_search / web_extract / web_find_similar).
     pub url: String,
     /// One of: not_checked, inferred, partial, verified, blocked, failed.
+    #[schemars(schema_with = "verification_state_schema")]
     pub verification_state: String,
     /// Why the state was declared — required when `verified`.
     pub basis: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ResolvePaperRequest {
     /// A paper reference in any supported form: DOI (bare, `doi:`, or
     /// doi.org URL), arXiv ID, PMID, PMCID, or OpenAlex work ID. Provide
@@ -406,6 +441,7 @@ pub struct PaperMetadata {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluateEvidenceRequest {
     /// The research question to evaluate evidence against.
     pub question: String,
@@ -421,6 +457,7 @@ pub struct EvaluateEvidenceRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluateArtifact {
     pub url: String,
     /// Title of the source (from SearchResultOutput.title).
@@ -434,34 +471,10 @@ pub struct EvaluateArtifact {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CiteSourcesRequest {
-    /// Sources to cite (URLs + metadata from web_search/web_extract results).
-    pub sources: Vec<CiteSource>,
-    /// Citation style: apa, bibtex, chicago, or json. Quoted or padded
-    /// values are normalized at the boundary.
-    #[schemars(schema_with = "cite_style_schema")]
-    pub style: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CiteSource {
-    pub url: String,
-    pub title: Option<String>,
-    pub published: Option<String>,
-    pub source: Option<String>,
-    pub authors: Option<Vec<String>>,
-}
-
-/// The citation style. Constructed by the boundary parse
-/// (`parse_closed_vocab`) and serialized into the response — nothing
-/// deserializes or schema-generates this enum directly.
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CiteStyle {
-    Apa,
-    Bibtex,
-    Chicago,
-    Json,
+    /// The works to cite. Each needs a `title` and a `url` or `doi`.
+    pub sources: Vec<crate::research::apa::CiteSource>,
 }
 
 // ── Result types ──
@@ -490,29 +503,6 @@ pub struct ExtractedContent {
     pub content: String,
     pub format: String,
     pub metadata: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BrowseResult {
-    pub url: String,
-    pub content: String,
-    pub instruction: Option<String>,
-    pub actions_taken: Vec<String>,
-}
-
-impl BrowseResult {
-    /// A browse result whose provider returned extracted page content —
-    /// the shared tail of the extract-style providers (Exa `/contents`,
-    /// Tavily `/extract`). The content extraction stays per provider
-    /// (each response shape differs); the result shape is shared.
-    pub fn extracted(url: &str, content: String, instruction: &str) -> Self {
-        Self {
-            url: url.to_string(),
-            content,
-            instruction: Some(instruction.to_string()),
-            actions_taken: vec!["extract".to_string()],
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -900,26 +890,17 @@ pub(crate) struct ExtractOutput {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct BrowseOutput {
-    pub url: String,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub instruction: Option<String>,
-    pub actions_taken: Vec<String>,
-}
-
 // ── Health / ping types ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealthEntry {
     pub kind: String,
     /// Which pool surface this registration serves (search / extract /
-    /// browse / find_similar). The same provider kind registers once per
-    /// surface it serves (firecrawl: search+extract+browse; tavily and exa:
-    /// search+browse; serpapi: general+scholar+books engines) — without
-    /// the label, the ping's health list shows indistinguishable
-    /// duplicate kinds (mcp-tool-review R-03).
+    /// find_similar). The same provider kind registers once per surface it
+    /// serves (firecrawl: search+extract; exa: search+find_similar; serpapi:
+    /// general+scholar+books engines) — without the label, the ping's
+    /// health list shows indistinguishable duplicate kinds
+    /// (mcp-tool-review R-03).
     pub surface: String,
     pub healthy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

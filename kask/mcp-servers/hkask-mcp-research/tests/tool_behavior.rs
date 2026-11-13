@@ -4,13 +4,13 @@
 //! - `web_ping` happy path (in-process, stub pool).
 //! - `web_search` invalid-argument paths (empty query, oversized query,
 //!   unknown strategy, unknown freshness) — checked before any HTTP call.
-//! - `web_search` / `web_find_similar` / `web_extract` / `web_browse`
+//! - `web_search` / `web_find_similar` / `web_extract`
 //!   credential-missing paths — a stub `WebSearchPort` returns
 //!   `NoProviderConfigured`, which maps to `permission_denied`. This pins the
 //!   `.rules` rule: a missing credential must surface as a structured error,
 //!   not a silent fallback or empty result.
-//! - `web_extract` / `web_browse` invalid-argument paths (oversized URL,
-//!   oversized json_prompt / instruction) — checked before URL validation.
+//! - `web_extract` invalid-argument paths (oversized URL, oversized
+//!   json_prompt) — checked before URL validation.
 //! - Research-run tools without a DB → `permission_denied` (the
 //!   `require_research_db!` gate), and their ledger paths on an in-memory DB.
 //!
@@ -28,12 +28,11 @@ use hkask_mcp_research::research::providers::{
 };
 
 use hkask_mcp_research::research::types::{
-    AnnotateResearchRunRequest, BeginResearchRunRequest, BrowseRequest, BrowseResult, CiteSource,
-    CiteSourcesRequest, CompoundSearchResult, EvaluateArtifact, EvaluateEvidenceRequest,
-    ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest, FinishResearchRunRequest,
-    GetResearchRunRequest, LatencyTier, ProviderFailureRecord, ProviderHealthEntry, ProviderInfo,
-    ProviderRecommendation, ProviderSkipRecord, RankedResult, RateLimiter, ResolvePaperRequest,
-    SearchQuery, SearchRequest, SearchStrategy, WebError,
+    AnnotateResearchRunRequest, BeginResearchRunRequest, CompoundSearchResult, EvaluateArtifact,
+    EvaluateEvidenceRequest, ExtractOptions, ExtractRequest, ExtractedContent, FindSimilarRequest,
+    FinishResearchRunRequest, GetResearchRunRequest, LatencyTier, ProviderFailureRecord,
+    ProviderHealthEntry, ProviderInfo, ProviderRecommendation, ProviderSkipRecord, RankedResult,
+    RateLimiter, ResolvePaperRequest, SearchQuery, SearchRequest, SearchStrategy, WebError,
 };
 use hkask_mcp_server::server::McpToolError;
 use hkask_mcp_test_support::{invoke_tool, parse_envelope};
@@ -78,7 +77,6 @@ macro_rules! stub_web_search_port {
         search($self:ident, $query:ident, $strategy:ident, $provider:ident): $search:block,
         find_similar: $find_similar:block,
         extract: $extract:block,
-        browse: $browse:block,
         health: $health:block,
         kinds: $kinds:block,
         score($score_self:ident, $score_query:ident, $score_intent:ident): $score:block
@@ -105,13 +103,6 @@ macro_rules! stub_web_search_port {
                 _url: &str,
                 _opts: &ExtractOptions,
             ) -> Result<ExtractedContent, WebError> $extract
-
-            async fn browse(
-                &self,
-                _url: &str,
-                _instruction: &str,
-                _timeout: Duration,
-            ) -> Result<BrowseResult, WebError> $browse
 
             async fn health_check(&self) -> Vec<ProviderHealthEntry> $health
 
@@ -157,7 +148,6 @@ macro_rules! defaults_pool {
                 no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
             },
             extract: { no_provider!("No extract provider configured.") },
-            browse: { no_provider!("No browse provider configured.") },
             health: { Vec::new() },
             kinds: { Vec::new() },
             score(self, _query, _intent): { Vec::new() }
@@ -195,9 +185,6 @@ stub_web_search_port! {
     extract: {
         no_provider!("No extract provider configured.")
     },
-    browse: {
-        no_provider!("No browse provider configured. Set HKASK_FIRECRAWL_API_KEY.")
-    },
     health: {
         vec![ProviderHealthEntry {
             kind: "stub".to_string(),
@@ -223,7 +210,6 @@ stub_web_search_port! {
     },
     find_similar: { no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.") },
     extract: { no_provider!("No extract provider configured.") },
-    browse: { no_provider!("No browse provider configured. Set HKASK_FIRECRAWL_API_KEY.") },
     health: { Vec::new() },
     kinds: {
         vec![
@@ -256,7 +242,6 @@ stub_web_search_port! {
             metadata: Some(serde_json::json!({"title": "A JS shell", "statusCode": 200})),
         })
     },
-    browse: { no_provider!("No browse provider configured.") },
     health: { Vec::new() },
     kinds: { Vec::new() },
     score(self, _query, _intent): { Vec::new() }
@@ -294,7 +279,6 @@ stub_web_search_port! {
     },
     find_similar: { no_provider!("not configured") },
     extract: { no_provider!("not configured") },
-    browse: { no_provider!("not configured") },
     health: { Vec::new() },
     kinds: { Vec::new() },
     score(self, _query, _intent): { Vec::new() }
@@ -362,7 +346,6 @@ stub_web_search_port! {
             metadata: Some(serde_json::json!({"statusCode": 200})),
         })
     },
-    browse: { no_provider!("No browse provider configured.") },
     health: { Vec::new() },
     kinds: { Vec::new() },
     score(self, _query, _intent): { Vec::new() }
@@ -410,7 +393,6 @@ stub_web_search_port! {
             metadata: Some(serde_json::json!({"statusCode": 404, "error": "Not Found"})),
         })
     },
-    browse: { no_provider!("No browse provider configured.") },
     health: { Vec::new() },
     kinds: { Vec::new() },
     score(self, _query, _intent): { Vec::new() }
@@ -1263,56 +1245,7 @@ async fn web_find_similar_surfaces_missing_credentials_as_permission_denied() {
     assert_error_kind(&error, McpErrorKind::PermissionDenied);
 }
 
-// ── web_browse invalid-argument paths ──────────────────────────────────────
-
-#[tokio::test]
-async fn web_browse_rejects_oversized_url() {
-    let server = make_server_without_db();
-    let oversized_url = format!("http://1.2.3.4/{}", "x".repeat(2100));
-    let error = err(server
-        .web_browse(Parameters(BrowseRequest {
-            url: oversized_url,
-            instruction: None,
-            timeout_secs: None,
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-}
-
-#[tokio::test]
-async fn web_browse_rejects_oversized_instruction() {
-    let server = make_server_without_db();
-    let error = err(server
-        .web_browse(Parameters(BrowseRequest {
-            url: LITERAL_IP_URL.to_string(),
-            instruction: Some("x".repeat(3000)),
-            timeout_secs: None,
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-    assert!(
-        error.message.contains("instruction"),
-        "error should mention instruction; got: {}",
-        error.message
-    );
-}
-
-// ── web_browse credential-missing path ─────────────────────────────────────
-
-#[tokio::test]
-async fn web_browse_surfaces_missing_credentials_as_permission_denied() {
-    let server = make_server_without_db();
-    let error = err(server
-        .web_browse(Parameters(BrowseRequest {
-            url: LITERAL_IP_URL.to_string(),
-            instruction: None,
-            timeout_secs: None,
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::PermissionDenied);
-}
-
-// ── web_extract / web_browse SSRF destination gate ─────────────────────
+// ── web_extract SSRF destination gate ─────────────────────
 
 /// Control: the pre-existing strict gate refuses a loopback destination at
 /// the tool layer, before any provider is consulted.
@@ -1385,24 +1318,6 @@ async fn web_extract_rejects_nat64_loopback_destination() {
     assert!(
         error.message.contains("Loopback"),
         "error must name the loopback rejection: {}",
-        error.message
-    );
-}
-
-#[tokio::test]
-async fn web_browse_rejects_unspecified_destination() {
-    let server = make_server_without_db();
-    let error = err(server
-        .web_browse(Parameters(BrowseRequest {
-            url: "http://0.0.0.0:6379/".to_string(),
-            instruction: None,
-            timeout_secs: None,
-        }))
-        .await);
-    assert_error_kind(&error, McpErrorKind::InvalidArgument);
-    assert!(
-        error.message.contains("Unspecified"),
-        "error must name the unspecified rejection: {}",
         error.message
     );
 }
@@ -2025,7 +1940,6 @@ stub_web_search_port! {
     },
     find_similar: { no_provider!("not configured") },
     extract: { no_provider!("not configured") },
-    browse: { no_provider!("not configured") },
     health: { Vec::new() },
     kinds: { vec!["arxiv".to_string()] },
     score(self, _query, _intent): {
@@ -2838,50 +2752,226 @@ async fn annotate_research_run_accepts_quoted_verification_state() {
     );
 }
 
+// ── Wire-level pins: arguments arrive as JSON, the way a client sends them ──
+
+/// Decode `arguments` into a tool's request type exactly as the tool
+/// boundary does, so a pin covers the wire shape and not a hand-built
+/// struct. A decode failure is the same `invalid_argument` a client sees.
+fn decode<T: serde::de::DeserializeOwned>(
+    arguments: serde_json::Value,
+) -> Result<Parameters<T>, McpToolError> {
+    serde_json::from_value(arguments)
+        .map(Parameters)
+        .map_err(|error| McpToolError::invalid_argument(error.to_string()))
+}
+
+async fn cite(
+    server: &ResearchServer,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, McpToolError> {
+    let response = server.cite_sources(decode(arguments)?).await?;
+    Ok(parse_envelope(&response))
+}
+
+/// expect: "cite_sources returns an APA 7 reference list" — Purdue OWL's
+/// webpage example, sent as JSON.
 #[tokio::test]
-async fn cite_sources_accepts_quoted_style() {
+async fn cite_sources_formats_an_apa_reference_from_json_arguments() {
     let server = make_server_without_db();
-    let cited = invoke_tool!(
-        server,
-        cite_sources,
-        CiteSourcesRequest {
-            sources: vec![CiteSource {
-                url: "https://a.example/1".to_string(),
-                title: Some("Quoted Style Probe".to_string()),
-                published: Some("2026-10-09".to_string()),
-                source: Some("a.example".to_string()),
-                authors: Some(vec!["A. Author".to_string()]),
-            }],
-            style: "\"apa\"".to_string(),
-        }
-    );
-    assert_eq!(cited["style"].as_str(), Some("apa"), "{cited}");
-    assert!(
-        cited["citations"].as_array().is_some_and(|c| !c.is_empty()),
+    let cited = cite(
+        &server,
+        serde_json::json!({"sources": [{
+            "url": "https://humanparts.medium.com/laziness-does-not-exist-3af27e312d01",
+            "title": "Laziness does not exist",
+            "authors": [{"family": "Price", "given": "Devon"}],
+            "published": "2018-03-23",
+            "site_name": "Medium"
+        }]}),
+    )
+    .await
+    .expect("formats");
+    assert_eq!(cited["count"], 1, "{cited}");
+    assert_eq!(
+        cited["references"][0]["reference"],
+        "Price, D. (2018, March 23). *Laziness does not exist*. Medium. https://humanparts.medium.com/laziness-does-not-exist-3af27e312d01",
         "{cited}"
+    );
+    assert_eq!(cited["references"][0]["source_index"], 0, "{cited}");
+    assert_eq!(cited["notes"], serde_json::json!([]), "{cited}");
+}
+
+/// expect: an author sent as a string is a group name kept as written; an
+/// author sent as an object is a person; no author puts the title first;
+/// no date reads (n.d.); the list comes back in reference-list order with
+/// each entry's request position.
+#[tokio::test]
+async fn cite_sources_orders_the_list_and_handles_group_missing_author_and_missing_date() {
+    let server = make_server_without_db();
+    let cited = cite(
+        &server,
+        serde_json::json!({"sources": [
+            {"url": "https://example.org/z", "title": "Zebra crossings", "published": "2020"},
+            {"url": "https://www.nami.org/Learn-More/Mental-Health-Conditions",
+             "title": "Mental health conditions",
+             "authors": ["National Alliance on Mental Illness"]},
+            {"doi": "10.1145/1571941.1572114",
+             "title": "Reciprocal rank fusion outperforms Condorcet and individual rank learning methods",
+             "authors": [{"family": "Cormack", "given": "Gordon V."},
+                         {"family": "Clarke", "given": "Charles L. A."},
+                         {"family": "Büttcher", "given": "Stefan"}],
+             "published": "2009"}
+        ]}),
+    )
+    .await
+    .expect("formats");
+    let entries = cited["references"].as_array().expect("references");
+    let order: Vec<u64> = entries
+        .iter()
+        .map(|entry| entry["source_index"].as_u64().expect("index"))
+        .collect();
+    assert_eq!(
+        order,
+        vec![2, 1, 0],
+        "alphabetical by author, then by title: {cited}"
+    );
+    assert_eq!(
+        entries[0]["reference"],
+        "Cormack, G. V., Clarke, C. L. A., & Büttcher, S. (2009). *Reciprocal rank fusion outperforms Condorcet and individual rank learning methods*. https://doi.org/10.1145/1571941.1572114"
+    );
+    assert_eq!(
+        entries[1]["reference"],
+        "National Alliance on Mental Illness. (n.d.). *Mental health conditions*. https://www.nami.org/Learn-More/Mental-Health-Conditions"
+    );
+    assert_eq!(
+        entries[2]["reference"],
+        "*Zebra crossings*. (2020). https://example.org/z"
     );
 }
 
+/// expect: a `published` value copied from a search result ("4 days ago")
+/// is refused naming the source and the accepted forms — never turned
+/// into a year. Before the rebuild this produced "(4 da)".
 #[tokio::test]
-async fn cite_sources_unknown_style_teaches_the_vocabulary() {
+async fn cite_sources_refuses_a_relative_date_naming_the_source_and_the_forms() {
     let server = make_server_without_db();
-    let error = err(server
-        .cite_sources(Parameters(CiteSourcesRequest {
-            sources: vec![CiteSource {
-                url: "https://a.example/1".to_string(),
-                title: Some("Quoted Style Probe".to_string()),
-                published: None,
-                source: None,
-                authors: None,
-            }],
-            style: "mla".to_string(),
-        }))
-        .await);
+    let error = cite(
+        &server,
+        serde_json::json!({"sources": [
+            {"url": "https://example.org/a", "title": "A"},
+            {"url": "https://example.org/b", "title": "B", "published": "4 days ago"}
+        ]}),
+    )
+    .await
+    .expect_err("refused");
     assert_error_kind(&error, McpErrorKind::InvalidArgument);
     assert!(
-        error.message.contains("apa, bibtex, chicago, json"),
-        "teaches the accepted styles: {}",
+        error.message.contains("sources[1].published"),
+        "{}",
         error.message
+    );
+    assert!(error.message.contains("YYYY-MM-DD"), "{}", error.message);
+}
+
+/// expect: the fields of the tool this one replaced are refused by name,
+/// not ignored: `style`, and the old per-source `source`.
+#[tokio::test]
+async fn cite_sources_refuses_the_removed_style_and_source_arguments() {
+    let server = make_server_without_db();
+    let with_style = cite(
+        &server,
+        serde_json::json!({"sources": [{"url": "https://example.org/a", "title": "A"}], "style": "apa"}),
+    )
+    .await
+    .expect_err("style is gone");
+    assert_error_kind(&with_style, McpErrorKind::InvalidArgument);
+    assert!(
+        with_style.message.contains("style"),
+        "{}",
+        with_style.message
+    );
+
+    let with_source = cite(
+        &server,
+        serde_json::json!({"sources": [{"url": "https://example.org/a", "title": "A", "source": "example.org"}]}),
+    )
+    .await
+    .expect_err("source is gone");
+    assert_error_kind(&with_source, McpErrorKind::InvalidArgument);
+    assert!(
+        with_source.message.contains("source"),
+        "{}",
+        with_source.message
+    );
+}
+
+/// expect: a misspelled argument is refused on every tool that takes
+/// arguments, naming the unknown field. Before this pin a misspelled
+/// optional argument was dropped: `duplicaton: "semantic"` ran the default
+/// tier and reported nothing.
+#[tokio::test]
+async fn every_tool_refuses_an_unknown_argument_by_name() {
+    use hkask_mcp_research::research::types::*;
+    fn refused<T: serde::de::DeserializeOwned>(tool: &str, mut arguments: serde_json::Value) {
+        arguments["zz_unknown"] = serde_json::json!(1);
+        let error = match decode::<T>(arguments) {
+            Ok(_) => panic!("{tool} accepted an unknown argument"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind, McpErrorKind::InvalidArgument, "{tool}");
+        assert!(
+            error.message.contains("zz_unknown"),
+            "{tool} must name the unknown field: {}",
+            error.message
+        );
+    }
+    refused::<SearchRequest>("web_search", serde_json::json!({"query": "q"}));
+    refused::<FindSimilarRequest>(
+        "web_find_similar",
+        serde_json::json!({"url": "https://example.org/"}),
+    );
+    refused::<ExtractRequest>(
+        "web_extract",
+        serde_json::json!({"url": "https://example.org/"}),
+    );
+    refused::<BeginResearchRunRequest>("begin_research_run", serde_json::json!({"question": "q"}));
+    refused::<GetResearchRunRequest>("get_research_run", serde_json::json!({"run_id": "r"}));
+    refused::<FinishResearchRunRequest>(
+        "finish_research_run",
+        serde_json::json!({"run_id": "r", "status": "failed"}),
+    );
+    refused::<AnnotateResearchRunRequest>(
+        "annotate_research_run",
+        serde_json::json!({"run_id": "r", "url": "https://example.org/", "verification_state": "inferred"}),
+    );
+    refused::<ResolvePaperRequest>("resolve_paper", serde_json::json!({"query": "10.1/x"}));
+    refused::<EvaluateEvidenceRequest>(
+        "evaluate_evidence",
+        serde_json::json!({"question": "q", "artifacts": [{"url": "https://example.org/"}]}),
+    );
+    refused::<CiteSourcesRequest>(
+        "cite_sources",
+        serde_json::json!({"sources": [{"url": "https://example.org/", "title": "T"}]}),
+    );
+
+    // The measured case: a misspelled optional argument on evaluate_evidence.
+    let misspelled = decode::<EvaluateEvidenceRequest>(serde_json::json!({
+        "question": "q",
+        "artifacts": [{"url": "https://example.org/"}],
+        "duplicaton": "semantic"
+    }));
+    let error = misspelled.err().expect("misspelled argument is refused");
+    assert!(error.message.contains("duplicaton"), "{}", error.message);
+    // A nested object is strict too.
+    let nested = decode::<EvaluateEvidenceRequest>(serde_json::json!({
+        "question": "q",
+        "artifacts": [{"url": "https://example.org/", "contnet": "x"}]
+    }));
+    assert!(
+        nested
+            .err()
+            .expect("nested unknown is refused")
+            .message
+            .contains("contnet")
     );
 }
 

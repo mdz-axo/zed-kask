@@ -1,10 +1,9 @@
 use super::{
-    ProviderSearchOutput, WebBrowseProvider, WebError, WebExtractProvider, WebSearchProvider,
-    reqwest_error_detail, search_results_from,
+    ProviderSearchOutput, WebError, WebExtractProvider, WebSearchProvider, reqwest_error_detail,
+    search_results_from,
 };
 use crate::research::types::*;
 use async_trait::async_trait;
-use std::time::Duration;
 
 #[derive(Clone)]
 pub(crate) struct FirecrawlProvider {
@@ -194,72 +193,6 @@ impl WebExtractProvider for FirecrawlProvider {
             content,
             format: opts.format.clone(),
             metadata,
-        })
-    }
-
-    async fn health(&self) -> Result<(), WebError> {
-        if self.api_key.is_none() {
-            return Err(WebError::NoProvider);
-        }
-        Ok(())
-    }
-}
-#[async_trait]
-impl WebBrowseProvider for FirecrawlProvider {
-    fn kind(&self) -> &str {
-        "firecrawl"
-    }
-
-    async fn browse(
-        &self,
-        url: &str,
-        instruction: &str,
-        timeout: Duration,
-    ) -> Result<BrowseResult, WebError> {
-        // SSRF validation is at the pool boundary (browse_with_fallback).
-        let auth = self.auth_header()?;
-        let payload = serde_json::json!({
-            "url": url, "formats": ["markdown"],
-            "actions": [{ "type": "wait", "milliseconds": 2000u64 }],
-        });
-        let resp = self
-            .client
-            .post(format!("{FIRECRAWL_API_BASE}/scrape"))
-            .header("Authorization", auth)
-            .header("Content-Type", "application/json")
-            .json(&payload)
-            .timeout(timeout)
-            .send()
-            .await
-            .map_err(|e| {
-                WebError::ProviderUnavailable(format!(
-                    "Firecrawl browse failed: {}",
-                    reqwest_error_detail(&e)
-                ))
-            })?;
-
-        let status = resp.status();
-        let body = resp.text().await.map_err(|e| {
-            WebError::ProviderUnavailable(format!("Firecrawl body read failed: {e}"))
-        })?;
-        if !status.is_success() {
-            return Err(WebError::ProviderError(format!(
-                "Firecrawl browse error {status}"
-            )));
-        }
-
-        let parsed: serde_json::Value = serde_json::from_str(&body).map_err(|e| {
-            WebError::ProviderError(format!("Failed to parse Firecrawl browse response: {e}"))
-        })?;
-
-        Ok(BrowseResult {
-            url: url.to_string(),
-            content: parsed["data"]["markdown"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            instruction: Some(instruction.to_string()),
-            actions_taken: vec!["scrape".to_string()],
         })
     }
 

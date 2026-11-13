@@ -11,7 +11,7 @@ mds_categories: [domain, composition, lifecycle]
 # Research MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-research`
-**Tools:** 12 — 5 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`, `web_browse`), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 5 research-run/paper tools (`begin_research_run`, `get_research_run`, `finish_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`. 2026-11-12: the 15 `rss_` feed tools were removed by operator decision — see [Feed tools removed](#feed-tools-removed-2026-11-12).)
+**Tools:** 11 — 4 web tools (`web_ping`, `web_search`, `web_find_similar`, `web_extract`), 2 evidence tools (`cite_sources`, `evaluate_evidence`), and 5 research-run/paper tools (`begin_research_run`, `get_research_run`, `finish_research_run`, `annotate_research_run`, `resolve_paper`). (2026-09-03 consolidation: `web_recommend_provider` folded into `web_search` — set `intent` and the tool scores the configured providers, picks the top recommendation, and surfaces the ranking in `provider_recommendations`. 2026-11-12: the 15 `rss_` feed tools were removed by operator decision — see [Feed tools removed](#feed-tools-removed-2026-11-12); `web_browse` was removed the same day — see [web_browse removed](#web_browse-removed-2026-11-12).)
 **Auto-start:** Yes with the default built-in set. Free providers work without provider credentials; encrypted research-run persistence requires `HKASK_DB_PASSPHRASE` (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs:211-253`).
 
 The research server is the web-research surface: a provider pool
@@ -19,7 +19,7 @@ The research server is the web-research surface: a provider pool
 with RRF fusion. The SerpAPI key also registers two explicit-only engines,
 `google_scholar` and `google_books`, that run only when named with
 `web_search(provider=...)` and never join fused, `quick` or intent-routed
-searches (`src/research/providers/serapi.rs`), content extraction, headless browsing,
+searches (`src/research/providers/serapi.rs`), content extraction,
 response caching, and rate limiting.
 
 ## Architecture
@@ -47,9 +47,9 @@ Three layered gates govern every destination a fetch connects to:
 1. **Tool layer** — `validate_tool_url_with_dns` (strict): scheme,
    embedded-credential, and literal/dns-resolved address checks before the
    request reaches the pool.
-2. **Pool boundary** — `extract_with_fallback` / `browse_with_fallback`
-   re-validate (`validate_provider_url`) so each provider in the fallback
-   chain is behind the same gate.
+2. **Pool boundary** — `extract_with_fallback` re-validates
+   (`validate_provider_url`) so each provider in the fallback chain is
+   behind the same gate.
 3. **Raw-fetch transport** (`kask/mcp-servers/hkask-mcp-research/src/research/providers/raw_fetch.rs`) — the inner gate:
    a custom reqwest redirect policy re-runs the strict literal checks on
    **every redirect hop** and bounds the chain (10 hops, cycles refused); a
@@ -151,7 +151,7 @@ leg's LOCAL model ONLY — the setting `kask.private_inference.rerank_model`
 (default `ollama/qwen3-reranker-4b:latest` per `DEFAULT_PRIVATE_RERANK_MODEL`,
 emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL`, admitted by the
 research server's allowlist), resolved at the construction seam
-(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:412-432`).
+(`kask/mcp-servers/hkask-mcp-research/src/hkask_mcp_research.rs:401-421`).
 Unset/empty is the operator's explicit opt-out → the surfaced skip: the
 heuristic RRF order stands, the reason naming the boundary, the refused
 cloud setting, and the private setting that routes locally. The configured
@@ -254,6 +254,68 @@ What this means for stored data:
   operator-owned and is left where it is.
 - A subscription list held in either file is no longer reachable through
   this server. A build before the removal can still export it as OPML.
+
+## web_browse removed (2026-11-12)
+
+`web_browse` was removed by operator decision during the mcp-tool-review of
+this server. Its description promised interactive browsing through a
+headless browser. Measured on the three providers behind it (Firecrawl,
+Tavily, Exa), on an isolated copy with the operator's keys: none read the
+`instruction` argument, and the tool returned the same page text as
+`web_extract` for the same URL (byte-identical through Firecrawl). No skill,
+template or code named the tool. Use `web_extract` to read a page.
+
+## Citation — APA 7 (2026-11-12)
+
+`cite_sources` formats sources as an APA 7 reference list (operator ruling
+2026-11-12; rebuilt from a tool that offered four styles and matched none
+of them — a `published` of "3 days ago" became the year "3 da"). The
+formatter is `src/research/apa.rs`; it is deterministic and makes no model
+call.
+
+**Rule source.** Purdue OWL's APA 7 pages "Reference List: Electronic
+Sources", "Reference List: Author/Authors" and "Reference List: Basic
+Rules", read 2026-11-12. OWL's own examples are the module's test fixtures.
+APA's own site was not readable by a plain fetch that day.
+
+**Input.** `sources`: each needs a `title` and a `url` or `doi`. Optional:
+`authors`, `published`, `site_name`, `journal`, `volume`, `issue`, `pages`,
+`retrieved`. An author is a string (a group or organization, kept as
+written) or an object `{family, given}` (a person).
+
+**What is applied.**
+
+- Authors inverted with initials; `&` before the last of 2 to 20 authors;
+  for 21 or more, the first 19, an ellipsis and the last.
+- No author: the title takes the author position.
+- No date: `(n.d.)`.
+- A site name equal to the single group author is left out.
+- A web page's title is italic; a journal article's title is plain and the
+  journal and volume are italic.
+- A DOI is written as `https://doi.org/…` and used instead of the URL.
+- `Retrieved Month D, YYYY, from` only when `retrieved` is given.
+- The list is alphabetized by first author (by title when there is none);
+  the same author runs earliest first with undated works first; the same
+  author and year take letter suffixes (`2004a`, `2004b`).
+
+**What is not done, and why.**
+
+- Titles are not re-cased. APA uses sentence case for page and article
+  titles, which needs knowledge of proper nouns.
+- Nothing is looked up. A missing author or date stays missing.
+- A `published` value that is not `YYYY`, `YYYY-MM`, `YYYY-MM-DD` or an
+  RFC 3339 timestamp is refused, naming the source. A search result's
+  `published` can be "4 days ago" or "January 13, 2026": convert it first.
+
+**Output.** `{references: [{source_index, reference}], count, notes}`.
+`source_index` is the source's position in the request, since the list is
+reordered. Italics are markdown asterisks. `notes` names anything the
+formatter could not settle (two undated works by the same author are
+listed by title without a suffix).
+
+Three choices are not stated on the OWL pages and are the implementation's
+own: a hyphenated given name keeps its hyphen in the initials, no period is
+added after a title ending in `.`, `?` or `!`, and italics are asterisks.
 
 ## Evidence evaluation — the signal model (2026-09-09)
 
@@ -411,17 +473,27 @@ parses through one helper pair in `src/research/types/validation.rs`:
 `normalize_closed_vocab` (trim, strip one layer of symmetric quotes,
 trim) then `parse_closed_vocab` (a spelling→value table) or
 `parse_closed_vocab_const` (a domain-owned `&[&str]` const — runs.rs's
-`FINISH_STATUSES` / `VERIFICATION_STATES` keep single vocabulary
-ownership, no duplicated tables). Covered fields: `web_search`
-strategy/intent/provider/freshness, `web_extract` format,
-`evaluate_evidence` duplication, `cite_sources` style,
+`FINISH_STATUSES` / `VERIFICATION_STATES` and types.rs's `INTENTS` keep
+single vocabulary ownership, no duplicated tables). Covered fields:
+`web_search` strategy/intent/provider/freshness, `web_extract` format,
+`evaluate_evidence` duplication,
 `finish_research_run` status and `annotate_research_run`
-verification_state. Matching is
+verification_state. Each of these fields publishes its values as an `enum`
+in the tool's input schema, except `provider`, whose valid values depend on
+which keys are configured. Matching is
 case-insensitive; quoted, padded, and case-variant emissions parse to the
 canonical spelling, and quoted and bare forms share one cache entry
 (normalization precedes the cache key). Unknown values reject with a
 teaching error naming the field and the accepted spellings:
 `{field} must be one of ..., got '{raw}'`.
+
+**Unknown arguments are refused (2026-11-12).** Every request type denies
+unknown fields and every input schema carries `additionalProperties:
+false`. Before this, a misspelled optional argument was dropped without a
+word: `evaluate_evidence` called with `duplicaton: "semantic"` ran the
+default tier and reported nothing. The refusal is `invalid_argument` and
+names the field. Pins: `every_tool_refuses_an_unknown_argument_by_name`,
+`every_tool_schema_is_closed_to_unknown_arguments`.
 
 **Provider-name error taxonomy.** A `provider` value that isn't
 registered errors by which mistake it is (`known_provider_kind`,
