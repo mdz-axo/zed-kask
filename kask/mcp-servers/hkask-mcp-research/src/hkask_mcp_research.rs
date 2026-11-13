@@ -776,9 +776,15 @@ impl ResearchServer {
             // surfaced as a note, never a bare success — and a degraded
             // extraction is NOT cached, so a retry re-fetches the origin
             // instead of replaying the shell.
+            //
+            // The floor is a test for PAGE TEXT. A structured (`json`)
+            // extraction is as long as its answer: a correct 75-character
+            // object was labelled a JS shell and left uncached (measured
+            // 2026-11-12). Its validity is already checked by
+            // `validate_extraction` above.
             const MIN_SUBSTANTIVE_CONTENT_CHARS: usize = 500;
             let content_chars = extracted.content.trim().chars().count();
-            let degraded = content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
+            let degraded = fmt == "markdown" && content_chars < MIN_SUBSTANTIVE_CONTENT_CHARS;
             let note = degraded.then(|| {
                 // A degraded PDF URL: the chain returned a page shell, not
                 // PDF text (the local extractor errored and a scraper leg

@@ -444,6 +444,9 @@ Three changes from the zk-reference retrieval sweep's lessons:
   non-2xx status the note names it instead (a gone/moved URL;
   2026-10-01, P2) — and does not cache the degraded
   extraction, so a retry re-fetches instead of replaying the shell.
+  The length floor applies to `markdown` only (2026-11-12): a structured
+  `json` answer is as long as its answer, and a correct 75-character
+  object had been labelled a JS shell and left uncached.
 - `web_search` results carry `oa_pdf_url` when a scholarly provider
   holds a candidate open-access copy (OpenAlex `best_oa_location.pdf_url`,
   Semantic Scholar `openAccessPdf.url`) — the same candidate-not-verified

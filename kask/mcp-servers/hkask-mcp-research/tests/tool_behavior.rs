@@ -247,6 +247,58 @@ stub_web_search_port! {
     score(self, _query, _intent): { Vec::new() }
 }
 
+/// Stub whose extraction returns a short, valid structured answer in the
+/// format it was asked for — the shape of a Firecrawl JSON-mode response.
+struct ShortJsonPool;
+
+// Written out by hand: the stub macro's method parameters are not visible
+// to the bodies passed into it, and this stub must answer in the format
+// it was asked for.
+#[async_trait]
+impl WebSearchPort for ShortJsonPool {
+    async fn search(
+        &self,
+        _query: &SearchQuery,
+        _strategy: SearchStrategy,
+        _provider: Option<&str>,
+    ) -> Result<CompoundSearchResult, WebError> {
+        no_provider!("No search provider configured.")
+    }
+    async fn find_similar(
+        &self,
+        _url: &str,
+        _num_results: u32,
+    ) -> Result<ProviderSearchOutput, WebError> {
+        no_provider!("Exa provider not configured. Set HKASK_EXA_API_KEY.")
+    }
+    async fn extract(
+        &self,
+        _url: &str,
+        opts: &ExtractOptions,
+    ) -> Result<ExtractedContent, WebError> {
+        Ok(ExtractedContent {
+            url: "https://example.com/page".to_string(),
+            content:
+                r#"{"title":"Instructions and Guides","domains":["example.com","example.org"]}"#
+                    .to_string(),
+            format: opts.format.clone(),
+            metadata: Some(serde_json::json!({"statusCode": 200})),
+        })
+    }
+    async fn health_check(&self) -> Vec<ProviderHealthEntry> {
+        Vec::new()
+    }
+    fn provider_fingerprint(&self) -> String {
+        "stub-short-json".to_string()
+    }
+    fn provider_kinds(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn score_providers(&self, _query: &str, _intent: Option<&str>) -> Vec<ProviderRecommendation> {
+        Vec::new()
+    }
+}
+
 /// Stub whose fusion result carries one breaker skip record — pins that a
 /// skipped provider reaches the caller as its own metadata (skipped is NOT
 /// failed: no request was made; the agent sees why a configured provider
@@ -2870,6 +2922,45 @@ async fn cite_sources_refuses_a_relative_date_naming_the_source_and_the_forms() 
         error.message
     );
     assert!(error.message.contains("YYYY-MM-DD"), "{}", error.message);
+}
+
+/// expect: a structured (`json`) extraction is not judged by the length
+/// floor for page text. Measured 2026-11-12 against Firecrawl: a correct
+/// 75-character object came back with a note calling it a JS shell.
+/// The same short text requested as markdown still carries the note.
+#[tokio::test]
+async fn web_extract_json_answer_is_not_labelled_a_page_shell() {
+    let server = make_server_with_pool(Arc::new(ShortJsonPool));
+    let response = server
+        .web_extract(
+            decode(serde_json::json!({
+                "url": "https://example.com/page",
+                "format": "json",
+                "json_prompt": "title and domains",
+                "json_schema": "{\"type\":\"object\"}"
+            }))
+            .expect("arguments decode"),
+        )
+        .await
+        .expect("extracts");
+    let structured = parse_envelope(&response);
+    assert_eq!(structured["format"], "json", "{structured}");
+    assert!(
+        structured.get("note").is_none(),
+        "a valid structured answer carries no degradation note: {structured}"
+    );
+
+    let response = server
+        .web_extract(
+            decode(serde_json::json!({"url": "https://example.com/page"})).expect("decode"),
+        )
+        .await
+        .expect("extracts");
+    let markdown = parse_envelope(&response);
+    assert!(
+        markdown["note"].is_string(),
+        "75 characters of page text is still reported as thin: {markdown}"
+    );
 }
 
 /// expect: the fields of the tool this one replaced are refused by name,
