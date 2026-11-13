@@ -385,7 +385,7 @@ mod tests {
     /// extraction answered 400 "Unrecognized key in body … jsonOptions".
     #[tokio::test]
     async fn a_json_extraction_posts_the_v2_body_and_returns_the_structured_data() {
-        let (base, bodies) = crate::test_support::http_fixture_capturing_bodies(http_json(
+        let (base, requests) = crate::test_support::http_fixture_capturing_requests(http_json(
             "200 OK",
             r#"{"success":true,"data":{"json":{"title":"Example Domains"},"metadata":{"statusCode":200}}}"#,
         ))
@@ -402,9 +402,10 @@ mod tests {
         assert_eq!(extracted.format, "json");
         assert_eq!(extracted.content, r#"{"title":"Example Domains"}"#);
 
-        let sent = bodies.lock().expect("bodies").clone();
+        let sent = requests.lock().expect("requests").clone();
         assert_eq!(sent.len(), 1, "one request");
-        let body: serde_json::Value = serde_json::from_str(&sent[0]).expect("request body is JSON");
+        let body: serde_json::Value =
+            serde_json::from_str(&sent[0].body).expect("request body is JSON");
         assert_eq!(body["url"], "https://www.iana.org/help/example-domains");
         assert_eq!(
             body["formats"],
@@ -417,7 +418,7 @@ mod tests {
     /// rejected request is not mistaken for a missing provider.
     #[tokio::test]
     async fn a_refused_extraction_carries_firecrawls_reason() {
-        let (base, _bodies) = crate::test_support::http_fixture_capturing_bodies(http_json(
+        let (base, _requests) = crate::test_support::http_fixture_capturing_requests(http_json(
             "400 Bad Request",
             r#"{"success":false,"code":"BAD_REQUEST","error":"Unrecognized key in body"}"#,
         ))

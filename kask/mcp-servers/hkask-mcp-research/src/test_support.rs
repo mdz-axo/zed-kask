@@ -11,19 +11,28 @@ pub(crate) async fn http_fixture(response: Arc<Vec<u8>>) -> (String, Arc<AtomicU
     http_fixture_sequence(vec![(*response).clone()]).await
 }
 
+/// One request as a capturing fixture received it.
+#[derive(Debug, Clone)]
+pub(crate) struct CapturedRequest {
+    /// The request target from the request line: path and query string,
+    /// still percent-encoded.
+    pub target: String,
+    pub body: String,
+}
+
 /// A loopback HTTP fixture that answers every connection with `response`
-/// and records each request's body. The header-only fixtures above cannot
-/// show what a POST carried; a provider's request shape is exactly what
-/// the Firecrawl extract pin has to see.
-pub(crate) async fn http_fixture_capturing_bodies(
+/// and records each request's target and body. The counting fixtures
+/// cannot show what a provider sent; its request shape is exactly what
+/// the Firecrawl extract pin and the arXiv query pin have to see.
+pub(crate) async fn http_fixture_capturing_requests(
     response: Vec<u8>,
-) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+) -> (String, Arc<std::sync::Mutex<Vec<CapturedRequest>>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind fixture");
     let address = listener.local_addr().expect("fixture address");
-    let bodies = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let recorded = bodies.clone();
+    let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = requests.clone();
     let response = Arc::new(response);
     tokio::spawn(async move {
         loop {
@@ -57,15 +66,20 @@ pub(crate) async fn http_fixture_capturing_bodies(
                         Ok(n) => buffer.extend_from_slice(&chunk[..n]),
                     }
                 }
+                let target = String::from_utf8_lossy(&buffer[..head_end])
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
                 let body = String::from_utf8_lossy(&buffer[head_end..]).into_owned();
-                if let Ok(mut bodies) = recorded.lock() {
-                    bodies.push(body);
+                if let Ok(mut requests) = recorded.lock() {
+                    requests.push(CapturedRequest { target, body });
                 }
                 let _ = socket.write_all(&response).await;
             });
         }
     });
-    (format!("http://{address}"), bodies)
+    (format!("http://{address}"), requests)
 }
 
 /// A loopback HTTP fixture that answers each connection with the next

@@ -320,6 +320,36 @@ single-provider call they change the order only if the provider attaches a
 preview or a score to some of its results and not others (source read; not
 measured). That is finding R-18, awaiting a ruling.
 
+## arXiv queries (2026-11-12)
+
+The arXiv provider sent the caller's query to arXiv unchanged. arXiv reads
+bare words as alternatives: "reciprocal rank fusion" matched 122,634
+papers, and one of the first five contained all three words (the others:
+fusion rings, image fusion, fusion energy, sensor fusion). arXiv is what
+`quick` picks on a server with no paid key, and what `intent: "academic"`
+picks on any server.
+
+A query of plain words is now sent as
+`(all:a AND all:b AND …) OR (a b …)`: papers containing every word rank
+first, and papers containing some of them still follow. Measured against
+arXiv, five results each:
+
+| Query | Before | Now |
+|---|---|---|
+| reciprocal rank fusion | 1 of 5 contains all three words | the first 4 of 5 do |
+| how does reciprocal rank fusion compare to learning to rank | 5 results | the same 5 results in the same order |
+
+Requiring every word, without the second half, returned nothing for the
+ten-word question; that form was measured and not used.
+
+A query already written in arXiv's syntax is sent as written: a field
+prefix (`ti:`, `au:`, `abs:`, `co:`, `jr:`, `cat:`, `rn:`, `id:`, `all:`,
+`submittedDate:`), an uppercase `AND`, `OR` or `ANDNOT`, a quoted phrase,
+or parentheses. Lowercase "and" and "or" are words.
+
+Not measured: a single word, sent as `all:word` (the form arXiv's manual
+gives), against the bare word.
+
 ## Page text from the keyless extractor (2026-11-12)
 
 RawFetch is the extractor that needs no key, and the fallback when

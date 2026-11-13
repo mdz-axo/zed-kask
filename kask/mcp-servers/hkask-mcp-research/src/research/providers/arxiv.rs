@@ -11,6 +11,8 @@ use std::time::Duration;
 pub(crate) struct ArxivProvider {
     client: reqwest::Client,
     pacer: super::ProviderPacer,
+    /// The query endpoint; a test points it at a fixture.
+    endpoint: String,
 }
 
 impl ArxivProvider {
@@ -18,7 +20,69 @@ impl ArxivProvider {
         Ok(Self {
             client: super::provider_http_client()?,
             pacer: super::ProviderPacer::new(Duration::from_secs(ARXIV_MIN_REQUEST_INTERVAL_SECS)),
+            endpoint: ARXIV_API_BASE.to_string(),
         })
+    }
+}
+
+/// Field prefixes of arXiv's query syntax (API user manual, appendix 5.1).
+const ARXIV_FIELD_PREFIXES: &[&str] = &[
+    "ti:",
+    "au:",
+    "abs:",
+    "co:",
+    "jr:",
+    "cat:",
+    "rn:",
+    "id:",
+    "all:",
+    "submittedDate:",
+];
+
+/// The `search_query` sent to arXiv for a caller's query.
+///
+/// A query that already uses arXiv's syntax (a field prefix, a Boolean
+/// operator, a quoted phrase or parentheses) is sent as written.
+///
+/// Plain words are not: arXiv reads bare words as alternatives, so
+/// "reciprocal rank fusion" matched 122,634 papers and one of the first
+/// five contained all three words (measured 2026-11-12). Requiring every
+/// word instead returned nothing for a ten-word question. The form sent
+/// asks for both in one request, `(all:a AND all:b) OR (a b)`. Measured:
+/// for the three-word query the first four results contain every word;
+/// for the ten-word question the results and their order are the same as
+/// for the bare words. A single word is sent as `all:word`, the form the
+/// arXiv manual gives for a one-word search (not measured against the
+/// bare word).
+fn arxiv_search_query(query: &str) -> String {
+    let structured = query.contains(['"', '(', ')'])
+        || query.split_whitespace().any(|word| {
+            matches!(word, "AND" | "OR" | "ANDNOT")
+                || ARXIV_FIELD_PREFIXES
+                    .iter()
+                    .any(|prefix| word.starts_with(prefix))
+        });
+    if structured {
+        return query.to_string();
+    }
+    // Punctuation separates words, so nothing in the bare tail can be read
+    // as query syntax.
+    let words: Vec<&str> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut required: Vec<String> = Vec::new();
+    for word in &words {
+        let term = format!("all:{word}");
+        if !required.iter().any(|seen| seen.eq_ignore_ascii_case(&term)) {
+            required.push(term);
+        }
+    }
+    match required.as_slice() {
+        // Nothing searchable in the query: arXiv reports the problem.
+        [] => query.to_string(),
+        [only] => only.clone(),
+        _ => format!("({}) OR ({})", required.join(" AND "), words.join(" ")),
     }
 }
 
@@ -57,17 +121,15 @@ impl WebSearchProvider for ArxivProvider {
             .wait_turn(Duration::from_secs(ARXIV_COMPOUND_TIMEOUT_SECS))
             .await?;
 
-        // arXiv API uses a Lucene-like search syntax. We pass the raw query
-        // and let the user formulate author/title searches (e.g. 'au:dunning').
         let params: Vec<(&str, String)> = vec![
-            ("search_query", query.query.clone()),
+            ("search_query", arxiv_search_query(&query.query)),
             ("max_results", query.num_results.to_string()),
             ("sortBy", "relevance".to_string()),
         ];
 
         let resp = self
             .client
-            .get(ARXIV_API_BASE)
+            .get(&self.endpoint)
             .query(&params)
             .send()
             .await
@@ -254,4 +316,113 @@ fn decode_xml_entities(s: &str) -> String {
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// expect: plain words are sent as one query that ranks papers with
+    /// every word first and still matches papers with some of them.
+    #[test]
+    fn plain_words_ask_for_all_of_them_first_and_any_of_them_after() {
+        assert_eq!(
+            arxiv_search_query("reciprocal rank fusion"),
+            "(all:reciprocal AND all:rank AND all:fusion) OR (reciprocal rank fusion)"
+        );
+        assert_eq!(arxiv_search_query("transformers"), "all:transformers");
+        // Punctuation separates words; a repeated word is required once
+        // and kept in the bare tail, which is the caller's words as given.
+        assert_eq!(
+            arxiv_search_query("Learning-to-rank: learning, to rank?"),
+            "(all:Learning AND all:to AND all:rank) OR (Learning to rank learning to rank)"
+        );
+        // The ten-word question measured on 2026-11-12.
+        assert_eq!(
+            arxiv_search_query("how does reciprocal rank fusion compare to learning to rank"),
+            "(all:how AND all:does AND all:reciprocal AND all:rank AND all:fusion AND \
+             all:compare AND all:to AND all:learning) OR \
+             (how does reciprocal rank fusion compare to learning to rank)"
+        );
+    }
+
+    /// expect: a query already written in arXiv's syntax is sent as
+    /// written: a field prefix, a Boolean operator, a phrase, a group.
+    #[test]
+    fn a_query_in_arxiv_syntax_is_sent_as_written() {
+        for query in [
+            "au:dunning",
+            "ti:\"reciprocal rank fusion\"",
+            "electron AND proton",
+            "au:del_maestro ANDNOT (ti:checkerboard OR ti:Pyrochlore)",
+            "cat:cs.IR fusion",
+            "\"learning to rank\"",
+        ] {
+            assert_eq!(arxiv_search_query(query), query, "{query}");
+        }
+        // Lowercase "and"/"or" are words, not operators.
+        assert_eq!(
+            arxiv_search_query("search and rescue"),
+            "(all:search AND all:and AND all:rescue) OR (search and rescue)"
+        );
+        // Nothing to search for is left for arXiv to report.
+        assert_eq!(arxiv_search_query("?!"), "?!");
+    }
+
+    /// expect: the query built above is what reaches arXiv, percent-encoded
+    /// once, with the result count and relevance order asked for; the Atom
+    /// answer is parsed into results.
+    #[tokio::test]
+    async fn search_sends_the_built_query_and_parses_the_answer() {
+        let atom = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n\
+            <entry>\n<id>http://arxiv.org/abs/2501.00001v1</id>\n\
+            <published>2025-01-01T00:00:00Z</published>\n\
+            <title>MMMORRF: Multimodal Multilingual Modularized\n  Reciprocal Rank Fusion</title>\n\
+            <summary>A summary.</summary>\n<author><name>A. Author</name></author>\n\
+            <link title=\"pdf\" href=\"http://arxiv.org/pdf/2501.00001v1\" rel=\"related\"/>\n\
+            </entry>\n</feed>";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/atom+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{atom}",
+            atom.len()
+        )
+        .into_bytes();
+        let (base, requests) = crate::test_support::http_fixture_capturing_requests(response).await;
+        let mut provider = ArxivProvider::new().expect("provider");
+        provider.endpoint = format!("{base}/api/query");
+
+        let output = provider
+            .search(&SearchQuery {
+                query: "reciprocal rank fusion".to_string(),
+                num_results: 5,
+                include_domains: Vec::new(),
+                exclude_domains: Vec::new(),
+                freshness: None,
+            })
+            .await
+            .expect("search succeeds");
+        assert_eq!(output.results.len(), 1);
+        assert_eq!(
+            output.results[0].title,
+            "MMMORRF: Multimodal Multilingual Modularized Reciprocal Rank Fusion"
+        );
+        assert_eq!(output.results[0].url, "http://arxiv.org/pdf/2501.00001v1");
+        assert_eq!(output.results[0].published.as_deref(), Some("2025-01-01"));
+
+        let sent = requests.lock().expect("requests").clone();
+        assert_eq!(sent.len(), 1, "one request");
+        let url = reqwest::Url::parse(&format!("{base}{}", sent[0].target)).expect("target");
+        let pairs: Vec<(String, String)> = url.query_pairs().into_owned().collect();
+        assert_eq!(
+            pairs,
+            [
+                (
+                    "search_query".to_string(),
+                    "(all:reciprocal AND all:rank AND all:fusion) OR (reciprocal rank fusion)"
+                        .to_string()
+                ),
+                ("max_results".to_string(), "5".to_string()),
+                ("sortBy".to_string(), "relevance".to_string()),
+            ]
+        );
+    }
 }
