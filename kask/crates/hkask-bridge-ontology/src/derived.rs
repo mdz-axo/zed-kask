@@ -169,11 +169,23 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
     },
     DerivedConcept {
         term: "forecast_calibration",
-        aliases: &["calibration"],
+        aliases: &["calibration", "calibration curve"],
         identity: "stated confidences match observed frequencies across many forecasts",
         definition: "The honesty of stated confidence: across many forecasts made at probability p, the event occurs about p of the time. Measured by calibration curves and Brier decomposition over a sample — a single outcome never measures calibration.",
         constituents: &["forecast", "confidence"],
-        authority: "operator ruling 2026-09-18; Tetlock & Gardner, Superforecasting: The Art and Science of Prediction (2015)",
+        authority: "operator ruling 2026-09-18; Tetlock & Gardner, Superforecasting: The Art and Science of Prediction (2015); alias 'calibration curve' by operator ruling 2026-11-13 (scenarios mcp-tool-review SC-03: the curve is the measurement the definition already names)",
+    },
+    DerivedConcept {
+        term: "dragonfly_eye_synthesis",
+        aliases: &[
+            "dragonfly eye",
+            "dragonfly forecasting",
+            "dragonfly-eye synthesis",
+        ],
+        identity: "many independent perspectives on one question -> one synthesized judgment (an average, a weighted average, or a reconciled single image), never the survival of one view",
+        definition: "Tetlock & Gardner's metaphor for the foxlike aggregation of perspectives: outside views, inside views, further outside and inside views and second opinions are gathered and then synthesized into a single probability — 'one view meets another and another and another, all of which must be synthesized into a single image'. The dragonfly's compound eye, thousands of lenses each with a slightly different perspective, is the image; 'Foxes aggregate perspectives' is the rule. Synthesis is explicitly an art of reconciling subjective judgments, not a formula; a simple or weighted average is a starting point. A process that stops at one perspective, or lets one win without reconciliation, is not dragonfly eye.",
+        constituents: &["superforecasting", "forecast_calibration"],
+        authority: "operator ruling 2026-11-13 (scenarios mcp-tool-review SC-03); Tetlock & Gardner, Superforecasting: The Art and Science of Prediction (2015), chapter 'Dragonfly Eye' and the 'Dragonfly Forecasting' section — held in full text in the capabilities-reasoner corpus",
     },
     DerivedConcept {
         term: "test_harness",
@@ -3544,6 +3556,51 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-11-07"),
                 "{term} cites the 2026-11-07 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The scenarios mcp-tool-review rulings (2026-11-13, SC-03)
+    /// resolve on the derived rung with Tetlock & Gardner as authority:
+    /// 'calibration curve' as an alias of forecast_calibration, and the
+    /// dragonfly-eye synthesis under its own entry — never the coarse core
+    /// anchor both carried before the ruling.
+    #[test]
+    fn scenarios_review_rulings_resolve_with_authority() {
+        for (term, expected_term, marker) in [
+            ("calibration curve", "forecast_calibration", "2026-11-13"),
+            (
+                "dragonfly-eye synthesis",
+                "dragonfly_eye_synthesis",
+                "Tetlock & Gardner",
+            ),
+            (
+                "dragonfly eye",
+                "dragonfly_eye_synthesis",
+                "operator ruling 2026-11-13",
+            ),
+            (
+                "dragonfly forecasting",
+                "dragonfly_eye_synthesis",
+                "Dragonfly Forecasting",
+            ),
+        ] {
+            let concept = resolve_derived(term).expect("SC-03 ruling must resolve in derived.rs");
+            assert_eq!(
+                concept.term, expected_term,
+                "{term} resolves to {expected_term}"
+            );
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+        }
+        let dragonfly = resolve_derived("dragonfly_eye_synthesis").expect("entry");
+        for constituent in dragonfly.constituents {
+            assert!(
+                resolve_derived(constituent).is_some(),
+                "{constituent} must itself resolve on the derived rung"
             );
         }
     }
