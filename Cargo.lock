@@ -8294,6 +8294,7 @@ dependencies = [
 name = "hkask-mcp-nostr-client"
 version = "0.40.2"
 dependencies = [
+ "bech32",
  "hkask-bridge-ontology",
  "hkask-mcp-server",
  "hkask-mcp-test-support",

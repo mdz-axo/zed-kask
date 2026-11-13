@@ -32,6 +32,9 @@ tracing.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
+# Tests build identifiers at run time from a throwaway key (an `nsec`-shaped
+# value in the `npub` field, for one), so no key is written into a test file.
+bech32.workspace = true
 hkask-mcp-test-support.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
