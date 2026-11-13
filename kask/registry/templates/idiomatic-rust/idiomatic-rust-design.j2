@@ -17,16 +17,6 @@ contract:
     guideline_violations: array
     reasoning: string
 ---
-{#
-  Compiler grounding: if code_actions are available, they are
-  compiler-verified starting points. Rust-analyzer's refactor suggestions
-  (replace with enum, extract struct, add missing trait impl, inline
-  function) are the compiler's design recommendations. The LLM's job is
-  to evaluate and extend these against the design goals, not to propose
-  refactors blind. Each code action used should be recorded in
-  compiler_actions_used so the challenge phase can verify it.
-#}
-
 You are designing Rust code with a type-driven lens. The type system is your
 canvas. Every type signature is a design decision. Every ownership
 relationship is an architectural commitment. The eight principles are a design
@@ -51,12 +41,18 @@ Guidelines checklist, enforced in the design phase.
 {{ assessment | tojson }}
 ```
 
-{% if code_actions and code_actions | length > 0 %}
-## LSP Code Actions (rust-analyzer refactor suggestions)
+## LSP Code Actions
 
-The following code actions are from rust-analyzer — compiler-verified
-refactor suggestions. Evaluate each against the design goals: does it
-address a principle violation from the assessment? Is it the right
+{% if code_actions | length == 0 %}
+`get_code_actions` was not run. Every design decision below is your own
+reasoning; leave `compiler_actions_used` empty.
+{% else %}
+The `get_code_actions` output, as returned, one entry per symbol asked. An
+entry saying no action is available is a measurement: rust-analyzer offers no
+refactor there. The actions listed are compiler-verified refactor suggestions
+(replace with enum, extract struct, add missing trait impl). Evaluate and
+extend them against the design goals; do not propose refactors blind. Does
+each address a principle violation from the assessment? Is it the right
 refactor, or does the compiler's suggestion need extension?
 
 ```json
@@ -67,13 +63,9 @@ For each code action:
 1. Which assessment improvement target does it address?
 2. Is the compiler's suggestion sufficient, or does it need extension?
 3. What design principle does it advance?
-{% else %}
-## LSP Code Actions
 
-No code actions provided. In Zed sessions, run `get_code_actions` on the
-target code before this step — rust-analyzer's refactor suggestions are
-compiler-verified starting points. Without them, your design is intrinsic
-(LLM reasoning) only.
+Record each one you use in `compiler_actions_used`, so the challenge can
+check it.
 {% endif %}
 
 {% if iteration_focus %}
@@ -136,10 +128,11 @@ Reference the current Rust ecosystem. For each design decision, cite:
 Run the Rust API Guidelines checklist against the proposed public API:
 
 - **Checklist:** https://rust-lang.github.io/api-guidelines/checklist.html
-- For every violated guideline, record the guideline ID, the proposed item, and
-  either the fix or the justification for the violation in
-  `guideline_violations`. A public API that violates a guideline without a
-  recorded justification is not converged.
+- For every violated guideline, record the guideline ID, the proposed item and
+  a `status` in `guideline_violations`: `fixed` (this proposal already
+  conforms — say how in `resolution`), `justified` (the violation stands —
+  give the reason in `resolution`), or `open` (neither yet). The caller's gate
+  does not converge while any row is `open`.
 - The guidelines are the citable anchor for API design; clippy does not lint
   naming, `#[must_use]`, `Send`/`Sync`, or `Debug`/`Display` conformance.
 
@@ -169,7 +162,7 @@ Run the Rust API Guidelines checklist against the proposed public API:
     {"action": "extract_struct", "location": "file.rs:42", "extended": true, "rationale": "Compiler suggested extraction; extended with validation in TryFrom"}
   ],
   "guideline_violations": [
-    {"guideline": "C-CONV", "item": "UserId::as_str", "resolution": "fixed — renamed to as_str per the cheap-borrow rule"}
+    {"guideline": "C-CONV", "item": "UserId::as_str", "status": "fixed", "resolution": "renamed to as_str per the cheap-borrow rule"}
   ],
   "reasoning": "Design reasoning, citing which decisions were compiler-suggested vs LLM-originated"
 }

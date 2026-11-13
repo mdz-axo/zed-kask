@@ -1225,6 +1225,302 @@ mod tests {
         );
     }
 
+    // One cargo `--message-format=json` record, as clippy prints it.
+    fn cargo_message(level: &str, code: Option<&str>, message: &str, line: u32) -> String {
+        serde_json::json!({
+            "reason": "compiler-message",
+            "message": {
+                "level": level, "message": message,
+                "code": code.map(|code| serde_json::json!({"code": code})),
+                "spans": [{"file_name": "src/lib.rs", "line_start": line, "is_primary": true}]
+            }
+        })
+        .to_string()
+    }
+
+    fn cargo_capture(messages: &[String], success: bool) -> String {
+        let mut lines = vec!["sccache enabled: /not/json".to_string()];
+        lines.extend(messages.iter().cloned());
+        lines.push(serde_json::json!({"reason": "build-finished", "success": success}).to_string());
+        lines.join("\n") + "\n"
+    }
+
+    fn compiler_facts(
+        baseline: &str,
+        proposed: &str,
+        unsafe_grep: &str,
+        miri: &str,
+        record: &str,
+    ) -> Result<serde_json::Value, String> {
+        authored_jq(
+            "idiomatic-rust",
+            "Compiler facts",
+            serde_json::json!({"baseline": baseline, "proposed": proposed,
+                "unsafe_grep": unsafe_grep, "miri": miri, "record": record}),
+        )
+    }
+
+    #[test]
+    fn idiomatic_rust_compiler_facts_are_measured_from_the_captures() {
+        let ptr_arg = cargo_message("error", Some("clippy::ptr_arg"), "writing `&Vec`", 1);
+        let ptr_arg_moved = cargo_message("error", Some("clippy::ptr_arg"), "writing `&Vec`", 9);
+        let unused = cargo_message("warning", Some("unused_variables"), "unused variable", 2);
+        let mismatch = cargo_message("error", Some("E0308"), "mismatched types", 4);
+        let syntax = cargo_message("error", None, "mismatched closing delimiter", 3);
+        let note = serde_json::json!({"reason": "compiler-message",
+            "message": {"level": "failure-note", "message": "For more information", "code": null, "spans": []}})
+        .to_string();
+        let clean = cargo_capture(&[], true);
+        let lints = cargo_capture(&[ptr_arg.clone(), ptr_arg, unused.clone()], false);
+
+        // Before the proposal is applied: the baseline's diagnostics stand, and
+        // nothing is reported as introduced or resolved.
+        let cold = compiler_facts(&lints, "", "", "", "").expect("baseline only");
+        assert_eq!(cold["baseline_status"], "ran");
+        assert_eq!(cold["proposed_status"], "not_run");
+        assert_eq!(
+            cold["open_codes"],
+            serde_json::json!(["clippy::ptr_arg", "unused_variables"])
+        );
+        // The duplicate record cargo prints per target is one diagnostic.
+        assert_eq!(
+            cold["diagnostics"].as_array().expect("diagnostics").len(),
+            2
+        );
+        assert_eq!(cold["new_lints"], serde_json::json!([]));
+        assert_eq!(cold["resolved_lints"], serde_json::json!([]));
+        assert_eq!(
+            cold["gate"],
+            serde_json::json!({"baseline_status":"ran","proposed_status":"not_run",
+                "open_codes":["clippy::ptr_arg","unused_variables"],"miri":"not_run",
+                "compile_errors":0,"new_lints":0,"unsafe_lines":0,"history":[],"iteration":1})
+        );
+
+        // A lint in both captures is not new, even when its line moved.
+        let moved = cargo_capture(&[ptr_arg_moved, unused], false);
+        let same = compiler_facts(&lints, &moved, "", "", "").expect("same lints");
+        assert_eq!(same["gate"]["new_lints"], 0);
+        assert_eq!(same["resolved_lints"], serde_json::json!([]));
+
+        // Lints are told from compile errors by code, not level: with warnings
+        // denied a lint arrives at level error.
+        let introduced = compiler_facts(&clean, &lints, "", "", "").expect("introduced");
+        assert_eq!(introduced["gate"]["compile_errors"], 0);
+        assert_eq!(introduced["gate"]["new_lints"], 2);
+        let resolved = compiler_facts(&lints, &clean, "", "", "").expect("resolved");
+        assert_eq!(resolved["gate"]["new_lints"], 0);
+        assert_eq!(
+            resolved["resolved_lints"]
+                .as_array()
+                .expect("resolved")
+                .len(),
+            2
+        );
+        assert_eq!(resolved["open_codes"], serde_json::json!([]));
+
+        let broken = cargo_capture(&[mismatch, syntax, note], false);
+        let errors = compiler_facts(&clean, &broken, "", "", "").expect("compile errors");
+        assert_eq!(errors["gate"]["compile_errors"], 2);
+        assert_eq!(errors["gate"]["new_lints"], 0);
+        assert_eq!(
+            errors["open_codes"],
+            serde_json::json!(["E0308", "rustc-error"])
+        );
+
+        // A build that fails and reports nothing is not a clean proposal.
+        let silent =
+            compiler_facts(&clean, &cargo_capture(&[], false), "", "", "").expect("silent failure");
+        assert_eq!(silent["proposed_status"], "unexplained_failure");
+        let absent = compiler_facts("", "", "", "", "").expect("nothing ran");
+        assert_eq!(absent["baseline_status"], "not_run");
+
+        // unsafe lines drop comments; Miri's status is read from its output.
+        let grep = "src/a.rs:4:    // SAFETY: unsafe is fine\nsrc/a.rs:5:    unsafe { *p }\n9:unsafe fn f() {}\n";
+        for (miri, status) in [
+            ("", "not_run"),
+            ("test result: ok.\nmiri-exit=0\n", "passed"),
+            (
+                "error: Undefined Behavior: dereference\nmiri-exit=nonzero\n",
+                "ub",
+            ),
+            (
+                "error: 'cargo-miri' is not installed\nmiri-exit=nonzero\n",
+                "failed",
+            ),
+        ] {
+            let facts = compiler_facts(&clean, &clean, grep, miri, "").expect("miri");
+            assert_eq!(facts["gate"]["miri"], status, "{miri}");
+            assert_eq!(facts["gate"]["unsafe_lines"], 2);
+        }
+
+        // The iteration and the confirmed history come from the record, in order.
+        let record = "{\"iteration\":1,\"confirmed\":2,\"outcome\":\"continue\"}\n{\"iteration\":2,\"confirmed\":4,\"outcome\":\"continue\"}\n";
+        let third = compiler_facts(&clean, &clean, "", "", record).expect("third pass");
+        assert_eq!(third["gate"]["history"], serde_json::json!([2, 4]));
+        assert_eq!(third["gate"]["iteration"], 3);
+        for bad in [
+            "{\"iteration\":2,\"confirmed\":1}\n",
+            "{\"iteration\":1,\"outcome\":\"continue\"}\n",
+        ] {
+            assert!(
+                compiler_facts(&clean, &clean, "", "", bad).is_err(),
+                "record refused: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn idiomatic_rust_templates_tell_not_run_from_clean_from_reported() {
+        let lint = cargo_message("error", Some("clippy::ptr_arg"), "LINT_SENTINEL", 1);
+        let error = cargo_message("error", Some("E0308"), "ERROR_SENTINEL", 4);
+        let clean = cargo_capture(&[], true);
+        let lints = cargo_capture(&[lint], false);
+        let broken = cargo_capture(&[error], false);
+        let inquiry = |facts: serde_json::Value, focus: &str| {
+            render_template_for_test(
+                "idiomatic-rust/idiomatic-rust-inquiry",
+                serde_json::json!({"design_problem":"PROBLEM_SENTINEL","existing_code":"fn f() {}",
+                    "design_constraints":{},"compiler_facts":facts,"iteration_focus":focus}),
+            )
+            .expect("inquiry render")
+        };
+        let not_run = inquiry(compiler_facts("", "", "", "", "").expect("facts"), "");
+        assert!(not_run.contains("did not run on this code (`not_run`)"));
+        assert!(!not_run.contains("reported nothing") && !not_run.contains("ground\ntruth"));
+        let clean_inquiry = inquiry(compiler_facts(&clean, "", "", "", "").expect("facts"), "");
+        assert!(clean_inquiry.contains("ran on this code and reported nothing"));
+        assert!(!clean_inquiry.contains("did not run"));
+        let reported = inquiry(
+            compiler_facts(&lints, "", "", "", "").expect("facts"),
+            "FOCUS_SENTINEL",
+        );
+        assert!(reported.contains("LINT_SENTINEL") && reported.contains("[\"clippy::ptr_arg\"]"));
+        assert!(reported.contains("Principle 2 (ownership is architecture)"));
+        assert!(reported.contains("FOCUS_SENTINEL") && reported.contains("PROBLEM_SENTINEL"));
+        assert!(!reported.contains("did not run") && !reported.contains("reported nothing"));
+        // The eight principles reach the prompt; no typed diagnostic count is asked for.
+        assert_eq!(reported.matches("\n8. **Unsafe as contract.**").count(), 1);
+        assert!(
+            !reported.contains("diagnostics_interpreted")
+                && !reported.contains("compiler_confirmed")
+        );
+
+        let design = |actions: serde_json::Value| {
+            render_template_for_test(
+                "idiomatic-rust/idiomatic-rust-design",
+                serde_json::json!({"design_problem":"PROBLEM_SENTINEL","existing_code":"",
+                    "assessment":{"invariants":["i"]},"code_actions":actions,"iteration_focus":""}),
+            )
+            .expect("design render")
+        };
+        let no_actions = design(serde_json::json!([]));
+        assert!(no_actions.contains("`get_code_actions` was not run"));
+        let actions = design(serde_json::json!([
+            "Found 1 code action(s):\n1. ACTION_SENTINEL"
+        ]));
+        assert!(actions.contains("ACTION_SENTINEL") && !actions.contains("was not run"));
+        assert!(actions.contains("\"status\": \"fixed\"") && actions.contains("`open`"));
+
+        let challenge = |facts: serde_json::Value, references: serde_json::Value| {
+            render_template_for_test(
+                "idiomatic-rust/idiomatic-rust-challenge",
+                serde_json::json!({"design_problem":"PROBLEM_SENTINEL","design_proposal":{"proposed_design":"x"},
+                    "assessment":{"invariants":["i"]},"design_constraints":{},
+                    "compiler_facts":facts,"reference_results":references}),
+            )
+            .expect("challenge render")
+        };
+        let unapplied = challenge(
+            compiler_facts(&clean, "", "", "", "").expect("facts"),
+            serde_json::json!([]),
+        );
+        assert!(unapplied.contains("The proposal has not been compiled"));
+        assert!(unapplied.contains("`find_references` was not run"));
+        assert!(
+            !unapplied.contains("was applied and compiled") && !unapplied.contains("## `unsafe`")
+        );
+        let silent = challenge(
+            compiler_facts(&clean, &cargo_capture(&[], false), "", "", "").expect("facts"),
+            serde_json::json!([]),
+        );
+        assert!(silent.contains("failed without reporting a diagnostic"));
+        let measured = challenge(
+            compiler_facts(
+                &lints,
+                &broken,
+                "src/a.rs:5:    unsafe { UNSAFE_SENTINEL }\n",
+                "error: Undefined Behavior\nmiri-exit=nonzero\n",
+                "",
+            )
+            .expect("facts"),
+            serde_json::json!(["Found 2 references to `Queue`:\n\n## REFERENCE_SENTINEL"]),
+        );
+        assert!(measured.contains("was applied and compiled"));
+        // Each measured list reaches the prompt under its own heading: the text
+        // between one heading and the next holds that list and no other.
+        let section = |text: &str, from: &str, to: &str| -> String {
+            let (_, tail) = text
+                .split_once(from)
+                .unwrap_or_else(|| panic!("no {from:?}"));
+            let (body, _) = tail.split_once(to).unwrap_or_else(|| panic!("no {to:?}"));
+            body.to_string()
+        };
+        let errors = section(&measured, "Compile errors", "Lints the proposal introduced");
+        assert!(errors.contains("ERROR_SENTINEL") && !errors.contains("LINT_SENTINEL"));
+        let introduced = section(
+            &measured,
+            "Lints the proposal introduced",
+            "Baseline lints the proposal resolved",
+        );
+        assert!(
+            !introduced.contains("_SENTINEL"),
+            "this proposal introduced no lint"
+        );
+        let resolved = section(
+            &measured,
+            "Baseline lints the proposal resolved",
+            "Everything still reported",
+        );
+        assert!(resolved.contains("LINT_SENTINEL") && !resolved.contains("ERROR_SENTINEL"));
+        let still = section(
+            &measured,
+            "Everything still reported",
+            "Clippy is a codified",
+        );
+        assert!(still.contains("ERROR_SENTINEL") && !still.contains("LINT_SENTINEL"));
+        // A lint the proposal introduces is listed as introduced, not as resolved.
+        let regressed = challenge(
+            compiler_facts(&clean, &lints, "", "", "").expect("facts"),
+            serde_json::json!(["Found 1 references to `Queue`"]),
+        );
+        let introduced = section(
+            &regressed,
+            "Lints the proposal introduced",
+            "Baseline lints the proposal resolved",
+        );
+        assert!(introduced.contains("LINT_SENTINEL"));
+        let resolved = section(
+            &regressed,
+            "Baseline lints the proposal resolved",
+            "Everything still reported",
+        );
+        assert!(!resolved.contains("LINT_SENTINEL"));
+        assert!(measured.contains("REFERENCE_SENTINEL") && measured.contains("UNSAFE_SENTINEL"));
+        assert!(measured.contains("Miri on the proposal: `ub`"));
+        assert!(!measured.contains("has not been compiled") && !measured.contains("was not run"));
+        for typed in [
+            "find_references_count",
+            "proposed_code_compiles",
+            "miri_checked",
+            "unsafe_blocks",
+        ] {
+            assert!(
+                !measured.contains(typed),
+                "the model is not asked to type {typed}"
+            );
+        }
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(

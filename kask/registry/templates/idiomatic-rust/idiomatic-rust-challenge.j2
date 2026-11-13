@@ -1,4 +1,4 @@
-{# goal: Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. #}
+{# goal: Adversarial review of a Rust design proposal against what the compiler, clippy and find_references measured on it. Find gaps, test edge cases, challenge assumptions, identify deeper connections, and produce refinement directives, citing the diagnostic code behind every compiler-confirmed finding. #}
 [inference]
 contract:
   input:
@@ -6,38 +6,16 @@ contract:
     design_proposal: object
     assessment: object
     design_constraints: object
-    clippy_lints: array
+    compiler_facts: object
+    reference_results: array
   output:
     gaps: array
     edge_cases: array
     assumptions_challenged: array
     connections: array
     refinement_directives: array
-    compiler_grounding: object
-    miri_checked: boolean
-    unsafe_blocks: integer
     reasoning: string
 ---
-{#
-  Compiler grounding: this phase uses two extrinsic oracles:
-    1. find_references (LSP) — the agent should run `find_references` on
-       the types being changed to find the actual blast radius, not the
-       LLM's guess. How many call sites will be affected?
-    2. clippy — if clippy_lints are available, they are a codified subset
-       of idiomatic Rust. Clippy's warnings are ground-truth design
-       feedback that the LLM's critique cannot match. Each clippy warning
-       maps to a design principle:
-         - clippy::needless_borrow → Principle 5 (explicit over implicit)
-         - clippy::unwrap_used → Principle 7 (errors as values)
-         - clippy::option_option → Principle 1 (invalid states)
-         - clippy::box_collection → Principle 4 (zero-cost abstraction)
-         - clippy::trait-duplication-in-bounds → Principle 6 (composition)
-
-  The agent should also run `diagnostics` on any proposed code to verify
-  it compiles — a design that doesn't compile is a critical gap, not a
-  style issue.
-#}
-
 You are a type-driven adversarial reviewer. Your job is to find what's wrong — not to be pleasant, to be correct. Every design has gaps. Every type has edge cases. Every assumption has a counterexample. Find them.
 
 ## Design Problem
@@ -62,39 +40,78 @@ You are a type-driven adversarial reviewer. Your job is to find what's wrong —
 {{ design_constraints | tojson }}
 {% endif %}
 
-{% if clippy_lints and clippy_lints | length > 0 %}
-## Clippy Lints (ground-truth idiomatic Rust feedback)
+## What the Compiler and Clippy Measured
 
-The following clippy lints are ground truth — they are a codified subset
-of idiomatic Rust. Each warning is a design issue the compiler has
-detected. Map each to a design principle and assess whether the proposed
-design addresses it.
+{% if compiler_facts.proposed_status == "not_run" %}
+The proposal has not been compiled: it was not applied to the crate, so neither
+the compiler nor clippy has seen it. This critique is your own reasoning only.
+Leave every `diagnostic_codes` list empty, and say in `reasoning` that the
+proposal is unverified.
+{% elif compiler_facts.proposed_status == "unexplained_failure" %}
+The build of the proposal failed without reporting a diagnostic (a toolchain or
+dependency failure, not a finding about the design). Treat the proposal as
+unverified: leave every `diagnostic_codes` list empty and say so in `reasoning`.
+{% else %}
+The proposal was applied and compiled. These lists are measured; type no count
+of them and do not restate them as your own findings.
 
+Compile errors — a design that does not compile is a critical gap, not a style issue:
 ```json
-{{ clippy_lints | tojson }}
+{{ compiler_facts.compile_errors | tojson }}
+```
+Lints the proposal introduced (not in the baseline):
+```json
+{{ compiler_facts.new_lints | tojson }}
+```
+Baseline lints the proposal resolved:
+```json
+{{ compiler_facts.resolved_lints | tojson }}
+```
+Everything still reported on the proposal:
+```json
+{{ compiler_facts.diagnostics | tojson }}
 ```
 
-For each clippy warning:
-1. Which design principle does it violate?
-2. Does the proposed design address it?
-3. If not, what refinement is needed?
-{% else %}
-## Clippy Lints
+Clippy is a codified subset of idiomatic Rust. Map each lint to a principle, for example:
+- `clippy::needless_borrow` → Principle 5 (explicit over implicit)
+- `clippy::unwrap_used` → Principle 7 (errors as values)
+- `clippy::option_option` → Principle 1 (invalid states)
+- `clippy::box_collection` → Principle 4 (zero-cost abstraction)
+- `clippy::trait_duplication_in_bounds` → Principle 6 (composition)
 
-No clippy lints provided. In Zed sessions, run `./script/clippy` on the
-target code before this step — clippy's warnings are ground-truth design
-feedback. Without them, your critique is intrinsic (LLM reasoning) only
-and may miss issues clippy would catch.
+Each compile error and each introduced lint needs a gap and a refinement
+directive. An empty list is a measurement: nothing of that kind was reported.
 {% endif %}
 
-## Compiler Verification
+## Blast Radius
 
-The agent should run `find_references` on the types being changed (to find
-the actual blast radius) and `diagnostics` on any proposed code (to verify
-it compiles). Record the results in compiler_grounding:
-- How many call sites are affected by the proposed type changes?
-- Does the proposed code compile? (If not, this is a critical gap.)
-- Are there new diagnostics introduced by the proposed design?
+{% if reference_results | length == 0 %}
+`find_references` was not run on the types being changed. The blast radius is
+unknown: do not estimate a number of call sites.
+{% else %}
+The `find_references` output for the types being changed, as returned, one
+entry per symbol asked. An entry saying no references were found is a
+measurement: nothing else uses that type.
+```json
+{{ reference_results | tojson }}
+```
+Name the call sites the proposal breaks or forces to change; cite them in the
+gap's `location`.
+{% endif %}
+
+{% if compiler_facts.unsafe_lines | length > 0 %}
+## `unsafe` in the Proposal
+
+These lines contain `unsafe` (Principle 8 — unsafe as contract):
+```json
+{{ compiler_facts.unsafe_lines | tojson }}
+```
+For each: is the safety invariant documented, and does it hold on every path
+that reaches the block? An undocumented or unheld invariant is a critical gap.
+Miri on the proposal: `{{ compiler_facts.miri }}` (`ub` — Miri reported
+undefined behaviour, a critical gap; `passed`; `failed` — Miri could not run
+to completion; `not_run`). Anything but `passed` leaves soundness unchecked.
+{% endif %}
 
 ## Challenge Method
 
@@ -129,45 +146,33 @@ Rust concepts rarely exist in isolation. Connect this design to broader patterns
 
 ### 5. Produce Refinement Directives
 
-For each gap or edge case, state: what specifically must change, which principle it addresses, and how much it improves the design. These directives feed back into the design phase in the next iteration.
-
-### 6. Check `unsafe` Soundness with Miri
-
-Where the proposed code contains `unsafe` blocks, run `cargo +nightly miri` on
-the target (Miri requires the nightly toolchain — skip loudly if it is absent).
-A Miri-reported undefined behaviour is a critical gap, not a style issue.
-Record the result in `miri_checked` and the block count in `unsafe_blocks`.
+For each gap or edge case, state: what specifically must change, which principle it addresses, and how much it improves the design. These directives feed the next inquiry.
 
 ## Output
 
 ```json
 {
   "gaps": [
-    {"location": "specific type/function", "gap": "what's missing", "severity": "critical|high|medium", "compiler_confirmed": true}
+    {"location": "specific type/function", "gap": "what's missing", "severity": "critical|high|medium", "diagnostic_codes": []}
   ],
   "edge_cases": [
-    {"scenario": "specific input or state", "outcome": "what happens", "principle_violated": 1, "compiler_confirmed": false}
+    {"scenario": "specific input or state", "outcome": "what happens", "principle_violated": 1, "diagnostic_codes": []}
   ],
   "assumptions_challenged": [
-    {"assumption": "what the proposal claimed", "counterexample": "why it doesn't hold", "validated": false, "compiler_evidence": "rust-analyzer diagnostic or clippy lint if any"}
+    {"assumption": "what the proposal claimed", "counterexample": "why it doesn't hold", "validated": false}
   ],
   "connections": [
     {"concept": "related Rust concept", "how_it_relates": "why this connection matters", "reference": "std type / crate / RFC"}
   ],
   "refinement_directives": [
-    {"directive": "specific change to make", "targets": "which part of the design", "principle_addressed": 1, "expected_improvement": "high|medium|low", "compiler_action": "related LSP code action or clippy lint if any"}
+    {"directive": "specific change to make", "targets": "which part of the design", "principle_addressed": 1, "expected_improvement": "high|medium|low"}
   ],
-  "compiler_grounding": {
-    "find_references_count": 12,
-    "proposed_code_compiles": true,
-    "new_diagnostics_introduced": 0,
-    "clippy_warnings_addressed": 3,
-    "clippy_warnings_remaining": 1
-  },
-  "miri_checked": true,
-  "unsafe_blocks": 2,
-  "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite compiler evidence where available."
+  "reasoning": "Summary of the adversarial review — what's solid, what's broken, what needs another pass. Cite the measured diagnostics where they bear on it."
 }
 ```
 
-`compiler_confirmed`: true if a compiler diagnostic or clippy lint confirms this gap (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic — lower confidence).
+`diagnostic_codes`: the codes, copied exactly from the measured lists above,
+that show this gap or edge case. An empty list means you identified it without
+the compiler — lower confidence. The caller's gate counts a finding as
+compiler-confirmed only when every code it cites is in the measured list, and
+reports any cited code that is not.

@@ -28,12 +28,17 @@ the LLM assesses and critiques its own proposals. This is the Dunning-Kruger
 trap: the LLM may confidently propose a design the borrow checker would reject.
 The compiler is the extrinsic oracle that closes the gap:
 
-| Phase | LSP tool | What it grounds |
-|-------|----------|-----------------|
-| Inquiry | `diagnostics` | Compiler errors/warnings as the starting point for assessment |
+| Phase | Tool | What it grounds |
+|-------|------|-----------------|
+| Inquiry | `./script/clippy -p <crate> --message-format=json` on the existing code (the baseline) | rustc errors and warnings and clippy lints, each with its code, file and line — the starting point for the assessment |
+| Inquiry | `go_to_definition` | The ownership graph as the code has it |
 | Design | `get_code_actions` | Compiler-verified refactor suggestions as design starting points |
-| Challenge | `find_references` + `diagnostics` | Actual blast radius + compile verification of proposed code |
-| Challenge | `./script/clippy` (not LSP — the codified-lint oracle) | Codified idiomatic Rust lints as ground-truth design feedback |
+| Challenge | the same clippy command on the applied proposal | Whether the proposal compiles, which lints it introduces and which it resolves |
+| Challenge | `find_references` | The actual blast radius |
+| Challenge | `cargo +nightly miri test` where the proposal contains `unsafe` | Undefined behaviour |
+
+One capture serves both oracles: clippy runs rustc, so its JSON output carries
+rustc's errors and warnings as well as the lints.
 
 Each compiler diagnostic is interpreted through the type-driven lens:
 - Borrow checker error → Principle 2 (ownership is architecture)
@@ -45,18 +50,19 @@ Each compiler diagnostic is interpreted through the type-driven lens:
 
 ## D/P labelling
 
-Design proposals (type-driven solutions, LSP-informed code actions) and the
-adversarial review's verdicts are P — judgment, critiqued by the compiler and
-clippy as the extrinsic oracles. The verification is D: diagnostics errors on
-the proposed code, new `./script/clippy` warnings versus the baseline, and
-compiler-confirmed findings, counted from the actual tool output and computed
-with `lisp_eval` — a proposal the compiler has not seen is unreviewed, and a
-critique the compiler contradicts is overruled.
+Design proposals and the adversarial review's findings are P — judgment,
+critiqued by the compiler and clippy. Everything the gates read is D: the
+**Compiler facts** filter (`jq`) turns the captured tool output into statuses,
+code lists and counts, and `IR-1` and `IR-2` (`lisp_eval`) decide from those
+and from the templates' outputs as returned. No count, status or flag is
+typed. A finding is compiler-confirmed only when every diagnostic code it
+cites is in the measured list; a proposal the compiler has not seen is
+`undetermined`, never converged.
 
 ## Initial and target condition
 
-- **Initial condition:** the Rust design problem and constraints, actual existing/proposed code, baseline compiler diagnostics and clippy output, ownership/invariant/error-domain observations, and the real reference blast radius.
-- **Target condition:** `IR-1` and `IR-2` pass and the Improvement Measure returns `converged`: the proposed code compiles, diagnostics contain no errors, clippy adds no warning, and all findings are reconciled with the compiler. `continue` re-enters inquiry with the challenge directives; `oscillating` escalates; `undetermined` remains unverified. Three iterations is the bound.
+- **Initial condition:** the Rust design problem and constraints, the existing code, and a run directory holding the baseline capture of that code.
+- **Target condition:** `IR-2` returns `converged`: the applied proposal compiles, introduces no lint the baseline did not have, at least one changed type had its references examined, no API-guideline violation is left `open`, and Miri reported no undefined behaviour. `continue` re-enters inquiry with the challenge directives; `oscillating` and `stop_bound` go to the operator; `undetermined` is reported as unverified. Three iterations is the bound.
 
 ## When to Use
 
@@ -74,84 +80,186 @@ critique the compiler contradicts is overruled.
 ## PDCA Loop
 
 ```
-Plan:  Phase 1 — Inquiry   → Assess against the eight design principles using rust-analyzer diagnostics as ground truth
-Do:    Phase 2 — Design    → Propose type-driven solutions informed by LSP code actions
-Check: Phase 3 — Challenge → Adversarial review verified by find_references, diagnostics, and clippy
-Check: Phase 4 — Converge  → evaluate the Improvement Measure gate (compiler-confirmed finding stability)
-Act:   Phase 5 — Loop      → Re-enter inquiry (step 1) with refinement directives from challenge
+Plan:  Inquiry   → capture the baseline, assess against the eight principles, gate with IR-1
+Do:    Design    → propose type-driven solutions informed by get_code_actions
+Check: Challenge → apply the proposal, capture it, review it adversarially, gate with IR-2
+Act:   Loop      → on `continue`, re-enter inquiry with the challenge's directives
 ```
 
-The loop targets step 1 (inquiry), not step 2 (design), so challenge findings
-re-inform the assessment. The agent re-runs `diagnostics` to check whether the
-compiler's view has changed. This closes the feedback loop properly: challenge
-findings → re-assess → re-design → re-challenge.
+The loop targets inquiry, not design, so challenge findings re-inform the
+assessment, and the inquiry reads the diagnostics of the code as it now stands.
+At most three iterations: `IR-2` counts them from the experiment record and
+returns `stop_bound` on a third iteration that still has an open reason, and on
+any attempt at a fourth.
 
-## Improvement Measure
+## Run directory and compiler facts
 
-**Gate (D — the compiler and clippy are the oracles):** after each challenge, count from the actual tool output: `diagnostics` errors on the proposed code, new `./script/clippy` warnings versus the baseline, and compiler-confirmed findings. Compute with `lisp_eval`:
-- form: `(cond ((not clippy_ran) "undetermined") ((> errors 0) "continue") ((> new_warnings 0) "continue") ((and (>= (length confirmed) 3) (< (* (- (nth (- (length confirmed) 2) confirmed) (nth (- (length confirmed) 3) confirmed)) (- (nth (- (length confirmed) 1) confirmed) (nth (- (length confirmed) 2) confirmed))) 0)) "oscillating") (t "converged"))`
-- env: `{ "clippy_ran": <true only if clippy ran on the proposed code>, "errors": <diagnostics errors>, "new_warnings": <clippy warnings not in the baseline>, "confirmed": [<compiler-confirmed finding counts, full history oldest first — the form reads the LAST three, so a tail oscillation is never hidden by earlier iterations>] }`
+Each design problem has one run directory,
+`~/Documents/zk-data/skills/idiomatic-rust/{date}-{run}/` (`{run}` a readable
+slug naming the problem). Create it with `terminal` — the built-in file tools
+cannot write there — with its five capture files empty:
 
-**Max iterations**: 3. `oscillating` (the confirmed-finding count went up then down, or down then up) escalates to the operator rather than looping. `undetermined` — no clippy run, so the challenge was LLM-only — never counts as converged. Gate inquiry completeness via `IR-1` (`(and diagnostics_ran (= unexplained_diagnostics 0) (> invariants_count 0))`) and challenge compile/blast-radius via `IR-2` (`(and proposed_code_compiles (= new_diagnostics 0) (> find_references_count 0))`) — `IR-2` requires at least one reference examined, so a challenge that never ran `find_references` cannot pass.
+```
+mkdir -p <run_dir> && touch <run_dir>/baseline.jsonl <run_dir>/proposed.jsonl <run_dir>/unsafe.txt <run_dir>/miri.txt <run_dir>/experiments.jsonl
+```
+
+| File | Holds | Written |
+|------|-------|---------|
+| `baseline.jsonl` | the existing code's diagnostics | once, before any edit |
+| `proposed.jsonl` | the proposal's diagnostics | after each applied revision |
+| `unsafe.txt` | the proposal's `unsafe` lines | after each applied revision |
+| `miri.txt` | Miri's output | only when `unsafe.txt` is not empty |
+| `experiments.jsonl` | the loop's history | one line after each `IR-2` (see *Experiment record*) |
+
+```
+./script/clippy -p <crate> --message-format=json > <run_dir>/baseline.jsonl 2> <run_dir>/baseline.err
+./script/clippy -p <crate> --message-format=json > <run_dir>/proposed.jsonl 2> <run_dir>/proposed.err
+grep -n -w unsafe <each file the proposal changed> > <run_dir>/unsafe.txt
+cargo +nightly miri test -p <crate> > <run_dir>/miri.txt 2>&1 && echo miri-exit=0 >> <run_dir>/miri.txt || echo miri-exit=nonzero >> <run_dir>/miri.txt
+```
+
+The clippy command exits nonzero whenever it reports anything (it denies
+warnings), and `grep` exits 1 when it finds nothing; neither is a failure of
+the capture. An empty `baseline.jsonl`, `proposed.jsonl` or `miri.txt` means that
+tool did not run; an empty `unsafe.txt` means the grep found no `unsafe` line
+or was not run, so run it after every applied revision.
+
+### Compiler facts
+
+Save the filter below verbatim as `<run_dir>/compiler-facts.jq` when the run
+directory is created, and run it after every capture:
+
+```
+jq -n --rawfile baseline <run_dir>/baseline.jsonl --rawfile proposed <run_dir>/proposed.jsonl --rawfile unsafe_grep <run_dir>/unsafe.txt --rawfile miri <run_dir>/miri.txt --rawfile record <run_dir>/experiments.jsonl '$ARGS.named' | jq -c -f <run_dir>/compiler-facts.jq > <run_dir>/facts.json
+```
+
+```jq
+def records: split("\n") | map(fromjson? | select(type == "object"));
+def diagnostics: map(select(.reason == "compiler-message") | .message
+    | select((.level == "error" or .level == "warning") and (.spans | length) > 0)
+    | {code:(.code.code // (if .level == "error" then "rustc-error" else "rustc-warning" end)),
+       level:.level, message:.message,
+       file:([.spans[] | select(.is_primary) | .file_name][0]),
+       line:([.spans[] | select(.is_primary) | .line_start][0])}) | unique;
+def status: if (any(.[]; .reason == "build-finished") | not) then "not_run"
+  elif any(.[]; .reason == "build-finished" and .success == false) and (diagnostics | length) == 0
+  then "unexplained_failure" else "ran" end;
+def hard: .code == "rustc-error" or (.code | test("^E[0-9]{4}$"));
+def key: [.code, .file, .message] | tojson;
+def tally: reduce .[] as $d ({}; .[$d | key] += 1);
+def beyond($seen): group_by(key)
+  | map((length - ($seen[.[0] | key] // 0)) as $n | select($n > 0) | .[0] + {count:$n});
+def miri_status: if test("^\\s*$") then "not_run" elif test("Undefined Behavior") then "ub"
+  elif test("miri-exit=0\\s*$") then "passed" else "failed" end;
+(.baseline | records) as $b | (.proposed | records) as $p | (.record | records) as $r
+| if all($r | to_entries[]; .value.iteration == .key + 1 and (.value.confirmed | type) == "number")
+  then . else error("experiment record out of sequence or without a confirmed count") end
+| ($b | status) as $bs | ($p | status) as $ps
+| ($b | diagnostics) as $bd | ($p | diagnostics) as $pd
+| (if $ps == "ran" then $pd else $bd end) as $current
+| [$bd[] | select(hard | not)] as $bl | [$pd[] | select(hard | not)] as $pl
+| {baseline_status:$bs, proposed_status:$ps,
+   open_codes:($current | map(.code) | unique),
+   diagnostics:$current,
+   compile_errors:(if $ps == "ran" then [$pd[] | select(hard)] else [] end),
+   new_lints:(if $ps == "ran" then $pl | beyond($bl | tally) else [] end),
+   resolved_lints:(if $ps == "ran" then $bl | beyond($pl | tally) else [] end),
+   unsafe_lines:(.unsafe_grep | split("\n")
+     | map(select(length > 0 and (test("^([^:]+:)?[0-9]+:\\s*//") | not)))),
+   miri:(.miri | miri_status)}
+| . + {gate:{baseline_status, proposed_status, open_codes, miri,
+   compile_errors:(.compile_errors | length), new_lints:(.new_lints | length),
+   unsafe_lines:(.unsafe_lines | length),
+   history:($r | map(.confirmed)), iteration:(($r | length) + 1)}}
+```
+
+`facts.json` is the templates' `compiler_facts` input, whole. It holds:
+
+- `baseline_status`, `proposed_status` — `ran`, `not_run` (the capture is empty or holds no build result), or `unexplained_failure` (the build failed and reported no diagnostic: a toolchain or dependency failure, not a finding).
+- `diagnostics`, `open_codes` — what is reported on the code as it now stands: the proposal's diagnostics once it has run, the baseline's before. With warnings denied every lint arrives at level `error`, so the filter tells compile errors from lints by code (`E` plus four digits, or no code at all), never by level.
+- `compile_errors`, `new_lints` (reported on the proposal more times than on the baseline, matched by code, file and message so that a moved line is not a new lint), `resolved_lints`.
+- `unsafe_lines` (comment lines dropped), `miri` (`not_run`, `passed`, `ub`, or `failed` when Miri did not run to completion).
+- `gate` — the statuses, the codes, the counts of the lists above, and `history` and `iteration` read from the experiment record. This object is what the two gates take. The filter refuses a record whose lines are out of sequence or lack a `confirmed` count.
+
+## Gates
+
+Both gates take the `gate` object of `facts.json` unchanged (print it with
+`jq -c .gate <run_dir>/facts.json`) beside the template outputs as returned.
+Type no count, status or code into an env.
+
+### IR-1 — the inquiry accounts for what the compiler reported
+
+```lisp
+(begin (define codes-of (lambda (rows) (if (is_null rows) (list) (append (assoc! "diagnostic_codes" (car rows)) (codes-of (cdr rows)))))) (define without (lambda (xs ys) (if (is_null xs) (list) (if (member (car xs) ys) (without (cdr xs) ys) (cons (car xs) (without (cdr xs) ys)))))) (let ((grounded (string= (assoc! "baseline_status" gate) "ran")) (unexplained (without (assoc! "open_codes" gate) (append (codes-of principle_violations) (codes-of invalid_states))))) (list (list "verdict" (cond ((= (length invariants) 0) "incomplete") ((not grounded) "ungrounded") ((not (is_null unexplained)) "incomplete") (t "pass"))) (list "unexplained_codes" unexplained) (list "invariants" (length invariants)))))
+```
+
+- env: `{ "gate": <facts.json's gate>, "invariants": <inquiry output>, "principle_violations": <inquiry output>, "invalid_states": <inquiry output> }`
+- `pass` — at least one invariant, the baseline ran, and every open diagnostic code is cited by a principle violation or an invalid state.
+- `incomplete` — no invariant was listed, or `unexplained_codes` names diagnostics the assessment does not account for. Re-run the inquiry once with those codes named in `iteration_focus`; a second `incomplete` stops the run and is reported with the codes.
+- `ungrounded` — the baseline did not run. The design may proceed, and the report says it is unverified; `IR-2` will return `undetermined`.
+
+### IR-2 — convergence
+
+```lisp
+(begin (define codes-of (lambda (rows) (if (is_null rows) (list) (append (assoc! "diagnostic_codes" (car rows)) (codes-of (cdr rows)))))) (define without (lambda (xs ys) (if (is_null xs) (list) (if (member (car xs) ys) (without (cdr xs) ys) (cons (car xs) (without (cdr xs) ys)))))) (define confirmed-in (lambda (rows codes) (if (is_null rows) 0 (+ (if (and (not (is_null (assoc! "diagnostic_codes" (car rows)))) (is_null (without (assoc! "diagnostic_codes" (car rows)) codes))) 1 0) (confirmed-in (cdr rows) codes))))) (define open-in (lambda (rows) (if (is_null rows) (list) (if (member (assoc! "status" (car rows)) (list "fixed" "justified")) (open-in (cdr rows)) (cons (assoc! "guideline" (car rows)) (open-in (cdr rows))))))) (let ((open (assoc! "open_codes" gate)) (findings (append gaps edge_cases)) (history (assoc! "history" gate)) (iteration (assoc! "iteration" gate)) (miri (assoc! "miri" gate)) (has-unsafe (> (assoc! "unsafe_lines" gate) 0))) (let ((confirmed (confirmed-in findings open)) (unsupported (without (codes-of findings) open)) (open-guidelines (open-in guideline_violations))) (let ((series (append history (list confirmed))) (reasons (append (if (> (assoc! "compile_errors" gate) 0) (list "compile_errors") (list)) (if (> (assoc! "new_lints" gate) 0) (list "new_lints") (list)) (if (= (length reference_results) 0) (list "references_not_examined") (list)) (if (is_null open-guidelines) (list) (list "guideline_open")) (if (and has-unsafe (string= miri "ub")) (list "miri_ub") (list))))) (let ((n (length series))) (list (list "verdict" (cond ((> iteration 3) "stop_bound") ((or (not (string= (assoc! "baseline_status" gate) "ran")) (not (string= (assoc! "proposed_status" gate) "ran"))) "undetermined") ((and (not (is_null reasons)) (>= iteration 3)) "stop_bound") ((not (is_null reasons)) "continue") ((and (>= n 3) (< (* (- (nth (- n 2) series) (nth (- n 3) series)) (- (nth (- n 1) series) (nth (- n 2) series))) 0)) "oscillating") (t "converged"))) (list "reasons" reasons) (list "iteration" iteration) (list "confirmed" confirmed) (list "unsupported_citations" unsupported) (list "open_guidelines" open-guidelines) (list "notes" (if (and has-unsafe (member miri (list "not_run" "failed"))) (list "unsafe_not_miri_checked") (list)))))))))
+```
+
+- env: `{ "gate": <facts.json's gate>, "gaps": <challenge output>, "edge_cases": <challenge output>, "guideline_violations": <design output>, "reference_results": <the list passed to the challenge render> }`
+- Run it after every challenge. `verdict`, in the form's clause order:
+  - `stop_bound` — this would be a fourth iteration, or it is the third and `reasons` is not empty. Stop; report the reasons to the operator.
+  - `undetermined` — the baseline or the proposal did not run (the proposal was not applied, or its build failed without a diagnostic). Never converged: report the design as unverified. If the cause is a failed capture, repeat the capture once and run the gate again.
+  - `continue` — `reasons` lists what is open: `compile_errors`, `new_lints`, `references_not_examined` (no `find_references` output was passed), `guideline_open` (`open_guidelines` names the rows neither `fixed` nor `justified`), `miri_ub`. Write the experiment record and re-enter inquiry.
+  - `oscillating` — the confirmed-finding count went up then down, or down then up, across the last three iterations. Goes to the operator rather than looping.
+  - `converged`.
+- `confirmed` counts the gaps and edge cases whose cited codes are all in `open_codes`; a finding with an empty citation list is unconfirmed. `unsupported_citations` lists cited codes the compiler did not report: those findings are unconfirmed, and the report says so.
+- `notes` carries `unsafe_not_miri_checked` when the proposal has `unsafe` lines and Miri did not pass or report: a `converged` verdict with that note is reported as converged with `unsafe` soundness unchecked.
+- The gate checks that a `find_references` output was passed, not what it says, and that a guideline row is marked `fixed` or `justified`, not whether the justification is sound. Those remain judgment.
 
 ## Experiment record
 
-The loop is durable: every challenge appends **one** record to
-`.agents/skills/idiomatic-rust/experiments.jsonl` (append-only, one JSON object
-per line, oldest first):
+After each `IR-2`, append one line to `<run_dir>/experiments.jsonl`, taking
+`iteration` and `confirmed` from the gate's result:
 
-```json
-{"iteration": 1, "next_step": "...", "prediction": "...", "outcome": "..."}
+```
+jq -n -c --argjson iteration <IR-2 iteration> --argjson confirmed <IR-2 confirmed> --arg outcome <IR-2 verdict> --arg next_step "<the single change the challenge prescribes>" --arg prediction "<what that change is expected to do to the next gate>" '$ARGS.named' >> <run_dir>/experiments.jsonl
 ```
 
-- `next_step` — the single change the challenge prescribes.
-- `prediction` — what that change is expected to do to the gate.
-- `outcome` — the observed gate result (`converged` / `continue` / `oscillating` / `undetermined`).
-
-Write the record **after** the gate runs, so `outcome` is observed rather than
-predicted. The inquiry phase reads the most recent record and carries its
-`outcome` into `iteration_focus`; a session that starts cold begins at
-iteration 1. Never rewrite a record — a changed prediction is a new iteration.
-The `iteration` field is what makes the three-iteration bound visible: stop and
-escalate when the next record would be iteration 4.
+Write it after the gate runs, so `outcome` is observed rather than predicted.
+Never rewrite a line — a changed prediction is a new iteration. The record is
+what makes the three-iteration bound hold: the filter derives `iteration` and
+`history` from it, so a resumed session continues the count instead of
+restarting it. A new design problem starts a new run directory and a new
+record; a record is never shared between problems, and nothing is written to
+the skill folder.
 
 ## Instructions
 
 ### idiomatic-rust-inquiry
 
-**Read the experiment record first.** If `.agents/skills/idiomatic-rust/experiments.jsonl` exists, read the most recent record and carry its `outcome` into `iteration_focus`; a session that starts cold begins at iteration 1.
-
-1. **Run `diagnostics`** on the target code (in Zed sessions). The compiler's errors and warnings are the starting point — not your guess.
-2. Evaluate the current or proposed design against each of the eight design principles, asking if it satisfies the principle, what specific states or relationships violate it, and the minimum change needed to satisfy it. Interpret each compiler diagnostic through the type-driven lens.
-3. List all invariants that must always be true.
-4. Identify all invalid states currently possible that should never occur.
-5. Map the ownership graph, detailing who creates, observes, mutates, and destroys each value. Use `go_to_definition` to trace the actual ownership graph through the codebase.
-6. Define the error domain, specifying what can fail, the handling level, and any silently swallowed errors.
-7. Rank principle violations by severity. Mark each as `compiler_confirmed` (extrinsic) or LLM-identified only (intrinsic — lower confidence).
-8. Order improvement targets by impact, specifying the exact type, ownership, or error changes needed. Note related LSP code actions where available.
+1. Create the run directory, save the filter, and capture the baseline before any edit; on a later iteration, the captures already hold the current state. Run the **Compiler facts** filter.
+2. Use `go_to_definition` to trace the ownership graph through the codebase. Issue it together with the baseline capture: neither reads the other.
+3. Set `iteration_focus`: empty on the first iteration; afterwards, the previous challenge's `refinement_directives` and the last experiment record's `next_step`, `prediction` and `outcome`.
+4. Render `idiomatic-rust/idiomatic-rust-inquiry` with `facts.json` as `compiler_facts` and the code as it now stands as `existing_code`, and execute it: evaluate the design against each of the eight principles; list the invariants; identify the invalid states; map who creates, observes, mutates and destroys each value; define the error domain; rank the violations; order the improvement targets. Cite the diagnostic codes behind each compiler-confirmed entry.
+5. Run `IR-1`.
 
 ### idiomatic-rust-design
 
-1. **Run `get_code_actions`** on the target code (in Zed sessions). Rust-analyzer's refactor suggestions are compiler-verified starting points.
+1. Run `get_code_actions` on the types the improvement targets name. Rust-analyzer's refactor suggestions are compiler-verified starting points; pass each output as returned in `code_actions`.
 2. Design types that make wrong usage impossible by replacing `String` with validating newtypes, `bool` with two-variant enums, `Vec<T>` with non-empty types, raw integers with unit-aware newtypes, and invalid `Option<T>` with non-nullable types. Where a plain replacement type is not enough, extend the same move with the deeper pattern menu (absorbed from actionbook/rust-skills `m05-type-driven`): typestate — state machines as type parameters so invalid transitions do not compile (`Connection<Disconnected>` consumed to produce `Connection<Connected>`); sealed traits — a closed implementor set without closing use (`mod private { pub trait Sealed {} }`); marker traits — compile-time capability flags (`trait Validated {}`); `PhantomData<T>` — type-level relationships at zero runtime cost; ZST markers — unit structs as compile-time tags (`struct Invariant;`). Evaluate and extend the compiler's suggestions against the design goals.
 3. Map the ownership DAG for each value, explicitly choosing single owners, shared immutable access, shared mutable access, or borrowed access.
 4. Ensure every fallible function returns `Result<T, E>`, using `thiserror` for libraries and `anyhow` for applications, avoiding `unwrap()` in library code, and documenting all panics.
 5. Design traits that define capabilities rather than taxonomies, preferring many small traits, using `impl Trait` in return positions, deriving common traits, and implementing `From<T>` for conversions.
 6. Reference the current Rust ecosystem for each design decision, citing std library patterns, key crates, relevant RFCs, and API guidelines.
 7. Record which design decisions were compiler-suggested vs LLM-originated in `compiler_actions_used`.
-8. **Run the Rust API Guidelines checklist** against the proposed public API (https://rust-lang.github.io/api-guidelines/checklist.html). Record every violated guideline in `guideline_violations` with its guideline ID and the proposed item; a public API that violates a guideline without a recorded justification is not converged.
+8. **Run the Rust API Guidelines checklist** against the proposed public API (https://rust-lang.github.io/api-guidelines/checklist.html). Record every violated guideline in `guideline_violations` with its guideline ID, the proposed item and a `status`: `fixed`, `justified`, or `open`. `IR-2` does not converge while a row is `open`.
 
 ### idiomatic-rust-challenge
 
-1. **Run `find_references`** on the types being changed (in Zed sessions). The actual blast radius — not your guess.
-2. **Run `diagnostics`** on any proposed code. A design that doesn't compile is a critical gap, not a style issue.
-3. **Run `./script/clippy`** on the target code (in Zed sessions). Clippy's lints are ground-truth idiomatic Rust feedback. Map each warning to a design principle.
-4. Find gaps where the design fails to address the original problem, misses scenarios, or leaves state transitions unhandled, citing specific types or functions. Mark each as `compiler_confirmed` where a diagnostic or clippy lint confirms it.
-5. Test edge cases for each type, considering empty inputs, maximum values, concurrent access, errors at each step, and mid-operation shutdowns.
-6. Challenge assumptions regarding correctness, performance, or safety by writing counterexamples that attempt to reach invalid states or expose hidden costs.
-7. Find deeper connections to broader Rust patterns, comparing the design to std library types, popular crates, applicable RFCs, and API guidelines.
-8. Produce refinement directives for each gap or edge case, stating the specific change required, the principle addressed, and the expected improvement. Note related compiler actions where available.
-9. **Check `unsafe` soundness with Miri** where the proposed code contains `unsafe` blocks: run `cargo +nightly miri` on the target (Miri requires the nightly toolchain — skip loudly if it is absent). A Miri-reported undefined behaviour is a critical gap. Record the result in `miri_checked` and the block count in `unsafe_blocks`.
+1. **Apply the proposal to the crate** with `edit_file`, so the compiler can see it. Applying edits the working tree: do it when the request is to make the change. When the request is for a design only, do not apply — `IR-2` then returns `undetermined`, and the design is delivered as unverified with the offer to apply it.
+2. Issue together, since none reads another's result: the clippy capture into `proposed.jsonl`, **`find_references`** on each type being changed (pass each output as returned in `reference_results`), and the `unsafe` grep. Then run Miri if `unsafe.txt` is not empty, and run the **Compiler facts** filter.
+3. Render `idiomatic-rust/idiomatic-rust-challenge` with the new `facts.json` and execute it: find the gaps where the design fails the original problem, misses scenarios or leaves state transitions unhandled, citing specific types or functions and the diagnostic codes that confirm them; test edge cases for each type (empty inputs, maximum values, concurrent access, errors at each step, mid-operation shutdown); challenge the proposal's claims of correctness, performance and safety with counterexamples; connect the design to std types, popular crates, RFCs and API guidelines; produce a refinement directive for each gap or edge case.
+4. Run `IR-2`, then append the experiment record.
+5. If the run ends on anything but `converged` with `compile_errors` among the reasons, the tree must not be left broken: undo your own edits with `edit_file` and say so in the report.
 
 ## Curated external idiom annex
 
@@ -179,47 +287,46 @@ together.
 
 | Template | Purpose |
 |----------|---------|
-| `idiomatic-rust-inquiry.j2` | Assess a Rust design problem against the eight design principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the type-driven lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. Produce a scored design assessment with specific improvement targets, marking each as compiler-confirmed (extrinsic) or LLM-identified (intrinsic — lower confidence). |
-| `idiomatic-rust-design.j2` | Propose type-driven Rust solutions with code examples, informed by LSP code actions. Rust-analyzer's refactor suggestions (replace with enum, extract struct, add missing trait impl) are compiler-verified starting points. Apply algebraic types, ownership patterns, error propagation, and trait design. Reference std library patterns, ecosystem best practices, and relevant RFCs. Record which decisions were compiler-suggested vs LLM-originated. |
-| `idiomatic-rust-challenge.j2` | Adversarial review of a Rust design proposal, grounded by compiler feedback. Uses find_references (actual blast radius, not LLM's guess), diagnostics (compile verification of proposed code), and clippy (codified idiomatic Rust lints as ground-truth design feedback). Find gaps, test edge cases, challenge assumptions, identify deeper connections. Produce a scored critique with specific refinement directives, marking each as compiler-confirmed or LLM-identified. |
+| `idiomatic-rust-inquiry.j2` | Assess the design problem against the eight principles, starting from the measured diagnostics. Returns invariants, invalid states, the ownership graph, the error domain, ranked principle violations and improvement targets; each compiler-confirmed entry cites its diagnostic codes. |
+| `idiomatic-rust-design.j2` | Propose type-driven solutions with code examples, informed by the `get_code_actions` output. Returns the design, its rationale, ecosystem references, the code actions used, and the API-guideline rows with a `status`. |
+| `idiomatic-rust-challenge.j2` | Adversarial review of the proposal against what the compiler, clippy, `find_references` and Miri measured on it. Returns gaps, edge cases, challenged assumptions, connections and refinement directives; each compiler-confirmed finding cites its diagnostic codes. |
 
-To render a template, call the `render_template` tool with the template ref (e.g., `idiomatic-rust/idiomatic-rust-inquiry`) and a context object with the required variables.
+Render with `render_template` and `context_path` (the contexts carry code and
+tool output, too large to inline). Copyable context shapes, variable names from
+each template's `[inference]` contract:
 
-Template context variables (from each template's [inference] contract):
-- `idiomatic-rust-inquiry.j2`: `design_problem`, `existing_code`, `design_constraints`, `compiler_diagnostics`, `iteration_focus`
-- `idiomatic-rust-design.j2`: `design_problem`, `existing_code`, `assessment`, `code_actions`, `iteration_focus`
-- `idiomatic-rust-challenge.j2`: `design_problem`, `design_proposal`, `assessment`, `design_constraints`, `clippy_lints`
+`idiomatic-rust/idiomatic-rust-inquiry`:
+```json
+{ "design_problem": "<the problem>", "existing_code": "<the code under design>", "design_constraints": {}, "compiler_facts": { "<the whole facts.json>": "" }, "iteration_focus": "" }
+```
+
+`idiomatic-rust/idiomatic-rust-design`:
+```json
+{ "design_problem": "<the problem>", "existing_code": "<the code under design>", "assessment": { "<the whole inquiry output>": "" }, "code_actions": ["<each get_code_actions output, as returned>"], "iteration_focus": "" }
+```
+
+`idiomatic-rust/idiomatic-rust-challenge`:
+```json
+{ "design_problem": "<the problem>", "design_proposal": { "<the whole design output>": "" }, "assessment": { "<the whole inquiry output>": "" }, "design_constraints": {}, "compiler_facts": { "<the whole facts.json>": "" }, "reference_results": ["<each find_references output, as returned>"] }
+```
+
+`code_actions` and `reference_results` are `[]` only when the tool was not run.
 
 ## Regression case
 
-All receipts executed live through `lisp_eval` (2026-10-01, batch-11 audit for
-the original form; 2026-11-09 for the corrected last-three window and `IR-2`).
+The tests evaluate the forms and the filter authored in this file, and render
+the templates:
 
-- Gate, converged: `{clippy_ran: true, errors: 0, new_warnings: 0,
-  confirmed: [3, 3, 3]}` → `"converged"`.
-- Gate, oscillating: `confirmed: [2, 4, 3]` (up then down) → `"oscillating"`
-  (the adjacent-difference product is negative — escalates to the operator).
-- Gate, tail oscillation (the 2026-11-09 fix): `confirmed: [3, 3, 3, 2, 4, 3]`
-  → `"oscillating"`. Under the previous form this returned `"converged"`
-  because it read indices 0–2; the corrected form reads the last three.
-- Gate, undetermined: `{clippy_ran: false, ...}` → `"undetermined"` — an
-  LLM-only challenge never counts as converged.
-- Gate, continue on errors: `{errors: 1, ...}` → `"continue"`.
-- Gate, short confirmed list: `confirmed: [3, 3]` → `"converged"` — the
-  length guard short-circuits the oscillation check (no out-of-bounds `nth`;
-  the clean-compiler branch dominates when errors and new warnings are 0).
-- `IR-2`, zero references: `{proposed_code_compiles: true, new_diagnostics: 0,
-  find_references_count: 0}` → `false` (the 2026-11-09 fix; the previous
-  `(>= ... 0)` conjunct was vacuous and returned `true`).
-- `IR-2`, references examined: `{..., find_references_count: 12}` → `true`.
+- `bash kask/scripts/check-skill-lisp-forms.sh` — `IR-1` and `IR-2` over fixed envs: a passing inquiry, an uncited diagnostic code, no invariants, no baseline; a converged proposal, each `continue` reason alone, a finding citing an unmeasured code, an empty citation list, the third-iteration stop, the iteration-four stop, an uncompiled proposal, a tail oscillation, and `unsafe` with and without a Miri result.
+- `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib idiomatic_rust_` — the **Compiler facts** filter over cargo JSON records (a clean build, lints, a type error, a build that fails with no diagnostic, non-JSON lines mixed in, a lint present in both captures, the experiment-record sequence, the three Miri outcomes), and the three templates in their not-run, clean and reported states.
 
-The skill's form is executed at use time, never anchored in code.
+These are computation and handoff checks. No test establishes that a design
+the gates pass is a good design.
 
 ## Constraints
 
-- The loop targets step 1 (inquiry), not step 2 (design) — challenge findings must re-inform the assessment.
-- The Improvement Measure gate runs after each challenge (not only at
-  iteration exhaustion) — the loop must not run unbounded; `oscillating`
-  escalates rather than loops.
-- The interpreter supports both prefix (`(+ a b)`) and infix (`a + b`) operator notation — use infix for simple scoring expressions, prefix for complex nested logic.
-- Compiler grounding is preferred but not required — when LSP tools are unavailable (pure skill execution), the skill falls back to intrinsic reasoning with reduced confidence.
+- The loop targets inquiry, not design — challenge findings must re-inform the assessment.
+- `IR-2` runs after every challenge, never only at the end; `oscillating` and `stop_bound` go to the operator rather than looping.
+- The gates read the saved facts and the templates' outputs as returned. Never type a count, a status or a diagnostic code into an env.
+- Without the compiler the skill still produces a design, labelled for what it is: `IR-1` returns `ungrounded` and `IR-2` returns `undetermined`, and the report says the design is unverified.
+- Run artifacts live in the run directory, never in the skill folder.

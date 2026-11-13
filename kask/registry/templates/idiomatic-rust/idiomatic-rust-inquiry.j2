@@ -1,11 +1,11 @@
-{# goal: Assess a Rust design problem against the eight design principles, using rust-analyzer diagnostics as ground truth. The compiler's errors and warnings are the starting point — not the LLM's guess. Interpret each diagnostic through the type-driven lens (borrow checker → ownership, type mismatch → invalid states, etc.). Identify invariants, invalid states, ownership graphs, and error domains. #}
+{# goal: Assess a Rust design problem against the eight design principles, starting from the compiler and clippy diagnostics the caller measured. Interpret each diagnostic through the type-driven lens, identify invariants, invalid states, the ownership graph and the error domain, and cite the diagnostic code behind every compiler-confirmed finding. #}
 [inference]
 contract:
   input:
     design_problem: string
     existing_code: string
     design_constraints: object
-    compiler_diagnostics: object
+    compiler_facts: object
     iteration_focus: string
   output:
     invariants: array
@@ -14,27 +14,8 @@ contract:
     error_domain: object
     principle_violations: array
     improvement_targets: array
-    compiler_grounding: object
     reasoning: string
 ---
-{#
-  Compiler grounding: if compiler_diagnostics are available, they are the
-  starting point — not the LLM's guess. The compiler is the extrinsic
-  oracle that prevents the Dunning-Kruger trap (the LLM confidently
-  assessing a design it doesn't understand). Interpret each diagnostic
-  through the type-driven lens:
-    - Borrow checker error → Principle 2 (ownership is architecture)
-    - Type mismatch → Principle 1 (invalid states unrepresentable)
-    - Lifetime error → Principle 2 (ownership) or Principle 5 (explicit)
-    - Missing trait impl → Principle 6 (composition over inheritance)
-    - Panic path → Principle 7 (errors as values)
-    - Unsafe block → Principle 8 (unsafe as contract)
-
-  Feedback loop: when iteration_focus is present (from previous challenge),
-  re-assess with the new findings. The agent should re-run `diagnostics`
-  to check whether the compiler's view has changed.
-#}
-
 You are designing Rust with a type-driven lens. Your mind operates on eight
 design principles — a synthesis of widely used Rust design mantras, not a
 citable spec. The citable anchor is the Rust API Guidelines
@@ -76,39 +57,49 @@ to Yaron Minsky (OCaml), not Graydon Hoare.
 {{ design_constraints | tojson }}
 {% endif %}
 
-{% if compiler_diagnostics and compiler_diagnostics | length > 0 %}
-## Compiler Diagnostics (rust-analyzer ground truth)
-
-The following diagnostics are from rust-analyzer — the compiler's view of
-the code. These are ground truth, not LLM guesses. Interpret each through
-the type-driven lens.
-
-```json
-{{ compiler_diagnostics | tojson }}
-```
-
-For each diagnostic:
-1. Which design principle does it violate?
-2. What specific state or relationship causes it?
-3. What is the minimum change that would resolve it?
-{% else %}
 ## Compiler Diagnostics
 
-No compiler diagnostics provided. In Zed sessions, run the `diagnostics`
-tool on the target code before this step — the compiler's errors and
-warnings are the starting point, not your guess. Without compiler
-diagnostics, your assessment is intrinsic (LLM self-reasoning) only and
-may miss issues the borrow checker would catch.
+{% if compiler_facts.baseline_status != "ran" %}
+The compiler and clippy did not run on this code (`{{ compiler_facts.baseline_status }}`).
+This assessment is your own reasoning only: it may miss what the borrow checker
+would catch. Leave every `diagnostic_codes` list empty — there is no diagnostic
+to cite.
+{% elif compiler_facts.diagnostics | length == 0 %}
+The compiler and clippy ran on this code and reported nothing. That is a
+measurement, not an absence of one: the code compiles and is lint-clean, so
+every finding below is yours, beyond what the lints cover. Leave every
+`diagnostic_codes` list empty.
+{% else %}
+The compiler and clippy reported the following on this code. These are ground
+truth, not guesses:
+
+```json
+{{ compiler_facts.diagnostics | tojson }}
+```
+
+Read each one through the lens:
+- Borrow checker error → Principle 2 (ownership is architecture)
+- Type mismatch → Principle 1 (invalid states unrepresentable)
+- Lifetime error → Principle 2 (ownership) or Principle 5 (explicit)
+- Missing trait impl → Principle 6 (composition over inheritance)
+- Panic path → Principle 7 (errors as values)
+- Unsafe block → Principle 8 (unsafe as contract)
+
+For each diagnostic: which principle does it violate, what state or
+relationship causes it, and what is the minimum change that resolves it? Every
+code in this list must be cited by at least one `principle_violations` or
+`invalid_states` entry: {{ compiler_facts.open_codes | tojson }}. The caller's
+gate lists any code left uncited.
 {% endif %}
 
 {% if iteration_focus %}
-## Iteration Focus (from previous challenge)
+## Iteration Focus (from the previous challenge)
 
 {{ iteration_focus }}
 
-The previous design was challenged on specific dimensions. Re-assess with
-these findings — the challenge may have surfaced new invariants or
-invalid states that the original assessment missed.
+The previous design was challenged on these points. Re-assess with them — the
+challenge may have surfaced invariants or invalid states the first assessment
+missed. The diagnostics above are from the current code, not from memory.
 {% endif %}
 
 ## Assessment Method
@@ -134,7 +125,7 @@ Then synthesize:
 {
   "invariants": ["invariant_1: must always be true", "..."],
   "invalid_states": [
-    {"state": "description of possible-but-invalid state", "principle_violated": 1, "severity": "critical|high|medium", "compiler_diagnostic": "related rust-analyzer error if any"}
+    {"state": "description of possible-but-invalid state", "principle_violated": 1, "severity": "critical|high|medium", "diagnostic_codes": []}
   ],
   "ownership_graph": "textual description of the ownership DAG: who creates/observes/mutates/destroys each value",
   "error_domain": {
@@ -143,19 +134,16 @@ Then synthesize:
     "silently_swallowed": ["error paths that silently fail"]
   },
   "principle_violations": [
-    {"principle": 1, "name": "Make invalid states unrepresentable", "violation": "specific description", "severity": "critical|high|medium", "compiler_confirmed": true}
+    {"principle": 1, "name": "Make invalid states unrepresentable", "violation": "specific description", "severity": "critical|high|medium", "diagnostic_codes": []}
   ],
   "improvement_targets": [
-    {"target": "specific change", "principle_addressed": 1, "impact": "high|medium|low", "effort": "small|medium|large", "compiler_action": "related LSP code action if any"}
+    {"target": "specific change", "principle_addressed": 1, "impact": "high|medium|low", "effort": "small|medium|large"}
   ],
-  "compiler_grounding": {
-    "diagnostics_interpreted": 5,
-    "principles_confirmed_by_compiler": [2, 7],
-    "principles_violated_by_compiler": [1, 5],
-    "diagnostics_not_yet_explained": ["any rust-analyzer warnings not yet mapped to a principle"]
-  },
-  "reasoning": "Step-by-step reasoning through each principle and the synthesis, citing compiler diagnostics where they confirmed or contradicted the LLM's assessment"
+  "reasoning": "Step-by-step reasoning through each principle and the synthesis, citing diagnostics where they confirmed or contradicted your assessment"
 }
 ```
 
-`compiler_confirmed`: true if a compiler diagnostic confirms this violation (extrinsic evidence), false if the LLM identified it without compiler help (intrinsic reasoning only — lower confidence).
+`diagnostic_codes`: the codes, copied exactly from the diagnostics above, that
+show this entry. An empty list means you identified it without the compiler —
+lower confidence. Never write a code that is not in the list above; type no
+count of diagnostics.

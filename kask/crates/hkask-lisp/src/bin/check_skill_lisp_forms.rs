@@ -2843,6 +2843,255 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_ir_1_requires_every_reported_code_to_be_cited() {
+        let form = skill_candidate("idiomatic-rust", "unexplained_codes");
+        let form = form.as_str();
+        let base = json!({
+            "gate": {"baseline_status": "ran", "open_codes": ["E0308", "clippy::ptr_arg"]},
+            "invariants": ["a queue is never empty"],
+            "principle_violations": [{"principle": 1, "diagnostic_codes": ["E0308"]}],
+            "invalid_states": [
+                {"state": "s", "diagnostic_codes": ["clippy::ptr_arg"]},
+                {"state": "t", "diagnostic_codes": []}
+            ]
+        });
+        let eval = |case: &str, changes: serde_json::Value| {
+            eval_sandboxed(form, &scientific_env(&base, changes))
+                .unwrap_or_else(|error| panic!("{case}: IR-1 failed to evaluate: {error}"))
+        };
+        let pass = eval("pass", json!({}));
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["unexplained_codes"], json!([]));
+        assert_eq!(pass["invariants"], json!(1));
+
+        // A clean baseline has nothing to cite and still passes.
+        let clean = eval(
+            "clean baseline",
+            json!({"gate": {"baseline_status": "ran", "open_codes": []},
+                   "principle_violations": [], "invalid_states": []}),
+        );
+        assert_eq!(clean["verdict"], json!("pass"));
+
+        let uncited = eval(
+            "uncited code",
+            json!({"invalid_states": [{"state": "t", "diagnostic_codes": []}]}),
+        );
+        assert_eq!(uncited["verdict"], json!("incomplete"));
+        assert_eq!(uncited["unexplained_codes"], json!(["clippy::ptr_arg"]));
+
+        let no_invariants = eval("no invariants", json!({"invariants": []}));
+        assert_eq!(no_invariants["verdict"], json!("incomplete"));
+        assert_eq!(no_invariants["invariants"], json!(0));
+
+        for status in ["not_run", "unexplained_failure"] {
+            let ungrounded = eval(
+                status,
+                json!({"gate": {"baseline_status": status, "open_codes": []}}),
+            );
+            assert_eq!(ungrounded["verdict"], json!("ungrounded"), "{status}");
+        }
+    }
+
+    #[test]
+    fn scientific_gate_ir_2_converges_only_on_a_measured_clean_proposal() {
+        let form = skill_candidate("idiomatic-rust", "define confirmed-in");
+        let form = form.as_str();
+        let base = json!({
+            "gate": {
+                "baseline_status": "ran", "proposed_status": "ran", "open_codes": [],
+                "miri": "not_run", "compile_errors": 0, "new_lints": 0, "unsafe_lines": 0,
+                "history": [], "iteration": 1
+            },
+            "gaps": [], "edge_cases": [], "guideline_violations": [],
+            "reference_results": ["Found 3 references to `Queue`"]
+        });
+        let with_gate = |changes: serde_json::Value| {
+            let mut gate = base["gate"].clone();
+            gate.as_object_mut()
+                .expect("gate object")
+                .extend(changes.as_object().expect("gate changes").clone());
+            json!({"gate": gate})
+        };
+        let eval = |case: &str, changes: serde_json::Value| {
+            eval_sandboxed(form, &scientific_env(&base, changes))
+                .unwrap_or_else(|error| panic!("{case}: IR-2 failed to evaluate: {error}"))
+        };
+
+        let converged = eval("converged", json!({}));
+        assert_eq!(converged["verdict"], json!("converged"));
+        assert_eq!(converged["reasons"], json!([]));
+        assert_eq!(converged["iteration"], json!(1));
+        assert_eq!(converged["confirmed"], json!(0));
+        assert_eq!(converged["notes"], json!([]));
+
+        // Each open reason alone blocks convergence and is named.
+        for (case, changes, reason) in [
+            (
+                "compile error",
+                with_gate(json!({"compile_errors": 1, "open_codes": ["E0308"]})),
+                "compile_errors",
+            ),
+            ("new lint", with_gate(json!({"new_lints": 2})), "new_lints"),
+            (
+                "no references",
+                json!({"reference_results": []}),
+                "references_not_examined",
+            ),
+            (
+                "open guideline",
+                json!({"guideline_violations": [
+                    {"guideline": "C-CONV", "status": "open"},
+                    {"guideline": "C-DEBUG", "status": "fixed"},
+                    {"guideline": "C-SEND-SYNC", "status": "justified"}
+                ]}),
+                "guideline_open",
+            ),
+            (
+                "miri ub",
+                with_gate(json!({"unsafe_lines": 2, "miri": "ub"})),
+                "miri_ub",
+            ),
+        ] {
+            let result = eval(case, changes);
+            assert_eq!(result["verdict"], json!("continue"), "{case}");
+            assert_eq!(result["reasons"], json!([reason]), "{case}");
+        }
+        let open = eval(
+            "open guideline names the row",
+            json!({"guideline_violations": [
+                {"guideline": "C-CONV", "status": "open"},
+                {"guideline": "C-DEBUG", "status": "fixed"}
+            ]}),
+        );
+        assert_eq!(open["open_guidelines"], json!(["C-CONV"]));
+        // A status the gate does not know is open, not silently accepted.
+        let odd = eval(
+            "unknown guideline status",
+            json!({"guideline_violations": [{"guideline": "C-CONV", "status": "waived"}]}),
+        );
+        assert_eq!(odd["verdict"], json!("continue"));
+        // Fixed and justified rows do not block.
+        let settled = eval(
+            "settled guidelines",
+            json!({"guideline_violations": [
+                {"guideline": "C-DEBUG", "status": "fixed"},
+                {"guideline": "C-SEND-SYNC", "status": "justified"}
+            ]}),
+        );
+        assert_eq!(settled["verdict"], json!("converged"));
+        // UB reported with no unsafe line in the proposal is not this proposal's finding.
+        let stale_miri = eval("miri ub without unsafe", with_gate(json!({"miri": "ub"})));
+        assert_eq!(stale_miri["verdict"], json!("converged"));
+
+        // A proposal the compiler has not seen is never converged.
+        for (case, changes) in [
+            (
+                "proposal not applied",
+                json!({"proposed_status": "not_run"}),
+            ),
+            (
+                "build failed silently",
+                json!({"proposed_status": "unexplained_failure"}),
+            ),
+            ("no baseline", json!({"baseline_status": "not_run"})),
+        ] {
+            assert_eq!(
+                eval(case, with_gate(changes))["verdict"],
+                json!("undetermined"),
+                "{case}"
+            );
+        }
+
+        // The bound: a third iteration with an open reason stops, a clean third
+        // iteration converges, and a fourth is refused whatever it shows.
+        let third_open = eval(
+            "third iteration, open",
+            with_gate(json!({"iteration": 3, "history": [0, 0], "new_lints": 1})),
+        );
+        assert_eq!(third_open["verdict"], json!("stop_bound"));
+        assert_eq!(third_open["reasons"], json!(["new_lints"]));
+        let second_open = eval(
+            "second iteration, open",
+            with_gate(json!({"iteration": 2, "history": [0], "new_lints": 1})),
+        );
+        assert_eq!(second_open["verdict"], json!("continue"));
+        let third_clean = eval(
+            "third iteration, clean",
+            with_gate(json!({"iteration": 3, "history": [0, 0]})),
+        );
+        assert_eq!(third_clean["verdict"], json!("converged"));
+        let fourth = eval(
+            "fourth iteration",
+            with_gate(json!({"iteration": 4, "history": [0, 0, 0]})),
+        );
+        assert_eq!(fourth["verdict"], json!("stop_bound"));
+
+        // A finding is confirmed only when every code it cites was measured.
+        let findings = eval(
+            "confirmation",
+            json!({
+                "gate": {
+                    "baseline_status": "ran", "proposed_status": "ran",
+                    "open_codes": ["clippy::ptr_arg", "unused_variables"],
+                    "miri": "not_run", "compile_errors": 0, "new_lints": 0, "unsafe_lines": 0,
+                    "history": [], "iteration": 1
+                },
+                "gaps": [
+                    {"gap": "a", "diagnostic_codes": ["clippy::ptr_arg"]},
+                    {"gap": "b", "diagnostic_codes": ["clippy::ptr_arg", "unused_variables"]},
+                    {"gap": "c", "diagnostic_codes": ["clippy::ptr_arg", "E9999"]}
+                ],
+                "edge_cases": [
+                    {"scenario": "d", "diagnostic_codes": []},
+                    {"scenario": "e", "diagnostic_codes": ["unused_variables"]}
+                ]
+            }),
+        );
+        assert_eq!(findings["confirmed"], json!(3));
+        assert_eq!(findings["unsupported_citations"], json!(["E9999"]));
+        assert_eq!(findings["verdict"], json!("converged"));
+
+        // Oscillation reads the last three counts: history plus this iteration's.
+        let two_confirmed = json!([
+            {"gap": "a", "diagnostic_codes": ["clippy::ptr_arg"]},
+            {"gap": "b", "diagnostic_codes": ["clippy::ptr_arg"]}
+        ]);
+        let oscillation = |history: serde_json::Value| {
+            eval(
+                "oscillation",
+                json!({
+                    "gate": {
+                        "baseline_status": "ran", "proposed_status": "ran",
+                        "open_codes": ["clippy::ptr_arg"], "miri": "not_run",
+                        "compile_errors": 0, "new_lints": 0, "unsafe_lines": 0,
+                        "history": history, "iteration": 3
+                    },
+                    "gaps": two_confirmed.clone()
+                }),
+            )
+        };
+        assert_eq!(oscillation(json!([1, 4]))["verdict"], json!("oscillating"));
+        assert_eq!(oscillation(json!([4, 1]))["verdict"], json!("oscillating"));
+        assert_eq!(oscillation(json!([4, 3]))["verdict"], json!("converged"));
+        assert_eq!(oscillation(json!([2, 2]))["verdict"], json!("converged"));
+
+        // unsafe that Miri did not check is disclosed beside the verdict.
+        for (miri, noted) in [("not_run", true), ("failed", true), ("passed", false)] {
+            let result = eval(miri, with_gate(json!({"unsafe_lines": 1, "miri": miri})));
+            assert_eq!(result["verdict"], json!("converged"), "{miri}");
+            assert_eq!(
+                result["notes"],
+                if noted {
+                    json!(["unsafe_not_miri_checked"])
+                } else {
+                    json!([])
+                },
+                "{miri}"
+            );
+        }
+    }
+
+    #[test]
     fn scientific_gate_ht1_only_updates_on_the_four_declared_triggers() {
         let form = skill_candidate("hypothesis-testing", "\"new_category\"");
         for trigger in [
