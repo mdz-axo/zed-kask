@@ -290,6 +290,7 @@ fn outcome_variant_name(outcome: &InferenceOutcome) -> &'static str {
         InferenceOutcome::WorktreeThread { .. } => "WorktreeThread",
         InferenceOutcome::RerankScores { .. } => "RerankScores",
         InferenceOutcome::DecisionAnswers { .. } => "DecisionAnswers",
+        InferenceOutcome::NostrSignedEvent { .. } => "NostrSignedEvent",
     }
 }
 
@@ -672,6 +673,34 @@ impl InferenceIpcClient {
         let response = self.ipc_roundtrip(&method, params).await?;
         match response.outcome {
             InferenceOutcome::WorktreeThread { thread } => Ok(thread),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
+    /// Ask the editor to sign one untagged kind 1 Nostr note with the
+    /// operator's key (D106). The grant token from the child's environment
+    /// goes along; the editor refuses `Auth` unless it names
+    /// `host/sign_nostr_note`, applies `kask.nostr.autopublish` (off: the
+    /// operator is shown the note, the identity and `relays`, and the call
+    /// waits for their answer), and returns the signed NIP-01 event JSON.
+    /// No key material crosses the wire in either direction.
+    pub async fn sign_nostr_note(
+        &self,
+        content: &str,
+        created_at: u64,
+        relays: &[String],
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::SignNostrNote;
+        let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            nostr_content: Some(content.to_string()),
+            nostr_created_at: Some(created_at),
+            nostr_relays: Some(relays.to_vec()),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => Ok(event),
             other => Err(unexpected_outcome_error(&method, other)),
         }
     }

@@ -27,6 +27,11 @@ r2d2.workspace = true
 
 hkask-inference.workspace = true
 hkask-keystore.workspace = true
+# The editor signs Nostr notes for the client server (D106); the signer
+# crate's consumers are the editor process only.
+hkask-nostr-core.workspace = true
+hkask-nostr-signer.workspace = true
+zeroize.workspace = true
 hkask-regulation.workspace = true
 hkask-condenser.workspace = true
 hkask_tool_invoker.workspace = true
@@ -101,6 +106,7 @@ gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 language_model = { workspace = true, features = ["test-support"] }
 credentials_provider = { workspace = true, features = ["test-support"] }
+zed_credentials_provider = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

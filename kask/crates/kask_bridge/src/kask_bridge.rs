@@ -51,6 +51,7 @@ mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
+mod nostr_signing;
 mod settings;
 #[cfg(test)]
 mod test_support;

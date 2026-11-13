@@ -40,6 +40,12 @@
 //!   path). The child carries an opaque parent-issued grant token and a
 //!   request allowlist; dispatch intersects them. Default is deny. Tokens are
 //!   per server, not PID-bound or OS isolation against arbitrary same-UID code.
+//! - `sign_nostr_note` — sign one untagged kind 1 Nostr note with the
+//!   operator's key, in the editor (D106). The child carries the same opaque
+//!   grant token; the grant must name `host/sign_nostr_note`. The editor
+//!   reads `kask.nostr.autopublish` and, when it is off, shows the note and
+//!   waits for the operator before any key is read. The key never crosses
+//!   the wire in either direction.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -53,6 +59,11 @@ use crate::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, LL
 pub const INFERENCE_SOCKET_ENV: &str = "HKASK_INFERENCE_SOCKET";
 /// Opaque parent-owned delegated-tool grant, scoped to a launched MCP child.
 pub const TOOL_GRANT_ENV: &str = "HKASK_TOOL_GRANT";
+
+/// The host effect a grant must name for `InferenceMethod::SignNostrNote`
+/// to be admitted. Set per child in `kask.mcp.delegated_tools`; default
+/// settings grant it to no server.
+pub const NOSTR_SIGN_GRANT: &str = "host/sign_nostr_note";
 
 /// Environment variable name for the admission-to-completion timeout in seconds.
 ///
@@ -122,6 +133,16 @@ pub enum InferenceMethod {
     /// provider directly — the MCP server never sees the credential. The
     /// result is returned as `InferenceOutcome::DecisionAnswers`.
     Decision,
+
+    /// Sign one untagged kind 1 Nostr note with the operator's key, in the
+    /// editor. Uses `nostr_content`, `nostr_created_at` and `nostr_relays`
+    /// from `InferenceParams` and the grant in `tool_grant`, which must name
+    /// [`NOSTR_SIGN_GRANT`]. The editor applies `kask.nostr.autopublish`:
+    /// off, it shows the note, the signing identity and the relays and signs
+    /// only when the operator approves; on, it signs. The result is returned
+    /// as `InferenceOutcome::NostrSignedEvent`. The key is read, decrypted
+    /// and used on the zed side only.
+    SignNostrNote,
 }
 
 /// Parameters for an inference request.
@@ -195,6 +216,18 @@ pub struct InferenceParams {
     /// probability distribution over those levels.
     #[serde(default)]
     pub decision_questions: Option<Vec<DecisionQuestion>>,
+    // ── Nostr fields (for `InferenceMethod::SignNostrNote`) ──
+    /// The note's text, as it will be published.
+    #[serde(default)]
+    pub nostr_content: Option<String>,
+    /// The note's `created_at`, seconds since the Unix epoch. Signed into
+    /// the event, so the caller fixes it and the read-back can find it.
+    #[serde(default)]
+    pub nostr_created_at: Option<u64>,
+    /// The relays the caller will send the signed note to. Shown to the
+    /// operator in the approval; the editor sends nothing.
+    #[serde(default)]
+    pub nostr_relays: Option<Vec<String>>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -271,6 +304,13 @@ pub enum InferenceOutcome {
         /// `Embeddings` variant).
         #[serde(default)]
         usage: crate::ports::InferenceUsage,
+    },
+    /// The signed event from `InferenceMethod::SignNostrNote`: the NIP-01
+    /// event object (`id`, `pubkey`, `created_at`, `kind`, `tags`,
+    /// `content`, `sig`), verified before it was returned.
+    NostrSignedEvent {
+        #[serde(rename = "nostr_event")]
+        event: serde_json::Value,
     },
     /// Error from the inference port.
     Error {
@@ -414,7 +454,60 @@ impl From<InferenceErrorPayload> for InferenceError {
 
 #[cfg(test)]
 mod tests {
-    use super::InferenceErrorPayload;
+    use super::{
+        InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceParams,
+        InferenceRequest, InferenceResponse, NOSTR_SIGN_GRANT,
+    };
+
+    /// expect: the sign method and its outcome survive the wire, the method
+    /// is spelled `sign_nostr_note`, and a request from a client that knows
+    /// nothing of the Nostr fields still parses (they default).
+    #[test]
+    fn sign_nostr_note_round_trips_and_its_fields_default() {
+        let request = InferenceRequest {
+            id: 7,
+            method: InferenceMethod::SignNostrNote,
+            params: InferenceParams {
+                tool_grant: Some("token".into()),
+                nostr_content: Some("hello".into()),
+                nostr_created_at: Some(1_700_000_000),
+                nostr_relays: Some(vec!["wss://relay.example".into()]),
+                ..Default::default()
+            },
+        };
+        let wire = serde_json::to_string(&request).expect("serializes");
+        assert!(wire.contains(r#""method":"sign_nostr_note""#));
+        let back: InferenceRequest = serde_json::from_str(&wire).expect("parses");
+        assert!(matches!(back.method, InferenceMethod::SignNostrNote));
+        assert_eq!(back.params.nostr_content.as_deref(), Some("hello"));
+        assert_eq!(back.params.nostr_created_at, Some(1_700_000_000));
+
+        // A client built before these fields existed sends none of them.
+        let mut legacy_wire = serde_json::to_value(InferenceParams::default()).expect("serializes");
+        let legacy_object = legacy_wire.as_object_mut().expect("an object");
+        for field in ["nostr_content", "nostr_created_at", "nostr_relays"] {
+            legacy_object.remove(field);
+        }
+        let legacy: InferenceParams =
+            serde_json::from_value(legacy_wire).expect("old params parse");
+        assert_eq!(legacy.nostr_content, None);
+        assert_eq!(legacy.nostr_created_at, None);
+        assert_eq!(legacy.nostr_relays, None);
+
+        let response = InferenceResponse {
+            id: 7,
+            outcome: InferenceOutcome::NostrSignedEvent {
+                event: serde_json::json!({"kind": 1, "content": "hello"}),
+            },
+        };
+        let wire = serde_json::to_string(&response).expect("serializes");
+        let back: InferenceResponse = serde_json::from_str(&wire).expect("parses");
+        match back.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => assert_eq!(event["kind"], 1),
+            other => panic!("wrong outcome: {other:?}"),
+        }
+        assert_eq!(NOSTR_SIGN_GRANT, "host/sign_nostr_note");
+    }
 
     /// The `status` field is wire-optional: a payload from before the field
     /// existed still parses (absent → `None`), and `None` serializes without

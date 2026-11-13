@@ -9918,6 +9918,8 @@ dependencies = [
  "hkask-mcp-kata-kanban",
  "hkask-mcp-server",
  "hkask-memory",
+ "hkask-nostr-core",
+ "hkask-nostr-signer",
  "hkask-regulation",
  "hkask-storage",
  "hkask-tool-invoker",
@@ -9945,6 +9947,7 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_credentials_provider",
+ "zeroize",
 ]
 
 [[package]]

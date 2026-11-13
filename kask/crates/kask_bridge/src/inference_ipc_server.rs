@@ -42,6 +42,7 @@ use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
 use crate::inference_embedding::LanguageModelEmbeddingPort;
+use crate::nostr_signing::{NOSTR_SIGN_QUEUE_CAPACITY, NostrSignRequest};
 
 /// A request to spawn a worktree-backed agent thread, sent from the tokio
 /// dispatch task to the GPUI-side task via a channel (same pattern as
@@ -504,6 +505,20 @@ impl InferenceIpcServer {
 
         let worktree_spawn_tx = Arc::new(worktree_spawn_tx);
 
+        // Nostr sign channel (D106) — the worktree pattern. The GPUI-side task
+        // reads the autopublish setting, asks the operator when it is off,
+        // and signs with the keychain-held key. The key stays on this side.
+        let (nostr_sign_tx, mut nostr_sign_rx) =
+            tokio::sync::mpsc::channel::<NostrSignRequest>(NOSTR_SIGN_QUEUE_CAPACITY);
+        // Detached: see the list_models task above.
+        cx.spawn(async move |cx| {
+            while let Some(request) = nostr_sign_rx.recv().await {
+                crate::nostr_signing::handle(request, cx).await;
+            }
+        })
+        .detach();
+        let nostr_sign_tx = Arc::new(nostr_sign_tx);
+
         // Batch credential channel — same pattern as `list_models_tx`. The
         // GPUI-side task reads API keys from zed's `CredentialsProvider`
         // keychain and returns them via the oneshot reply channel. The tokio-
@@ -550,6 +565,7 @@ impl InferenceIpcServer {
                         let list_models_tx = list_models_tx.clone();
                         let worktree_spawn_tx = worktree_spawn_tx.clone();
                         let provider_credential_tx = provider_credential_tx.clone();
+                        let nostr_sign_tx = nostr_sign_tx.clone();
                         tokio::spawn(async move {
                             handle_connection(
                                 stream,
@@ -557,6 +573,7 @@ impl InferenceIpcServer {
                                 list_models_tx,
                                 Some(worktree_spawn_tx),
                                 provider_credential_tx,
+                                Some(nostr_sign_tx),
                             )
                             .await;
                         });
@@ -721,6 +738,7 @@ async fn handle_connection(
     >,
     worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::Sender<WorktreeSpawnRequest>>>,
     provider_credential_tx: Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
+    nostr_sign_tx: Option<Arc<tokio::sync::mpsc::Sender<NostrSignRequest>>>,
 ) {
     if !peer_is_owner(&stream) {
         return;
@@ -776,7 +794,8 @@ async fn handle_connection(
         // pending so dropping a client cancels queued/provider work immediately.
         let outcome = tokio::select! {
             result = dispatch(&backend.inference, backend.embedding.as_ref(),
-                &list_models_tx, worktree_spawn_tx.as_ref(), &provider_credential_tx, request) => result,
+                &list_models_tx, worktree_spawn_tx.as_ref(), &provider_credential_tx,
+                nostr_sign_tx.as_ref(), request) => result,
             next = reader.read_line() => {
                 match next {
                     Ok(None) => tracing::debug!(target: "reg.inference", "IPC caller disconnected; local dispatch cancelled"),
@@ -899,9 +918,48 @@ async fn dispatch(
     >,
     worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::Sender<WorktreeSpawnRequest>>>,
     provider_credential_tx: &Arc<tokio::sync::mpsc::UnboundedSender<BatchCredentialRequest>>,
+    nostr_sign_tx: Option<&Arc<tokio::sync::mpsc::Sender<NostrSignRequest>>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
+
+    // Nostr sign requests (D106) — the worktree pattern: admitted here by
+    // grant and shape, executed on the GPUI side where the setting, the
+    // operator's answer and the key are.
+    if matches!(request.method, InferenceMethod::SignNostrNote) {
+        let (content, created_at) = match crate::nostr_signing::admit(
+            params.tool_grant.as_deref(),
+            params.nostr_content.as_deref(),
+            params.nostr_created_at,
+        ) {
+            Ok(admitted) => admitted,
+            Err(error) => return InferenceOutcome::Error { error },
+        };
+        let Some(tx) = nostr_sign_tx else {
+            return ipc_error(
+                "Connection",
+                "Nostr sign port not configured on the zed side",
+            );
+        };
+        let (tx_reply, rx_reply) = oneshot::channel();
+        if let Err(error) = tx.try_send(NostrSignRequest {
+            content,
+            created_at,
+            relays: params.nostr_relays.clone().unwrap_or_default(),
+            grant: params.tool_grant.clone().unwrap_or_default(),
+            reply: tx_reply,
+        }) {
+            return ipc_error(
+                "Unavailable",
+                format!("Nostr sign request not admitted: {error}"),
+            );
+        }
+        return match rx_reply.await {
+            Ok(Ok(event)) => InferenceOutcome::NostrSignedEvent { event },
+            Ok(Err(error)) => InferenceOutcome::Error { error },
+            Err(_) => ipc_error("Connection", "Nostr sign task dropped"),
+        };
+    }
 
     // Embedding requests are dispatched separately — they return
     // `InferenceOutcome::Embeddings`, not `InferenceOutcome::Result`.
@@ -1259,7 +1317,8 @@ async fn dispatch(
         | InferenceMethod::ListModels
         | InferenceMethod::CreateWorktreeThread
         | InferenceMethod::Rerank
-        | InferenceMethod::Decision => {
+        | InferenceMethod::Decision
+        | InferenceMethod::SignNostrNote => {
             tracing::error!(
                 target: "reg.inference",
                 method = ?request.method,
@@ -1409,6 +1468,7 @@ mod tests {
                 make_list_models_tx(),
                 None,
                 make_provider_credential_tx(),
+                None,
             ));
             let request = InferenceRequest {
                 id: 1,
@@ -1527,6 +1587,7 @@ mod tests {
             &list_models_tx,
             None,
             &provider_credential_tx,
+            None,
             request,
         )
         .await
@@ -1600,6 +1661,7 @@ mod tests {
             &make_list_models_tx(),
             None,
             &make_provider_credential_tx(),
+            None,
             InferenceRequest {
                 id: 1,
                 method: InferenceMethod::Embed,
@@ -1733,6 +1795,7 @@ mod tests {
             &list_models_tx,
             None,
             &provider_credential_tx,
+            None,
             request,
         )
         .await;
@@ -1809,6 +1872,7 @@ mod tests {
             &make_list_models_tx(),
             Some(tx),
             &make_provider_credential_tx(),
+            None,
             request,
         )
         .await
@@ -1946,6 +2010,7 @@ mod tests {
             make_list_models_tx(),
             Some(tx.clone()),
             make_provider_credential_tx(),
+            None,
         ));
         let bytes =
             serde_json::to_vec(&worktree_request(Some(grant), Some(vec![]))).expect("request JSON");
@@ -2169,5 +2234,105 @@ mod tests {
         assert_eq!(error.code, "Api");
         assert_eq!(error.message, "rate limited");
         assert_eq!(error.status, Some(429));
+    }
+
+    // ── Nostr sign dispatch (D106) ──
+
+    fn sign_request(grant: Option<String>) -> InferenceRequest {
+        InferenceRequest {
+            id: 1,
+            method: InferenceMethod::SignNostrNote,
+            params: InferenceParams {
+                tool_grant: grant,
+                nostr_content: Some("fixture".into()),
+                nostr_created_at: Some(1),
+                nostr_relays: Some(vec!["wss://relay.example".into()]),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// expect: a sign request without the sign grant is refused `Auth` at
+    /// dispatch and nothing is enqueued to the GPUI side; a request with a
+    /// worktree grant is refused the same way; a granted request with no
+    /// sign port fails `Connection`, never the defensive arm.
+    #[tokio::test]
+    async fn dispatch_sign_nostr_note_refuses_without_the_grant_and_enqueues_nothing() {
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<NostrSignRequest>(NOSTR_SIGN_QUEUE_CAPACITY);
+        let tx = Arc::new(tx);
+        let port: Arc<dyn InferencePort> = Arc::new(CannedInferencePort);
+        let dispatch_sign = |request: InferenceRequest| {
+            let port = port.clone();
+            let tx = tx.clone();
+            async move {
+                dispatch(
+                    &port,
+                    None,
+                    &make_list_models_tx(),
+                    None,
+                    &make_provider_credential_tx(),
+                    Some(&tx),
+                    request,
+                )
+                .await
+            }
+        };
+        let server = format!("sign-dispatch-{}", uuid::Uuid::new_v4());
+
+        let error = require_error(dispatch_sign(sign_request(None)).await);
+        assert_eq!(error.code, "Auth");
+
+        let worktree = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::WORKTREE_SPAWN.to_string()],
+        )
+        .expect("grant");
+        let error = require_error(dispatch_sign(sign_request(Some(worktree))).await);
+        assert_eq!(error.code, "Auth");
+        assert!(
+            rx.try_recv().is_err(),
+            "a refused request reached the GPUI side"
+        );
+
+        let signing = crate::delegation_grants::grant_for_server(
+            &server,
+            &[crate::delegation_grants::NOSTR_SIGN.to_string()],
+        )
+        .expect("grant");
+        let error = require_error(dispatch_canned(sign_request(Some(signing.clone()))).await);
+        assert_eq!(error.code, "Connection");
+        assert!(error.message.contains("sign port not configured"));
+
+        // Granted and ported: the request is enqueued with what the operator
+        // will be shown, and the dispatch waits for the GPUI side's answer.
+        let pending = tokio::spawn({
+            let port = port.clone();
+            let tx = tx.clone();
+            let request = sign_request(Some(signing));
+            async move {
+                dispatch(
+                    &port,
+                    None,
+                    &make_list_models_tx(),
+                    None,
+                    &make_provider_credential_tx(),
+                    Some(&tx),
+                    request,
+                )
+                .await
+            }
+        });
+        let enqueued = rx.recv().await.expect("enqueued");
+        assert_eq!(enqueued.content, "fixture");
+        assert_eq!(enqueued.relays, vec!["wss://relay.example".to_string()]);
+        let _ = enqueued.reply.send(Err(InferenceErrorPayload {
+            code: "Cancelled".into(),
+            message: "declined in the test".into(),
+            status: None,
+        }));
+        let error = require_error(pending.await.expect("dispatch task"));
+        assert_eq!(error.code, "Cancelled");
+        crate::delegation_grants::revoke_delegation_grant(&server);
     }
 }

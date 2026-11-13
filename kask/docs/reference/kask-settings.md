@@ -110,6 +110,14 @@ The child must also send its agent-card tool narrowing. The host intersects it
 with the grant, bounds the spawn queue to 32 requests, and rechecks revocation
 and disconnect before dequeue admission (`kask_bridge/src/inference_ipc_server.rs`,
 `WorktreeSpawnRequest::execute`). Empty narrowing grants no child tools.
+
+Signing a Nostr note is a second host effect in the same map (D106):
+`"nostr-client": ["host/sign_nostr_note"]`. Default settings grant it to no
+server, so the Curator cannot publish until the operator adds it. The host
+admits the request by the grant and the note's shape, then on the GPUI side
+reads `kask.nostr.autopublish` and, when it is off, shows the note in a
+window prompt before any keychain read (`kask_bridge/src/nostr_signing.rs`).
+The key never reaches the child.
 MCP grants never enable native builtins such as terminal. No fallback executor
 starts on refusal or a lost reply. A queued UI thread is reported as pending,
 not proof of execution. Grants remain server-scoped: native agents use their
@@ -317,7 +325,7 @@ file without that prompt.
 |-------|------|---------|-------------------|-------|
 | `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
 | `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server reads from, comma-joined: the first 8. `nostr_account` tries one connection to each and reports which answer; the read tools ask each one and report how its read ended |
-| `autopublish` | `bool` | `false` | none | Operator ruling 2026-11-13: off, the editor shows each publication the Curator initiates (text, signing `npub`, target relays) and signs only on the operator's approval; on, that step is removed. Read in the editor where the signature is made and delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`, `nostr_autopublish_resolves_off_unless_written_on`). Publishing is not built yet |
+| `autopublish` | `bool` | `false` | none | Operator ruling 2026-11-13: off, the editor shows each publication the Curator initiates (text, signing `npub`, target relays) in a window prompt and signs only when the operator chooses `Publish`; on, that step is removed. Read in the editor where the signature is made (`kask_bridge/src/nostr_signing.rs`), before any keychain read, and delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`, `nostr_autopublish_resolves_off_unless_written_on`). The sign path is built; the client's publish tool is not yet |
 
 **The key (not a setting).** The same page's Key block takes the `nsec` and
 an encryption password. The editor encrypts the key under the password

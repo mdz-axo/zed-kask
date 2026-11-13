@@ -6,6 +6,9 @@ use std::sync::{LazyLock, Mutex};
 
 /// A host effect, explicitly selected in the same parent-owned grant registry.
 pub(crate) const WORKTREE_SPAWN: &str = "host/create_worktree_thread";
+/// The host effect that admits a Nostr sign request (D106). Same registry,
+/// same token; named in `hkask-types` so the wire and the editor agree.
+pub(crate) const NOSTR_SIGN: &str = hkask_types::inference_ipc::NOSTR_SIGN_GRANT;
 struct Grant {
     token: String,
     tools: Vec<String>,
@@ -60,6 +63,21 @@ pub fn revoke_delegation_grant(server: &str) {
             tracing::warn!(target: "reg.inference", "Delegation registry poisoned; all dispatch is denied")
         }
     }
+}
+
+/// Whether the grant behind `token` names the host effect `effect`. A
+/// missing token, a revoked or replaced grant, or a grant without the effect
+/// is `false`; nothing here widens.
+pub(crate) fn grant_holds(token: Option<&str>, effect: &str) -> bool {
+    let Some(token) = token else {
+        return false;
+    };
+    let Ok(grants) = GRANTS.lock() else {
+        return false;
+    };
+    grants
+        .values()
+        .any(|grant| grant.token == token && grant.tools.iter().any(|tool| tool == effect))
 }
 
 /// Derive the child's ceiling from the parent grant and the requested narrowing.
@@ -126,5 +144,28 @@ mod tests {
             worktree_tools(Some(&replacement), Some(&["research/read".to_string()])),
             None
         );
+    }
+
+    /// expect: the sign effect is held only by a live grant that names it.
+    /// A grant for other tools, a worktree grant, no token, a replaced token
+    /// and a revoked grant all answer `false`.
+    #[test]
+    fn the_sign_effect_is_held_only_by_a_live_grant_that_names_it() {
+        let server = format!("test-{}", uuid::Uuid::new_v4());
+        assert!(!grant_holds(None, NOSTR_SIGN));
+
+        let other = grant_for_server(&server, &[WORKTREE_SPAWN.to_string()]).expect("grant");
+        assert!(!grant_holds(Some(&other), NOSTR_SIGN));
+        assert!(grant_holds(Some(&other), WORKTREE_SPAWN));
+
+        let signing = grant_for_server(&server, &[NOSTR_SIGN.to_string()]).expect("grant");
+        assert!(grant_holds(Some(&signing), NOSTR_SIGN));
+        assert!(!grant_holds(Some(&signing), WORKTREE_SPAWN));
+        // The replaced token no longer holds anything.
+        assert!(!grant_holds(Some(&other), WORKTREE_SPAWN));
+        assert!(!grant_holds(Some("not-a-token"), NOSTR_SIGN));
+
+        revoke_delegation_grant(&server);
+        assert!(!grant_holds(Some(&signing), NOSTR_SIGN));
     }
 }
