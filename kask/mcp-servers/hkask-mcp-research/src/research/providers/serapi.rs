@@ -121,7 +121,6 @@ impl SerapiProvider {
             source,
             published,
             oa_pdf_url: None,
-            provider: None,
         })
     }
 
@@ -244,7 +243,6 @@ impl SerapiProvider {
                     source: Some("youtube".to_string()),
                     published: None,
                     oa_pdf_url: None,
-                    provider: Some("serpapi_transcript".to_string()),
                 }],
                 ..Default::default()
             });
@@ -264,7 +262,6 @@ impl SerapiProvider {
                 source: Some("youtube".to_string()),
                 published: None,
                 oa_pdf_url: None,
-                provider: Some("serpapi_transcript".to_string()),
             }],
             // Store full transcript in content_previews for downstream extraction
             content_previews: {
@@ -348,7 +345,6 @@ impl WebSearchProvider for SerapiProvider {
                             source: item["source"].as_str().map(|s| s.to_string()),
                             published: item["date"].as_str().map(|s| s.to_string()),
                             oa_pdf_url: None,
-                            provider: None,
                         })
                     })
                     .collect::<Vec<_>>()

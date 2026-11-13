@@ -189,7 +189,7 @@ pub(crate) fn heuristic_order(results: &mut [RankedResult], fused: bool) {
         if let Some(score) = result.semantic_score {
             result.rrf_score += score * 0.05;
         }
-        if result.content_preview.is_some() || result.extracted_content.is_some() {
+        if result.content_preview.is_some() {
             result.rrf_score += 0.05;
         }
     }
@@ -276,12 +276,10 @@ fn age_in_days(result: &RankedResult) -> f64 {
 //   overrides it, and the research server's config_env allowlist passes it
 //   through under governed launch.
 
-/// Cap on title/description field lengths fed to the rerank document text,
-/// so a deep search over 50 results with full extracted content cannot blow
-/// the reranker's context window (Qwen3-Reranker-8B: 41K tokens per query
-/// and document).
+/// Cap on each field (title, description, preview) of the rerank document
+/// text, so a deep search over 50 results cannot blow the reranker's
+/// context window (Qwen3-Reranker-8B: 41K tokens per query and document).
 const RERANK_FIELD_MAX_CHARS: usize = 400;
-const RERANK_CONTENT_MAX_CHARS: usize = 1200;
 
 fn truncate_field(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
@@ -297,7 +295,7 @@ fn truncate_field(text: &str, max_chars: usize) -> String {
 }
 
 /// Build the document text for one candidate — the fields a relevance
-/// judgment needs (title, URL, description, date, content), truncated per
+/// judgment needs (title, URL, description, date, preview), truncated per
 /// field. Every candidate gets the same shape, so the reranker's judgments
 /// are comparable by construction.
 fn build_rerank_document(result: &RankedResult) -> String {
@@ -316,12 +314,7 @@ fn build_rerank_document(result: &RankedResult) -> String {
     if let Some(ref published) = result.published {
         document.push_str(&format!("Published: {published}\n"));
     }
-    if let Some(ref content) = result.extracted_content {
-        document.push_str(&format!(
-            "Content: {}",
-            truncate_field(content, RERANK_CONTENT_MAX_CHARS)
-        ));
-    } else if let Some(ref preview) = result.content_preview {
+    if let Some(ref preview) = result.content_preview {
         document.push_str(&format!(
             "Preview: {}",
             truncate_field(preview, RERANK_FIELD_MAX_CHARS)
@@ -459,7 +452,6 @@ mod rerank_tests {
             best_rank: None,
             content_preview: None,
             semantic_score: None,
-            extracted_content: None,
         }
     }
 
@@ -668,7 +660,6 @@ mod heuristic_order_tests {
             best_rank: None,
             content_preview: None,
             semantic_score: None,
-            extracted_content: None,
         }
     }
 

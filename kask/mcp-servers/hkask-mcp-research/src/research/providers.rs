@@ -85,7 +85,6 @@ pub(crate) fn search_results_from(
                         source: source(item),
                         published: published(item),
                         oa_pdf_url: None,
-                        provider: None,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -531,7 +530,6 @@ impl ProviderPool {
                         provider_count: 1,
                         providers: vec![kind.to_string()],
                         best_rank: Some(rank),
-                        extracted_content: None,
                         content_preview: output
                             .content_previews
                             .get(&r.url.to_lowercase())
@@ -835,7 +833,6 @@ impl ProviderPool {
                     best_rank: Some(best_rank),
                     content_preview,
                     semantic_score,
-                    extracted_content: None,
                 }
             })
             .collect();

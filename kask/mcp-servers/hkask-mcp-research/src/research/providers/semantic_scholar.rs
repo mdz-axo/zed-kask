@@ -195,7 +195,6 @@ impl WebSearchProvider for SemanticScholarProvider {
                             source,
                             published: year,
                             oa_pdf_url: paper["openAccessPdf"]["url"].as_str().map(str::to_string),
-                            provider: Some("semantic_scholar".to_string()),
                         })
                     })
                     .collect::<Vec<_>>()

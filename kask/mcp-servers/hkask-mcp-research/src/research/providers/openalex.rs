@@ -208,7 +208,6 @@ fn parse_openalex_works(body: &str) -> Vec<SearchResult> {
                 source: venue,
                 published: publication_year.map(|year| year.to_string()),
                 oa_pdf_url: work_oa_pdf_url(work),
-                provider: Some("openalex".to_string()),
             })
         })
         .collect()
@@ -360,7 +359,6 @@ mod openalex_tests {
         assert_eq!(results[0].url, "https://doi.org/10.1/first");
         assert_eq!(results[0].source.as_deref(), Some("Venue One"));
         assert_eq!(results[0].published.as_deref(), Some("2023"));
-        assert_eq!(results[0].provider.as_deref(), Some("openalex"));
         // A work without a DOI falls back to its OpenAlex landing page.
         assert_eq!(results[1].url, "https://openalex.org/W2");
     }

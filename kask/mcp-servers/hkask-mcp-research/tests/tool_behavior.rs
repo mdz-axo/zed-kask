@@ -1471,7 +1471,6 @@ defaults_pool! {
             best_rank: None,
             content_preview: None,
             semantic_score: None,
-            extracted_content: None,
         };
         Ok(CompoundSearchResult {
             query: _query.query.clone(),
@@ -1953,7 +1952,6 @@ defaults_pool! {
                     best_rank: None,
                     content_preview: None,
                     semantic_score: None,
-                    extracted_content: None,
                 }],
                 answer_box: None,
                 related_questions: Vec::new(),

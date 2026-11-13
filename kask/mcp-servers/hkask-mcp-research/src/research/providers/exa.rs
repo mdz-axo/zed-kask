@@ -82,7 +82,6 @@ impl ExaProvider {
                             source: item["author"].as_str().map(|s| s.to_string()),
                             published: item["publishedDate"].as_str().map(|s| s.to_string()),
                             oa_pdf_url: None,
-                            provider: None,
                         })
                     })
                     .collect::<Vec<_>>()

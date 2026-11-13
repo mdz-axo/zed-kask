@@ -281,7 +281,6 @@ fn parse_arxiv_atom(xml: &str) -> Vec<SearchResult> {
                 Some(published.split('T').next().unwrap_or("").to_string())
             },
             oa_pdf_url: None,
-            provider: Some("arxiv".to_string()),
         });
     }
 

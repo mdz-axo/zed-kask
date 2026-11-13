@@ -495,8 +495,6 @@ pub struct SearchResult {
     /// so the consumer still verifies identity (the no-substitution rule).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oa_pdf_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -596,8 +594,6 @@ pub struct RankedResult {
     pub best_rank: Option<usize>,
     pub content_preview: Option<String>,
     pub semantic_score: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extracted_content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

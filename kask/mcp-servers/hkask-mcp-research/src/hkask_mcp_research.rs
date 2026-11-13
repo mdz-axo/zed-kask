@@ -1865,7 +1865,6 @@ mod search_order_tests {
                         source: None,
                         published: published.map(str::to_string),
                         oa_pdf_url: None,
-                        provider: None,
                     })
                     .collect(),
                 ..Default::default()
