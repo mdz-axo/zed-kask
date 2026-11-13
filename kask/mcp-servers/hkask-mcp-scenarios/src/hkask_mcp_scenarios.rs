@@ -874,10 +874,11 @@ impl ScenariosServer {
         .await
     }
 
-    /// Tree-level propagation: update one root event's prior and recompute
-    /// every descendant marginal and the joint.
+    /// Tree-level Bayesian propagation: update one root event's prior and
+    /// recompute every descendant marginal and the joint. The propagation
+    /// journal is the tâtonnement record (Bhattacharya Prop. 6).
     #[tool(
-        description = "Update one root event's prior probability and propagate through the event tree: all descendant marginals and the joint probability are recomputed. Only a root event (no depends_on) has a prior; an event with parents is refused, because its probability comes from its conditional table. Returns the updated tree plus a propagation journal (per-node before/after deltas). Conditional tables are untouched. Stores the updated tree in the project record."
+        description = "Update one root event's prior probability and propagate through the event tree: all descendant marginals and the joint probability are recomputed. Only a root event (no depends_on) has a prior; an event with parents is refused, because its probability comes from its conditional table. Returns the updated tree plus a propagation journal (per-node before/after deltas) — the tâtonnement record of the update round. Conditional tables are untouched. Stores the updated tree in the project record."
     )]
     pub async fn scenario_propagate(
         &self,
@@ -926,7 +927,7 @@ impl ScenariosServer {
                     m
                 }),
                 "approximation_note": dependent_parents_note(&result.tree),
-                "framework": "Tree-level propagation: the named root event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node.",
+                "framework": "Tree-level Bayesian propagation: the named root event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node (one tâtonnement round, Bhattacharya Prop. 6, arXiv:2211.03244).",
             });
 
             Ok(output)
