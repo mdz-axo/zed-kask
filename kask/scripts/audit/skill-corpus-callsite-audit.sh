@@ -1,81 +1,111 @@
 #!/usr/bin/env bash
-# Skill-corpus call-site audit — checks that a skill's SKILL.md documents
-# at least one of the context variables its own-namespace templates
-# declare, so a model following the SKILL.md can construct the render
-# context without opening the template.
+# Skill-corpus call-site audit — for every template a SKILL.md references,
+# in its own namespace or another skill's, check that the SKILL.md names
+# every REQUIRED input of that template's [inference] contract, so a model
+# following the SKILL.md can construct the render context without opening
+# the template.
 #
 # For every skill in .agents/skills/ with a SKILL.md:
-#   1. Extract backticked template references (`stem.j2`) from the body.
-#   2. Resolve each against the skill's own registry namespace
-#      (kask/registry/templates/<skill-name>/<stem>.j2). Cross-namespace
-#      references (shared namespaces like company-research, media) are
-#      skipped — the referencing skill is not the primary invoker.
-#   3. For templates with an [inference] contract, extract the declared
-#      input field names.
-#   4. If ZERO of the declared inputs appear as words in the SKILL.md,
-#      flag: callsite-blind — the model must open the template to know
-#      what to pass.
+#   1. Extract backticked template references from the body:
+#      `stem.j2` (own namespace) and `namespace/stem` or `namespace/stem.j2`
+#      (any namespace — a cross-skill delegation is a call site too; the
+#      2026-11-12 essentialist→coding-guidelines/guidelines-verify case
+#      was a delegation whose required inputs the caller never held).
+#   2. Resolve each against kask/registry/templates/. Unresolvable refs
+#      are skipped (the crossrefs check owns dangling references).
+#   3. Read the contract's required inputs: every `input:` key except
+#      those typed `…|null`, carrying `required: false`, or carrying a
+#      `default:`. Nested sub-keys are not inputs.
+#   4. Flag each required input that does not appear as a word in the
+#      SKILL.md: `callsite-gap`. Zero documented inputs is reported as
+#      `callsite-blind`.
 #
 # Known limitations (advisory, documented):
-#   - Word matching is exact: a SKILL.md that describes the input in
-#     prose without using the field name (e.g., "the learner's name"
-#     instead of `learner_bot`) is flagged. Read-triage adjudicates.
-#   - Cross-namespace templates are out of scope (the referencing skill
-#     may be a methodology citation, not the invoker).
-#   - Templates without contracts are skipped (the contract audit
-#     covers their internal agreement; this checks the invocation seam).
+#   - Word matching is exact: a SKILL.md that describes an input in prose
+#     without the field name is flagged. A reference that is a pattern or
+#     methodology citation, not an invocation, is accepted by listing it
+#     in skill-corpus-callsite-accepted.txt as `<skill> <namespace/stem>`.
+#   - Templates without contracts are skipped (the contract audit covers
+#     their internal agreement; this checks the invocation seam).
 #
-# Advisory instrument: findings are proposals for read-triage, not edits.
+# Exit status: 0 when nothing is flagged, 1 otherwise (the selftest and
+# the skill-maintenance checklist read the exit).
 # Usage: ./skill-corpus-callsite-audit.sh
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SKILLS="$SCRIPT_DIR/../../../.agents/skills"
-REG="$SCRIPT_DIR/../../registry/templates"
+SKILLS="${SKILL_CORPUS_DIR:-$SCRIPT_DIR/../../../.agents/skills}"
+REG="${TEMPLATE_CORPUS_DIR:-$SCRIPT_DIR/../../registry/templates}"
+ACCEPTED="${CALLSITE_ACCEPTED_FILE:-$SCRIPT_DIR/skill-corpus-callsite-accepted.txt}"
 
 checked=0
 flagged=0
 skipped=0
+accepted=0
 for skill_dir in "$SKILLS"/*/; do
     skill=$(basename "$skill_dir")
     skillmd="$skill_dir/SKILL.md"
     [ -f "$skillmd" ] || continue
 
-    # Extract template stems (any .j2 mention — the [ -f ] resolution
-    # below filters non-existent references automatically).
-    for stem in $(grep -oE '[a-z0-9_-]+\.j2' "$skillmd" 2>/dev/null \
-        | sed 's/\.j2$//' | sort -u || true); do
-        template="$REG/$skill/$stem.j2"
+    # Own-namespace `stem.j2` and any-namespace `ns/stem(.j2)` references,
+    # normalised to `ns/stem`.
+    refs=$( {
+        grep -oE '`[a-z0-9_-]+\.j2`' "$skillmd" 2>/dev/null \
+            | tr -d '`' | sed "s/\.j2\$//; s#^#$skill/#" || true
+        grep -oE '`[a-z0-9_-]+/[a-z0-9_-]+(\.j2)?`' "$skillmd" 2>/dev/null \
+            | tr -d '`' | sed 's/\.j2$//' || true
+    } | sort -u)
+
+    for ref in $refs; do
+        template="$REG/$ref.j2"
         [ -f "$template" ] || continue
         grep -q '^  input:' "$template" || { skipped=$((skipped + 1)); continue; }
 
+        if [ -f "$ACCEPTED" ] && grep -qxF -- "$skill $ref" "$ACCEPTED"; then
+            accepted=$((accepted + 1))
+            continue
+        fi
         checked=$((checked + 1))
 
-        # Declared input field names (4-space indent, digits allowed,
-        # nested sub-keys skipped — same extraction as the contract audit).
-        ins=$(awk -v sect="  input:" '
-            $0 == sect { insec = 1; next }
-            insec && /^    [a-z_][a-z0-9_]*:/ { f = $1; sub(/:$/, "", f); print f; next }
-            insec && /^      / { next }
-            insec { insec = 0 }
+        # Required input names: 4-space-indented keys under `  input:`,
+        # minus `|null` types, `required: false` and `default:` carriers.
+        required=$(awk '
+            $0 == "  input:" { insec = 1; next }
+            insec && /^    [a-z_][a-z0-9_]*:/ {
+                flush()
+                name = $1; sub(/:$/, "", name)
+                rest = $0; sub(/^    [a-z_][a-z0-9_]*:[ ]*/, "", rest)
+                optional = (rest ~ /\|[ ]*null/) ? 1 : 0
+                next
+            }
+            insec && /^      / {
+                if ($0 ~ /^      type:.*\|[ ]*null/) optional = 1
+                if ($0 ~ /^      required:[ ]*false/) optional = 1
+                if ($0 ~ /^      default:/) optional = 1
+                next
+            }
+            insec { flush(); insec = 0 }
+            function flush() { if (name != "" && !optional) print name; name = ""; optional = 0 }
+            END { flush() }
         ' "$template")
 
-        [ -z "$ins" ] && { skipped=$((skipped + 1)); continue; }
+        [ -z "$required" ] && continue
 
-        # Count how many declared inputs appear as words in the SKILL.md.
         total=0
-        documented=0
-        for field in $ins; do
+        missing=""
+        for field in $required; do
             total=$((total + 1))
-            if grep -qw -- "$field" "$skillmd"; then
-                documented=$((documented + 1))
-            fi
+            grep -qw -- "$field" "$skillmd" || missing="$missing $field"
         done
-
-        if [ "$documented" -eq 0 ]; then
-            echo "  $skill/$stem.j2: callsite-blind: $total declared inputs, none documented in SKILL.md"
+        gap=$(echo "$missing" | wc -w)
+        if [ "$gap" -eq "$total" ]; then
+            echo "  $skill -> $ref: callsite-blind: $total required inputs, none documented in SKILL.md:$missing"
+            flagged=$((flagged + 1))
+        elif [ "$gap" -gt 0 ]; then
+            echo "  $skill -> $ref: callsite-gap: $gap of $total required inputs undocumented in SKILL.md:$missing"
             flagged=$((flagged + 1))
         fi
     done
 done
-echo "checked $checked call sites; $flagged flagged; $skipped skipped (no contract or unresolvable)"
+echo "checked $checked call sites; $flagged flagged; $accepted accepted (baseline); $skipped skipped (no contract)"
+[ "$flagged" -eq 0 ]
