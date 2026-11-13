@@ -5833,6 +5833,53 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_sm_1_judges_the_goal_annotation_from_the_read_file_and_the_extracted_goal() {
+        let form = skill_candidate("skill-maintenance", "goal_text_too_short");
+        let gate = |path: &str, content: &str, goal: &str| {
+            eval_sandboxed(
+                &form,
+                &json!({"target_path": path, "target_content": content, "goal_text": goal}),
+            )
+            .unwrap_or_else(|error| panic!("SM-1 failed to evaluate: {error}"))
+        };
+        let ok = gate(
+            "kask/registry/templates/x/y.j2",
+            "{# goal: Give the interrogator its reference #}\n[inference]\n",
+            "Give the interrogator its reference",
+        );
+        assert_eq!(ok["verdict"], json!("auditable"));
+        assert_eq!(ok["goal_chars"], json!(35));
+
+        let bare = gate("docs/notes.md", "no annotation here", "");
+        assert_eq!(bare["verdict"], json!("unauditable"));
+        assert_eq!(
+            bare["problems"],
+            json!([
+                "target_not_a_template",
+                "goal_annotation_missing",
+                "goal_text_too_short"
+            ])
+        );
+        let short = gate("x/y.j2", "{# goal: short #}", "short");
+        assert_eq!(short["problems"], json!(["goal_text_too_short"]));
+        assert_eq!(short["goal_chars"], json!(5));
+        // Exactly ten characters clears the floor, nine does not; an
+        // unterminated annotation does not.
+        assert_eq!(
+            gate("x/y.j2", "{# goal: 0123456789 #}", "0123456789")["verdict"],
+            json!("auditable")
+        );
+        assert_eq!(
+            gate("x/y.j2", "{# goal: 012345678 #}", "012345678")["problems"],
+            json!(["goal_text_too_short"])
+        );
+        assert_eq!(
+            gate("x/y.j2", "{# goal: never closed", "never closed")["problems"],
+            json!(["goal_annotation_missing"])
+        );
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

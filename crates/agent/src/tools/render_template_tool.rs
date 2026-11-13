@@ -1857,6 +1857,31 @@ mod tests {
         assert_eq!(due, serde_json::json!(["past"]));
     }
 
+    /// skill-maintenance's SM-1 measures a goal the lisp cannot slice out of
+    /// the template text; the authored jq filter extracts it, and it must
+    /// work on a real registry template's header, collapsing its line wraps.
+    #[test]
+    fn skill_maintenance_goal_filter_extracts_the_goal_from_a_real_template_header() {
+        let template = std::fs::read_to_string(
+            registry_template_base().join("essentialist/essentialist-flow.j2"),
+        )
+        .expect("read the essentialist template");
+        let goal = authored_jq_with_args(
+            "skill-maintenance",
+            "skill-maintenance template-logic audit (formerly skill-logic-audit)",
+            &[],
+            serde_json::Value::String(template),
+        )
+        .expect("authored goal.jq runs");
+        let goal = goal.as_str().expect("the goal is one string");
+        assert!(
+            goal.starts_with("Give the eliminative interrogator its reference"),
+            "got: {goal}"
+        );
+        assert!(!goal.contains('\n'), "line wraps are collapsed");
+        assert!(!goal.contains("#}"));
+    }
+
     #[test]
     fn corpus_audit_repairs_are_pinned_at_template_handoffs() {
         let complete_intake = render_template_for_test(
