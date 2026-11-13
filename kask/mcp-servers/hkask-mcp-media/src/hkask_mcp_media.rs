@@ -1456,6 +1456,75 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// dcterms:identifier: `MediaServer::image_create_collage`
+    /// expect: A canvas the grid cannot fit, an unreadable size or an unknown
+    /// layout is refused; the server stays up and publishes nothing.
+    /// pre: two images in the active gallery.
+    /// post: each bad request is invalid_argument; an explicit list of seven
+    /// images is used whole instead of being cut to the default of six.
+    /// [P1] Constraining: a 0x0 canvas used to wrap the unsigned cell arithmetic
+    /// into a 4 TiB allocation and abort the whole server process.
+    #[tokio::test]
+    async fn collage_refuses_impossible_canvases_and_unknown_layouts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let _env_lock = crate::ARTIFACTS_ENV_LOCK.lock().await;
+        let artifacts = tempfile::tempdir()?;
+        let _env = ArtifactsEnvGuard::set(artifacts.path());
+        let server = make_server();
+        let directory = tempfile::tempdir()?;
+        for name in ["a", "b", "c", "d", "e", "f", "g"] {
+            image::RgbImage::new(2, 2).save(directory.path().join(format!("{name}.png")))?;
+        }
+        server
+            .gallery_organize(read_only_organize_request(directory.path()))
+            .await?;
+        let before = std::fs::read_dir(crate::assets::generated_assets_dir())?.count();
+        for arguments in [
+            serde_json::json!({"image_indices": [0, 1], "canvas_size": "0x0"}),
+            serde_json::json!({"image_indices": [0, 1], "canvas_size": "zz-not-a-size"}),
+            serde_json::json!({"image_indices": [0, 1], "canvas_size": "100x100", "spacing": 400}),
+            serde_json::json!({"image_indices": [0, 1], "canvas_size": "9000x9000"}),
+            serde_json::json!({"image_indices": [0, 1], "layout": "zz-bogus"}),
+            serde_json::json!({"image_indices": [0, 1], "max_items": 0}),
+            serde_json::json!({"image_indices": []}),
+            serde_json::json!({"image_indices": [0, 1, 2, 3, 4, 5, 6, 0, 1, 2]}),
+        ] {
+            let error = server
+                .image_create_collage(crate::test_support::wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{arguments}: {error:?}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(crate::assets::generated_assets_dir())?.count(),
+            before,
+            "a refused collage publishes nothing"
+        );
+        let seven = content_of(
+            &server
+                .image_create_collage(crate::test_support::wire(
+                    serde_json::json!({"image_indices": [0, 1, 2, 3, 4, 5, 6]}),
+                )?)
+                .await?,
+        );
+        assert_eq!(
+            seven["image_count"], 7,
+            "an explicit selection is used whole"
+        );
+        let no_match = server
+            .image_create_collage(crate::test_support::wire(
+                serde_json::json!({"search_terms": ["zz-none"]}),
+            )?)
+            .await
+            .expect_err("nothing in the gallery matches");
+        assert_eq!(no_match.kind, hkask_types::McpErrorKind::FailedPrecondition);
+        Ok(())
+    }
+
     /// PR-M2 pin (MF-13): the collage routes through the canonical storage
     /// contract — the output is gallery-indexed with lineage
     /// (op `image_create_collage`) at a durable path, never a bare temp
@@ -11326,6 +11395,35 @@ mod gallery_lifecycle_tests {
         )
     }
 
+    /// A real one-second video or tone (ffmpeg lavfi), chosen by extension:
+    /// gallery_add_media checks the declared kind against the file's streams.
+    async fn media_fixture(path: &Path) -> TestResult {
+        let source = if path.extension().and_then(|ext| ext.to_str()) == Some("wav") {
+            vec!["-f", "lavfi", "-i", "sine=frequency=440:duration=1"]
+        } else {
+            vec![
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=duration=1:size=64x48:rate=5",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ]
+        };
+        let output = tokio::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error"])
+            .args(source)
+            .arg(path)
+            .output()
+            .await?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
+        }
+        Ok(())
+    }
+
     fn png(path: &Path, color: u8) {
         image::RgbImage::from_pixel(3, 2, image::Rgb([color, 0, 0]))
             .save(path)
@@ -11749,7 +11847,7 @@ mod gallery_lifecycle_tests {
         let (external_id, _) = server.import_reference_image(&external, fixture.path())?;
         for (name, kind) in [("film.mp4", "video"), ("sound.wav", "audio")] {
             let path = root.join(name);
-            std::fs::write(&path, b"fixture bytes")?;
+            media_fixture(&path).await?;
             let response = server
                 .gallery_add_media(Parameters(GalleryAddMediaRequest {
                     path: path.to_string_lossy().into_owned(),
@@ -11825,7 +11923,7 @@ mod gallery_lifecycle_tests {
         organize(&server, &active, false).await?;
         let active_id = server.access_gallery()?.gallery_id;
         let film = owner.join("film.mp4");
-        std::fs::write(&film, b"fixture bytes")?;
+        media_fixture(&film).await?;
         server
             .gallery_add_media(Parameters(GalleryAddMediaRequest {
                 path: film.to_string_lossy().into_owned(),

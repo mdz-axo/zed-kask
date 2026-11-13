@@ -11,21 +11,92 @@ use serde::{Deserialize, Serialize};
 // ── Image description ────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DescribeImageRequest {
-    /// Image URL or gallery search result reference.
+    /// A local image path (file:// accepted), an http(s) URL, or a
+    /// data:<mime>;base64 URI.
     pub image_url: String,
-    /// Caption style: "descriptive", "artistic", "technical", "alt_text".
+    /// Caption style: "descriptive" (default), "artistic", "technical", "alt_text".
+    #[schemars(schema_with = "optional_caption_style_schema")]
     pub style: Option<String>,
+}
+
+/// The closed vocabularies of the gallery tools. Each list is the single
+/// source for its input schema's enumeration and for the handler's refusal.
+pub const CAPTION_STYLES: [&str; 4] = ["descriptive", "artistic", "technical", "alt_text"];
+pub const GALLERY_MODES: [&str; 3] = ["read-only", "copy-on-write", "destructive"];
+pub const SEARCH_MODES: [&str; 2] = ["tags", "semantic"];
+pub const ANALYZE_MODES: [&str; 3] = ["new", "all", "selection"];
+pub const TIMELINE_PERIODS: [&str; 3] = ["year", "month", "decade"];
+pub const FACE_STATUSES: [&str; 2] = ["valid", "rejected"];
+pub const IMPORT_MEDIA_TYPES: [&str; 2] = ["video", "audio"];
+pub const ANNOTATION_KINDS: [&str; 2] = ["tag", "note"];
+
+fn string_enum(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"type": "string", "enum": values})
+}
+fn optional_string_enum(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [{"type": "string", "enum": values}, {"type": "null"}]})
+}
+fn optional_string_enum_list(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [
+        {"type": "array", "items": {"type": "string", "enum": values}},
+        {"type": "null"}
+    ]})
+}
+fn optional_caption_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&CAPTION_STYLES)
+}
+fn gallery_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&GALLERY_MODES)
+}
+fn optional_search_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&SEARCH_MODES)
+}
+fn optional_tag_types_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum_list(&crate::tools::gallery::TAG_TYPES)
+}
+fn analyze_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&ANALYZE_MODES)
+}
+fn optional_pipelines_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum_list(&crate::tools::gallery::ANALYSIS_PIPELINES)
+}
+fn optional_face_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&FACE_STATUSES)
+}
+fn timeline_period_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&TIMELINE_PERIODS)
+}
+fn collage_layout_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&crate::tools::processing::COLLAGE_LAYOUTS)
+}
+fn import_media_type_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&IMPORT_MEDIA_TYPES)
+}
+pub(crate) fn annotation_kind_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&ANNOTATION_KINDS)
 }
 
 // ── Gallery request types ────────────────────────────────────────────────
 
+/// The request of a tool that takes no arguments. A handler with no
+/// parameter is served an open schema and anything sent to it is dropped;
+/// this makes "no arguments" a contract the boundary enforces.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoArguments {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryOrganizeRequest {
     /// Absolute path to the gallery folder.
     pub path: String,
-    /// Policy mode: "read-only", "copy-on-write", or "destructive".
+    /// Policy mode: "read-only" (default), "copy-on-write", or "destructive".
+    /// A gallery keeps the mode it was first organized with; the response
+    /// reports mode_preserved when the requested mode was not applied.
     #[serde(default = "default_mode")]
+    #[schemars(schema_with = "gallery_mode_schema")]
     pub mode: String,
     /// Whether to scan subdirectories recursively (default: true).
     #[serde(default = "default_true")]
@@ -45,28 +116,38 @@ fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GallerySearchRequest {
     pub query: String,
-    /// Search mode: "tags" (default — fuzzy match against AI-generated tags;
-    /// works without embeddings) or "semantic" (caption-embedding cosine
-    /// similarity; requires gallery_analyze to have generated captions).
+    /// Search mode: "tags" (default — fuzzy match against researcher tags and
+    /// notes and model suggestions; works without embeddings) or "semantic"
+    /// (caption-embedding cosine similarity; requires gallery_analyze to have
+    /// generated captions; one embedding call per captioned image).
+    #[schemars(schema_with = "optional_search_mode_schema")]
     pub mode: Option<String>,
     /// Semantic mode only: find images similar to this gallery image (by its
-    /// caption embedding) instead of the query text.
+    /// caption embedding) instead of the query text. Refused in tags mode.
     pub image_index: Option<usize>,
+    /// Maximum results, 1 to 100 (default 10 in tags mode, 5 in semantic mode).
     pub limit: Option<usize>,
+    /// Tags mode only: restrict matches to these tag types.
+    #[schemars(schema_with = "optional_tag_types_schema")]
     pub tag_types: Option<Vec<String>>,
+    /// Minimum similarity, 0.0 to 1.0 (default 0.3).
     pub min_similarity: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAnalyzeRequest {
     /// Which images to analyze: "new" (untagged only), "all" (everything), or "selection" (specific indices).
     #[serde(default = "default_analyze_mode")]
+    #[schemars(schema_with = "analyze_mode_schema")]
     pub mode: String,
     /// Specific image indices (only when mode="selection").
     pub image_indices: Option<Vec<usize>>,
     /// Which pipelines to run: "faces", "objects", "colors", "composition", "scene". Default: "objects", "colors", "composition", "scene"; faces require explicit selection.
+    #[schemars(schema_with = "optional_pipelines_schema")]
     pub pipelines: Option<Vec<String>>,
     /// Maximum images to process (safety limit, default: 50).
     #[serde(default = "default_analyze_limit")]
@@ -81,6 +162,7 @@ fn default_analyze_limit() -> usize {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryRefreshRequest {
     /// Whether to scan subdirectories recursively (default: true).
     #[serde(default = "default_true")]
@@ -95,6 +177,7 @@ pub struct GalleryRefreshRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryNameFaceRequest {
     /// The face group number (from analyze results).
     pub face_group: usize,
@@ -107,12 +190,14 @@ pub struct GalleryNameFaceRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FaceValidateRequest {
     /// Gallery image index to validate as a face reference.
     pub image_index: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FaceRegisterRequest {
     /// Gallery image index of the validated reference portrait.
     pub image_index: usize,
@@ -127,18 +212,22 @@ pub struct FaceRegisterRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FaceListRequest {
     /// Optional status filter: "valid" or "rejected".
+    #[schemars(schema_with = "optional_face_status_schema")]
     pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FaceRemoveRequest {
     /// Face registry ID to remove.
     pub face_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FaceScanFolderRequest {
     /// Absolute path to the folder of reference face images. Each image must
     /// have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`,
@@ -400,17 +489,19 @@ impl AsRef<str> for FaceStatus {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryTimelineRequest {
-    /// Time period: "year", "month", or "decade".
+    /// Time period: "year" (default), "month", or "decade".
     #[serde(default = "default_period")]
+    #[schemars(schema_with = "timeline_period_schema")]
     pub period: String,
-    /// How many periods to include (default: 5).
+    /// How many periods to include, newest first (default 5, 1 to 500).
     #[serde(default = "default_count")]
     pub count: usize,
-    /// Max images per period (default: 3).
+    /// Max images per period (default 3, 1 to 500).
     #[serde(default = "default_per_period")]
     pub per_period: usize,
-    /// Optional search terms to filter by.
+    /// Optional: keep only images with a tag containing one of these terms.
     pub search_terms: Option<Vec<String>>,
 }
 
@@ -427,16 +518,23 @@ fn default_per_period() -> usize {
 // ── Image editing request types ──────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateCollageRequest {
     pub search_terms: Option<Vec<String>>,
     pub similar_to_index: Option<usize>,
     pub image_indices: Option<Vec<usize>>,
+    /// Images taken by search_terms or similar_to_index, 1 to 9 (default 6).
+    /// An explicit image_indices list is used whole.
     #[serde(default = "default_max_items")]
     pub max_items: usize,
+    /// "grid" (default), "horizontal", "vertical" or "masonry".
     #[serde(default = "default_layout")]
+    #[schemars(schema_with = "collage_layout_schema")]
     pub layout: String,
     #[serde(default = "default_spacing")]
+    /// Gap between cells in pixels (default 8).
     pub spacing: u32,
+    /// WIDTHxHEIGHT in pixels, each edge 1 to 8192 (default 1200x900).
     #[serde(default = "default_canvas")]
     pub canvas_size: String,
 }
@@ -512,7 +610,9 @@ fn default_max_frames() -> u32 {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TranscribeBundleRequest {
-    /// URL or base64 data URI of the audio to transcribe.
+    /// URL or local path of the audio/video to transcribe (local paths and
+    /// file:// URIs naming existing files are read directly). An inline
+    /// data: URI is not accepted.
     pub audio_url: String,
     /// Optional ISO 639-1 language code (e.g., "en", "ja").
     pub language: Option<String>,
@@ -571,12 +671,14 @@ pub struct RecordAndTranscribeRequest {
 // ── Historical lineage request types ─────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryLineageRequest {
     /// Index of the gallery image whose lineage to read.
     pub image_index: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryDeleteImageRequest {
     /// Index of the gallery image to delete from the index (positional —
     /// resolves against the active gallery). Supply exactly one of
@@ -744,12 +846,14 @@ pub struct JobCancelRequest {
 /// gallery index (the former gallery_add_video / gallery_add_audio pair,
 /// merged — the bodies differed only in media type and dimensions).
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAddMediaRequest {
     /// Absolute path to the media file.
     pub path: String,
-    /// Media kind: "video" or "audio".
+    /// Media kind: "video" or "audio". Must match the file's streams.
+    #[schemars(schema_with = "import_media_type_schema")]
     pub media_type: String,
-    /// Video width in pixels (video only; optional metadata).
+    /// Video width in pixels (video only; read from the file when omitted).
     pub width: Option<u32>,
     /// Video height in pixels (video only; optional metadata).
     pub height: Option<u32>,
@@ -760,6 +864,7 @@ pub struct GalleryAddMediaRequest {
 /// Request to get complete details for a gallery asset — record, tags,
 /// lineage, and face associations in a single call.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAssetDetailRequest {
     /// Active asset position. Supply exactly one of image_index or image_id.
     pub image_index: Option<usize>,
@@ -769,6 +874,7 @@ pub struct GalleryAssetDetailRequest {
 
 /// Request for `gallery_list_assets` — the panel/library data source.
 #[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryListAssetsRequest {
     /// 0-based offset (matches gallery index semantics — index `offset + i`
     /// in the result is the `image_index` other gallery tools accept).
@@ -786,6 +892,7 @@ fn default_asset_list_limit() -> usize {
 // ── Album request types ─────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryCreateAlbumRequest {
     /// Album name.
     pub name: String,
@@ -794,6 +901,7 @@ pub struct GalleryCreateAlbumRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryMoveToAlbumRequest {
     /// Gallery image index to add to the album.
     pub image_index: usize,
@@ -802,6 +910,7 @@ pub struct GalleryMoveToAlbumRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryRemoveFromAlbumRequest {
     /// Gallery image index to remove from the album.
     pub image_index: usize,
@@ -810,12 +919,14 @@ pub struct GalleryRemoveFromAlbumRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryDeleteAlbumRequest {
     /// Album ID to delete.
     pub album_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryListAlbumMembersRequest {
     /// Album ID to list members for.
     pub album_id: String,

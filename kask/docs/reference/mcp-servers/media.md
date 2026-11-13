@@ -451,28 +451,28 @@ No routing or layout change is part of this repair.
 |------|-------------|
 | `gallery_organize` | Organize a photo gallery: create the index, scan a folder for images, return status. Run before `gallery_search`. |
 | `gallery_status` | Gallery status: path, mode, image count, total size. |
-| `gallery_search` | Search the gallery by description. Mode `tags` (default): fuzzy-matches AI-generated tags (objects, faces, colors, composition). Mode `semantic`: caption-embedding cosine similarity against the query text or a reference `image_index` (requires `gallery_analyze` first). The former `gallery_find_similar` tool, folded in as the semantic mode. Query and candidate-caption embeddings are compared within one request — width-agnostic at the model's native width (no `dimensions` parameter). |
+| `gallery_search` | Search the gallery by description. Mode `tags` (default): fuzzy-matches researcher tags and notes and model suggestions; `tag_types` restricts it to a closed set (tag, note, face, object, color, composition, caption). `limit` is 1 to 100 and `min_similarity` 0.0 to 1.0; a value outside its range, an unknown tag type, or an argument the selected mode does not use is refused rather than answered with an empty result. Mode `semantic`: caption-embedding cosine similarity against the query text or a reference `image_index` (requires `gallery_analyze` first). The former `gallery_find_similar` tool, folded in as the semantic mode. Query and candidate-caption embeddings are compared within one request — width-agnostic at the model's native width (no `dimensions` parameter). |
 | `gallery_refresh` | Rescan for new/removed images and update all AI metadata; face detection OFF by default, `include_faces=true` also scans the face reference folder and auto-matches against the face registry. |
 | `describe_image` | Describe an image in detail; styles: descriptive, artistic, technical, alt_text. |
 | `gallery_analyze` | Analyze source objects, colors, composition, and scenes. Faces require explicit pipeline selection; model tags remain distinct from researcher annotations. |
-| `gallery_name_face` | Name a face group from `gallery_analyze`, by free-text name or registry `face_id`; after naming, `gallery_search` finds photos of that person. |
+| `gallery_name_face` | Name a face group from `gallery_analyze`, by free-text name or registry `face_id`; after naming, `gallery_search` finds photos of that person. A group number no detected face carries is `not_found`. |
 | `face_validate` | Validate a gallery image as a face reference: exactly 1 face, coverage ≥15%, frontal pose, good lighting, no occlusion, sharp focus; structured pass/fail with reasons. |
-| `face_register` | Register a face reference with a person's name; auto-validates 6 criteria, `--force` skips validation; stored in `face_registry` for matching during `gallery_refresh`. |
+| `face_register` | Register a face reference with a person's name; validates 6 criteria with the vision model, `force=true` skips validation; blank names are refused; stored in `face_registry` for matching during `gallery_refresh`. |
 | `face_scan_folder` | Scan a folder of reference face images (with YAML sidecars) and register each in `face_registry`; default `mcp/media/faces/`. |
-| `face_list` | List registered faces; optional status filter (valid / rejected). |
+| `face_list` | List registered faces; optional status filter (valid / rejected; any other value is refused). |
 | `face_remove` | Remove a face from the registry by ID. |
-| `gallery_timeline` | Organize gallery images by time period using EXIF dates; grouped by year, month, or decade. |
+| `gallery_timeline` | Group gallery images by EXIF capture date: year, month (`YYYY-MM`) or decade, newest first; images without a readable date are grouped under `undated`. `count` and `per_period` are 1 to 500. |
 | `gallery_lineage` | Read historical or source-derived lineage plus any retained historical workflow graph; `lineage: null` if none recorded. This never executes a saved creative operation. |
-| `gallery_list_assets` | List gallery assets in stable index order with pagination. |
+| `gallery_list_assets` | List gallery assets in stable index order with pagination; `limit` is 1 to 500 and a value outside it is refused. |
 | `gallery_asset_detail` | Complete details by active `image_index` or stable `image_id` (exactly one), including missing/status fields, lineage, structured OMC v2.8 creation graph, and typed transcript-render origin; the inspector-panel data source. |
-| `gallery_delete_image` | Delete an Asset from the gallery index by stable `image_id` or active `image_index` (exactly one); linked transcripts detach and survive. Index-only deletion preserves source bytes in every mode. `delete_file=true` requires destructive gallery mode; read-only/copy-on-write refuse before mutation. Unlink failure preserves the index/link; a later database failure explicitly reports that the source was already deleted and requires reconciliation (`src/tools/gallery.rs:1395–1444`; pinned by `gallery_deletion_mode_matrix` and `asset_file_deletion_failure_preserves_gallery_and_transcript_identity`). |
-| `gallery_add_media` | Import a video or audio file into the gallery whose folder contains it (not the active gallery; a file outside every gallery folder is refused) (media_type selects the kind); SHA-256 hash for deduplication. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
-| `gallery_create_album` | Create an album; metadata-only grouping, assets stay in place, an asset can be in multiple albums. |
+| `gallery_delete_image` | Delete an Asset from the gallery index by stable `image_id` or active `image_index` (exactly one); linked transcripts detach and survive. Index-only deletion preserves source bytes in every mode. `delete_file=true` requires the gallery that owns the asset to be in destructive mode (the active gallery's mode is irrelevant: an `image_id` resolves across galleries); read-only/copy-on-write refuse before mutation. Unlink failure preserves the index/link; a later database failure explicitly reports that the source was already deleted and requires reconciliation (pinned by `gallery_deletion_mode_matrix`, `deleting_a_file_needs_the_owning_gallery_to_be_destructive` and `asset_file_deletion_failure_preserves_gallery_and_transcript_identity`). |
+| `gallery_add_media` | Import a video or audio file into the gallery whose folder contains it (not the active gallery; a file outside every gallery folder is refused); `media_type` (video or audio) must match the file's streams when ffprobe is available, and video dimensions are read from the file. The SHA-256 is computed in 1 MiB blocks, never by loading the file. The former `gallery_add_video`/`gallery_add_audio` pair, merged. |
+| `gallery_create_album` | Create an album in the current gallery, optionally nested under one of its albums; metadata-only grouping, assets stay in place, an asset can be in multiple albums. |
 | `gallery_list_albums` | List all albums in the current gallery. |
-| `gallery_move_to_album` | Add a gallery asset to an album; idempotent. |
-| `gallery_remove_from_album` | Remove a gallery asset from an album; idempotent. |
-| `gallery_delete_album` | Delete an album; assets remain in the gallery. |
-| `gallery_list_album_members` | List all image indices in an album. |
+| `gallery_move_to_album` | Add an asset of the current gallery to one of its albums; idempotent. An album id that is not an album of the current gallery is `not_found` (true of every album tool). |
+| `gallery_remove_from_album` | Remove an asset of the current gallery from one of its albums; idempotent for a non-member. |
+| `gallery_delete_album` | Delete an album of the current gallery with its nested albums; assets remain in the gallery. |
+| `gallery_list_album_members` | List the assets in an album of the current gallery as stable ids and current indices. |
 
 ### YouTube discovery (`kask/mcp-servers/hkask-mcp-media/src/tools/youtube.rs`, 1 tool)
 
@@ -484,7 +484,7 @@ No routing or layout change is part of this repair.
 
 | Tool | Description |
 |------|-------------|
-| `image_create_collage` | Create a collage from gallery images (local composition via `image` crate); three modes: `search_terms`, `similar_to_index`, or `image_indices`. Published through the canonical storage contract (PR-M2, 2026-10-06): the output is gallery-indexed with lineage (op `image_create_collage`) at a durable artifacts path — the result carries `gallery_asset_id` + `display_hint`; the scratch write is consumed by the publication. |
+| `image_create_collage` | Create a collage from gallery images (local composition via `image` crate); exactly one selection: `image_indices` (1 to 9, used whole), `search_terms` or `similar_to_index` (fuzzy tag-text match, up to `max_items`). `layout` is grid, horizontal, vertical or masonry; `canvas_size` is `WIDTHxHEIGHT`, each edge 1 to 8192, and a canvas the grid cannot fit is refused. Published through the canonical storage contract (PR-M2, 2026-10-06): the output is gallery-indexed with lineage (op `image_create_collage`) at a durable artifacts path — the result carries `gallery_asset_id` + `display_hint`; the scratch write is consumed by the publication. |
 | `video_clip` | Trim a video to start/end times using local ffmpeg through a keyframe-aligned segment plan — boundary spans re-encode for a frame-exact cut, interior keyframe-aligned GOPs stream-copy bit-stably (`src/video/ffmpeg.rs` `segment_split`), so segments compose with no edit-list offset — then durably publish and index the result in the generated gallery. |
 | `video_to_gif` | Convert a video segment to GIF using local ffmpeg, then durably publish it in the generated gallery. |
 | `video_add_caption` | Add a text caption overlay with local ffmpeg, then durably publish the MP4 in the generated gallery. |
@@ -516,7 +516,7 @@ causal error and removes the generated file and coupled gallery row/lineage.
 
 | Tool | Description |
 |------|-------------|
-| `transcribe_bundle` | Transcribe audio or video into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
+| `transcribe_bundle` | Transcribe audio or video (a URL or local path; an inline data URI is not accepted) into a synchronized `TranscriptBundle` with word-level timings (full_text carries the plain text) — the single transcription entry point, and the ingest format for the educt layers. The former raw-JSON `transcribe` tool was removed (the bundle is a strict superset). |
 | `audio_capture` | Capture audio from the default microphone and publish it as a canonical durable WAV asset (16 kHz mono); callers cannot select an output path. |
 | `record_and_transcribe` | Record from the microphone, publish the recording as a durable WAV gallery asset, and transcribe it; returns the published recording (`output`, `gallery_asset_id`) with the `TranscriptBundle` under `transcript`. A failed transcription keeps the recording and returns `status: partial` with a typed `transcript_error`. |
 | `transcribe_and_store` | Transcribe audio or video AND store the `TranscriptBundle` server-side in one call, keyed to its recording when a gallery asset id is supplied, returning only the transcript summary (id, words_count, has_word_timings, gallery_asset_id when linked) — the ingest entry point when the educt layers will be used afterwards. |

@@ -482,10 +482,17 @@ impl GalleryStore {
     /// ever been organized. Startup uses this to re-activate the operator's
     /// last gallery so a server restart does not leave the gallery dormant
     /// until a manual `gallery_organize` call.
+    ///
+    /// Organized means scanned: `reconcile` (gallery_organize, gallery_refresh)
+    /// is the only writer of `updated_at` after the insert, which stamps it
+    /// equal to `created_at`. A row that was only registered — the home folder
+    /// of a published asset or of a face reference image — is not a gallery
+    /// the operator chose, and used to win here whenever it was newer.
     pub fn most_recently_organized(&self) -> Result<Option<GalleryRecord>, GalleryStoreError> {
         let rows = query_map(
             &*self.driver,
-            "SELECT g.id FROM galleries g ORDER BY g.updated_at DESC LIMIT 1",
+            "SELECT g.id FROM galleries g WHERE g.updated_at <> g.created_at
+             ORDER BY g.updated_at DESC LIMIT 1",
             &[],
             |row| Ok(row.get_str(0)?.to_string()),
         )?;
@@ -1490,12 +1497,41 @@ impl GalleryStore {
     // ── Album CRUD ──────────────────────────────────────────────────────
 
     /// Create a new album in a gallery.
+    /// An album of one gallery, or `NotFound` naming the id. Every album
+    /// operation resolves through this, so an album id from another gallery
+    /// is as unknown as one that never existed.
+    pub fn album_in(
+        &self,
+        gallery_id: &str,
+        album_id: &str,
+    ) -> std::result::Result<AlbumRecord, GalleryStoreError> {
+        query_row(
+            &*self.driver,
+            "SELECT id, gallery_id, name, parent_id, created_at
+             FROM gallery_albums WHERE id = ?1 AND gallery_id = ?2",
+            &[
+                DbValue::Text(album_id.to_string()),
+                DbValue::Text(gallery_id.to_string()),
+            ],
+            Self::album_from_row,
+        )?
+        .ok_or_else(|| {
+            GalleryStoreError::NotFound(NotFound {
+                entity_type: "album".to_string(),
+                id: format!("album_id={album_id}"),
+            })
+        })
+    }
+
     pub fn create_album(
         &self,
         gallery_id: &str,
         name: &str,
         parent_id: Option<&str>,
     ) -> std::result::Result<AlbumRecord, GalleryStoreError> {
+        if let Some(parent_id) = parent_id {
+            self.album_in(gallery_id, parent_id)?;
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let now = now_rfc3339();
         self.driver.execute(
@@ -1820,14 +1856,67 @@ mod tests {
         assert!(store.most_recently_organized().unwrap().is_none());
     }
 
+    /// Register `root` and scan it empty, as gallery_organize does.
+    fn organize_empty(
+        store: &GalleryStore,
+        root: &std::path::Path,
+        mode: GalleryMode,
+    ) -> GalleryRecord {
+        let gallery = store
+            .open(root.to_str().expect("UTF-8 root"), mode)
+            .expect("gallery opens");
+        store
+            .reconcile(
+                &gallery.id,
+                &GalleryScan {
+                    root_path: gallery.root_path.clone(),
+                    recursive: true,
+                    extensions: Vec::new(),
+                    entries: Vec::new(),
+                    errors: Vec::new(),
+                },
+            )
+            .expect("empty scan reconciles");
+        gallery
+    }
+
     #[test]
     fn most_recently_organized_returns_the_only_gallery() {
         let store = setup();
         let root = tempfile::tempdir().expect("gallery root");
-        let path = root.path().to_str().expect("UTF-8 root");
-        let gallery = store.open(path, GalleryMode::ReadOnly).unwrap();
+        let gallery = organize_empty(&store, root.path(), GalleryMode::ReadOnly);
         let most_recent = store.most_recently_organized().unwrap().unwrap();
         assert_eq!(most_recent.id, gallery.id);
+    }
+
+    /// expect: After a restart I am in the gallery I organized, not in a
+    /// folder the server registered for its own bookkeeping afterwards.
+    #[test]
+    fn a_folder_that_was_only_registered_is_not_the_organized_gallery() {
+        let store = setup();
+        let chosen = tempfile::tempdir().expect("chosen gallery");
+        let generated = tempfile::tempdir().expect("publication home");
+        let only_registered = store
+            .open(
+                generated.path().to_str().expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
+        assert!(
+            store.most_recently_organized().unwrap().is_none(),
+            "a registered folder alone is nothing to re-activate"
+        );
+        let organized = organize_empty(&store, chosen.path(), GalleryMode::ReadOnly);
+        let later = tempfile::tempdir().expect("face folder");
+        store
+            .open(
+                later.path().to_str().expect("UTF-8 root"),
+                GalleryMode::ReadOnly,
+            )
+            .unwrap();
+        let most_recent = store.most_recently_organized().unwrap().unwrap();
+        assert_eq!(most_recent.id, organized.id);
+        assert_ne!(most_recent.id, only_registered.id);
     }
 
     #[test]
@@ -1835,18 +1924,8 @@ mod tests {
         let store = setup();
         let first_root = tempfile::tempdir().expect("first gallery");
         let second_root = tempfile::tempdir().expect("second gallery");
-        let first = store
-            .open(
-                first_root.path().to_str().expect("UTF-8 root"),
-                GalleryMode::ReadOnly,
-            )
-            .unwrap();
-        let second = store
-            .open(
-                second_root.path().to_str().expect("UTF-8 root"),
-                GalleryMode::CopyOnWrite,
-            )
-            .unwrap();
+        let first = organize_empty(&store, first_root.path(), GalleryMode::ReadOnly);
+        let second = organize_empty(&store, second_root.path(), GalleryMode::CopyOnWrite);
         let first_id = first.id;
         let second_id = second.id;
         let most_recent = store.most_recently_organized().unwrap().unwrap();

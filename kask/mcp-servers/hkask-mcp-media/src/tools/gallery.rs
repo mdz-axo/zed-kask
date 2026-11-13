@@ -1,25 +1,42 @@
 //! Gallery tools — organize, search, find-similar, refresh, describe, analyze, faces, timeline.
 use crate::*;
 
-const ANALYSIS_PIPELINES: [&str; 5] = ["faces", "objects", "colors", "composition", "scene"];
+pub const ANALYSIS_PIPELINES: [&str; 5] = ["faces", "objects", "colors", "composition", "scene"];
+/// Every tag type the index holds: the two researcher kinds and the five the
+/// analysis pipelines write. `gallery_search`'s `tag_types` filter is this set.
+pub const TAG_TYPES: [&str; 7] = [
+    "tag",
+    "note",
+    "face",
+    "object",
+    "color",
+    "composition",
+    "caption",
+];
+/// Search result bounds shared by both search modes.
+const MAX_SEARCH_RESULTS: usize = 100;
 // Face detection/identification is never implied by generic analysis or auto-analysis.
 const DEFAULT_ANALYSIS_PIPELINES: [&str; 4] = ["objects", "colors", "composition", "scene"];
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAnnotationCreateRequest {
     pub gallery_asset_id: String,
     /// One of: tag, note.
+    #[schemars(schema_with = "crate::types::annotation_kind_schema")]
     pub kind: String,
     /// Manually supplied annotation text (possibly agent-mediated), not model-analysis output.
     pub value: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAnnotationListRequest {
     pub gallery_asset_id: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAnnotationUpdateRequest {
     pub gallery_asset_id: String,
     pub annotation_id: String,
@@ -27,6 +44,7 @@ pub struct GalleryAnnotationUpdateRequest {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GalleryAnnotationDeleteRequest {
     pub gallery_asset_id: String,
     pub annotation_id: String,
@@ -155,6 +173,58 @@ fn refresh_status(scan_errors: &[String], stage_errors: &[&[String]]) -> &'stati
         "partial"
     } else {
         "completed"
+    }
+}
+
+/// SHA-256 and byte length of a file, read in fixed-size blocks. Media files
+/// run to gigabytes; reading one whole to hash it held the entire file in
+/// memory (measured: 547 MB peak resident for a 529 MB file).
+fn hash_file_streaming(path: &std::path::Path) -> std::io::Result<(String, u64)> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut block = vec![0u8; 1024 * 1024];
+    let mut total = 0u64;
+    loop {
+        let read = file.read(&mut block)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&block[..read]);
+        total += read as u64;
+    }
+    Ok((format!("{:x}", hasher.finalize()), total))
+}
+
+/// `gallery_list_assets` page size bounds.
+const MAX_ASSET_PAGE: usize = 500;
+/// `gallery_timeline` bounds for both the period count and images per period.
+const MAX_TIMELINE_PERIODS: usize = 500;
+use crate::types::{CAPTION_STYLES, FACE_STATUSES};
+
+/// The timeline bucket for an EXIF `DateTimeOriginal` (`YYYY:MM:DD hh:mm:ss`),
+/// or `undated`. The date is validated before it is sliced: an absent or
+/// malformed date used to be cut like a date, so a year bucket was named
+/// `unkn`, a month bucket `unknown`, and a decade `unk0s`.
+fn timeline_period_key(period: &str, date_taken: Option<&str>) -> String {
+    const UNDATED: &str = "undated";
+    let Some(date) = date_taken else {
+        return UNDATED.to_string();
+    };
+    let bytes = date.as_bytes();
+    let digits = |range: std::ops::Range<usize>| {
+        bytes
+            .get(range)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    if !(digits(0..4) && digits(5..7) && matches!(bytes.get(4), Some(b':' | b'-'))) {
+        return UNDATED.to_string();
+    }
+    match period {
+        "month" => format!("{}-{}", &date[0..4], &date[5..7]),
+        "decade" => format!("{}0s", &date[0..3]),
+        _ => date[0..4].to_string(),
     }
 }
 
@@ -351,7 +421,10 @@ impl MediaServer {
     }
 
     #[tool(description = "Get gallery status: path, mode, image count, and total size.")]
-    pub async fn gallery_status(&self) -> Result<String, McpToolError> {
+    pub async fn gallery_status(
+        &self,
+        Parameters(NoArguments {}): Parameters<NoArguments>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_status", async {
             match self.access_gallery() {
                 Ok(ga) => Ok(serde_json::json!({
@@ -399,6 +472,39 @@ impl MediaServer {
             if mode == "semantic" && query.trim().is_empty() && image_index.is_none() {
                 return Err(McpToolError::invalid_argument(
                     "semantic mode requires a query or an image_index",
+                ));
+            }
+            // Arguments that could only produce an empty answer, or that the
+            // selected mode would ignore, are refused: an empty result must
+            // mean nothing matched.
+            if let Some(limit) = limit {
+                validate_item_count("limit", limit, 1, MAX_SEARCH_RESULTS)?;
+            }
+            if let Some(min_similarity) = min_similarity
+                && !(0.0..=1.0).contains(&min_similarity)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "min_similarity must be between 0.0 and 1.0, got {min_similarity}"
+                )));
+            }
+            if let Some(unknown) = tag_types
+                .iter()
+                .flatten()
+                .find(|tag_type| !TAG_TYPES.contains(&tag_type.to_lowercase().as_str()))
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown tag type '{unknown}' — tag_types filters by {}",
+                    TAG_TYPES.join(", ")
+                )));
+            }
+            if mode == "tags" && image_index.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "image_index finds similar images in semantic mode; tags mode searches by query only",
+                ));
+            }
+            if mode == "semantic" && tag_types.is_some() {
+                return Err(McpToolError::invalid_argument(
+                    "tag_types filters tags mode; semantic mode compares scene descriptions only",
                 ));
             }
 
@@ -791,7 +897,15 @@ impl MediaServer {
                 validate_tool_url_with_dns(&image_url).await?;
             }
 
+            // An unknown style rendered an empty instruction block: the
+            // model was sent a prompt with no task and billed for it.
             let style_str = style.as_deref().unwrap_or("descriptive");
+            if !CAPTION_STYLES.contains(&style_str) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown style '{style_str}' — style is one of {}",
+                    CAPTION_STYLES.join(", ")
+                )));
+            }
             let mut vars = HashMap::new();
             vars.insert("style", style_str);
             let prompt = self
@@ -942,10 +1056,12 @@ impl MediaServer {
                 .map_err(|e| map_media_error(e.into()))?;
 
             let mut renamed = 0u32;
+            let mut face_tags = 0u32;
             for (tag, _path) in &all_tags {
                 if tag.tag_type != "face" {
                     continue;
                 }
+                face_tags += 1;
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tag.value)
                     && parsed["face_index"].as_u64() == Some(face_group as u64)
                 {
@@ -970,6 +1086,13 @@ impl MediaServer {
                 }
             }
 
+            // Naming nothing is not "named": the group number matched no
+            // detected face in this gallery.
+            if renamed == 0 {
+                return Err(McpToolError::not_found(format!(
+                    "no detected face carries face_group {face_group} in the current gallery ({face_tags} face tags present); run gallery_analyze with pipelines=[\"faces\"] to detect faces"
+                )));
+            }
             Ok(serde_json::json!({
                 "status": "named",
                 "face_group": face_group,
@@ -1012,7 +1135,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Register a face reference with a person's name. Auto-validates the image against 6 criteria (face count, coverage, pose, lighting, occlusion, clarity). Pass --force to skip validation and register directly as valid. Stores in the face_registry table for automatic matching during gallery_refresh."
+        description = "Register a face reference with a person's name. Validates the image with the vision model against 6 criteria (face count, coverage, pose, lighting, occlusion, clarity); force=true skips validation and registers directly as valid. Stores in the face_registry table for matching during gallery_refresh with include_faces=true."
     )]
     pub async fn face_register(
         &self,
@@ -1024,6 +1147,11 @@ impl MediaServer {
         }): Parameters<FaceRegisterRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_register", async {
+            if first_name.trim().is_empty() || last_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "first_name and last_name must not be blank",
+                ));
+            }
             let _admission = if force {
                 None
             } else {
@@ -1089,13 +1217,21 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "List all registered faces in the face registry. Optionally filter by status: 'valid' or 'rejected'."
+        description = "List all registered faces in the face registry. Optionally filter by status: 'valid' or 'rejected' (any other value is refused)."
     )]
     pub async fn face_list(
         &self,
         Parameters(FaceListRequest { status }): Parameters<FaceListRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "face_list", async {
+            if let Some(status) = status.as_deref()
+                && !FACE_STATUSES.contains(&status)
+            {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown status '{status}' — face_list filters by {}",
+                    FACE_STATUSES.join(" or ")
+                )));
+            }
             let faces = self
                 .gallery_store
                 .list_faces(status.as_deref())
@@ -1129,7 +1265,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade."
+        description = "Group the current gallery's images by the EXIF capture date: year, month (YYYY-MM) or decade, newest period first. Images without a readable capture date are grouped under 'undated'. count and per_period are 1 to 500."
     )]
     pub async fn gallery_timeline(
         &self,
@@ -1146,6 +1282,8 @@ impl MediaServer {
                     "Invalid period '{period}': must be year, month, or decade"
                 )));
             }
+            validate_item_count("count", count, 1, MAX_TIMELINE_PERIODS)?;
+            validate_item_count("per_period", per_period, 1, MAX_TIMELINE_PERIODS)?;
             let ga = self.access_gallery().map_err(map_media_error)?;
 
             // Asset identity travels with every timeline result so inline and
@@ -1173,23 +1311,8 @@ impl MediaServer {
                 }
 
                 let exif = Self::extract_exif(&img.absolute_path);
-                let date_str = exif
-                    .get("date_taken")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-
-                let period_key = match period.as_str() {
-                    "month" => date_str.chars().take(7).collect(),
-                    "decade" => {
-                        let prefix: String = date_str.chars().take(3).collect();
-                        if prefix.chars().count() == 3 {
-                            format!("{prefix}0s")
-                        } else {
-                            "unknown".to_string()
-                        }
-                    }
-                    _ => date_str.chars().take(4).collect(),
-                };
+                let period_key =
+                    timeline_period_key(&period, exif.get("date_taken").and_then(|v| v.as_str()));
 
                 dated_images.push((period_key, img.relative_path, img.absolute_path, img.id));
             }
@@ -1281,7 +1404,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_list_assets", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
-            let limit = limit.clamp(1, 500);
+            validate_item_count("limit", limit, 1, MAX_ASSET_PAGE)?;
             let assets = self
                 .gallery_store
                 .list_assets(&ga.gallery_id, offset, limit)
@@ -1424,10 +1547,18 @@ impl MediaServer {
                 crate::transcript_store::count_linked_transcripts(driver, &image.id)
                     .map_err(crate::tools::educt::map_store_error)?;
             if delete_file {
-                if ga.mode != GalleryMode::Destructive.as_str() {
-                    return Err(McpToolError::permission_denied(
-                        "Deleting an original file requires destructive gallery mode; use delete_file=false to remove only the index entry",
-                    ));
+                // The permission is the mode of the gallery that owns the
+                // asset. An id resolves across galleries, so the active
+                // gallery's mode says nothing about this file.
+                let owner = self
+                    .gallery_store
+                    .get(&image.gallery_id)
+                    .map_err(map_gallery_store_error)?;
+                if owner.mode != GalleryMode::Destructive.as_str() {
+                    return Err(McpToolError::permission_denied(format!(
+                        "Deleting an original file requires destructive gallery mode; the gallery at {} is {}. Use delete_file=false to remove only the index entry",
+                        owner.root_path, owner.mode
+                    )));
                 }
                 let path = std::path::Path::new(&image.absolute_path);
                 std::fs::remove_file(path).map_err(|error| {
@@ -1464,7 +1595,7 @@ impl MediaServer {
     /// hash for deduplication and indexes the file for gallery search (the
     /// former gallery_add_video / gallery_add_audio pair, merged).
     #[tool(
-        description = "Import a video or audio file into the gallery whose folder contains it (not necessarily the active gallery); the file must be inside an organized gallery folder. Computes SHA-256 hash for deduplication and indexes the file for gallery search. media_type selects the kind: 'video' (with optional width/height metadata) or 'audio'."
+        description = "Import a video or audio file into the gallery whose folder contains it (not necessarily the active gallery); the file must be inside an organized gallery folder. Records its SHA-256 and indexes it. media_type is 'video' or 'audio' and must match the file's streams when ffprobe is available; video width/height are read from the file unless supplied."
     )]
     pub async fn gallery_add_media(
         &self,
@@ -1486,6 +1617,7 @@ impl MediaServer {
                     )));
                 }
             };
+            hkask_mcp_server::ensure_existing_file(&path, "media file")?;
             let file_path = std::path::Path::new(&path)
                 .canonicalize()
                 .map_err(|error| McpToolError::invalid_argument(format!("{path}: {error}")))?;
@@ -1500,15 +1632,34 @@ impl MediaServer {
                         "{path} is not inside any gallery folder; run gallery_organize on its folder first"
                     ))
                 })?;
-            let bytes = std::fs::read(&file_path).map_err(|e| {
-                McpToolError::invalid_argument(format!("Failed to read {kind} file: {e}"))
-            })?;
-            let hash = {
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(&bytes);
-                format!("{:x}", hasher.finalize())
+            // The declared kind is checked against the file's streams when
+            // ffprobe is available: a wav recorded as video would render as
+            // a video asset everywhere its kind is read.
+            let probed = if self.ffmpeg.available {
+                Some(
+                    self.ffmpeg
+                        .probe(&file_path.to_string_lossy())
+                        .await
+                        .map_err(|error| {
+                            McpToolError::invalid_argument(format!(
+                                "{path} is not readable as media: {error}"
+                            ))
+                        })?,
+                )
+            } else {
+                None
             };
+            if let Some(probe) = &probed {
+                let actual = if probe.has_video_stream { "video" } else { "audio" };
+                if actual != kind {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "{path} is {actual}, not {kind}; pass media_type '{actual}'"
+                    )));
+                }
+            }
+            let (hash, size_bytes) = hash_file_streaming(&file_path).map_err(|error| {
+                hkask_mcp_server::server::map_io_error(error, &format!("read {kind} file {path}"))
+            })?;
             let ext = file_path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -1520,10 +1671,10 @@ impl MediaServer {
                     &gallery.id,
                     &file_path.to_string_lossy(),
                     &hash,
-                    width.unwrap_or(0),
-                    height.unwrap_or(0),
+                    width.or(probed.as_ref().map(|probe| probe.width)).unwrap_or(0),
+                    height.or(probed.as_ref().map(|probe| probe.height)).unwrap_or(0),
                     &ext,
-                    bytes.len() as u64,
+                    size_bytes,
                     kind,
                 )
                 .map_err(|e| map_media_error(e.into()))?;
@@ -1559,7 +1710,7 @@ impl MediaServer {
     /// groupings — assets stay in place on disk. An asset can be in
     /// multiple albums.
     #[tool(
-        description = "Create a new album in the current gallery. Albums are metadata-only groupings — assets stay in place on disk. An asset can be in multiple albums."
+        description = "Create a new album in the current gallery, optionally nested under one of its albums (parent_id). Albums are metadata-only groupings — assets stay in place on disk. An asset can be in multiple albums."
     )]
     pub async fn gallery_create_album(
         &self,
@@ -1577,7 +1728,7 @@ impl MediaServer {
             let record = self
                 .gallery_store
                 .create_album(&ga.gallery_id, &name, parent_id.as_deref())
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(map_gallery_store_error)?;
             serde_json::to_value(&record)
                 .map_err(|e| McpToolError::internal(format!("encode album record: {e}")))
         })
@@ -1586,7 +1737,10 @@ impl MediaServer {
 
     /// List all albums in the current gallery.
     #[tool(description = "List all albums in the current gallery.")]
-    pub async fn gallery_list_albums(&self) -> Result<String, McpToolError> {
+    pub async fn gallery_list_albums(
+        &self,
+        Parameters(NoArguments {}): Parameters<NoArguments>,
+    ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_list_albums", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
             let albums = self
@@ -1600,7 +1754,9 @@ impl MediaServer {
     }
 
     /// Add a gallery asset to an album.
-    #[tool(description = "Add a gallery asset to an album. Idempotent — re-adding is a no-op.")]
+    #[tool(
+        description = "Add an asset of the current gallery to one of its albums. Idempotent — re-adding is a no-op. An album id that is not an album of the current gallery is not_found."
+    )]
     pub async fn gallery_move_to_album(
         &self,
         Parameters(GalleryMoveToAlbumRequest {
@@ -1609,12 +1765,16 @@ impl MediaServer {
         }): Parameters<GalleryMoveToAlbumRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_move_to_album", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            self.gallery_store
+                .album_in(&ga.gallery_id, &album_id)
+                .map_err(map_gallery_store_error)?;
             let image_id = self
                 .resolve_image_id(image_index)
                 .map_err(map_media_error)?;
             self.gallery_store
                 .add_to_album(&album_id, &image_id)
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(map_gallery_store_error)?;
             Ok(serde_json::json!({
                 "added": true,
                 "album_id": album_id,
@@ -1626,7 +1786,7 @@ impl MediaServer {
 
     /// Remove a gallery asset from an album.
     #[tool(
-        description = "Remove a gallery asset from an album. Idempotent — removing a non-member is a no-op."
+        description = "Remove an asset of the current gallery from one of its albums. Idempotent — removing a non-member is a no-op. An album id that is not an album of the current gallery is not_found."
     )]
     pub async fn gallery_remove_from_album(
         &self,
@@ -1636,12 +1796,16 @@ impl MediaServer {
         }): Parameters<GalleryRemoveFromAlbumRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_remove_from_album", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            self.gallery_store
+                .album_in(&ga.gallery_id, &album_id)
+                .map_err(map_gallery_store_error)?;
             let image_id = self
                 .resolve_image_id(image_index)
                 .map_err(map_media_error)?;
             self.gallery_store
                 .remove_from_album(&album_id, &image_id)
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(map_gallery_store_error)?;
             Ok(serde_json::json!({
                 "removed": true,
                 "album_id": album_id,
@@ -1654,16 +1818,20 @@ impl MediaServer {
     /// Delete an album. Assets remain in the gallery — only the album
     /// grouping and its memberships are removed.
     #[tool(
-        description = "Delete an album. Assets remain in the gallery — only the album grouping and its memberships are removed."
+        description = "Delete an album of the current gallery, with its nested albums. Assets remain in the gallery — only the album groupings and their memberships are removed."
     )]
     pub async fn gallery_delete_album(
         &self,
         Parameters(GalleryDeleteAlbumRequest { album_id }): Parameters<GalleryDeleteAlbumRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_delete_album", async {
+            let ga = self.access_gallery().map_err(map_media_error)?;
+            self.gallery_store
+                .album_in(&ga.gallery_id, &album_id)
+                .map_err(map_gallery_store_error)?;
             self.gallery_store
                 .delete_album(&album_id)
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(map_gallery_store_error)?;
             Ok(serde_json::json!({
                 "deleted": true,
                 "album_id": album_id,
@@ -1673,7 +1841,9 @@ impl MediaServer {
     }
 
     /// List all image indices in an album.
-    #[tool(description = "List all image indices in an album.")]
+    #[tool(
+        description = "List the assets in an album of the current gallery as stable ids and current indices. An album id that is not an album of the current gallery is not_found."
+    )]
     pub async fn gallery_list_album_members(
         &self,
         Parameters(GalleryListAlbumMembersRequest { album_id }): Parameters<
@@ -1682,6 +1852,9 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "gallery_list_album_members", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
+            self.gallery_store
+                .album_in(&ga.gallery_id, &album_id)
+                .map_err(map_gallery_store_error)?;
             let image_ids = self
                 .gallery_store
                 .list_album_members(&album_id)
@@ -1994,5 +2167,512 @@ pub(super) mod tests {
         assert_eq!(refresh_status(&errors, &[&[]]), "degraded");
         assert_eq!(refresh_status(&[], &[&errors]), "partial");
         assert_eq!(refresh_status(&[], &[&[]]), "completed");
+    }
+
+    use crate::test_support::{live_input_schema, wire};
+
+    /// Organize `dir` (holding `count` generated 2x2 images) as the active
+    /// gallery in `mode`; returns the gallery id.
+    async fn organize(
+        server: &MediaServer,
+        dir: &std::path::Path,
+        count: usize,
+        mode: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        for index in 0..count {
+            image::RgbImage::from_pixel(2, 2, image::Rgb([index as u8 * 40, 0, 0]))
+                .save(dir.join(format!("zz-{index}.png")))?;
+        }
+        let organized = payload(
+            &server
+                .gallery_organize(wire(serde_json::json!({"path": dir, "mode": mode}))?)
+                .await?,
+        );
+        Ok(organized["gallery_id"]
+            .as_str()
+            .ok_or("gallery id")?
+            .to_string())
+    }
+
+    /// dcterms:identifier: `MediaServer::gallery_delete_image`
+    /// expect: A file in a gallery I organized read-only is never deleted,
+    /// whichever gallery happens to be active.
+    /// pre: gallery A read-only with one image; gallery B destructive and active.
+    /// post: delete_file on A's asset by id is permission_denied naming A's mode;
+    /// the file and the index row remain. The same request on B's own asset deletes.
+    #[tokio::test]
+    async fn deleting_a_file_needs_the_owning_gallery_to_be_destructive()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let read_only = tempfile::tempdir()?;
+        let destructive = tempfile::tempdir()?;
+        organize(&server, read_only.path(), 1, "read-only").await?;
+        let kept = payload(
+            &server
+                .gallery_list_assets(wire(serde_json::json!({}))?)
+                .await?,
+        );
+        let kept_id = kept["assets"][0]["id"]
+            .as_str()
+            .ok_or("asset id")?
+            .to_string();
+        let kept_path = std::path::PathBuf::from(kept["assets"][0]["path"].as_str().ok_or("path")?);
+        organize(&server, destructive.path(), 1, "destructive").await?;
+
+        let refused = server
+            .gallery_delete_image(wire(
+                serde_json::json!({"image_id": kept_id, "delete_file": true}),
+            )?)
+            .await
+            .expect_err("the owning gallery is read-only");
+        assert_eq!(refused.kind, hkask_types::McpErrorKind::PermissionDenied);
+        assert!(refused.message.contains("read-only"), "{}", refused.message);
+        assert!(
+            kept_path.is_file(),
+            "the read-only gallery's file is untouched"
+        );
+        assert!(server.gallery_store.get_by_id(&kept_id).is_ok());
+
+        let own = payload(
+            &server
+                .gallery_delete_image(wire(
+                    serde_json::json!({"image_index": 0, "delete_file": true}),
+                )?)
+                .await?,
+        );
+        assert_eq!(own["file_deleted"], true);
+        assert!(!destructive.path().join("zz-0.png").exists());
+        Ok(())
+    }
+
+    /// expect: An album id that is not an album of the gallery I am working
+    /// in is unknown to every album tool; it is never a server fault, an empty
+    /// answer, or a quiet success.
+    #[tokio::test]
+    async fn album_tools_resolve_the_album_within_the_current_gallery()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        organize(&server, first.path(), 1, "read-only").await?;
+        let album = payload(
+            &server
+                .gallery_create_album(wire(serde_json::json!({"name": "zz-album"}))?)
+                .await?,
+        );
+        let album_id = album["id"].as_str().ok_or("album id")?.to_string();
+        let nested = payload(
+            &server
+                .gallery_create_album(wire(
+                    serde_json::json!({"name": "zz-child", "parent_id": album_id}),
+                )?)
+                .await?,
+        );
+        assert_eq!(nested["parent_id"], album_id);
+
+        let unknown = serde_json::json!({"image_index": 0, "album_id": "zz-none"});
+        for error in [
+            server
+                .gallery_create_album(wire(
+                    serde_json::json!({"name": "zz", "parent_id": "zz-none"}),
+                )?)
+                .await
+                .expect_err("unknown parent"),
+            server
+                .gallery_move_to_album(wire(unknown.clone())?)
+                .await
+                .expect_err("unknown album"),
+            server
+                .gallery_remove_from_album(wire(unknown)?)
+                .await
+                .expect_err("unknown album"),
+            server
+                .gallery_list_album_members(wire(serde_json::json!({"album_id": "zz-none"}))?)
+                .await
+                .expect_err("unknown album"),
+            server
+                .gallery_delete_album(wire(serde_json::json!({"album_id": "zz-none"}))?)
+                .await
+                .expect_err("unknown album"),
+        ] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound, "{error:?}");
+            assert!(error.message.contains("zz-none"), "{}", error.message);
+        }
+
+        // With another gallery active, the first gallery's album is unknown:
+        // no cross-gallery membership, no cross-gallery delete.
+        organize(&server, second.path(), 1, "read-only").await?;
+        let foreign = serde_json::json!({"image_index": 0, "album_id": album_id});
+        for error in [
+            server
+                .gallery_move_to_album(wire(foreign)?)
+                .await
+                .expect_err("another gallery's album"),
+            server
+                .gallery_list_album_members(wire(serde_json::json!({"album_id": album_id}))?)
+                .await
+                .expect_err("another gallery's album"),
+            server
+                .gallery_delete_album(wire(serde_json::json!({"album_id": album_id}))?)
+                .await
+                .expect_err("another gallery's album"),
+        ] {
+            assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound, "{error:?}");
+        }
+        assert!(
+            server
+                .gallery_store
+                .list_album_members(&album_id)?
+                .is_empty()
+        );
+        organize(&server, first.path(), 0, "read-only").await?;
+        assert_eq!(
+            payload(
+                &server
+                    .gallery_list_albums(wire(serde_json::json!({}))?)
+                    .await?
+            )
+            .as_array()
+            .map(Vec::len),
+            Some(2),
+            "the album and its child survived the refused delete"
+        );
+        Ok(())
+    }
+
+    /// expect: A search or listing argument that can only produce an empty
+    /// answer is refused; an empty answer means nothing matched.
+    #[tokio::test]
+    async fn search_and_listing_bounds_are_refused_not_answered_empty()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        organize(&server, dir.path(), 2, "read-only").await?;
+        for arguments in [
+            serde_json::json!({"query": "zz", "limit": 0}),
+            serde_json::json!({"query": "zz", "limit": 101}),
+            serde_json::json!({"query": "zz", "min_similarity": 7.5}),
+            serde_json::json!({"query": "zz", "tag_types": ["zz-bogus"]}),
+            serde_json::json!({"query": "zz", "image_index": 1}),
+            serde_json::json!({"query": "zz", "mode": "semantic", "tag_types": ["tag"]}),
+        ] {
+            let error = server
+                .gallery_search(wire(arguments.clone())?)
+                .await
+                .expect_err("refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{arguments}: {error:?}"
+            );
+        }
+        for arguments in [
+            serde_json::json!({"limit": 0}),
+            serde_json::json!({"limit": 501}),
+        ] {
+            let error = server
+                .gallery_list_assets(wire(arguments)?)
+                .await
+                .expect_err("refused");
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        }
+        for arguments in [
+            serde_json::json!({"count": 0}),
+            serde_json::json!({"per_period": 0}),
+        ] {
+            let error = server
+                .gallery_timeline(wire(arguments)?)
+                .await
+                .expect_err("refused");
+            assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        }
+        let faces = server
+            .face_list(wire(serde_json::json!({"status": "vaild"}))?)
+            .await
+            .expect_err("a status outside the set is refused");
+        assert_eq!(faces.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            faces.message.contains("valid or rejected"),
+            "{}",
+            faces.message
+        );
+        Ok(())
+    }
+
+    /// expect: Images with no readable capture date are grouped under one
+    /// honest name, and a dated image lands in its year, month and decade.
+    #[tokio::test]
+    async fn timeline_groups_undated_images_under_one_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (period, date, expected) in [
+            ("year", Some("2019:07:04 10:00:00"), "2019"),
+            ("month", Some("2019:07:04 10:00:00"), "2019-07"),
+            ("decade", Some("2019:07:04 10:00:00"), "2010s"),
+            ("month", Some("2019-07-04T10:00:00"), "2019-07"),
+            ("year", None, "undated"),
+            ("month", None, "undated"),
+            ("decade", None, "undated"),
+            ("year", Some("unknown"), "undated"),
+            ("decade", Some("19"), "undated"),
+        ] {
+            assert_eq!(
+                timeline_period_key(period, date),
+                expected,
+                "{period} {date:?}"
+            );
+        }
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        organize(&server, dir.path(), 2, "read-only").await?;
+        let timeline = payload(
+            &server
+                .gallery_timeline(wire(serde_json::json!({}))?)
+                .await?,
+        );
+        assert_eq!(timeline["periods"][0]["period"], "undated");
+        assert_eq!(timeline["periods"][0]["total_images"], 2);
+        Ok(())
+    }
+
+    /// expect: Naming a face group that no detected face carries tells me so;
+    /// a registered reference face needs a real name.
+    #[tokio::test]
+    async fn naming_or_registering_nothing_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        organize(&server, dir.path(), 1, "read-only").await?;
+        let unnamed = server
+            .gallery_name_face(wire(
+                serde_json::json!({"face_group": 42, "name": "Zz Probe"}),
+            )?)
+            .await
+            .expect_err("no face carries that group");
+        assert_eq!(unnamed.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(
+            unnamed.message.contains("face_group 42"),
+            "{}",
+            unnamed.message
+        );
+        let blank = server
+            .face_register(wire(serde_json::json!({
+                "image_index": 0, "first_name": "  ", "last_name": "", "force": true,
+            }))?)
+            .await
+            .expect_err("a blank name is refused");
+        assert_eq!(blank.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert_eq!(
+            payload(&server.face_list(wire(serde_json::json!({}))?).await?)["count"],
+            0
+        );
+        Ok(())
+    }
+
+    /// expect: An imported recording is hashed without being held in memory,
+    /// and its declared kind matches what the file is.
+    /// pre: a real wav (audio only) inside an organized gallery.
+    /// post: media_type video is refused naming the real kind; audio imports
+    /// with the same SHA-256 and size a whole-file read gives.
+    #[tokio::test]
+    async fn imported_media_is_hashed_in_blocks_and_its_kind_is_checked()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use sha2::Digest;
+        let server = research_server();
+        let dir = tempfile::tempdir()?;
+        organize(&server, dir.path(), 1, "read-only").await?;
+        let wav = dir.path().join("zz-tone.wav");
+        let made = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=90",
+            ])
+            .args(["-ar", "44100", "-ac", "2"])
+            .arg(&wav)
+            .output()
+            .await?;
+        assert!(made.status.success(), "wav fixture generated");
+        let bytes = std::fs::read(&wav)?;
+        assert!(bytes.len() > 3 * 1024 * 1024, "spans several hash blocks");
+
+        let mislabelled = server
+            .gallery_add_media(wire(
+                serde_json::json!({"path": wav, "media_type": "video"}),
+            )?)
+            .await
+            .expect_err("a wav is not video");
+        assert_eq!(mislabelled.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            mislabelled.message.contains("is audio"),
+            "{}",
+            mislabelled.message
+        );
+
+        let imported = payload(
+            &server
+                .gallery_add_media(wire(
+                    serde_json::json!({"path": wav, "media_type": "audio"}),
+                )?)
+                .await?,
+        );
+        assert_eq!(
+            imported["hash"],
+            format!("{:x}", sha2::Sha256::digest(&bytes))
+        );
+        assert_eq!(imported["size_bytes"], bytes.len());
+        assert_eq!(imported["media_type"], "audio");
+
+        let directory = server
+            .gallery_add_media(wire(
+                serde_json::json!({"path": dir.path(), "media_type": "audio"}),
+            )?)
+            .await
+            .expect_err("a directory is not a media file");
+        assert_eq!(directory.kind, hkask_types::McpErrorKind::InvalidArgument);
+        let missing = server
+            .gallery_add_media(wire(
+                serde_json::json!({"path": dir.path().join("zz-none.wav"), "media_type": "audio"}),
+            )?)
+            .await
+            .expect_err("a missing file is named");
+        assert_eq!(missing.kind, hkask_types::McpErrorKind::NotFound);
+        Ok(())
+    }
+
+    /// expect: Every gallery, face and image tool refuses an argument it does
+    /// not declare and enumerates its closed vocabularies in its schema.
+    #[test]
+    fn gallery_tools_have_closed_schemas_and_enumerated_vocabularies() {
+        let misspelled = wire::<GalleryListAssetsRequest>(serde_json::json!({"ofset": 1}))
+            .err()
+            .expect("an undeclared key is refused");
+        assert!(misspelled.to_string().contains("ofset"), "{misspelled}");
+        assert!(
+            wire::<GallerySearchRequest>(serde_json::json!({"query": "zz", "tag_type": ["tag"]}))
+                .is_err(),
+            "tag_type (singular) must not search unfiltered"
+        );
+        assert!(wire::<NoArguments>(serde_json::json!({})).is_ok());
+        assert!(
+            wire::<NoArguments>(serde_json::json!({"gallery_id": "zz"})).is_err(),
+            "gallery_status takes no arguments: one that names a gallery must not be dropped"
+        );
+        let closed = [
+            "gallery_organize",
+            "gallery_status",
+            "gallery_search",
+            "gallery_refresh",
+            "gallery_analyze",
+            "gallery_name_face",
+            "gallery_timeline",
+            "gallery_lineage",
+            "gallery_list_assets",
+            "gallery_asset_detail",
+            "gallery_delete_image",
+            "gallery_add_media",
+            "gallery_create_album",
+            "gallery_list_albums",
+            "gallery_move_to_album",
+            "gallery_remove_from_album",
+            "gallery_delete_album",
+            "gallery_list_album_members",
+            "gallery_annotation_create",
+            "gallery_annotation_list",
+            "gallery_annotation_update",
+            "gallery_annotation_delete",
+            "face_validate",
+            "face_register",
+            "face_scan_folder",
+            "face_list",
+            "face_remove",
+            "describe_image",
+            "image_create_collage",
+        ];
+        for tool in closed {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
+        let enumerated = |tool: &str, field: &str| {
+            let property = &live_input_schema(tool)["properties"][field];
+            property
+                .get("enum")
+                .or_else(|| property["anyOf"][0].get("enum"))
+                .or_else(|| property["anyOf"][0]["items"].get("enum"))
+                .cloned()
+                .unwrap_or_else(|| panic!("{tool}.{field} is not enumerated: {property}"))
+        };
+        assert_eq!(
+            enumerated("gallery_organize", "mode"),
+            serde_json::json!(crate::types::GALLERY_MODES)
+        );
+        assert_eq!(
+            enumerated("gallery_search", "mode"),
+            serde_json::json!(crate::types::SEARCH_MODES)
+        );
+        assert_eq!(
+            enumerated("gallery_search", "tag_types"),
+            serde_json::json!(TAG_TYPES)
+        );
+        assert_eq!(
+            enumerated("gallery_analyze", "mode"),
+            serde_json::json!(crate::types::ANALYZE_MODES)
+        );
+        assert_eq!(
+            enumerated("gallery_analyze", "pipelines"),
+            serde_json::json!(ANALYSIS_PIPELINES)
+        );
+        assert_eq!(
+            enumerated("gallery_timeline", "period"),
+            serde_json::json!(crate::types::TIMELINE_PERIODS)
+        );
+        assert_eq!(
+            enumerated("gallery_add_media", "media_type"),
+            serde_json::json!(crate::types::IMPORT_MEDIA_TYPES)
+        );
+        assert_eq!(
+            enumerated("gallery_annotation_create", "kind"),
+            serde_json::json!(crate::types::ANNOTATION_KINDS)
+        );
+        assert_eq!(
+            enumerated("face_list", "status"),
+            serde_json::json!(FACE_STATUSES)
+        );
+        assert_eq!(
+            enumerated("describe_image", "style"),
+            serde_json::json!(CAPTION_STYLES)
+        );
+        assert_eq!(
+            enumerated("image_create_collage", "layout"),
+            serde_json::json!(crate::tools::processing::COLLAGE_LAYOUTS)
+        );
+    }
+
+    /// dcterms:identifier: `MediaServer::describe_image`
+    /// expect: A style the caption template has no branch for is refused
+    /// before anything is sent to the vision model.
+    #[tokio::test]
+    async fn describe_image_refuses_an_unknown_style_before_inference()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let image = dir.path().join("zz.png");
+        image::RgbImage::new(2, 2).save(&image)?;
+        // research_server's port panics on any inference call.
+        let error = research_server()
+            .describe_image(wire(
+                serde_json::json!({"image_url": image, "style": "haiku"}),
+            )?)
+            .await
+            .expect_err("unknown style");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        for style in CAPTION_STYLES {
+            assert!(error.message.contains(style), "{}", error.message);
+        }
+        Ok(())
     }
 }

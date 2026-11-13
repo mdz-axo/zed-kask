@@ -137,6 +137,50 @@ impl LocalVideoEffectiveParams<'_> {
     }
 }
 
+pub const COLLAGE_LAYOUTS: [&str; 4] = ["grid", "horizontal", "vertical", "masonry"];
+/// Largest collage edge. 8192 x 8192 RGBA is 256 MiB, composed in memory.
+const MAX_COLLAGE_EDGE: u32 = 8192;
+const MAX_COLLAGE_ITEMS: usize = 9;
+
+/// Parse `WIDTHxHEIGHT` and check that every cell keeps at least one pixel
+/// after spacing. An unparseable size used to fall back to 1200x900 without
+/// saying so, and a canvas smaller than its spacing wrapped the unsigned cell
+/// arithmetic into a resize of terabytes, which aborted the server process.
+fn collage_canvas(
+    canvas_size: &str,
+    cols: u32,
+    rows: u32,
+    spacing: u32,
+) -> Result<(u32, u32), McpToolError> {
+    let parsed = canvas_size.split_once('x').and_then(|(width, height)| {
+        Some((width.parse::<u32>().ok()?, height.parse::<u32>().ok()?))
+    });
+    let Some((width, height)) = parsed else {
+        return Err(McpToolError::invalid_argument(format!(
+            "canvas_size must be WIDTHxHEIGHT in pixels (for example 1200x900), got '{canvas_size}'"
+        )));
+    };
+    if !(1..=MAX_COLLAGE_EDGE).contains(&width) || !(1..=MAX_COLLAGE_EDGE).contains(&height) {
+        return Err(McpToolError::invalid_argument(format!(
+            "canvas_size edges must be between 1 and {MAX_COLLAGE_EDGE} pixels, got {width}x{height}"
+        )));
+    }
+    // Mirrors compose_collage_grid: a cell is (edge - spacing * (n + 1)) / n,
+    // and the image drawn in it is the cell minus one more spacing.
+    let cell = |edge: u32, count: u32| {
+        u64::from(edge)
+            .checked_sub(u64::from(spacing) * (u64::from(count) + 1))
+            .map(|free| free / u64::from(count))
+            .filter(|cell| *cell > u64::from(spacing))
+    };
+    if cell(width, cols).is_none() || cell(height, rows).is_none() {
+        return Err(McpToolError::invalid_argument(format!(
+            "a {width}x{height} canvas leaves no room for {cols} columns and {rows} rows with spacing {spacing}; enlarge canvas_size or reduce spacing"
+        )));
+    }
+    Ok((width, height))
+}
+
 /// Compose a collage grid: dark canvas, cells sized by `cols`/`rows` and
 /// `spacing`, each image scaled to its cell (Lanczos3) and centered.
 /// Shared by the collage tool and its composition test — the grid math is
@@ -347,7 +391,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms (semantic tag search), similar_to_index (visually similar images), or image_indices (explicit list)."
+        description = "Compose a collage of 1 to 9 images of the current gallery and publish it as a PNG asset. Choose exactly one selection: image_indices (an explicit list, all used), search_terms (fuzzy match on tag text) or similar_to_index (images whose tag text resembles that image's tags); the last two take up to max_items. layout is grid, horizontal, vertical or masonry; canvas_size is WIDTHxHEIGHT up to 8192 per edge."
     )]
     pub async fn image_create_collage(
         &self,
@@ -363,6 +407,7 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "image_create_collage", async {
             let _admission = self.admit_heavy_operation()?;
+            validate_item_count("max_items", max_items, 1, MAX_COLLAGE_ITEMS)?;
             let mode_count =
                 search_terms.is_some() as u8 + similar_to_index.is_some() as u8 + image_indices.is_some() as u8;
             if mode_count == 0 {
@@ -434,22 +479,22 @@ impl MediaServer {
                     paths.push(ga.root_path.join(rel_path));
                 }
             } else if let Some(ref indices) = image_indices {
-                if indices.is_empty() {
-                    return Err(McpToolError::invalid_argument("At least one image index is required."));
-                }
-                if indices.len() > 9 {
-                    return Err(McpToolError::invalid_argument(
-                        "Maximum 9 images supported for collage.",
-                    ));
-                }
-                let limit = indices.len().min(max_items);
-                for idx in indices.iter().take(limit) {
+
+                // An explicit list is the caller's selection: it is never
+                // cut down to max_items (default 6), which used to drop the
+                // seventh to ninth image without saying so.
+                validate_item_count("image_indices", indices.len(), 1, MAX_COLLAGE_ITEMS)?;
+                for idx in indices.iter() {
                     paths.push(self.resolve_image_path(*idx).map_err(map_media_error)?);
                 }
             }
 
+            // The arguments were well formed; the gallery holds nothing
+            // that matches them.
             if paths.is_empty() {
-                return Err(McpToolError::invalid_argument("No images found for collage."));
+                return Err(McpToolError::failed_precondition(
+                    "no gallery image matches the search terms; tags come from gallery_analyze or gallery_annotation_create",
+                ));
             }
 
             let mut images = Vec::new();
@@ -467,13 +512,16 @@ impl MediaServer {
                 "horizontal" => images.len() as u32,
                 "vertical" => 1u32,
                 "masonry" => 3u32.min(images.len() as u32),
-                _ => (images.len() as f64).sqrt().ceil() as u32,
+                "grid" => (images.len() as f64).sqrt().ceil() as u32,
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "unknown layout '{other}' — layout is one of {}",
+                        COLLAGE_LAYOUTS.join(", ")
+                    )));
+                }
             };
             let rows = (images.len() as u32).div_ceil(cols);
-
-            let parts: Vec<&str> = canvas_size.split('x').collect();
-            let canvas_w: u32 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(1200);
-            let canvas_h: u32 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(900);
+            let (canvas_w, canvas_h) = collage_canvas(&canvas_size, cols, rows, spacing)?;
 
             let canvas = compose_collage_grid(&images, cols, rows, canvas_w, canvas_h, spacing);
 

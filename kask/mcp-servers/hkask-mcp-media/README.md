@@ -24,12 +24,12 @@ The table below is a partial quick-reference.
 | `gallery_analyze` | Analyze source objects, colors, composition, and scenes; faces require explicit pipeline selection. Model-derived metadata stays separate from researcher annotations |
 | `gallery_name_face` | Name a face group from gallery_analyze. Provide either a free-text name or a face_id from the face registry |
 | `face_validate` | Validate a gallery image as a face reference for facial recognition. Checks: exactly 1 face, face coverage â¥15%, frontal pose, good lighting, no occlusion, sharp focus |
-| `face_register` | Register a face reference with a person's name. Auto-validates against 6 criteria. Pass --force to skip validation. Stored in the face_registry for automatic matching during gallery_refresh |
+| `face_register` | Register a face reference with a person's name. Validates against 6 criteria with the vision model; force=true skips validation. Stored in the face_registry for automatic matching during gallery_refresh |
 | `face_scan_folder` | Scan a folder of reference face images and register each one in the face_registry. Each image must have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`, `last_name`, and optional `notes`. Default folder: `mcp/media/faces/` |
-| `face_list` | List all registered faces in the face registry. Optionally filter by status: valid, rejected, or pending |
+| `face_list` | List all registered faces in the face registry. Optionally filter by status: valid or rejected |
 | `face_remove` | Remove a face from the registry by its ID |
-| `gallery_timeline` | Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade |
-| `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. Three modes: search_terms, similar_to_index, or image_indices |
+| `gallery_timeline` | Group gallery images by EXIF capture date (year, month or decade); images without a readable date are grouped under undated |
+| `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. One selection: image_indices (1 to 9), search_terms, or similar_to_index |
 | `youtube_search` | Search YouTube through SerpApi for structured metadata (views, duration, channel, publication date, provider extensions, URL); does not invoke yt-dlp or download media |
 | `video_fetch` | Download a selected YouTube/Vimeo/platform URL with yt-dlp and publish it as a durable local gallery asset |
 | `video_clip` | Trim a video to specified start/end times using local ffmpeg |
