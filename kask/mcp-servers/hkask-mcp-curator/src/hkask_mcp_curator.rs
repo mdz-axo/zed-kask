@@ -854,7 +854,7 @@ impl CuratorServer {
     }
 
     #[tool(
-        description = "Recall the Curator's memory by exact entity, or along an ontology axis. Give `entity` (with `recall_shape`: `perspective_scoped` for rows whose perspective is the curator, `entity_wide` for every h_mem of the entity, or `both`), or give `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) with `ontology_value` — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace. Exactly one of the two. Returns at most `limit` h_mems, newest first (default 100, at most 500); `total` and `limit_reached` say what the bound cut. Entity recall counts as a use: it resets the returned rows' decay clocks. Axis recall does not."
+        description = "Recall h_mems by exact entity or along an ontology axis (one of the two), newest first, at most `limit`; entity recall counts as a use and resets the returned rows' decay clocks. Give `entity` (with `recall_shape`: `perspective_scoped` for rows whose perspective is the curator, `entity_wide` for every h_mem of the entity, or `both`), or give `ontology_axis` (dc_type | dc_subject | pko_procedure | ontology_namespace) with `ontology_value` — e.g. every step of procedure X, or every h_mem tagged by a domain ontology namespace. `limit` defaults to 100 and is at most 500; `total` and `limit_reached` say what the bound cut. Axis recall does not reset decay clocks."
     )]
     pub async fn curator_memory_recall(
         &self,
@@ -1315,7 +1315,7 @@ impl CuratorServer {
     /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a new memory into the curator's store. Requires evidence citation (h_mem ID). Confidence starts at 0.5 whatever the caller believes; nothing changes it afterwards except memory_update. An existing memory for the same entity and attribute with a different value refuses the insert, naming it. The response carries the new h_mem_id."
+        description = "Insert a memory that cites an existing h_mem as evidence: it is stored at confidence 0.5, is refused when the entity and attribute already hold a different value, and returns its h_mem_id. Nothing changes the stored confidence afterwards except memory_update, whatever the caller believes."
     )]
     pub async fn memory_insert(
         &self,
@@ -1435,7 +1435,7 @@ impl CuratorServer {
     /// The new confidence is combined with the existing confidence using
     /// log-odds (Bayesian) pooling — not replacement.
     #[tool(
-        description = "Update an existing memory's confidence via Bayesian combination. The new confidence (0.0 to 1.0) is combined (not replaced) with the existing value using log-odds pooling: above 0.5 raises it, below 0.5 lowers it, 0.5 leaves it unchanged. The row is replaced; the response carries the replacement h_mem_id."
+        description = "Combine a new confidence (0.0 to 1.0) into a memory's stored confidence by log-odds pooling, optionally replacing its value; the row is replaced and the response carries the replacement h_mem_id. Above 0.5 raises the stored confidence, below 0.5 lowers it, 0.5 leaves it unchanged."
     )]
     pub async fn memory_update(
         &self,
@@ -1491,7 +1491,7 @@ impl CuratorServer {
     /// in the memory store by forgetting or de-conflicting contradictory
     /// h_mems.
     #[tool(
-        description = "Resolve a contradiction between memories. Strategies: 'forget' (delete the target h_mem from the database), 'update_confidence' (set the target's confidence to new_confidence; the row is replaced and the response carries the replacement id). Requires a non-blank reason citing the contradiction; the reason is returned in the response and is not stored."
+        description = "Resolve a contradiction between memories by acting on one target h_mem: 'forget' deletes it, 'update_confidence' sets its confidence to new_confidence and returns the replacement id. Requires a non-blank reason citing the contradiction; the reason is returned in the response and is not stored."
     )]
     pub async fn memory_resolve_contradiction(
         &self,
@@ -1581,7 +1581,7 @@ impl CuratorServer {
     /// confidence decay (lowers weight, never deletes) and confidence-based
     /// consolidation (deletes low-confidence).
     #[tool(
-        description = "Prune curator h_mems older than max_age_days. Default scope is turn storage only (curator:thread:) — knowledge-layer rows are untouched; set all_layers=true for full-store; set prefixes=[\"...\"] to prune only entities under those prefixes (e.g. the skill_use_issue: incident log). Hard-deletes aged h_mems, optionally sparing those recalled within spare_recalled_within_days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
+        description = "Hard-delete curator h_mems older than max_age_days: by default turn storage only (curator:thread:), leaving knowledge-layer rows untouched. Set all_layers=true for the full store, or prefixes=[\"...\"] to prune only entities under those prefixes (e.g. the skill_use_issue: incident log); spare_recalled_within_days spares rows recalled within that many days. Deterministic, non-LLM. Distinct from confidence-based consolidation."
     )]
     pub async fn curator_memory_prune(
         &self,
@@ -1672,7 +1672,7 @@ impl CuratorServer {
     /// (entity, attribute, normalized_value), keeps highest-confidence,
     /// deletes the rest. Non-string values skipped.
     #[tool(
-        description = "Deduplicate curator h_mems by normalized string value. Scans the newest `limit` h_mems (default 10000), groups by (entity, attribute, normalized_value), keeps highest-confidence, deletes the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:) skipped. limit_reached is true when older rows may have been left unscanned."
+        description = "Delete duplicate curator h_mems: among the newest `limit` rows (default 10000), rows sharing entity, attribute and normalized string value keep the highest-confidence one and lose the rest. Deterministic, non-LLM. Non-string values and turn storage (curator:thread:) skipped. limit_reached is true when older rows may have been left unscanned."
     )]
     pub async fn curator_memory_dedup(
         &self,
@@ -2106,6 +2106,80 @@ mod tool_surface_tests {
             enum_of("curator_memory_backfill_embeddings", "mode"),
             crate::types::BACKFILL_MODES
         );
+    }
+
+    /// The text the editor forwards to the model for a description
+    /// (`build_request_tools` in `crates/agent/src/thread.rs`): the whole
+    /// description up to 200 bytes, else its first sentence within 200
+    /// bytes, else a 200-byte cut ending in "...".
+    fn forwarded(description: &str) -> String {
+        if description.len() <= 200 {
+            return description.to_string();
+        }
+        let mut cutoff = 200;
+        while !description.is_char_boundary(cutoff) {
+            cutoff -= 1;
+        }
+        match description[..cutoff].find(". ") {
+            Some(position) => description[..=position].to_string(),
+            None => format!("{}...", &description[..cutoff]),
+        }
+    }
+
+    /// mcp-tool-review CU-30 pin. The editor forwards a description only to
+    /// its first sentence within 200 bytes; the input schema is forwarded
+    /// whole. Measured on a build of 13dbe1cf79: the forwarded text of the
+    /// two deleting tools did not say they delete, and three write tools'
+    /// forwarded text had lost the evidence requirement, the pooling rule
+    /// and the strategies. Each forwarded text is a complete sentence, and
+    /// for these tools it carries the fact a caller must have before
+    /// calling.
+    #[test]
+    fn forwarded_descriptions_are_complete_and_carry_the_load_bearing_fact() {
+        let tools = CuratorServer::tool_router().list_all();
+        let lead_of = |name: &str| {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("tool {name} present"));
+            forwarded(tool.description.as_deref().unwrap_or_default())
+        };
+        for tool in &tools {
+            let lead = lead_of(&tool.name);
+            assert!(
+                lead.ends_with('.') && !lead.ends_with("..."),
+                "{}: the forwarded text is cut mid-sentence: {lead:?}",
+                tool.name
+            );
+        }
+        for (name, facts) in [
+            (
+                "curator_memory_prune",
+                &["Hard-delete", "turn storage only"][..],
+            ),
+            ("curator_memory_dedup", &["Delete duplicate"][..]),
+            ("memory_insert", &["evidence", "0.5", "h_mem_id"][..]),
+            (
+                "memory_update",
+                &["log-odds pooling", "replacement h_mem_id"][..],
+            ),
+            (
+                "memory_resolve_contradiction",
+                &["'forget' deletes", "'update_confidence'"][..],
+            ),
+            (
+                "curator_memory_recall",
+                &["one of the two", "resets the returned rows' decay clocks"][..],
+            ),
+        ] {
+            let lead = lead_of(name);
+            for fact in facts {
+                assert!(
+                    lead.contains(fact),
+                    "{name}: the forwarded text must carry {fact:?}: {lead:?}"
+                );
+            }
+        }
     }
 
     /// The retired escalation/advice tool family must not reappear — the
