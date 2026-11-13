@@ -37,7 +37,7 @@ mds_categories: [composition, domain]
 | [Experimentation](experimentation.md) | `kask/mcp-servers/hkask-mcp-experimentation` | Experiment registry for the sharded experimentation program: registered experiments with pre-registered predictions, variant lineages, fitness records (caller-asserted report references), selection fossils | 8 |
 | Kata Kanban | `kask/mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards and retained canonical goals with separate human closure | 26 |
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | Research evidence ingestion, annotation, transcription, source-linked excerpts, and time-keyed media layers | 90 |
-| Nostr Client | `kask/mcp-servers/hkask-mcp-nostr-client` | Reports the Nostr identity configured in `kask.nostr` (npub, hex key, seed relays) or a named not-configured or invalid state. Contacts no relay. Receives no credential, holds no key and cannot sign | 1 |
+| Nostr Client | `kask/mcp-servers/hkask-mcp-nostr-client` | Reports the Nostr identity configured in `kask.nostr` (npub and hex key, or a named not-configured or invalid state) and whether each seed relay answers: one connection attempt per relay, up to 8, to `wss://` addresses with a public host only. Reads no events yet. Receives no credential and holds no key; refused on private threads | 1 |
 | Nostr Relay | `kask/mcp-servers/hkask-mcp-nostr-relay` | Loopback Nostr relay archiving allowlisted authors' public events over LMDB: status, archive query, pull-only sync from public relays, admission log. Holds no key; refused on private threads | 4 |
 
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 28 |

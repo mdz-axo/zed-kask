@@ -312,13 +312,23 @@ change them.
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
 | `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
-| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server starts from, comma-joined |
+| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server starts from, comma-joined. `nostr_account` tries one connection to each of the first 8 and reports which answer |
 
 Both variables are emitted for every settings state, so the editor's own
 environment never supplies them. The `npub` is trimmed and the relays are
 trimmed and de-duplicated here; nothing is validated here. The client server
 decides whether the `npub` is usable and reports `configured`,
 `not_configured` or `invalid` in `nostr_account`.
+
+The client server also decides which seed relays it will contact. An
+installed server connects only to `wss://` addresses whose host is neither
+`localhost` nor an IP literal in a loopback, private, link-local, unspecified
+or broadcast range, and to no address that carries a user name or password.
+The check is on the host as written: a public name that resolves to a private
+address is not caught. `nostr_account` reports each usable relay as
+`connected`, `unreachable`, `handshake_failed`, `timed_out` or `failed`, and
+each entry it will not contact as `refused`, by its position in the list and
+the reason, without repeating the entry.
 
 One subsection, `relay` (`KaskNostrRelaySettings`): the local relay server's
 policy. The operator sets it here or on the Settings > Kask > Nostr page; no
