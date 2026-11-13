@@ -4681,6 +4681,105 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_vc_1_checks_the_candidate_partition_and_the_signal_mapping() {
+        let form = skill_candidate("verification-compression", "removed_without_mapping");
+        let inventory = json!([
+            {"artifact_id": "artifact:a"}, {"artifact_id": "artifact:b"}, {"artifact_id": "artifact:c"}
+        ]);
+        let candidate = |removed: &[&str], retained: &[&str], merged: &[&str]| json!({"removed_artifacts": removed, "retained_artifacts": retained, "merged_artifacts": merged});
+        let mapping = |removed: &str, retained: &str, status: &str| {
+            json!({"removed_artifact": removed, "retained_artifact": retained, "status": status,
+                   "signal_key": {}, "empirical_falsifier": "f"})
+        };
+        let gate = |candidate: serde_json::Value, mapping: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"artifact_inventory": inventory, "candidate": candidate, "signal_mapping": mapping}),
+            )
+            .unwrap_or_else(|error| panic!("VC-1 failed to evaluate: {error}"))
+        };
+
+        let covered = json!([mapping("artifact:c", "artifact:a", "covered")]);
+        let pass = gate(
+            candidate(&["artifact:c"], &["artifact:a", "artifact:b"], &[]),
+            covered.clone(),
+        );
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["problems"], json!([]));
+        assert_eq!(pass["counts"]["removed"], json!(1));
+
+        let unclassified = gate(
+            candidate(&["artifact:c"], &["artifact:a"], &[]),
+            covered.clone(),
+        );
+        assert_eq!(unclassified["problems"], json!(["unclassified_artifacts"]));
+        assert_eq!(unclassified["unclassified"], json!(["artifact:b"]));
+
+        let twice = gate(
+            candidate(
+                &["artifact:c"],
+                &["artifact:a", "artifact:b", "artifact:c"],
+                &[],
+            ),
+            covered.clone(),
+        );
+        assert_eq!(twice["problems"], json!(["artifact_in_two_classes"]));
+
+        let merged_ok = gate(
+            candidate(&[], &["artifact:a"], &["artifact:b", "artifact:c"]),
+            json!([]),
+        );
+        assert_eq!(merged_ok["verdict"], json!("pass"));
+
+        let missing = gate(
+            candidate(&["artifact:c"], &["artifact:a", "artifact:b"], &[]),
+            json!([mapping("artifact:c", "artifact:a", "missing")]),
+        );
+        assert_eq!(missing["problems"], json!(["unpreserved_signals"]));
+        assert_eq!(missing["unpreserved"], json!(["artifact:c"]));
+
+        let unmapped = gate(
+            candidate(&["artifact:c"], &["artifact:a", "artifact:b"], &[]),
+            json!([]),
+        );
+        assert_eq!(unmapped["problems"], json!(["removed_without_mapping"]));
+        assert_eq!(unmapped["removed_without_mapping"], json!(["artifact:c"]));
+
+        let stray_target = gate(
+            candidate(&["artifact:c"], &["artifact:a", "artifact:b"], &[]),
+            json!([mapping("artifact:c", "artifact:z", "covered")]),
+        );
+        assert_eq!(stray_target["problems"], json!(["unpreserved_signals"]));
+
+        let outside = gate(
+            candidate(
+                &["artifact:c", "artifact:d"],
+                &["artifact:a", "artifact:b"],
+                &[],
+            ),
+            covered,
+        );
+        assert_eq!(
+            outside["problems"],
+            json!(["artifacts_outside_inventory", "removed_without_mapping"])
+        );
+        assert_eq!(outside["outside_inventory"], json!(["artifact:d"]));
+
+        let all_retained = gate(
+            candidate(&[], &["artifact:a", "artifact:b", "artifact:c"], &[]),
+            json!([]),
+        );
+        assert_eq!(all_retained["verdict"], json!("pass"));
+
+        let empty = eval_sandboxed(
+            &form,
+            &json!({"artifact_inventory": [], "candidate": candidate(&[], &[], &[]), "signal_mapping": []}),
+        )
+        .expect("empty inventory evaluates");
+        assert_eq!(empty["problems"], json!(["empty_inventory"]));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",

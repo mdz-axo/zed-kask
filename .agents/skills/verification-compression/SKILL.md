@@ -253,9 +253,11 @@ verification code.
    every retained artifact's full five-field signal rows, not just totals.
    In `execute` record the approved source scope and exact candidate diff;
    in `analyze` source snapshots must remain identical. Then run deterministic
-   `lisp_eval` gate `VC-1`:
-   - form: `(and (= total_steps (+ (length keep_ids) (length compress_ids) (length delete_ids))) (= (length unbacked_expectations) 0) (= (length unpreserved_falsifiers) 0))`
-   - env: `{ "total_steps": <count>, "keep_ids": <retained ids>, "compress_ids": <merged/compressed ids>, "delete_ids": <removed ids>, "unbacked_expectations": <list>, "unpreserved_falsifiers": <list> }`
+   `lisp_eval` gate `VC-1` over the elimination render and the step-0 inventory,
+   both as returned:
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define strings (lambda (xs) (if (is_null xs) (list) (if (stringp (car xs)) (cons (car xs) (strings (cdr xs))) (strings (cdr xs)))))) (define ids (lambda (rows) (if (is_null rows) (list) (cons (text-of (car rows) "artifact_id") (ids (cdr rows)))))) (define unique (lambda (xs) (if (is_null xs) t (and (not (member (car xs) (cdr xs))) (unique (cdr xs)))))) (define not-in (lambda (xs ys) (if (is_null xs) (list) (if (member (car xs) ys) (not-in (cdr xs) ys) (cons (car xs) (not-in (cdr xs) ys)))))) (define removed (strings (assoc "removed_artifacts" candidate))) (define retained (strings (assoc "retained_artifacts" candidate))) (define merged (strings (assoc "merged_artifacts" candidate))) (define partition (append retained merged removed)) (define inventory (ids artifact_inventory)) (define rows (if (listp signal_mapping) signal_mapping (list))) (define bad-row (lambda (row) (not (and (string= (text-of row "status") "covered") (member (text-of row "removed_artifact") removed) (member (text-of row "retained_artifact") retained))))) (define unpreserved (lambda (rs) (if (is_null rs) (list) (if (bad-row (car rs)) (cons (text-of (car rs) "removed_artifact") (unpreserved (cdr rs))) (unpreserved (cdr rs)))))) (define unmapped (lambda (rs) (if (is_null rs) (list) (if (is_null (keep-rows (car rs) rows)) (cons (car rs) (unmapped (cdr rs))) (unmapped (cdr rs)))))) (define keep-rows (lambda (id rs) (if (is_null rs) (list) (if (string= (text-of (car rs) "removed_artifact") id) (cons (car rs) (keep-rows id (cdr rs))) (keep-rows id (cdr rs)))))) (define problems (append (if (> (length inventory) 0) (list) (list "empty_inventory")) (if (unique partition) (list) (list "artifact_in_two_classes")) (if (is_null (not-in inventory partition)) (list) (list "unclassified_artifacts")) (if (is_null (not-in partition inventory)) (list) (list "artifacts_outside_inventory")) (if (is_null (unpreserved rows)) (list) (list "unpreserved_signals")) (if (is_null (unmapped removed)) (list) (list "removed_without_mapping")))) (list (list "verdict" (if (is_null problems) "pass" "blocked")) (list "problems" problems) (list "unclassified" (not-in inventory partition)) (list "outside_inventory" (not-in partition inventory)) (list "unpreserved" (unpreserved rows)) (list "removed_without_mapping" (unmapped removed)) (list "counts" (list (list "inventory" (length inventory)) (list "retained" (length retained)) (list "merged" (length merged)) (list "removed" (length removed))))))`
+   - env: `{ "artifact_inventory": <the step-0 selected artifact rows>, "candidate": <the render's candidate object>, "signal_mapping": <the render's signal_mapping array> }`
+   - `pass`: every inventory artifact is in exactly one of `retained_artifacts`, `merged_artifacts`, `removed_artifacts`; every removed artifact has at least one mapping row; every mapping row is `covered`, names a removed artifact and a retained one. `blocked` lists `problems` (`empty_inventory`, `artifact_in_two_classes`, `unclassified_artifacts`, `artifacts_outside_inventory`, `unpreserved_signals`, `removed_without_mapping`) with the artifacts behind each; return to the render. The form checks the mapping's shape and completeness; whether a mapped retained artifact really carries the signal is step 8's proof and step 9's fault re-run.
 
 ### CHECK — Prove graph preservation and run the experiment
 
@@ -296,10 +298,12 @@ verification code.
    their complete scope and computed diff match the operator-authorized change.
    A changed source is not a changed oracle. Run before/after timings in the
    declared `timing_scope`. If both states are selected, measure them separately;
-   never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4,
-   require the allowed-change control to keep passing, and run deterministic `lisp_eval` gate `VC-2` at `experiment.j2`:
-   - form: `(and (= baseline_oracle_matches proposed_oracle_matches) (= regressions_detected 0) (= seeded_faults_caught baseline_faults_caught) (< proposed_duration_ms baseline_duration_ms))`
-   - env: `{ "baseline_oracle_matches": <count>, "proposed_oracle_matches": <count>, "regressions_detected": <count>, "seeded_faults_caught": <count>, "baseline_faults_caught": <count>, "proposed_duration_ms": <ms>, "baseline_duration_ms": <ms> }`
+   never substitute a warm sample for a cold claim. Re-run every discriminating fault from step 4
+   and require the allowed-change control to keep passing; their outcomes
+   enter the experiment render's `preservation` block
+   (`failed_harmful_cases`, `allowed_change_control_failures`) and are gated
+   there in step 10 — there is no separate count to type here, and speed is
+   never a preservation condition.
 10. Call `read_file` for
     `kask/registry/templates/verification-compression/experiment.j2` and produce
     the result. Capture the exact graph, all before/after source snapshots,
@@ -343,7 +347,7 @@ verification code.
     compression. Compute means directly from observed samples, never a
     model-supplied summary mean:
     - form: `(define sum (lambda (xs) (if (is_null xs) 0 (+ (car xs) (sum (cdr xs)))))) (define measured-speedup (lambda (s) (if (and (member "measured" (list (assoc "status" s))) (>= (length (assoc "timing_samples_before_ms" s)) 2) (>= (length (assoc "timing_samples_after_ms" s)) 2) (> (sum (assoc "timing_samples_after_ms" s)) 0)) (/ (/ (sum (assoc "timing_samples_before_ms" s)) (length (assoc "timing_samples_before_ms" s))) (/ (sum (assoc "timing_samples_after_ms" s)) (length (assoc "timing_samples_after_ms" s)))) nil))) (let ((wb (+ (assoc "nodes_before" metrics) (assoc "edges_before" metrics))) (wa (+ (assoc "nodes_after" metrics) (assoc "edges_after" metrics))) (cb (+ (assoc "code_nodes_before" metrics) (assoc "code_edges_before" metrics))) (ca (+ (assoc "code_nodes_after" metrics) (assoc "code_edges_after" metrics)))) (list (list "workflow_graph_compression" (if (= wb 0) nil (- 1 (/ wa wb)))) (list "code_graph_compression" (if (and (> cb 0) (member "measured" (list (assoc "code_graph_status" metrics))) (member "execute" (list (assoc "mode" context))) (eq (assoc "authorized_diff_verified" context) t) (eq (assoc "source_changed" context) t)) (- 1 (/ ca cb)) nil)) (list "cold_speedup" (measured-speedup (assoc "cold" metrics))) (list "warm_speedup" (measured-speedup (assoc "warm" metrics)))))`
-    - env: `{ "metrics": <measured workflow/code graph counts plus cold/warm samples; use code_nodes_before=0 and code_edges_before=0 when code graph was not measured>, "context": <the same verified receipt context from step 10> }`.
+    - env: `{ "metrics": <the render's metrics object as returned>, "context": <the same verified receipt context from step 10> }` — the form reads `code_graph_status` itself; do not zero or edit fields by hand.
     - A missing or `nil` speedup or graph measure satisfies no target in
       that dimension. Never infer acceleration from fewer commands; use
       observed time. A no-edit pilot may demonstrate workflow compression
@@ -436,11 +440,17 @@ Template context variables (from each template's [inference] contract):
 
 ## Regression case
 
-Run the five pinned `lisp_eval` forms (VC-0 relevance, inventory gate,
-preservation gate, context/samples gate, deltas) through the live tool with
-representative stub envs, BOTH directions per gate, whenever a form changes.
-The inline forms are the authority for expected outcomes — this section does
-not restate them. Stub the discriminating cases the compiled pins do not
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates `VC-1`
+(`scientific_gate_vc_1_`) over the authored form: a three-artifact
+inventory with one covered removal (pass); an artifact left out of every
+class; one in two classes; a mapping row `missing`; a removed artifact with
+no mapping row; a mapping to a retained artifact outside the candidate; a
+removal outside the inventory; an all-retained candidate (pass). Run the
+other pinned `lisp_eval` forms (VC-0 relevance, inventory gate, preservation
+gate, context/samples gate, deltas) through the live tool with representative
+stub envs, BOTH directions per gate, whenever a form changes. The inline
+forms are the authority for expected outcomes — this section does not
+restate them. Stub the discriminating cases the compiled pins do not
 cover:
 
 - **VC-0**: one-to-one complete current rows, one-to-one fired tombstones,
