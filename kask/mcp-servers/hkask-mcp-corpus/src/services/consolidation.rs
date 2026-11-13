@@ -143,9 +143,15 @@ impl ConsolidationService {
 
         let limiter = AdaptiveLimiter::new(concurrency, ADAPTIVE_CONCURRENCY_FLOOR);
         let router = Arc::clone(&self.inference_router);
-        let model_override = std::env::var("HKASK_QA_MODEL")
+        // Synthesis runs on the configured default generation model
+        // (kask.models.default_model, injected as HKASK_DEFAULT_MODEL). The
+        // former first choice, HKASK_QA_MODEL, was a variable the host never
+        // injected (mcp-tool-review CO2-15). Unset here means the port's own
+        // task model; the result names which was requested.
+        let model_override = std::env::var("HKASK_DEFAULT_MODEL")
             .ok()
-            .or_else(|| std::env::var("HKASK_DEFAULT_MODEL").ok());
+            .filter(|model| !model.trim().is_empty());
+        let synthesis_model = model_override.clone();
 
         let mut handles = Vec::with_capacity(multi_indices.len());
         for &ci in &multi_indices {
@@ -222,7 +228,13 @@ impl ConsolidationService {
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some(text);
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.docproc.consolidation",
+                            cluster = ci,
+                            %error,
+                            "synthesis call failed — the cluster keeps its highest-salience member's text"
+                        );
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some("__FALLBACK__".to_string());
                     }
@@ -244,6 +256,17 @@ impl ConsolidationService {
         // Phase 3: Build consolidated TaggedChunks (collect data, then drop guard)
         let consolidated_texts: Vec<Option<String>> =
             results.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // A multi-chunk cluster whose synthesis did not return text (a refused
+        // or failed call, or a joined-out task) keeps its first member's text:
+        // counted, never presented as a synthesis.
+        let synthesis_failures = multi_indices
+            .iter()
+            .filter(|&&ci| {
+                consolidated_texts[ci]
+                    .as_deref()
+                    .is_none_or(|text| text == "__FALLBACK__")
+            })
+            .count();
         let mut consolidated: Vec<TaggedChunk> = Vec::with_capacity(all_clusters.len());
         let mut reembed_texts: Vec<(String, String, String)> = Vec::new();
 
@@ -471,6 +494,8 @@ impl ConsolidationService {
             "consolidated": consolidated.len(),
             "multi_chunk_clusters": multi,
             "absorbed": absorbed,
+            "synthesis_model": synthesis_model,
+            "synthesis_failures": synthesis_failures,
             "reembedded": embedded_count,
             "embed_failures": embed_failures,
             "reduction_pct": (1.0 - consolidated.len() as f64 / chunks.len().max(1) as f64) * 100.0,

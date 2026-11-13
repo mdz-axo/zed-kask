@@ -1,6 +1,7 @@
 //! Wire-level pins for the document-intake family (convert, is_complex, ocr,
-//! chunk): every call is a `tools/call` JSON request through the production
-//! transport, and every assertion reads what a consumer receives.
+//! chunk) and the reduction family (dedup, consolidate): every call is a
+//! `tools/call` JSON request through the production transport, and every
+//! assertion reads what a consumer receives.
 use std::sync::Arc;
 
 use serde_json::json;
@@ -128,6 +129,36 @@ async fn ocr_refuses_a_non_image_before_model_resolution() {
     let (kind, message) = refusal("corpus_ocr", &result);
     assert_eq!(kind, "invalid_argument", "{message}");
     assert!(message.contains("Cannot resolve path"), "{message}");
+}
+
+/// expect: "A clustering threshold outside [0, 1] is refused before the
+/// database is opened, by both reduction tools."
+/// pre: a db_path that does not exist; thresholds 1.5, -0.1 and NaN-free
+/// out-of-range values. post: invalid_argument naming the range; the
+/// database path is never reached (a missing database would be not_found).
+#[tokio::test]
+async fn reduction_tools_refuse_an_out_of_range_threshold_first() {
+    let inside = inside();
+    let within = |name: &str| inside.path().join(name).to_string_lossy().into_owned();
+    std::fs::write(within("tagged.jsonl"), "{}\n").expect("tagged");
+    let mut wire = Wire::start(server()).await;
+    for tool in ["corpus_dedup_chunks", "corpus_consolidate_chunks"] {
+        for threshold in [1.5, -0.1] {
+            let result = wire
+                .call(
+                    tool,
+                    json!({"tagged_jsonl":within("tagged.jsonl"),"output":within("out.jsonl"),
+                        "db_path":within("absent.db"),"threshold":threshold}),
+                )
+                .await;
+            let (kind, message) = refusal(tool, &result);
+            assert_eq!(kind, "invalid_argument", "{tool} {threshold}: {message}");
+            assert!(
+                message.contains("cosine similarity in [0, 1]"),
+                "{tool} {threshold}: {message}"
+            );
+        }
+    }
 }
 
 /// expect: "A single source that yields no words is an error naming the

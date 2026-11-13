@@ -651,6 +651,39 @@ mod adaptive_limiter_tests {
         assert_eq!(limiter.current(), 1);
     }
 
+    /// expect: "A caller-supplied concurrency of 100000 is a ceiling the ramp
+    /// may approach, never an initial allowance: dispatch starts at the floor
+    /// and grows one slot per success, so a huge request cannot stampede the
+    /// provider." (mcp-tool-review CO2-25: the four tools with a `concurrency`
+    /// argument apply no clamp; this is why none is needed.)
+    #[tokio::test]
+    async fn a_huge_caller_ceiling_still_starts_at_the_floor() {
+        let limiter = AdaptiveLimiter::new(100_000, ADAPTIVE_CONCURRENCY_FLOOR);
+        assert_eq!(limiter.current(), ADAPTIVE_CONCURRENCY_FLOOR);
+        let held: Vec<AdaptiveSlot> = {
+            let mut held = Vec::new();
+            for _ in 0..ADAPTIVE_CONCURRENCY_FLOOR {
+                held.push(limiter.acquire().await);
+            }
+            held
+        };
+        let blocked =
+            tokio::time::timeout(std::time::Duration::from_millis(50), limiter.acquire()).await;
+        assert!(
+            blocked.is_err(),
+            "the third acquire must wait at the floor, whatever the ceiling"
+        );
+        drop(held);
+        for _ in 0..1_000 {
+            limiter.report_success();
+        }
+        assert_eq!(
+            limiter.current(),
+            ADAPTIVE_CONCURRENCY_FLOOR + 1_000,
+            "growth is additive, one slot per success"
+        );
+    }
+
     #[test]
     fn success_grows_additively_bounded_by_ceiling() {
         let limiter = AdaptiveLimiter::new(4, 2);

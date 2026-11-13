@@ -1914,6 +1914,42 @@ async fn consolidation_fixture(
     }
 }
 
+/// expect: "When every synthesis call fails, the consolidated output is the
+/// first member's text under a consolidated ref and the summary says so;
+/// nothing reads as synthesized."
+/// pre: two near-identical embedded chunks; a port whose generation refuses
+/// (no configured model) and whose embedding works.
+/// post: one consolidated row whose text equals the original, classification
+/// Unverified, `synthesis_failures: 1` in the summary.
+#[tokio::test]
+async fn consolidation_without_a_model_falls_back_visibly() {
+    let directory = fixture();
+    let port = Arc::new(RecordingPort {
+        generation_error: Some(InferenceError::NotConfigured(
+            "no generation model configured".into(),
+        )),
+        ..Default::default()
+    });
+    let server = server(Arc::clone(&port));
+    let request = consolidation_fixture(&server, directory.path()).await;
+    let summary = content(server.corpus_consolidate_chunks(Parameters(request)).await);
+    assert_eq!(summary["original"], 2, "{summary}");
+    assert_eq!(summary["consolidated"], 1, "{summary}");
+    assert_eq!(summary["multi_chunk_clusters"], 1, "{summary}");
+    assert_eq!(summary["synthesis_failures"], 1, "{summary}");
+    assert_eq!(summary["reembedded"], 1, "{summary}");
+    let rows = std::fs::read_to_string(directory.path().join("consolidated.jsonl"))
+        .expect("consolidated output");
+    let row: hkask_types::corpus::TaggedChunk =
+        serde_json::from_str(rows.lines().next().expect("one row")).expect("chunk");
+    assert_eq!(row.text, ORIGINAL);
+    assert_eq!(
+        row.classification,
+        hkask_types::corpus::ClassificationOutcome::Unverified
+    );
+    assert_eq!(port.prompts.lock().expect("prompts").len(), 1);
+}
+
 /// expect: Purge/clear cancels consolidation even between its DB snapshot and inference.
 /// [P8] Motivating: a deleted source snapshot cannot be republished as synthesis.
 #[tokio::test]

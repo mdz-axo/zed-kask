@@ -76,6 +76,7 @@ impl CorpusServer {
         Parameters(req): Parameters<DedupChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_dedup_chunks", async {
+            cosine_threshold(req.threshold)?;
             crate::helpers::check_output(&req.output)?;
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
             let db_path = crate::helpers::existing_db(&req.db_path)?;
@@ -136,13 +137,14 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Consolidate semantically related chunks via LLM synthesis. Clusters chunks within each source file by cosine similarity > threshold (default 0.75), then uses the inference router to synthesize each multi-chunk cluster into a single comprehensive passage. Re-embeds annotated synthesis while storing original synthesized passage_text and publishing it to warm retrieval; durable storage retains that text across restarts. Repeated DB/ref writes replace prior embeddings; original source entities remain. Clear/purge cancels overlapping in-flight publication with an error. Writes consolidated tagged chunks JSONL with provenance."
+        description = "Consolidate semantically related chunks via LLM synthesis. Clusters chunks within each source file by cosine similarity > threshold (default 0.75), then uses the inference router to synthesize each multi-chunk cluster into a single comprehensive passage. Re-embeds annotated synthesis while storing original synthesized passage_text and publishing it to warm retrieval; durable storage retains that text across restarts. Repeated DB/ref writes replace prior embeddings; original source entities remain. Clear/purge cancels overlapping in-flight publication with an error. Synthesis uses the configured default generation model (kask.models.default_model); a cluster whose synthesis call fails keeps its highest-salience member's text and is counted in synthesis_failures. Writes consolidated tagged chunks JSONL with provenance."
     )]
     pub async fn corpus_consolidate_chunks(
         &self,
         Parameters(req): Parameters<ConsolidateChunksRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "corpus_consolidate_chunks", async {
+            cosine_threshold(req.threshold)?;
             crate::helpers::check_output(&req.output)?;
             let passphrase = crate::helpers::resolve_corpus_passphrase()?;
             let db_path = crate::helpers::existing_db(&req.db_path)?;
@@ -588,6 +590,18 @@ pub(crate) struct DedupChunksRequest {
 
 fn default_corpus_prefix() -> String {
     "corpus:researcher:".to_string()
+}
+
+/// A cosine-similarity threshold is a number in [0, 1]: below 0 every pair
+/// clusters, above 1 nothing does, and NaN makes every comparison false —
+/// each a silent no-op dressed as a result.
+fn cosine_threshold(threshold: f64) -> Result<(), McpToolError> {
+    if !(0.0..=1.0).contains(&threshold) {
+        return Err(McpToolError::invalid_argument(format!(
+            "threshold must be a cosine similarity in [0, 1]; got {threshold}"
+        )));
+    }
+    Ok(())
 }
 
 fn default_dedup_threshold() -> f64 {
