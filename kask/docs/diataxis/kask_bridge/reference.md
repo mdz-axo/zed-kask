@@ -236,7 +236,7 @@ non-optional, so every server declares its credential boundary explicitly
 unknown ID no credentials (`kask/crates/kask_bridge/src/mcp_servers.rs:490@filter_credentials_for_server`).
 Add an allowlist-alignment test beside the existing per-server tests, such as
 `research_allowlist_matches_actual_reads`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1595@research_allowlist_matches_actual_reads`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1611@research_allowlist_matches_actual_reads`).
 
 #### 3. Declare the non-secret configuration boundary
 
@@ -288,7 +288,7 @@ Run the focused server tests, the bridge allowlist tests, and then
 
 The composed-path regression test is
 `build_mcp_server_env_composition_respects_allowlists`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:1781@build_mcp_server_env_composition_respects_allowlists`).
+(`kask/crates/kask_bridge/src/mcp_servers.rs:1797@build_mcp_server_env_composition_respects_allowlists`).
 
 ## Further reading
 

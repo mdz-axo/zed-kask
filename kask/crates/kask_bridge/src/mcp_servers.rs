@@ -1173,6 +1173,22 @@ mod tests {
         assert_eq!(server.config_env, expected_config);
     }
 
+    /// Operator ruling 2026-11-11: "nostr is not enabled or is disabled on
+    /// private threads - you shouldn't be sharing private threads on a public
+    /// network". The whole client server is refused there by default; no
+    /// per-tool table, so a tool added later is covered.
+    #[test]
+    fn nostr_client_is_disabled_on_private_threads_by_default() {
+        assert!(
+            settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS.contains(&"nostr-client"),
+            "nostr-client must be in the default private-thread disabled set"
+        );
+        assert!(
+            BUILT_IN_MCP_SERVERS.iter().any(|s| s.id == "nostr-client"),
+            "the disabled-set entry must name a registered server"
+        );
+    }
+
     /// Whatever credentials exist, none reaches the Nostr client: the
     /// per-server filter gives it nothing, including the database passphrase
     /// every other stateful server receives.

@@ -5761,6 +5761,95 @@ async fn corpus_server_tools_are_absent_on_private_threads(cx: &mut TestAppConte
     fake.end_last(&model);
 }
 
+/// zed-kask: D100 (operator ruling 2026-11-11: "nostr is not enabled or is
+/// disabled on private threads - you shouldn't be sharing private threads on
+/// a public network") — the Nostr client server joins the default
+/// `private_thread_disabled_servers` set. Its tools read from and publish to
+/// public relays for the configured account, so a private thread refuses the
+/// whole server at the offer point, through the same default-set resolution
+/// the media and corpus pins hold. The whole server, not a per-tool table: a
+/// tool added to it later is covered without an entry of its own.
+#[gpui::test]
+async fn nostr_client_server_tools_are_absent_on_private_threads(cx: &mut TestAppContext) {
+    let ThreadTest {
+        thread,
+        context_server_store,
+        ..
+    } = setup_thread_test_with_test_profile(cx).await;
+
+    // A local provider serves this test's thread, so the marked thread
+    // keeps its model and turns actually run (the media pin's pattern).
+    let fake = register_local_fake_provider(cx);
+    let model = fake.model("fake");
+    thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx));
+
+    // Two tools on the Nostr server: the one that exists today and a name
+    // that does not, standing for any tool added later.
+    let _nostr_calls = setup_context_server(
+        "nostr-client",
+        vec![
+            plain_mcp_tool("nostr_account"),
+            plain_mcp_tool("nostr_tool_added_later"),
+        ],
+        &context_server_store,
+        cx,
+    );
+    let _other_calls = setup_context_server(
+        "research",
+        vec![plain_mcp_tool("research_tool")],
+        &context_server_store,
+        cx,
+    );
+
+    // Marked: every tool of the Nostr server is refused at the offer point
+    // with no settings configuration; the other server's tool remains.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(true, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("marked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    for nostr_tool in ["nostr_account", "nostr_tool_added_later"] {
+        assert!(
+            !names.contains(&nostr_tool.to_string()),
+            "a private thread never offers the Nostr server's {nostr_tool}: {names:?}"
+        );
+    }
+    assert!(
+        names.contains(&"research_tool".to_string()),
+        "a private thread keeps every other server's tool: {names:?}"
+    );
+    fake.end_last(&model);
+
+    // Unmarked: the Nostr tools return — the refusal keys on the live mark,
+    // re-evaluated per turn.
+    thread.update(cx, |thread, cx| {
+        thread.set_private_inference(false, cx);
+        thread
+            .send(ClientUserMessageId::new(), ["list tools"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+    let completion = fake
+        .pending_completions()
+        .pop()
+        .expect("unmarked-thread completion");
+    let names = tool_names_for_completion(&completion);
+    for nostr_tool in ["nostr_account", "nostr_tool_added_later"] {
+        assert!(
+            names.contains(&nostr_tool.to_string()),
+            "an unmarked thread offers the Nostr server's {nostr_tool} again: {names:?}"
+        );
+    }
+    fake.end_last(&model);
+}
+
 /// zed-kask: D100 (review finding F2) — the mark-change-mid-turn
 /// interaction on the tool perimeter. The perimeter is re-evaluated per
 /// REQUEST ITERATION (`refresh_turn_tools` inside `run_turn_internal`),
