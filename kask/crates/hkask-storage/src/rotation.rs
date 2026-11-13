@@ -987,15 +987,50 @@ pub(crate) mod tests {
     /// expect: "Rotating my populated RSS database preserves feeds, search, and future updates" [P1]
     #[test]
     fn rotate_passphrase_preserves_rss_feed_entries_and_search() {
-        // Read the actual server DDL without introducing a storage → server dependency.
-        let source = include_str!("../../../mcp-servers/hkask-mcp-research/src/research/db.rs");
-        let schema = source
-            .split_once("pub const RESEARCH_SCHEMA_DDL: &str = \"")
-            .expect("RSS DDL declaration")
-            .1
-            .split_once("\";")
-            .expect("RSS DDL end")
-            .0;
+        // A self-contained fixture schema with the features rotation must carry
+        // across: an FTS5 index kept in sync by triggers, AUTOINCREMENT
+        // high-water marks, and cascading foreign keys. It is the feed schema
+        // the research server created until 2026-11-12; databases written
+        // before then still hold these tables, so rotating them is still live.
+        let schema = "
+            PRAGMA busy_timeout=5000;
+            PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
+            CREATE TABLE IF NOT EXISTS feeds (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                url   TEXT NOT NULL UNIQUE,
+                title TEXT
+            );
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_id   INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                stream_id TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS entries (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                feed_id  INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+                entry_id TEXT NOT NULL,
+                title    TEXT,
+                content  TEXT,
+                summary  TEXT,
+                UNIQUE(feed_id, entry_id)
+            );
+            CREATE TABLE IF NOT EXISTS entry_states (
+                entry_id INTEGER PRIMARY KEY REFERENCES entries(id) ON DELETE CASCADE,
+                is_read  INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
+                title, content, summary, content=''
+            );
+            CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+                INSERT INTO entries_fts(rowid, title, content, summary)
+                    VALUES (new.id, new.title, new.content, new.summary);
+            END;
+            CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+                INSERT INTO entries_fts(entries_fts, rowid, title, content, summary)
+                    VALUES ('delete', old.id, old.title, old.content, old.summary);
+            END;
+        ";
         let directory = tempfile::tempdir().expect("temporary database");
         let path = directory
             .path()
