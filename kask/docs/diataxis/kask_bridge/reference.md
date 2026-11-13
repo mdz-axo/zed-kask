@@ -106,7 +106,7 @@ by `run_pending_db_passphrase_rotation` (`crates/zed/src/main.rs:373`) — see
 | `KaskCondenserSettings` | normal profile; incoming-result compression off | `kask/crates/kask_bridge/src/settings.rs:303-323` |
 | `KaskCorpusSettings` | dimension 1024; embedding default `OpenRouter/qwen/qwen3-embedding-8b` (MRL — every embed request carries `dimensions = embedding_dim`); template root `kask/registry` | `kask/crates/kask_bridge/src/settings.rs:336-357` |
 | `KaskMediaSettings` | STT, vision, and the role models (sound annotation, grounded tagging) use shared constants; the former TTS/image/video fields are removed | `kask/crates/kask_bridge/src/settings.rs:405-440` |
-| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR `ollama/glm-ocr:latest`; reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:472-569` |
+| `KaskModelsSettings` | default GLM 5.3; classifier GLM 5.2; QA generator empty; OCR from `DEFAULT_OCR_MODEL` (`RunPod/kask-ocr`); reranker from `DEFAULT_RERANK_MODEL` | `kask/crates/kask_bridge/src/settings.rs:472-569` |
 | `KaskPrivateInferenceSettings` | private-thread disabled servers `media`, `corpus`; local private-memory models `ollama/qwen3-embedding:0.6b`, `ollama/qwen3.5:4b`, `ollama/qwen3-reranker-4b:latest` | `kask/crates/kask_bridge/src/settings.rs:562-632` |
 
 ## Built-in MCP registry

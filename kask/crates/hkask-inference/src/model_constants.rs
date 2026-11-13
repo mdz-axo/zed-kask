@@ -297,6 +297,20 @@ mod decision_model_tests {
     }
 }
 
+#[cfg(test)]
+mod ocr_model_tests {
+    /// The default is the dedicated RunPod OCR endpoint (D29), named with
+    /// the provider prefix the registry key carries — never the pre-RunPod
+    /// local `glm-ocr` literal the two settings layers each used to copy.
+    #[test]
+    fn default_ocr_model_is_the_runpod_endpoint() {
+        let model = super::DEFAULT_OCR_MODEL;
+        assert_eq!(model, "RunPod/kask-ocr");
+        assert!(model.to_ascii_lowercase().contains("ocr"));
+        assert!(!model.starts_with("ollama/"));
+    }
+}
+
 // ── Media pipeline defaults ───────────────────────────────────────────────
 //
 // The media server has no in-server model fallback (its accessors return
@@ -417,6 +431,18 @@ pub const DEFAULT_DECISION_MODEL: &str = "OpenRouter/typesafe/jev-1.14";
 /// one constant (plus re-embedding the stores; the search-side model gate
 /// filters and surfaces mismatched rows during the migration window).
 pub const DEFAULT_EMBEDDING_MODEL: &str = "OpenRouter/qwen/qwen3-embedding-8b";
+
+/// Default OCR model (env `HKASK_OCR_MODEL` via `KaskModelsSettings::ocr_model`
+/// on the zed side and `HkaskSettings::ocr_model` in hkask-mcp-corpus — the
+/// two settings layers reference this one literal). The RunPod serverless
+/// endpoint named `kask-ocr` (D29): the endpoint name is the model id, so
+/// `RunPod/kask-ocr` resolves through the registry's `{provider}/{name}`
+/// key; `resolve_ocr_model` matches it case-insensitively. Before this
+/// constant existed each layer carried its own copy of the pre-RunPod
+/// `ollama/glm-ocr:latest` literal (operator correction 2026-11-13): a
+/// local model the dedicated-OCR guardrail in `resolve_ocr_model` was
+/// written to steer away from.
+pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 
 /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's LOCAL
 /// embedding model, served by the local ollama instance (the
