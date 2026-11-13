@@ -620,6 +620,74 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         authority: "operator ruling 2026-10-15 (agentic-scientist-v3 integration, decision D3); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
     },
     DerivedConcept {
+        term: "experiment_variant",
+        aliases: &["variant", "variants", "challenger variant", "challenger"],
+        identity: "one genotype configuration registered under one experiment with a role (baseline, challenger or ablation) and an optional parent, measured under that experiment's sealed contract",
+        definition: "The unit of comparison in The Agentic Scientist's variants pipeline (Lange, Grillotti, Yamada, Charakorn & Ha, arXiv:2610.18933, 2026): the winning program, its baselines and its ablated variants are each a configuration evaluated under the same sealed evaluator; the ablation entry above is this term's controlled-removal case. In zed-kask it grounds the experimentation server's variant_register: exactly one baseline per experiment, challengers by default, ablations naming their parent, a keyed retry returning the first registration. The nameable violation: a configuration measured outside its experiment's sealed contract and compared as if it were a variant of it.",
+        constituents: &["genotype", "baseline", "ablation", "sealed eval contract"],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
+    },
+    DerivedConcept {
+        term: "baseline_variant",
+        aliases: &["baseline", "control arm", "baseline arm"],
+        identity: "the control arm of an experiment: the one variant measured alone, before any challenger spend, whose measured fitness is the comparison point every other variant answers to",
+        definition: "SUMO's controlGroup (UXExperimentalTerms.kif: the collection of agents who experienced the experimentalControlProcess of an Experimenting) carried into the variants pipeline of The Agentic Scientist (Lange et al., arXiv:2610.18933, 2026), where the winning program is compared against baselines under the same sealed evaluator. In zed-kask the baseline is the only variant that records fitness before experiment_seal, its pass rate is the headroom attestation the seal stores, and variant_register refuses a second baseline. The nameable violation: a challenger measured with no baseline measurement to compare against.",
+        constituents: &["experiment variant", "headroom", "sealed eval contract"],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); SUMO controlGroup (ontologyportal/sumo, UXExperimentalTerms.kif); Lange, Grillotti, Yamada, Charakorn & Ha, The Agentic Scientist, arXiv:2610.18933 (2026)",
+    },
+    DerivedConcept {
+        term: "fitness",
+        aliases: &["fitness score", "recorded fitness", "fitness record"],
+        identity: "the value of a declared fitness function evaluated over recorded runs of one variant — a measurement cited by report references, never a simulated or model-asserted number",
+        definition: "The fitness function of evolutionary computation (CSO 3.5, cso:fitness_function) as GEPA uses it (Agrawal et al., arXiv:2507.19457, 2025): a scalar or per-objective score of a candidate on an evaluation set, from which the Pareto frontier is kept. In zed-kask fitness_record stores per-objective scores with the report references and run count that produced them, sums run counts against the declared budget, and after the seal requires the seal id; the house rule is recorded runs only. The nameable violation: a fitness value with no run behind it.",
+        constituents: &[
+            "fitness function",
+            "experiment variant",
+            "reflective prompt evolution",
+        ],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); CSO 3.5 fitness_function (cso.kmi.open.ac.uk, released 2025-07-29); Agrawal et al., GEPA, arXiv:2507.19457 (2025)",
+    },
+    DerivedConcept {
+        term: "noise_band",
+        aliases: &["noise band", "tie band", "cost band"],
+        identity: "the declared tolerance within which two fitness readings of the same eval set count as a tie, fixed before measurement so run-to-run variance cannot be read as an improvement",
+        definition: "Georges, Buytaert and Eeckhout's statistically rigorous performance evaluation (OOPSLA 2007): a difference smaller than the run-to-run variance is not a result. GEPA's 10% cost band (Agrawal et al., 2025) is the precedent zed-kask adopted (experimentation-reference-model.md): experiment_propose stores the band as part of the eval contract, experiment_seal fingerprints it, and automated pre-selection may act only on differences outside it. The nameable violation: selecting a variant on a difference inside its own declared band.",
+        constituents: &["fitness", "performance regression", "sealed eval contract"],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); Georges, Buytaert & Eeckhout, Statistically Rigorous Java Performance Evaluation, OOPSLA 2007, doi:10.1145/1297027.1297033; Agrawal et al., GEPA, arXiv:2507.19457 (2025)",
+    },
+    DerivedConcept {
+        term: "selection_set",
+        aliases: &[
+            "selection set",
+            "holdout set",
+            "held-out set",
+            "held-out runs",
+        ],
+        identity: "the evaluation runs reserved for the final, selection-grade score of a variant, disjoint by reference from every run that gave feedback to its design",
+        definition: "GEPA's feedback/selection split (Agrawal et al., arXiv:2507.19457, 2025): candidates are proposed from reflection on one set of trajectories and ranked for the Pareto frontier on another, so the selection score is never the score the proposer optimized against. In zed-kask final_evaluation_record enforces it on report references: a run reference used by any fitness record or earlier final evaluation of the experiment is refused, in both directions, and a reference repeated within one call is refused; whether two references name disjoint data remains the caller's assertion. The nameable violation: a selection score computed on runs the variant was tuned on.",
+        constituents: &["test set", "fitness", "reflective prompt evolution"],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); Agrawal et al., GEPA, arXiv:2507.19457 (2025)",
+    },
+    DerivedConcept {
+        term: "sealed_eval_contract",
+        aliases: &[
+            "sealed eval contract",
+            "seal",
+            "experiment seal",
+            "eval contract",
+        ],
+        identity: "the declaration's eval_set, fitness_fn, noise_band, rubrics and design_spec frozen under a SHA-256 fingerprint of their stored JSON text, together with one headroom attestation of the measured baseline",
+        definition: "The registered protocol of preregistration (Nosek et al., PNAS 2018): the confirmatory contract is fixed before the confirmatory data are inspected, and every later deviation is visible against it. In zed-kask experiment_seal is that registration's receipt: it fingerprints the already-declared contract from the stored row (object key order as declared, never sorted), records the baseline variant, its fitness evidence and its pass rate or scientific headroom criterion, and is permanent — one seal per experiment, an identical retry returns it, a different one is refused, and every later fitness record cites it. dpv:Seal (a certification mark) is a different sense and is not this term's anchor. The nameable violation: an eval contract edited after its seal, or a challenger measured before one exists.",
+        constituents: &[
+            "preregistration",
+            "baseline variant",
+            "headroom",
+            "noise band",
+            "rubric",
+        ],
+        authority: "operator ruling 2026-11-13 (mcp-tool-review of hkask-mcp-experimentation, EX-A1); Nosek et al., The preregistration revolution, PNAS 115(11):2600–2606 (2018), doi:10.1073/pnas.1708274114",
+    },
+    DerivedConcept {
         term: "multi_criteria_decision_analysis",
         aliases: &[
             "mcda",
@@ -2620,6 +2688,33 @@ mod tests {
             assert!(
                 concept.authority.starts_with("operator ruling 2026-10-18"),
                 "{term} cites the 2026-10-18 ruling"
+            );
+        }
+    }
+
+    /// expect: [P5] The experimentation-registry rulings (2026-11-13,
+    /// mcp-tool-review EX-A1) resolve with their published authority, and
+    /// `seal` resolves here rather than to dpv:Seal's certification sense.
+    #[test]
+    fn experimentation_registry_rulings_resolve_with_authority() {
+        for (term, marker) in [
+            ("variant", "Lange"),
+            ("baseline", "controlGroup"),
+            ("fitness", "fitness_function"),
+            ("noise band", "Georges"),
+            ("holdout set", "GEPA"),
+            ("seal", "Nosek"),
+            ("sealed eval contract", "Nosek"),
+        ] {
+            let concept = resolve_derived(term).expect("experimentation ruling must resolve");
+            assert!(
+                concept.authority.contains(marker),
+                "{term}: {}",
+                concept.authority
+            );
+            assert!(
+                concept.authority.starts_with("operator ruling 2026-11-13"),
+                "{term} cites the 2026-11-13 ruling"
             );
         }
     }
