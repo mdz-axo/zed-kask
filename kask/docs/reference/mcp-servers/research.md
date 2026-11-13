@@ -265,6 +265,23 @@ Tavily, Exa), on an isolated copy with the operator's keys: none read the
 `web_extract` for the same URL (byte-identical through Firecrawl). No skill,
 template or code named the tool. Use `web_extract` to read a page.
 
+## Structured extraction (2026-11-12)
+
+`web_extract` with `format: "json"` is served by Firecrawl only; RawFetch
+refuses it. Until this date every such request failed: the provider sent
+Firecrawl's v1 body (`jsonOptions`), which the v2 `/scrape` endpoint refuses
+with HTTP 400 "Unrecognized key in body", and `json_schema` was accepted by
+the tool and never sent. The provider now sends the v2 form, one
+`formats` entry `{"type": "json", "schema": …, "prompt": …}`, carrying
+`json_schema` and `json_prompt` when given. Measured on an isolated copy
+with the operator's key against a public page: the request returned the
+structured object.
+
+A Firecrawl response that lacks the requested field (`data.json` for
+`json`, `data.markdown` for `markdown`) is an error. Before, a missing
+`data.json` was returned as the content `null` and a missing
+`data.markdown` as empty text, both as successes.
+
 ## Citation — APA 7 (2026-11-12)
 
 `cite_sources` formats sources as an APA 7 reference list (operator ruling
