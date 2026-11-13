@@ -700,7 +700,7 @@ impl MediaServer {
                     "width must be between 1 and {MAX_GIF_WIDTH} pixels, got {w}"
                 )));
             }
-            if f == 0 {
+            if !(1..=MAX_GIF_FPS).contains(&f) {
                 return Err(McpToolError::invalid_argument(format!(
                     "fps must be between 1 and {MAX_GIF_FPS}, got {f}"
                 )));
