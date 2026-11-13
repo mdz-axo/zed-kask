@@ -1826,3 +1826,169 @@ mod provenance_gate_tests {
         );
     }
 }
+
+/// The order `web_search` returns, through the real provider pool: the
+/// handler is called with JSON arguments, the pool holds stub providers.
+#[cfg(test)]
+mod search_order_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use hkask_mcp_test_support::fixtures::noop_inference_port::NoopInferencePort;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    use super::ResearchServer;
+    use crate::research::providers::{ProviderSearchOutput, WebSearchProvider};
+    use crate::research::types::{
+        SearchCapability, SearchQuery, SearchRequest, SearchResult, WebError,
+    };
+    use crate::research::{ProviderPool, RateLimiter, ResponseCache};
+
+    /// A provider that returns fixed (url, published) results in its own
+    /// relevance order.
+    struct FixedProvider {
+        kind: &'static str,
+        results: Vec<(&'static str, Option<&'static str>)>,
+    }
+
+    #[async_trait]
+    impl WebSearchProvider for FixedProvider {
+        fn kind(&self) -> &str {
+            self.kind
+        }
+        fn capabilities(&self) -> Vec<SearchCapability> {
+            vec![SearchCapability::Keyword]
+        }
+        async fn search(&self, _query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+            Ok(ProviderSearchOutput {
+                results: self
+                    .results
+                    .iter()
+                    .map(|(url, published)| SearchResult {
+                        title: (*url).to_string(),
+                        url: (*url).to_string(),
+                        description: None,
+                        source: None,
+                        published: published.map(str::to_string),
+                        oa_pdf_url: None,
+                        provider: None,
+                    })
+                    .collect(),
+                ..Default::default()
+            })
+        }
+        async fn health(&self) -> Result<(), WebError> {
+            Ok(())
+        }
+    }
+
+    fn server(providers: Vec<Box<dyn WebSearchProvider>>) -> ResearchServer {
+        ResearchServer::new(
+            hkask_types::WebID::new(),
+            Arc::new(ProviderPool::new(providers, Vec::new(), None, None, None)),
+            Arc::new(ResponseCache::new(0, Duration::from_secs(1))),
+            RateLimiter::new(1000, 60),
+            None,
+            Arc::new(NoopInferencePort),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    async fn result_urls(server: &ResearchServer, arguments: serde_json::Value) -> Vec<String> {
+        let request: SearchRequest = serde_json::from_value(arguments).expect("arguments decode");
+        let response = server
+            .web_search(Parameters(request))
+            .await
+            .expect("search succeeds");
+        let body = hkask_mcp_test_support::parse_envelope(&response);
+        body["results"]
+            .as_array()
+            .unwrap_or_else(|| panic!("results array: {body}"))
+            .iter()
+            .map(|result| result["url"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    /// The measured case (2026-11-12): the provider's first result is a
+    /// 2009 paper and the rest are days old.
+    fn oldest_first() -> Vec<(&'static str, Option<&'static str>)> {
+        vec![
+            ("https://example.org/2009-paper", Some("2009")),
+            ("https://example.org/recent-a", Some("2 days ago")),
+            ("https://example.org/recent-b", Some("1 day ago")),
+            ("https://example.org/undated", None),
+        ]
+    }
+
+    /// expect: a single-provider search returns the provider's own order,
+    /// by `provider=` and by the quick strategy alike. Before, the 2009
+    /// paper the provider ranked first came back last.
+    #[tokio::test]
+    async fn a_single_provider_search_keeps_the_provider_order() {
+        let expected = [
+            "https://example.org/2009-paper",
+            "https://example.org/recent-a",
+            "https://example.org/recent-b",
+            "https://example.org/undated",
+        ];
+        let server = server(vec![Box::new(FixedProvider {
+            kind: "openalex",
+            results: oldest_first(),
+        })]);
+        assert_eq!(
+            result_urls(
+                &server,
+                serde_json::json!({"query": "reciprocal rank fusion", "provider": "openalex"})
+            )
+            .await,
+            expected
+        );
+        assert_eq!(
+            result_urls(
+                &server,
+                serde_json::json!({"query": "reciprocal rank fusion", "strategy": "quick"})
+            )
+            .await,
+            expected
+        );
+    }
+
+    /// expect: in a fused search a result two providers rank first stays
+    /// above newer results one provider returned, and results with equal
+    /// fusion scores come newer first.
+    #[tokio::test]
+    async fn a_fused_search_uses_the_date_only_between_equal_scores() {
+        let server = server(vec![
+            Box::new(FixedProvider {
+                kind: "openalex",
+                results: vec![
+                    ("https://example.org/2009-paper", Some("2009")),
+                    ("https://example.org/old-second", Some("2015-03-01")),
+                ],
+            }),
+            Box::new(FixedProvider {
+                kind: "arxiv",
+                results: vec![
+                    ("https://example.org/2009-paper", Some("2009")),
+                    ("https://example.org/new-second", Some("1 day ago")),
+                ],
+            }),
+        ]);
+        assert_eq!(
+            result_urls(
+                &server,
+                serde_json::json!({"query": "reciprocal rank fusion", "strategy": "web"})
+            )
+            .await,
+            [
+                "https://example.org/2009-paper",
+                "https://example.org/new-second",
+                "https://example.org/old-second",
+            ]
+        );
+    }
+}

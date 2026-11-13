@@ -98,7 +98,7 @@ enforcement tests prove the policy runs on every hop.
 
 **Requirement (operator directive).** The deep strategy's rerank stage must be
 a templated LLM call, not a heuristic. The original heuristic implementation
-(signal boosts in `apply_rerank`) was a shortcut, not the design. The output
+(signal boosts, today `heuristic_order`) was a shortcut, not the design. The output
 must also be trustworthy: general models commit category errors — well-formed
 but semantically wrong judgments that structural validation cannot catch.
 
@@ -288,6 +288,37 @@ rawfetch: …`), under the error kind of the first provider that tried.
 Before, only the last provider's error was returned, so a Firecrawl refusal
 reached the caller as RawFetch declining JSON. A single failure is returned
 unchanged.
+
+## Result order and publication date (2026-11-12)
+
+Publication date no longer decides the order of `web_search` results
+(operator ruling during the mcp-tool-review of this server).
+
+Before, every search added up to +0.1 to a result's score for a recent
+date. One provider's top rank is worth 1/61 = 0.0164 and the gap between
+neighbouring ranks about 0.0003, so the date outweighed relevance by two
+orders of magnitude, on single-provider calls as well. Measured with
+`provider=openalex` and the query "reciprocal rank fusion": the 2009 paper
+that OpenAlex itself ranks first came back last of five, behind three
+2026 papers with no citations.
+
+Now:
+
+- **One provider answered** (`provider=`, an `intent` pick, or the `quick`
+  strategy): the date is not read.
+- **Fused** (`web`, `news`, `deep`): the date orders only results whose
+  scores are equal, newer first, undated last; results still equal are
+  ordered by URL, so the same results come back in the same order on
+  every call.
+
+Not changed: the two remaining additions to the score, +0.05 for a result
+that carries a content preview and +0.05 x a provider's own similarity
+score. The first is larger than a top rank, and whether a result has a
+preview depends on which provider returned it, so in a fused search a
+result with a preview still outranks a better-ranked one without. In a
+single-provider call they change the order only if the provider attaches a
+preview or a score to some of its results and not others (source read; not
+measured). That is finding R-18, awaiting a ruling.
 
 ## Page text from the keyless extractor (2026-11-12)
 

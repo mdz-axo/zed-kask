@@ -8,7 +8,7 @@ use chrono::Datelike;
 
 use hkask_types::InferencePort;
 
-use crate::research::types::{RankedResult, RerankSignal};
+use crate::research::types::RankedResult;
 
 // ── Domain-agnostic ranking utilities ──────────────────────────────────────
 
@@ -167,39 +167,52 @@ fn parse_fuzzy_date(s: &str) -> f64 {
 
 // ── Web-search-specific ranking ────────────────────────────────────────────
 
-pub(crate) fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
-    match signal {
-        RerankSignal::Recency => {
-            for r in results.iter_mut() {
-                if let Some(ref published) = r.published {
-                    let days = parse_age_to_days(published);
-                    if days >= 0.0 {
-                        let boost = 1.0 / (1.0 + days / 7.0);
-                        r.rrf_score += boost * 0.1;
-                    }
-                }
-            }
+/// Order search results after retrieval.
+///
+/// Two boosts are added to the fusion score (a provider's own similarity
+/// score, and the presence of a content preview) and the results are sorted
+/// by score.
+///
+/// Publication date does not move a result past a better-ranked one. It
+/// used to: up to +0.1 was added for a recent date, against a top fusion
+/// score of 1/61 = 0.0164 and a rank-to-rank gap of about 0.0003, so date
+/// decided the order. Measured 2026-11-12 on a single-provider call: the
+/// provider's first result, a 2009 paper, came back last of five.
+///
+/// - `fused == false` (one provider answered): the date is not read. The
+///   sort is stable, so results with equal scores keep the provider's order.
+/// - `fused == true`: among results with equal scores the newer comes
+///   first and an undated one last, then by URL. The URL makes the order
+///   the same on every call: fused results arrive in hash-map order.
+pub(crate) fn heuristic_order(results: &mut [RankedResult], fused: bool) {
+    for result in results.iter_mut() {
+        if let Some(score) = result.semantic_score {
+            result.rrf_score += score * 0.05;
         }
-        RerankSignal::Semantic => {
-            for r in results.iter_mut() {
-                if let Some(score) = r.semantic_score {
-                    r.rrf_score += score * 0.05;
-                }
-            }
-        }
-        RerankSignal::ContentQuality => {
-            for r in results.iter_mut() {
-                if r.content_preview.is_some() || r.extracted_content.is_some() {
-                    r.rrf_score += 0.05;
-                }
-            }
+        if result.content_preview.is_some() || result.extracted_content.is_some() {
+            result.rrf_score += 0.05;
         }
     }
-    results.sort_by(|a, b| {
-        b.rrf_score
-            .partial_cmp(&a.rrf_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    if fused {
+        results.sort_by(|a, b| {
+            b.rrf_score
+                .total_cmp(&a.rrf_score)
+                .then_with(|| age_in_days(a).total_cmp(&age_in_days(b)))
+                .then_with(|| a.url.cmp(&b.url))
+        });
+    } else {
+        results.sort_by(|a, b| b.rrf_score.total_cmp(&a.rrf_score));
+    }
+}
+
+/// Days since publication, or infinity when the date is absent or unread.
+fn age_in_days(result: &RankedResult) -> f64 {
+    result
+        .published
+        .as_deref()
+        .map(parse_age_to_days)
+        .filter(|days| *days >= 0.0)
+        .unwrap_or(f64::INFINITY)
 }
 
 // ── LLM rerank (deep strategy) ─────────────────────────────────────────────
@@ -634,5 +647,98 @@ mod rerank_tests {
             ],
             "heuristic order must be kept untouched on total failure"
         );
+    }
+}
+
+#[cfg(test)]
+mod heuristic_order_tests {
+    use super::*;
+
+    fn result(url: &str, published: Option<&str>, score: f64) -> RankedResult {
+        RankedResult {
+            title: url.to_string(),
+            url: url.to_string(),
+            description: None,
+            source: None,
+            published: published.map(str::to_string),
+            oa_pdf_url: None,
+            rrf_score: score,
+            provider_count: 1,
+            providers: vec!["stub".to_string()],
+            best_rank: None,
+            content_preview: None,
+            semantic_score: None,
+            extracted_content: None,
+        }
+    }
+
+    fn urls(results: &[RankedResult]) -> Vec<&str> {
+        results.iter().map(|r| r.url.as_str()).collect()
+    }
+
+    /// expect: one provider's order is kept whatever the dates say. The
+    /// oldest result is first because the provider ranked it first.
+    #[test]
+    fn a_single_provider_order_is_not_rewritten_by_date() {
+        let mut results = vec![
+            result("https://example.org/2009", Some("2009-07-19"), 1.0 / 61.0),
+            result("https://example.org/today", Some("1 day ago"), 1.0 / 62.0),
+            result("https://example.org/undated", None, 1.0 / 63.0),
+        ];
+        heuristic_order(&mut results, false);
+        assert_eq!(
+            urls(&results),
+            [
+                "https://example.org/2009",
+                "https://example.org/today",
+                "https://example.org/undated"
+            ]
+        );
+    }
+
+    /// expect: in a fused list a newer date never lifts a result past one
+    /// with a higher fusion score, however small the gap.
+    #[test]
+    fn a_newer_date_does_not_outrank_a_higher_fusion_score() {
+        let mut results = vec![
+            result("https://example.org/new", Some("1 day ago"), 1.0 / 62.0),
+            result("https://example.org/old", Some("2009-07-19"), 1.0 / 61.0),
+        ];
+        heuristic_order(&mut results, true);
+        assert_eq!(
+            urls(&results),
+            ["https://example.org/old", "https://example.org/new"]
+        );
+    }
+
+    /// expect: among fused results with equal scores the newer is first,
+    /// an undated or unreadable date last, and equal dates fall to the URL,
+    /// whatever order they arrived in.
+    #[test]
+    fn equal_fusion_scores_are_ordered_by_date_then_url() {
+        let tied = 1.0 / 61.0;
+        let expected = [
+            "https://example.org/b-new",
+            "https://example.org/a-old",
+            "https://example.org/c-old",
+            "https://example.org/d-garbled",
+            "https://example.org/e-undated",
+        ];
+        let build = || {
+            vec![
+                result("https://example.org/e-undated", None, tied),
+                result("https://example.org/c-old", Some("2020-01-01"), tied),
+                result("https://example.org/d-garbled", Some("soon"), tied),
+                result("https://example.org/b-new", Some("2 days ago"), tied),
+                result("https://example.org/a-old", Some("2020-01-01"), tied),
+            ]
+        };
+        let mut forward = build();
+        heuristic_order(&mut forward, true);
+        assert_eq!(urls(&forward), expected);
+        let mut reversed = build();
+        reversed.reverse();
+        heuristic_order(&mut reversed, true);
+        assert_eq!(urls(&reversed), expected);
     }
 }

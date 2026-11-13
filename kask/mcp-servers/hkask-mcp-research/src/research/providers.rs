@@ -1099,6 +1099,7 @@ impl WebSearchPort for ProviderPool {
             )));
         }
 
+        let fused = provider.is_none() && strategy != SearchStrategy::Quick;
         let mut compound = if let Some(kind) = provider {
             // Explicit provider override — single provider, no fusion, no
             // fallback. The caller picked deliberately (from the intent
@@ -1149,9 +1150,7 @@ impl WebSearchPort for ProviderPool {
             self.search_compound(&search_query, strategy).await
         };
 
-        apply_rerank(&mut compound.results, RerankSignal::Recency);
-        apply_rerank(&mut compound.results, RerankSignal::Semantic);
-        apply_rerank(&mut compound.results, RerankSignal::ContentQuality);
+        heuristic_order(&mut compound.results, fused);
 
         // Deep strategy: extract content from top results to enrich the response.
         // This populates content_preview, giving users actual page content
