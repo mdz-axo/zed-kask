@@ -84,12 +84,12 @@ Produce a JSON object with:
 - `tests_added`: array of test function names
 - `files_touched`: array of file paths
 
-Do NOT emit `compiled`, `tests_passed`, `invariant_holds`, `marker_count`, or
-`call_site_count` — those are measured execution states the CALLER observes
-(`cargo check`, the pinning-test run, `check-hkask-no-zed-deps.sh`, and
-`grep -c` for the marker and call-site totals). This template cannot know a
-command outcome at generation time; the caller records them and the
-Verification gate's `UR-3` evaluates them over the measured values.
+Do NOT emit exit codes or marker counts — those are measured execution
+states the CALLER observes (`cargo check`, the pinning-test run,
+`check-hkask-no-zed-deps.sh`, each printing its exit, and `grep -c` for the
+marker total). This template cannot know a command outcome at generation
+time; the caller passes the printed values and the `map.j2` inventory to the
+Verification gate's `UR-3`.
 
 ## Constraints
 

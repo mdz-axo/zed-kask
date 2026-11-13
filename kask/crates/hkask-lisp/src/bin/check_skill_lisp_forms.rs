@@ -5281,6 +5281,146 @@ form: "(= (+ a b) 3)"
     }
 
     #[test]
+    fn scientific_gate_ur_2_compares_unit_ids_across_the_inventory_order_and_force_table() {
+        let form = skill_candidate("upstream-rebase", "units_missing_from_order");
+        let units = json!([
+            {"id": "u1", "line_start": 1, "line_end": 9, "purpose": "p"},
+            {"id": "u2", "line_start": 10, "line_end": 20, "purpose": "q"}
+        ]);
+        let table = json!([
+            {"id": "u1", "force": "Prohibition", "enforcement_point": "test x", "pinning_test": "t"},
+            {"id": "u2", "force": "Guideline", "enforcement_point": "", "pinning_test": ""}
+        ]);
+        let gate = |units: serde_json::Value,
+                    order: serde_json::Value,
+                    table: serde_json::Value| {
+            eval_sandboxed(
+                &form,
+                &json!({"functional_units": units, "topological_order": order, "constraint_force_table": table}),
+            )
+            .unwrap_or_else(|error| panic!("UR-2 failed to evaluate: {error}"))
+        };
+        // The map render's real shape: unit objects against an id order.
+        let pass = gate(units.clone(), json!(["u2", "u1"]), table.clone());
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["units"], json!(2));
+
+        let short = gate(units.clone(), json!(["u1"]), table.clone());
+        assert_eq!(short["problems"], json!(["units_missing_from_order"]));
+        assert_eq!(short["missing_from_order"], json!(["u2"]));
+        let stray = gate(units.clone(), json!(["u1", "u2", "u9"]), table);
+        assert_eq!(stray["problems"], json!(["order_names_unknown_units"]));
+        assert_eq!(stray["unknown_in_order"], json!(["u9"]));
+
+        let bare = gate(
+            units.clone(),
+            json!(["u1", "u2"]),
+            json!([{"id": "u1", "force": "Prohibition", "enforcement_point": ""}]),
+        );
+        assert_eq!(
+            bare["problems"],
+            json!([
+                "units_without_force",
+                "prohibition_without_enforcement_point"
+            ])
+        );
+        assert_eq!(bare["without_force"], json!(["u2"]));
+        assert_eq!(bare["bare_prohibitions"], json!(["u1"]));
+
+        let cased = gate(
+            units,
+            json!(["u1", "u2"]),
+            json!([{"id": "u1", "force": "prohibition", "enforcement_point": "x"}, {"id": "u2", "force": "Guideline"}]),
+        );
+        assert_eq!(cased["problems"], json!(["unknown_force"]));
+        assert_eq!(
+            gate(json!([]), json!([]), json!([]))["problems"],
+            json!(["no_units"])
+        );
+        let duplicated = gate(
+            json!(["u1", "u1"]),
+            json!(["u1"]),
+            json!([{"id": "u1", "force": "Evidence"}]),
+        );
+        assert_eq!(duplicated["problems"], json!(["duplicate_unit_ids"]));
+    }
+
+    #[test]
+    fn scientific_gate_ur_3_reads_printed_exits_the_grep_count_and_the_inventory() {
+        let form = skill_candidate("upstream-rebase", "results_not_measured");
+        let units = json!([{"id": "u1"}, {"id": "u2"}]);
+        let gate = |check: serde_json::Value,
+                    test: serde_json::Value,
+                    invariant: serde_json::Value,
+                    markers: serde_json::Value,
+                    strategy: &str| {
+            eval_sandboxed(
+                &form,
+                &json!({"check_exit": check, "test_exit": test, "invariant_exit": invariant, "marker_count": markers,
+                        "functional_units": units, "strategy": strategy}),
+            )
+            .unwrap_or_else(|error| panic!("UR-3 failed to evaluate: {error}"))
+        };
+        let pass = gate(
+            json!(0),
+            json!(0),
+            json!(0),
+            json!(2),
+            "mapped-reapplication",
+        );
+        assert_eq!(pass["verdict"], json!("pass"));
+        assert_eq!(pass["unit_count"], json!(2));
+        let short = gate(
+            json!(0),
+            json!(0),
+            json!(0),
+            json!(1),
+            "mapped-reapplication",
+        );
+        assert_eq!(short["verdict"], json!("return_to_step_5"));
+        assert_eq!(
+            short["problems"],
+            json!(["marker_count_differs_from_units"])
+        );
+        // Under git merge the marker count is not a re-application count.
+        assert_eq!(
+            gate(json!(0), json!(0), json!(0), json!(1), "git-merge")["verdict"],
+            json!("pass")
+        );
+        let failing = gate(
+            json!(101),
+            json!(0),
+            json!(1),
+            json!(2),
+            "mapped-reapplication",
+        );
+        assert_eq!(
+            failing["problems"],
+            json!(["cargo_check_failed", "no_zed_deps_invariant_failed"])
+        );
+        assert_eq!(
+            gate(json!(0), json!(1), json!(0), json!(2), "git-merge")["problems"],
+            json!(["pinning_tests_failed"])
+        );
+        let typed = gate(
+            json!(true),
+            json!(0),
+            json!(0),
+            json!(2),
+            "mapped-reapplication",
+        );
+        assert_eq!(typed["problems"], json!(["results_not_measured"]));
+        let text_count = gate(
+            json!(0),
+            json!(0),
+            json!(0),
+            json!("2"),
+            "mapped-reapplication",
+        );
+        assert_eq!(text_count["problems"], json!(["results_not_measured"]));
+    }
+
+    #[test]
     fn guarded_union_and_assoc_null_check_are_accepted() {
         let forms = parse(
             "(and (is_null (assoc \"optional\" row)) (or (and (stringp x) (string= x \"none\")) (and (numberp x) (> x 0.05))))",
