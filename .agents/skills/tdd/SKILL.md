@@ -59,7 +59,10 @@ A **seam** is the public boundary where you observe behavior without reaching
 inside: a crate's `pub` API, an MCP tool called through `Parameters`, a GPUI
 entity driven through `TestAppContext`, a CLI or script exit code.
 
-**Test only at agreed seams.** Before writing any test, render `tdd/tdd-seams` to propose the seams under test, validate the proposal deterministically via `lisp_eval` (`TDD-1`: `(and (> seams_count 0) (= invalid_layers_count 0) (= impl_oracles_count 0) (= internal_mocks_count 0))`), and confirm them with the user. No test is written at an unconfirmed seam. Ask: "What's the public interface, and which seams should we test?" When the interface's shape is itself in question, consult `deep-module`.
+**Test only at agreed seams.** Before writing any test, render `tdd/tdd-seams` to propose the seams under test, validate the proposal deterministically via `lisp_eval` (`TDD-1`), and confirm them with the user. No test is written at an unconfirmed seam. Ask: "What's the public interface, and which seams should we test?" When the interface's shape is itself in question, consult `deep-module`.
+
+- `TDD-1` form: `(begin (define rows (lambda (v) (if (listp v) v (list)))) (define text (lambda (v) (if (stringp v) v ""))) (define layers (list "example" "property" "proof" "loop-closure")) (define boundaries (list "Fs" "HttpClient" "Clock" "Rng")) (define field (lambda (s k) (if (listp s) (assoc k s) nil))) (define bad-fakes (lambda (fs) (if (is_null fs) (list) (if (and (stringp (car fs)) (or (member (car fs) boundaries) (ends-with "Port" (car fs)))) (bad-fakes (cdr fs)) (cons (car fs) (bad-fakes (cdr fs))))))) (define walk (lambda (ss i acc-layers acc-oracles acc-mocks) (if (is_null ss) (list acc-layers acc-oracles acc-mocks) (let ((s (car ss))) (walk (cdr ss) (+ i 1) (if (member (text (field s "layer")) layers) acc-layers (cons i acc-layers)) (if (and (stringp (field s "oracle")) (not (string= (field s "oracle") "implementation"))) acc-oracles (cons i acc-oracles)) (if (is_null (bad-fakes (rows (field s "boundary_fakes")))) acc-mocks (cons i acc-mocks))))))) (define r (walk (rows seams) 0 (list) (list) (list))) (define n (length (rows seams))) (list (list "pass" (and (> n 0) (is_null (car r)) (is_null (car (cdr r))) (is_null (car (cdr (cdr r)))))) (list "seams_count" n) (list "invalid_layer_seams" (reverse (car r))) (list "implementation_oracle_seams" (reverse (car (cdr r)))) (list "internal_mock_seams" (reverse (car (cdr (cdr r)))))))`
+- env: `{ "seams": <the tdd-seams render's seams array, as returned> }` — the form reads each seam's `layer`, `oracle` and `boundary_fakes` itself and returns `{pass, seams_count, invalid_layer_seams, implementation_oracle_seams, internal_mock_seams}` (indices into the array). `pass` needs at least one seam, every `layer` in `example|property|proof|loop-closure`, every `oracle` a string other than `implementation` (a null or missing oracle fails — the tautology guard of the cycle gate, applied at proposal time), and every `boundary_fakes` entry a system-boundary port — a name ending in `Port` (`InferencePort`, `ToolPort`, `MemoryPort`, …) or one of `Fs`, `HttpClient`, `Clock`, `Rng`. Anything else named as a fake is an internal collaborator (the Mocking section) and fails the seam.
 
 Pick the layer the obligation needs (testing-protocol §The four layers):
 
@@ -139,6 +142,23 @@ Run the cycle gate's branch matrix through `lisp_eval` (receipts live 2026-09-30
 The gate form and the five-branch receipts above are executed through
 the live tool (`lisp_eval`); the skill's forms are verified at audit
 and use time, never anchored in code.
+
+`TDD-1` receipts over the tdd-seams render's real `seams[]` shape (`layer`, `oracle`, `boundary_fakes`), executed 2026-11-13 through the `hkask_lisp` evaluator and re-evaluated by `~/Documents/zk-data/skills/tdd/2026-11-13-tdd1-repair/receipts.sh`:
+
+| seams | pass | field that names it |
+|---|---|---|
+| one example seam, oracle literal, fakes [InferencePort] | true | |
+| layer `unit` | false | `invalid_layer_seams` [0] |
+| layers loop-closure, proof, property | true | the four layers |
+| second seam with oracle `implementation` | false | `implementation_oracle_seams` [1] |
+| oracle null, or the key absent | false | a missing oracle is not an independent one |
+| fakes [InferencePort, SessionStore] | false | `internal_mock_seams` [0] — SessionStore is an internal collaborator |
+| fakes [MemoryPort, Fs, Clock, HttpClient, Rng] | true | boundary ports |
+| fakes [] | true | nothing faked is allowed |
+| fakes [7] | false | a non-string entry is not a port |
+| empty or null seams | false | `seams_count` 0 |
+
+Before this repair TDD-1 took four counts the agent tallied over the render (`seams_count`, `invalid_layers_count`, `impl_oracles_count`, `internal_mocks_count`); the last had no field in the render to count from.
 
 ## Constraints
 
