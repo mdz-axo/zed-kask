@@ -256,12 +256,12 @@ mod tests {
     #[test]
     fn auth_header_accepts_clean_key() {
         let provider =
-            FirecrawlProvider::new(Some("fc-b336f31c1e524cd4a9c6c4c515184483".to_string()))
+            FirecrawlProvider::new(Some("fc-00000000000000000000000000000000".to_string()))
                 .expect("provider");
         let header = provider.auth_header().expect("clean key must validate");
         assert_eq!(
             header.as_bytes(),
-            b"Bearer fc-b336f31c1e524cd4a9c6c4c515184483"
+            b"Bearer fc-00000000000000000000000000000000"
         );
     }
 
