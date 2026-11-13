@@ -1497,16 +1497,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 // lives there — artifact files and outputs go to the visible
                 // artifacts dir under {server}-mcp/{artifact-type}/). Default
                 // DB path is `{kask_data_dir}/mcp/research/research.db`.
-                // The DB is plaintext SQLite by recorded design decision
-                // (operator ruling 2026-09-29, F-P1): MCP-server data stays
-                // unencrypted so this server runs in an independent
-                // MCP-server pattern without the zed keychain or
-                // HKASK_DB_PASSPHRASE.
+                // The DB is encrypted: it is opened below with the
+                // passphrase from HKASK_DB_PASSPHRASE (or the keychain),
+                // and with no passphrase the server runs without it and the
+                // research-run tools refuse. A comment here said the DB was
+                // unencrypted by a 2026-09-29 ruling. That is not what
+                // this code does, and the file on disk does not begin with
+                // the unencrypted SQLite header (measured 2026-11-12).
                 // D28 path resolution through the shared helper — the
                 // env override (HKASK_RESEARCH_DB), the per-agent default,
                 // the parent self-heal and the warn/info logging are one
-                // implementation (the research DB is plaintext by design;
-                // only its path resolution is shared).
+                // implementation.
                 let research_db_path = hkask_mcp_server::resolve_server_db_path(
                     "HKASK_RESEARCH_DB",
                     &hkask_types::agent_paths::mcp_server_db("research", "research"),
