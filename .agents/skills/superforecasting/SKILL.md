@@ -256,12 +256,14 @@ The superforecasting process accepts an optional `expert_prior` array input
 alongside `market_context`. Before invoking the process, the invoking agent
 should:
 
-1. Call `rss_list_subscriptions` to find the actual LEAP feed stream IDs. Use
-   `rss_get_entries` with each matching `stream_id`, then check entry titles
-   and content against the forecasting question. `rss_search` is global and
-   cannot search within named streams; do not infer a feed from a global match.
-2. If source-identified entries match, parse the LEAP forecast distribution
-   from those entries into the `expert_prior` array. Each element carries:
+1. Get the URL of the LEAP report that covers the forecasting question: from
+   the operator, or with `web_search`. Read the page with `web_extract` (pass
+   `run_id` when a research run is open, so the run ledger records the page).
+   A search result's title or snippet is not a reading. A response that
+   carries a `note` is a degraded extraction: treat the page as not read.
+2. If the extracted page states a forecast for the question, parse the LEAP
+   forecast distribution from it into the `expert_prior` array, with the
+   extracted URL as `source_url`. Each element carries:
    `question`, `median_probability`, `superforecaster_median` (if available),
    `public_median` (if available), `interquartile_range` (if available),
    `time_horizon`, `scenario` ('rapid AI progress' / 'slow AI progress' /
@@ -271,9 +273,10 @@ should:
 
 The process does not fetch LEAP itself — the invoking agent does, because the
 process is a single skill invocation and should not reach out to MCP servers
-mid-process (per the existing `market_context` pattern). If no matching
-subscription or source-identified entry exists, `expert_prior` is empty and
-the process runs without it. Do not fabricate LEAP data.
+mid-process (per the existing `market_context` pattern). If no LEAP page was
+found, the page could not be read, or it states no forecast for the question,
+`expert_prior` is empty and the process runs without it. Do not fabricate
+LEAP data.
 
 ## EQM Feedback Integration
 
