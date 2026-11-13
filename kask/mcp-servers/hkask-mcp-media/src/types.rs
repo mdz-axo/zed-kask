@@ -31,6 +31,11 @@ pub const TIMELINE_PERIODS: [&str; 3] = ["year", "month", "decade"];
 pub const FACE_STATUSES: [&str; 2] = ["valid", "rejected"];
 pub const IMPORT_MEDIA_TYPES: [&str; 2] = ["video", "audio"];
 pub const ANNOTATION_KINDS: [&str; 2] = ["tag", "note"];
+/// The closed vocabularies of the transcript tools, on the same terms.
+pub const TRANSCRIPT_ANNOTATION_KINDS: [&str; 2] = ["highlight", "strike"];
+pub const LOCATE_BASES: [&str; 2] = ["working", "source"];
+pub const SPEAKER_SOURCES: [&str; 2] = ["audio", "text"];
+pub const TRANSCRIPT_SEARCH_MODES: [&str; 1] = ["lexical"];
 
 fn string_enum(values: &[&str]) -> schemars::Schema {
     schemars::json_schema!({"type": "string", "enum": values})
@@ -76,6 +81,41 @@ fn import_media_type_schema(_: &mut schemars::SchemaGenerator) -> schemars::Sche
 }
 pub(crate) fn annotation_kind_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     string_enum(&ANNOTATION_KINDS)
+}
+pub(crate) fn optional_transcript_annotation_kind_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    optional_string_enum(&TRANSCRIPT_ANNOTATION_KINDS)
+}
+pub(crate) fn transcript_search_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&TRANSCRIPT_SEARCH_MODES)
+}
+fn optional_locate_basis_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&LOCATE_BASES)
+}
+fn optional_speaker_source_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&SPEAKER_SOURCES)
+}
+fn export_format_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&crate::transcript_export::EXPORT_FORMATS)
+}
+
+/// Decode a structured argument sent as JSON text (the form the schema
+/// declares, which every model provider can emit) or as the JSON value
+/// itself. The media panel builds its layer and payload arguments as
+/// objects; a field that decoded text only refused every one of them
+/// ("invalid type: map, expected a string") before the handler ran.
+pub(crate) fn json_text_or_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<hkask_types::AnyJsonValue, D::Error> {
+    match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::String(text) => serde_json::from_str(&text)
+            .map(hkask_types::AnyJsonValue)
+            .map_err(|error| {
+                serde::de::Error::custom(format!("expected complete JSON text: {error}"))
+            }),
+        value => Ok(hkask_types::AnyJsonValue(value)),
+    }
 }
 
 // ── Gallery request types ────────────────────────────────────────────────
@@ -242,8 +282,10 @@ pub struct FaceScanFolderRequest {
 // ── Educt transcript-store requests ─────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductStoreTranscriptRequest {
     /// The full TranscriptBundle JSON exactly as returned by transcribe_bundle.
+    #[serde(deserialize_with = "json_text_or_value")]
     pub transcript: hkask_types::AnyJsonValue,
     /// Optional gallery asset ID linking this transcript to a gallery asset
     /// (the asset JOIN for recall by asset).
@@ -251,6 +293,7 @@ pub struct EductStoreTranscriptRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductListTranscriptsRequest {
     /// Filter by the transcribed media's path (the bundle's audio_path).
     pub media_path: Option<String>,
@@ -261,6 +304,7 @@ pub struct EductListTranscriptsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductGetTranscriptRequest {
     pub transcript_id: String,
     /// Include stored layers in the response (default true).
@@ -268,26 +312,31 @@ pub struct EductGetTranscriptRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductDeleteTranscriptRequest {
     pub transcript_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductStoreLayerRequest {
     pub transcript_id: String,
     /// The layer as a tagged JSON object:
     /// {"kind": "speaker"|"paragraph"|"correction"|"highlight"|"edl"|"realignment", ...}.
     /// Validated against the transcript's word count before storage; a
     /// layer that fails validation is rejected with the named invariant.
+    #[serde(deserialize_with = "json_text_or_value")]
     pub layer: hkask_types::AnyJsonValue,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductListLayersRequest {
     pub transcript_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductParagraphPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
@@ -302,6 +351,7 @@ pub struct EductParagraphPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductSpeakerPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
@@ -312,6 +362,7 @@ pub struct EductSpeakerPassRequest {
     /// Speaker attribution source: "audio" (default — an audio-capable
     /// model hears the recording; the scaffold's primary source) or
     /// "text" (the text-cue pass — works with every model, approximate).
+    #[schemars(schema_with = "optional_speaker_source_schema")]
     pub source: Option<String>,
     /// Opt into the v2 structured-outputs mode for the "text" source
     /// (provider-enforced JSON Schema). Not supported with source
@@ -327,6 +378,7 @@ pub struct EductSpeakerPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VoiceEnrollRequest {
     pub transcript_id: String,
     /// Inclusive immutable source-word range authorizing one named speaker.
@@ -336,26 +388,30 @@ pub struct VoiceEnrollRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VoiceListRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VoiceRemoveRequest {
     pub profile_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VoicePruneRequest {
-    /// Delete profiles older than this many days unless a human-confirmed
-    /// match refreshed them within the same retention window. Maximum 365000.
+    /// Delete profiles enrolled more than this many days ago. Maximum 365000.
     pub max_age_days: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VoiceIdentifyRequest {
     pub transcript_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductRetranscribeSectionRequest {
     pub transcript_id: String,
     /// Inclusive source word range to re-transcribe. Indices anchor the
@@ -370,6 +426,7 @@ pub struct EductRetranscribeSectionRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductCorrectionPassRequest {
     pub transcript_id: String,
     /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
@@ -383,6 +440,7 @@ pub struct EductCorrectionPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductApplyCorrectionsRequest {
     pub transcript_id: String,
     /// Apply a specific correction layer by ID; defaults to the latest.
@@ -390,6 +448,7 @@ pub struct EductApplyCorrectionsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductRealignTranscriptRequest {
     pub transcript_id: String,
     /// Re-anchor a specific correction layer by ID; defaults to the latest.
@@ -397,6 +456,7 @@ pub struct EductRealignTranscriptRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductHighlightPassRequest {
     pub transcript_id: String,
     /// The natural-language selection request (e.g. "where he explains
@@ -413,6 +473,7 @@ pub struct EductHighlightPassRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductEdlFromHighlightsRequest {
     pub transcript_id: String,
     /// Compose only highlights with this exact label; all highlights when
@@ -424,6 +485,7 @@ pub struct EductEdlFromHighlightsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductRenderEdlRequest {
     pub transcript_id: String,
     /// Render a specific EDL layer by ID; defaults to the latest.
@@ -431,16 +493,19 @@ pub struct EductRenderEdlRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductExportRequest {
     pub transcript_id: String,
     /// Export format: "srt" (captions from the word timings, cues split
     /// at sentence punctuation), "highlights_csv" (every stored highlight
-    /// with time ranges), "corpus_text" (the rendered transcript for
+    /// with time ranges), "review_csv" (paragraph blocks with their
+    /// speaker-confidence review flags), "corpus_text" (the rendered transcript for
     /// corpus ingestion — repository-wide semantic search by composition),
     /// "webvtt" (word-level karaoke captions beside SRT), "web_annotation"
     /// (highlights as W3C Web Annotation JSON with position and quote
     /// selectors), or "otio" (a composed reel serialized to
     /// OpenTimelineIO).
+    #[schemars(schema_with = "export_format_schema")]
     pub format: String,
     /// The specific EDL layer to serialize for the "otio" format. When
     /// omitted, the latest stored EDL layer is used. Ignored by the other
@@ -450,6 +515,7 @@ pub struct EductExportRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductLocateRequest {
     pub transcript_id: String,
     /// The passage to locate — quote the rendered form exactly (punctuation
@@ -461,6 +527,7 @@ pub struct EductLocateRequest {
     /// `"source"` (immutable source-word indices, what correction-layer
     /// edits and other source-anchored layers require; converted through
     /// the re-anchored index map when a realignment is applied).
+    #[schemars(schema_with = "optional_locate_basis_schema")]
     pub basis: Option<String>,
 }
 
@@ -1008,6 +1075,7 @@ pub struct LayersStoreItemRequest {
     /// The text a lexical search matches — must be nonblank.
     pub searchable_text: String,
     /// Arbitrary structured payload (labels, boxes, confidences, OCR text).
+    #[serde(deserialize_with = "json_text_or_value")]
     pub payload: hkask_types::AnyJsonValue,
     /// Gallery asset ids of frames this item references; each must exist.
     pub frame_asset_ids: Option<Vec<String>>,

@@ -383,6 +383,14 @@ impl MediaServer {
         }): Parameters<TranscribeAndStoreRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "transcribe_and_store", async {
+            // A recording id that is not a live gallery asset is refused
+            // before the transcription is paid for (job_submit's rule, R5):
+            // the store refused it only after the provider call.
+            if let Some(asset_id) = gallery_asset_id.as_deref() {
+                self.gallery_store
+                    .get_by_id(asset_id)
+                    .map_err(crate::map_gallery_store_error)?;
+            }
             let _admission = self.admit_heavy_operation()?;
             let bundle = self
                 .transcribe_to_bundle(&audio_url, &language, model.as_deref())

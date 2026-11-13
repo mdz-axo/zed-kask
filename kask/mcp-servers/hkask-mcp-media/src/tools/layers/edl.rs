@@ -177,7 +177,7 @@ impl MediaServer {
         Parameters(request): Parameters<LayersRenderEdlRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "layers_render_edl", async {
-            ensure_local_input_exists(&request.media_path)?;
+            admit_media_source(&request.media_path).await?;
             let ffmpeg = self.require_ffmpeg()?;
             let driver = &**self.gallery_store.driver();
             let filter = MediaLayerFilter {
@@ -211,7 +211,7 @@ impl MediaServer {
                     record.id
                 )));
             }
-            let audio = is_audio_path(&request.media_path);
+            let audio = source_is_audio_only(ffmpeg, &request.media_path).await?;
             let mut intermediates = crate::assets::ScratchIntermediates::new("layers_render_edl");
             let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(record.items.len());
             for item in &record.items {

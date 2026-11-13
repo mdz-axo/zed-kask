@@ -17893,6 +17893,144 @@ mod tests {
             "refusals dispatch nothing"
         );
     }
+
+    /// expect: every argument object a panel builder produces decodes into
+    /// the media server's own request type for the tool it is sent to, and
+    /// a layer it carries parses as the server's layer type.
+    /// [P1] Constraining: the builders' tests asserted JSON shape against a
+    /// recording invoker, never against the server. The reel, correction,
+    /// tag and redaction builders send their layer and payload as objects;
+    /// the server's fields decoded JSON text only and refused all four
+    /// (measured 2026-11-12 on the installed server: "invalid type: map,
+    /// expected a string").
+    #[test]
+    fn every_argument_builder_decodes_into_the_servers_request_type() {
+        use hkask_mcp_media::tools::educt::{
+            EductAnnotationCreateRequest, EductAnnotationUpdateRequest,
+        };
+        use hkask_mcp_media::transcript_layers::TranscriptLayer;
+        use hkask_mcp_media::types::{
+            EductLocateRequest, EductRealignTranscriptRequest, EductStoreLayerRequest,
+            LayersStoreRequest,
+        };
+        // The crate has no direct serde dependency; a macro needs no bound.
+        macro_rules! decoded {
+            ($request:ty, $tool:literal, $arguments:expr) => {{
+                let arguments: serde_json::Value = $arguments;
+                serde_json::from_value::<$request>(arguments.clone()).unwrap_or_else(|error| {
+                    panic!(
+                        "{} refuses the panel's arguments: {error}\n{arguments}",
+                        $tool
+                    )
+                })
+            }};
+        }
+        fn stores_a_layer(what: &str, arguments: serde_json::Value) {
+            let request = decoded!(EductStoreLayerRequest, "educt_store_layer", arguments);
+            if let Err(error) = serde_json::from_value::<TranscriptLayer>(request.layer.0) {
+                panic!("{what}: the layer is not a server layer: {error}");
+            }
+        }
+
+        decoded!(
+            EductAnnotationCreateRequest,
+            "educt_annotation_create",
+            highlight_create_params("t-1", 0, 3, "label")
+        );
+        decoded!(
+            EductAnnotationCreateRequest,
+            "educt_annotation_create",
+            strike_create_params("t-1", 4, 4)
+        );
+        decoded!(
+            EductAnnotationUpdateRequest,
+            "educt_annotation_update",
+            highlight_update_params("t-1", "layer-0", 0, 3, "label", "note")
+        );
+        decoded!(
+            EductRealignTranscriptRequest,
+            "educt_realign_transcript",
+            correction_realign_params("t-1", "layer-0")
+        );
+        decoded!(
+            EductLocateRequest,
+            "educt_locate",
+            correction_locate_params("t-1", "a quote")
+        );
+
+        let edits = vec![PaneCorrectionEdit {
+            start_word: 3,
+            end_word: 5,
+            replacement: "fixed words".into(),
+            reason: CORRECTION_REASON.to_string(),
+        }];
+        stores_a_layer(
+            "correction",
+            correction_store_params("t-1", &edits, "2026-11-12T00:00:00Z").expect("params"),
+        );
+
+        let state = TranscriptPaneState {
+            transcript_id: "t-1".into(),
+            media_path: "/m".into(),
+            gallery_asset_id: None,
+            alignment: "original".into(),
+            alignment_note: None,
+            words: None,
+            working_text: String::new(),
+            paragraph_breaks: None,
+            speaker_spans: None,
+            review: None,
+            layers: Vec::new(),
+            highlights: vec![PaneHighlight {
+                start_word: 0,
+                end_word: 3,
+                label: "a".into(),
+                note: "n".into(),
+                annotation_id: "layer-0".into(),
+                researcher_supplied: true,
+            }],
+            strikes: vec![PaneStrike {
+                start_word: 5,
+                end_word: 5,
+                annotation_id: "strike-5".into(),
+            }],
+            correction_edits: Vec::new(),
+            source_words: Vec::new(),
+        };
+        let clips = [reel_clip("layer-0", 0, 3, true, &[])];
+        for mode in [
+            ReelComposeMode::Assemble,
+            ReelComposeMode::Reduce,
+            ReelComposeMode::Mixed,
+        ] {
+            stores_a_layer(
+                "reel",
+                compose_reel_params(&state, &clips, mode).expect("a reel to compose"),
+            );
+        }
+
+        decoded!(
+            LayersStoreRequest,
+            "layers_store",
+            researcher_tag_params("/m.mp4", Some("asset-1"), 1.0, 2.0, "label")
+        );
+        let target = RedactionTarget {
+            label: "person".into(),
+            box_norm: [0.1, 0.2, 0.3, 0.4],
+            source_ref: "layer_obj/item_a".into(),
+        };
+        decoded!(
+            LayersStoreRequest,
+            "layers_store",
+            redaction_decision_params(
+                "/m.mp4",
+                None,
+                &target,
+                (1.0, 2.0),
+                PaneRedactionEffect::Blur,
+            )
+        );
+    }
 }
 
 #[cfg(test)]

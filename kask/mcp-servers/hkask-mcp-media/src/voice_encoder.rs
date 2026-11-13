@@ -121,6 +121,12 @@ impl OnnxVoiceEncoder {
         })
     }
 
+    /// The identity of the vector space this encoder embeds into. Two
+    /// embeddings are comparable only under equal fingerprints.
+    pub fn fingerprint(&self) -> &EncoderFingerprint {
+        &self.fingerprint
+    }
+
     pub async fn embed_span(
         &self,
         ffmpeg: &FfmpegRunner,

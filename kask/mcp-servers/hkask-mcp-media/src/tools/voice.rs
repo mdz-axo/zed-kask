@@ -12,6 +12,13 @@ use crate::*;
 const MAX_ENROLLMENT_SPAN_MS: u64 = 60_000;
 const MAX_PRUNE_AGE_DAYS: u32 = 365_000;
 
+/// The most audio `voice_identify` embeds from one speaker span: the
+/// enrollment bound, so a probe and a profile are embedded over the same
+/// regime. The encoder's memory grows with the span (measured: one
+/// 1,199.9 s span took the server from 119 MB to 3,105 MB resident), and a
+/// lecture's speaker span runs to an hour or more.
+const MAX_IDENTIFICATION_SPAN_MS: u64 = MAX_ENROLLMENT_SPAN_MS;
+
 /// The minimum cosine similarity between a span embedding and the enrolled
 /// centroid for a positive identification (plan §5.3: threshold ≈0.75).
 const IDENTIFICATION_THRESHOLD: f64 = 0.75;
@@ -19,6 +26,60 @@ const IDENTIFICATION_THRESHOLD: f64 = 0.75;
 /// The minimum top-1 minus runner-up similarity gap for a positive
 /// identification (plan §5.3: margin ≈0.05).
 const IDENTIFICATION_MARGIN: f64 = 0.05;
+
+/// The best-matching profile for one span embedding, and the similarity of
+/// the best profile of ANOTHER speaker (0.0 when there is none). The margin
+/// is a distance between speakers: measured against every other profile, a
+/// speaker enrolled twice was their own runner-up (measured: similarity
+/// 0.81, margin 0.0, `unknown`), so a second enrollment made the speaker
+/// unidentifiable.
+fn best_match<'a>(
+    embedding: &[f32],
+    profiles: &'a [VoiceProfile],
+) -> Option<(&'a VoiceProfile, f64, f64)> {
+    let scored: Vec<(&VoiceProfile, f64)> = profiles
+        .iter()
+        .map(|profile| (profile, cosine_similarity(embedding, &profile.centroid)))
+        .collect();
+    let (best, top) = scored.iter().copied().reduce(|best, candidate| {
+        if candidate.1 > best.1 {
+            candidate
+        } else {
+            best
+        }
+    })?;
+    let runner_up = scored
+        .iter()
+        .filter(|(profile, _)| profile.speaker_name != best.speaker_name)
+        .map(|(_, similarity)| *similarity)
+        .fold(0.0_f64, f64::max);
+    Some((best, top, runner_up))
+}
+
+/// The audio `voice_identify` embeds for a span: from its start, at most
+/// `MAX_IDENTIFICATION_SPAN_MS`. `None` when the word timings give the span
+/// no duration.
+fn identification_window(start_ms: u64, end_ms: u64) -> Option<(u64, u64)> {
+    (end_ms > start_ms).then(|| {
+        (
+            start_ms,
+            start_ms + (end_ms - start_ms).min(MAX_IDENTIFICATION_SPAN_MS),
+        )
+    })
+}
+
+/// Split profiles into those embedded by `encoder` and the rest. A profile
+/// enrolled under another encoder lives in a different vector space; a
+/// cosine across the two is a number with no meaning, so such profiles are
+/// counted and never compared.
+fn comparable_profiles(
+    profiles: Vec<VoiceProfile>,
+    encoder: &EncoderFingerprint,
+) -> (Vec<VoiceProfile>, Vec<VoiceProfile>) {
+    profiles
+        .into_iter()
+        .partition(|profile| &profile.fingerprint == encoder)
+}
 
 /// The L2-normalized cosine similarity between two vectors. Both inputs
 /// should already be L2-normalized (the CAM++ model output is), so this
@@ -102,10 +163,9 @@ fn map_voice_error(error: VoiceProfileError) -> McpToolError {
     match error {
         VoiceProfileError::Unavailable(message) => McpToolError::failed_precondition(message),
         VoiceProfileError::MissingCredential(message) => McpToolError::permission_denied(message),
-        VoiceProfileError::ProfileNotFound(message) => McpToolError::not_found(message),
-        VoiceProfileError::ModelMismatch { profile_id, .. } => McpToolError::invalid_argument(
-            format!("voice profile {profile_id} has an incompatible encoder fingerprint"),
-        ),
+        VoiceProfileError::ProfileNotFound(profile_id) => {
+            McpToolError::not_found(format!("voice profile {profile_id} not found"))
+        }
         other => McpToolError::internal(other.to_string()),
     }
 }
@@ -226,9 +286,7 @@ impl MediaServer {
                 )));
             }
             let evidence = single_speaker_evidence(driver, &transcript_id, start_word, end_word)?;
-            if !crate::is_local_media_path(&bundle.audio_path) {
-                validate_tool_url_with_dns(&bundle.audio_path).await?;
-            }
+            crate::tools::educt::admit_media_source(&bundle.audio_path).await?;
             let encoder = self
                 .voice
                 .encoder()
@@ -293,7 +351,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Identify the speaker of every span in the latest speaker layer of a stored transcript by cosine-comparing each span's CAM++ embedding against every enrolled voice profile's centroid (suggest-only). Suggested matches are stored as separate identification layers carrying the matched profile id, speaker name, cosine similarity, and the top-1 minus runner-up margin. No match is auto-confirmed; confirmation flows through the existing annotation tools or through voice_prune sparing the matched profile."
+        description = "Identify the speaker of every span in the latest speaker layer of a stored transcript by cosine-comparing each span's CAM++ embedding against every enrolled voice profile's centroid (suggest-only). At most the first 60 seconds of a span are embedded; each result reports embedded_ms. Suggested matches are stored as separate identification layers carrying the matched profile id, speaker name, cosine similarity, and the top-1 minus runner-up margin; every run stores its own layers. No match is auto-confirmed and no tool records a confirmation."
     )]
     pub async fn voice_identify(
         &self,
@@ -302,6 +360,17 @@ impl MediaServer {
         execute_tool(self, "voice_identify", async {
             let _admission = self.admit_heavy_operation()?;
             let store = self.voice.profile_store().map_err(map_voice_error)?;
+            // The transcript is resolved before the profile count: an
+            // unknown id answered `no_profiles` while the store was empty.
+            let driver = &**self.gallery_store.driver();
+            let Some((_summary, bundle)) =
+                crate::transcript_store::load_transcript(driver, &transcript_id)
+                    .map_err(map_store_error)?
+            else {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            };
             let profiles = store.list_profiles().map_err(map_voice_error)?;
             if profiles.is_empty() {
                 return Ok(serde_json::json!({
@@ -311,16 +380,6 @@ impl MediaServer {
                     "spans": [],
                 }));
             }
-            let driver = &**self.gallery_store.driver();
-            crate::transcript_store::ensure_schema(driver).map_err(map_store_error)?;
-            let Some((_summary, bundle)) =
-                crate::transcript_store::load_transcript(driver, &transcript_id)
-                    .map_err(map_store_error)?
-            else {
-                return Err(McpToolError::not_found(format!(
-                    "transcript {transcript_id} not found"
-                )));
-            };
             if bundle.words.is_empty() {
                 return Err(McpToolError::failed_precondition(
                     "transcript has no word-level timings; identification cannot anchor",
@@ -336,11 +395,13 @@ impl MediaServer {
                     "no speaker layer; run the speaker pass (educt_speaker_pass) first",
                 ));
             };
+            crate::tools::educt::admit_media_source(&bundle.audio_path).await?;
             let encoder = self
                 .voice
                 .encoder()
                 .await
                 .map_err(map_voice_encoder_error)?;
+            let (profiles, incompatible) = comparable_profiles(profiles, encoder.fingerprint());
             let media_path = std::path::Path::new(&bundle.audio_path);
             let mut span_results = Vec::new();
             let mut identified = 0;
@@ -348,29 +409,8 @@ impl MediaServer {
             for span in &speaker_layer.spans {
                 let start_ms = bundle.words[span.start_word].start_ms;
                 let end_ms = bundle.words[span.end_word].end_ms;
-                let embedded = encoder
-                    .embed_span(&self.ffmpeg, media_path, start_ms, end_ms)
-                    .await
-                    .map_err(map_voice_encoder_error)?;
-                let mut best: Option<(&VoiceProfile, f64)> = None;
-                let mut runner_up: f64 = 0.0;
-                for profile in &profiles {
-                    let similarity = cosine_similarity(&embedded.embedding, &profile.centroid);
-                    match best {
-                        Some((_, current)) if current >= similarity => {
-                            if similarity > runner_up {
-                                runner_up = similarity;
-                            }
-                        }
-                        _ => {
-                            if let Some((_, prev)) = best {
-                                runner_up = prev;
-                            }
-                            best = Some((profile, similarity));
-                        }
-                    }
-                }
-                let Some((profile, top)) = best else {
+                let Some((window_start, window_end)) = identification_window(start_ms, end_ms)
+                else {
                     unknown += 1;
                     span_results.push(serde_json::json!({
                         "start_word": span.start_word,
@@ -378,7 +418,25 @@ impl MediaServer {
                         "start_ms": start_ms,
                         "end_ms": end_ms,
                         "status": "unknown",
-                        "reason": "no profile had a computable centroid",
+                        "reason": "the span's word timings give it no duration",
+                    }));
+                    continue;
+                };
+                let embedded_ms = window_end - window_start;
+                let embedded = encoder
+                    .embed_span(&self.ffmpeg, media_path, window_start, window_end)
+                    .await
+                    .map_err(map_voice_encoder_error)?;
+                let Some((profile, top, runner_up)) = best_match(&embedded.embedding, &profiles)
+                else {
+                    unknown += 1;
+                    span_results.push(serde_json::json!({
+                        "start_word": span.start_word,
+                        "end_word": span.end_word,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "status": "unknown",
+                        "reason": "no enrolled profile was made with the current voice encoder",
                     }));
                     continue;
                 };
@@ -390,6 +448,7 @@ impl MediaServer {
                         "end_word": span.end_word,
                         "start_ms": start_ms,
                         "end_ms": end_ms,
+                        "embedded_ms": embedded_ms,
                         "status": "unknown",
                         "top_similarity": top,
                         "margin": margin,
@@ -409,7 +468,7 @@ impl MediaServer {
                     score: top,
                     margin,
                     threshold_version: format!(
-                        "cos{IDENTIFICATION_THRESHOLD:.2}-margin{IDENTIFICATION_MARGIN:.2}"
+                        "cos{IDENTIFICATION_THRESHOLD:.2}-margin{IDENTIFICATION_MARGIN:.2}-vs-other-speaker"
                     ),
                     model_family: embedded.fingerprint.model_family.clone(),
                     weights_sha256: embedded.fingerprint.weights_sha256.clone(),
@@ -428,6 +487,7 @@ impl MediaServer {
                     "end_word": span.end_word,
                     "start_ms": start_ms,
                     "end_ms": end_ms,
+                    "embedded_ms": embedded_ms,
                     "status": "identified",
                     "profile_id": profile.id,
                     "speaker_name": profile.speaker_name,
@@ -443,6 +503,8 @@ impl MediaServer {
                 "spans": span_results,
                 "threshold": IDENTIFICATION_THRESHOLD,
                 "margin": IDENTIFICATION_MARGIN,
+                "profiles_compared": profiles.len(),
+                "profiles_skipped_other_encoder": incompatible.len(),
             }))
         })
         .await
@@ -517,7 +579,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Prune voice profiles older than max_age_days, sparing profiles with a human-confirmed match inside the same retention window. Each candidate goes through the voice_remove cleanup path for embeddings and derived identification layers. No pruning runs implicitly."
+        description = "Prune voice profiles enrolled more than max_age_days ago. Each one goes through the voice_remove cleanup path for embeddings and derived identification layers. No pruning runs implicitly."
     )]
     pub async fn voice_prune(
         &self,
@@ -1465,5 +1527,209 @@ mod tests {
             serde_json::json!("deleted"),
             "the detached provenance is reported, never silent"
         );
+    }
+
+    fn profile_named(name: &str, id: &str, centroid: [f32; 2]) -> VoiceProfile {
+        VoiceProfile {
+            id: id.to_string(),
+            speaker_name: name.to_string(),
+            authorization: enrollment().authorization,
+            fingerprint: enrollment().fingerprint,
+            centroid: centroid.to_vec(),
+            segments: Vec::new(),
+            created_at: "2026-11-12T00:00:00Z".to_string(),
+            last_confirmed_match_at: None,
+        }
+    }
+
+    /// expect: The margin is measured against the best profile of ANOTHER
+    /// speaker. A speaker enrolled twice is not their own runner-up.
+    /// [P1] Measured on the installed server (round e2, identify-two-run1):
+    /// with two profiles of one voice the span scored 0.8139 with margin
+    /// 0.0 and was reported `unknown`.
+    #[test]
+    fn a_speaker_enrolled_twice_is_not_their_own_runner_up() {
+        let profiles = vec![
+            profile_named("Ada", "ada-1", [1.0, 0.0]),
+            profile_named("Ada", "ada-2", [0.98, 0.2]),
+            profile_named("Grace", "grace-1", [0.0, 1.0]),
+        ];
+        let (best, top, runner_up) = best_match(&[1.0, 0.05], &profiles).expect("a best profile");
+        assert_eq!(best.speaker_name, "Ada");
+        assert!(top > 0.99, "top similarity {top}");
+        assert!(
+            runner_up < 0.1,
+            "the runner-up is Grace (near-orthogonal), not Ada's second profile: {runner_up}"
+        );
+        assert!(top - runner_up >= IDENTIFICATION_MARGIN);
+        // One speaker only: nothing to be confused with.
+        let alone = vec![
+            profile_named("Ada", "ada-1", [1.0, 0.0]),
+            profile_named("Ada", "ada-2", [0.98, 0.2]),
+        ];
+        let (_, _, runner_up) = best_match(&[1.0, 0.05], &alone).expect("a best profile");
+        assert_eq!(runner_up, 0.0);
+        assert!(best_match(&[1.0, 0.0], &[]).is_none());
+    }
+
+    /// expect: identification embeds at most the enrollment bound of audio
+    /// from a span, and nothing from a span with no duration.
+    /// [P1] Measured on the installed server (round e4): one 1,199.9 s span
+    /// took the process from 118,944 kB to 3,105,292 kB resident.
+    #[test]
+    fn identification_embeds_a_bounded_window_of_each_span() {
+        assert_eq!(identification_window(500, 7_600), Some((500, 7_600)));
+        assert_eq!(
+            identification_window(1_000, 1_200_900),
+            Some((1_000, 1_000 + MAX_ENROLLMENT_SPAN_MS)),
+            "a lecture-length span is cut to the enrollment bound"
+        );
+        assert_eq!(identification_window(5_000, 5_000), None);
+        assert_eq!(
+            identification_window(5_000, 1_000),
+            None,
+            "inverted timings"
+        );
+    }
+
+    /// expect: only profiles embedded by the current encoder are compared.
+    #[test]
+    fn profiles_from_another_encoder_are_set_aside_not_compared() {
+        let current = enrollment().fingerprint;
+        let mut foreign = profile_named("Old", "old-1", [1.0, 0.0]);
+        foreign.fingerprint.weights_sha256 = "other-weights".to_string();
+        let (comparable, skipped) = comparable_profiles(
+            vec![profile_named("Ada", "ada-1", [1.0, 0.0]), foreign],
+            &current,
+        );
+        assert_eq!(comparable.len(), 1);
+        assert_eq!(comparable[0].id, "ada-1");
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].id, "old-1");
+    }
+
+    /// expect: the voice tools answer for the transcript and the profile a
+    /// caller names, and refuse arguments they do not declare.
+    /// [P1] Measured on the installed server (rounds e1, e2): an unknown
+    /// transcript id answered `no_profiles`; a removed profile's refusal was
+    /// the bare id; `{"zz_unknown":1}` was accepted.
+    #[tokio::test]
+    async fn voice_tools_name_what_is_missing_and_refuse_undeclared_arguments() {
+        use crate::test_support::{live_input_schema, wire};
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        let server = server(store);
+
+        let error = server
+            .voice_identify(wire(serde_json::json!({"transcript_id": "zz-none"})).expect("wire"))
+            .await
+            .expect_err("an unknown transcript is not an empty profile store");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(error.message.contains("transcript zz-none not found"));
+
+        let error = server
+            .voice_remove(wire(serde_json::json!({"profile_id": "zz-none"})).expect("wire"))
+            .await
+            .expect_err("an unknown profile is not found");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert_eq!(error.message, "voice profile zz-none not found");
+
+        assert!(wire::<VoiceListRequest>(serde_json::json!({"zz_unknown": 1})).is_err());
+        assert!(
+            wire::<VoicePruneRequest>(serde_json::json!({"max_age_days": 30, "dry_run": true}))
+                .is_err(),
+            "a guessed dry_run must not be dropped before a deletion"
+        );
+        for tool in [
+            "voice_enroll",
+            "voice_identify",
+            "voice_list",
+            "voice_remove",
+            "voice_prune",
+        ] {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
+        // No tool records a confirmed match, so no description promises one.
+        let tools = MediaServer::combined_router().list_all();
+        for tool in ["voice_prune", "voice_identify"] {
+            let description = tools
+                .iter()
+                .find(|entry| entry.name == tool)
+                .and_then(|entry| entry.description.clone())
+                .expect("description");
+            assert!(
+                !description.contains("sparing"),
+                "{tool} promises a sparing rule nothing can trigger: {description}"
+            );
+        }
+    }
+
+    /// expect: a stored source that is not there is the caller's missing
+    /// file (`not_found`), named before any decode.
+    /// [P1] Measured on the installed server (round e2): `internal` with an
+    /// ffmpeg banner for both voice_enroll and voice_identify.
+    #[tokio::test]
+    async fn voice_tools_refuse_a_missing_source_before_decoding() {
+        use crate::test_support::wire;
+        let fixture = tempfile::tempdir().expect("voice DB fixture");
+        let path = fixture.path().join("voice.db");
+        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
+            .expect("open voice store");
+        store.enroll(enrollment()).expect("seed a profile");
+        let server = server(store);
+        let words = crate::test_support::timed_words(&["a", "b", "c"]);
+        let bundle = crate::transcript::TranscriptBundle {
+            words,
+            ..crate::transcript::TranscriptBundle::new(
+                fixture
+                    .path()
+                    .join("zz-absent.wav")
+                    .to_string_lossy()
+                    .into_owned(),
+                3.0,
+                "a b c".to_string(),
+            )
+        };
+        let stored = server
+            .educt_store_transcript(
+                wire(serde_json::json!({"transcript": serde_json::to_string(&bundle).expect("json")}))
+                    .expect("wire"),
+            )
+            .await
+            .expect("store transcript");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        server
+            .educt_store_layer(
+                wire(serde_json::json!({
+                    "transcript_id": transcript_id,
+                    "layer": {"kind": "speaker",
+                        "provenance": {"model": "test", "prompt_template": "test", "created_at": "2026-11-12T00:00:00Z"},
+                        "spans": [{"start_word": 0, "end_word": 2, "speaker": "S1", "confidence": 0.9}]},
+                }))
+                .expect("wire"),
+            )
+            .await
+            .expect("store speaker layer");
+        for outcome in [
+            server
+                .voice_identify(wire(serde_json::json!({"transcript_id": transcript_id})).expect("wire"))
+                .await,
+            server
+                .voice_enroll(
+                    wire(serde_json::json!({"transcript_id": transcript_id, "start_word": 0, "end_word": 2, "speaker_name": "zz"}))
+                        .expect("wire"),
+                )
+                .await,
+        ] {
+            let error = outcome.expect_err("a missing source is refused");
+            assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound, "{}", error.message);
+            assert!(error.message.contains("zz-absent.wav"), "{}", error.message);
+        }
     }
 }

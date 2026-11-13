@@ -194,12 +194,6 @@ pub enum VoiceProfileError {
     DerivedLayers(String),
     #[error("invalid voice enrollment: {0}")]
     InvalidEnrollment(String),
-    #[error("voice profile {profile_id} has an incompatible encoder fingerprint")]
-    ModelMismatch {
-        profile_id: String,
-        expected: Box<EncoderFingerprint>,
-        actual: Box<EncoderFingerprint>,
-    },
     #[error("voice profile {0} not found")]
     ProfileNotFound(String),
 }
@@ -570,35 +564,6 @@ impl VoiceProfileStore {
         Ok(removal)
     }
 
-    pub fn require_compatible(
-        &self,
-        profile_id: &str,
-        candidate: &EncoderFingerprint,
-    ) -> Result<(), VoiceProfileError> {
-        let row = self.driver.query_optional(
-            "SELECT model_family, weights_sha256, preprocessing, dimension
-             FROM voice_profiles WHERE id = ?1",
-            &[DbValue::Text(profile_id.to_string())],
-        )?;
-        let Some(row) = row else {
-            return Err(VoiceProfileError::ProfileNotFound(profile_id.to_string()));
-        };
-        let expected = EncoderFingerprint {
-            model_family: row.get_str(0)?.to_string(),
-            weights_sha256: row.get_str(1)?.to_string(),
-            preprocessing: row.get_str(2)?.to_string(),
-            dimension: row.get_int(3)? as usize,
-        };
-        if &expected != candidate {
-            return Err(VoiceProfileError::ModelMismatch {
-                profile_id: profile_id.to_string(),
-                expected: Box::new(expected),
-                actual: Box::new(candidate.clone()),
-            });
-        }
-        Ok(())
-    }
-
     fn load_segments(&self, profile_id: &str) -> Result<Vec<VoiceEmbedding>, VoiceProfileError> {
         let dimension = self.profile_dimension(profile_id)?;
         let rows = self.driver.query(
@@ -869,29 +834,6 @@ mod tests {
                 .expect("list profiles after removal")
                 .is_empty(),
             "profile {profile_id} and its embeddings must be gone"
-        );
-    }
-
-    #[test]
-    fn comparability_rejects_a_different_weights_fingerprint() {
-        let fixture = tempfile::tempdir().expect("voice DB fixture directory");
-        let path = fixture.path().join("voice-profiles.db");
-        let store = VoiceProfileStore::open(&path.to_string_lossy(), "test-passphrase")
-            .expect("open encrypted voice store");
-        let profile = store.enroll(enrollment()).expect("persist enrollment");
-        store
-            .require_compatible(&profile.id, &profile.fingerprint)
-            .expect("identical fingerprint is comparable");
-        let mismatched = EncoderFingerprint {
-            weights_sha256: "different-weights".to_string(),
-            ..profile.fingerprint.clone()
-        };
-        let error = store
-            .require_compatible(&profile.id, &mismatched)
-            .expect_err("different weights must not be compared");
-        assert!(
-            matches!(error, VoiceProfileError::ModelMismatch { .. }),
-            "expected a named model mismatch, got {error}"
         );
     }
 }

@@ -16,7 +16,7 @@
 
 use crate::transcript::TimedWord;
 use crate::transcript_layers::{EdlLayer, TranscriptLayer};
-use crate::transcript_select::{EdlOp, SelectionError, WordRange, word_range_to_time_range};
+use crate::transcript_select::{SelectionError, WordRange, word_range_to_time_range};
 use crate::transcript_store::LayerRecord;
 use crate::{MediaError, map_media_error};
 use hkask_mcp_server::server::McpToolError;
@@ -34,18 +34,35 @@ pub(crate) enum TranscriptExportFormat {
     Otio,
 }
 
+/// Every export format, in the order the tool's schema lists them.
+const ALL_EXPORT_FORMATS: [TranscriptExportFormat; 7] = [
+    TranscriptExportFormat::Srt,
+    TranscriptExportFormat::HighlightsCsv,
+    TranscriptExportFormat::ReviewCsv,
+    TranscriptExportFormat::CorpusText,
+    TranscriptExportFormat::WebVtt,
+    TranscriptExportFormat::WebAnnotation,
+    TranscriptExportFormat::Otio,
+];
+
+/// The names `educt_export` accepts: the schema enumerates this list and
+/// `parse` reads the same labels, so a format cannot be accepted and
+/// unlisted (as `review_csv` was) or listed and refused.
+pub const EXPORT_FORMATS: [&str; 7] = [
+    ALL_EXPORT_FORMATS[0].label(),
+    ALL_EXPORT_FORMATS[1].label(),
+    ALL_EXPORT_FORMATS[2].label(),
+    ALL_EXPORT_FORMATS[3].label(),
+    ALL_EXPORT_FORMATS[4].label(),
+    ALL_EXPORT_FORMATS[5].label(),
+    ALL_EXPORT_FORMATS[6].label(),
+];
+
 impl TranscriptExportFormat {
     pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "srt" => Some(Self::Srt),
-            "highlights_csv" => Some(Self::HighlightsCsv),
-            "review_csv" => Some(Self::ReviewCsv),
-            "corpus_text" => Some(Self::CorpusText),
-            "webvtt" => Some(Self::WebVtt),
-            "web_annotation" => Some(Self::WebAnnotation),
-            "otio" => Some(Self::Otio),
-            _ => None,
-        }
+        ALL_EXPORT_FORMATS
+            .into_iter()
+            .find(|format| format.label() == value)
     }
 
     const fn extension(self) -> &'static str {
@@ -303,10 +320,34 @@ pub fn srt_from_words(words: &[TimedWord]) -> Result<String, SelectionError> {
         return Err(SelectionError::NoWordTimings);
     }
     let mut srt = String::new();
+    let mut first_word = 0;
     for (index, cue_words) in cue_groups(words).into_iter().enumerate() {
+        cue_time_range(first_word, &cue_words)?;
+        first_word += cue_words.len();
         append_cue(&mut srt, index + 1, &cue_words);
     }
     Ok(srt)
+}
+
+/// A cue's time range, refused when the stored timings put its end before
+/// its start: the caption formats cut time ranges too, and a cue running
+/// backwards is not a caption any player can show.
+fn cue_time_range(
+    first_word: usize,
+    cue_words: &[&TimedWord],
+) -> Result<Option<(u64, u64)>, SelectionError> {
+    let (Some(first), Some(last)) = (cue_words.first(), cue_words.last()) else {
+        return Ok(None);
+    };
+    if last.end_ms < first.start_ms {
+        return Err(SelectionError::InvertedTimeRange {
+            start_word: first_word,
+            end_word: first_word + cue_words.len() - 1,
+            start_ms: first.start_ms,
+            end_ms: last.end_ms,
+        });
+    }
+    Ok(Some((first.start_ms, last.end_ms)))
 }
 
 /// Append one numbered SRT cue block (index, timestamp line, text, blank
@@ -361,16 +402,19 @@ pub fn webvtt_from_words(words: &[TimedWord]) -> Result<String, SelectionError> 
         return Err(SelectionError::NoWordTimings);
     }
     let mut vtt = String::from("WEBVTT\n\n");
+    let mut first_word = 0;
     for (index, cue_words) in cue_groups(words).into_iter().enumerate() {
-        let (Some(first), Some(last)) = (cue_words.first(), cue_words.last()) else {
+        let range = cue_time_range(first_word, &cue_words)?;
+        first_word += cue_words.len();
+        let Some((start_ms, end_ms)) = range else {
             continue;
         };
         vtt.push_str(&(index + 1).to_string());
         vtt.push('\n');
         vtt.push_str(&format!(
             "{} --> {}\n",
-            webvtt_timestamp(first.start_ms),
-            webvtt_timestamp(last.end_ms)
+            webvtt_timestamp(start_ms),
+            webvtt_timestamp(end_ms)
         ));
         let text = cue_words
             .iter()
@@ -512,27 +556,28 @@ fn rational_time_ms(ms: u64) -> serde_json::Value {
 }
 
 /// Serialize a composed reel EDL to OpenTimelineIO (S7, study §4): a
-/// Timeline holding one Video track whose clips are the EDL's `Keep` ops
-/// in op order — each clip's `source_range` comes from the selection
-/// algebra and its `media_reference` targets the recording. `Cut` ops are
-/// the gaps and produce no clips. Structural keys follow the documented
-/// OTIO schema (Timeline/Stack/Track/Clip/TimeRange/RationalTime/
-/// ExternalReference).
+/// Timeline holding one Video track whose clips are the reel's clip plan,
+/// the same `edl_to_clip_plan` output `educt_render_edl` cuts, so the
+/// timeline describes the media the render produces: `Cut` ops are
+/// subtracted from the keeps (or from the whole transcript when the EDL
+/// has no `Keep`), and word-adjacent keeps are one clip. Each clip's
+/// `media_reference` targets the recording. Structural keys follow the
+/// documented OTIO schema (Timeline/Stack/Track/Clip/TimeRange/
+/// RationalTime/ExternalReference).
 pub fn otio_timeline(
     words: &[TimedWord],
     edl: &EdlLayer,
     media_target: &str,
     name: &str,
 ) -> Result<serde_json::Value, SelectionError> {
-    if words.is_empty() {
-        return Err(SelectionError::NoWordTimings);
-    }
+    let plan = crate::transcript_select::edl_to_clip_plan(
+        words,
+        &crate::transcript_select::Edl {
+            ops: edl.ops.clone(),
+        },
+    )?;
     let mut clips = Vec::new();
-    for entry in &edl.ops {
-        if entry.op != EdlOp::Keep {
-            continue;
-        }
-        let (start_ms, end_ms) = word_range_to_time_range(words, entry.range)?;
+    for (start_ms, end_ms) in plan {
         clips.push(serde_json::json!({
             "OTIO_SCHEMA": "Clip.1",
             "name": format!("clip-{}", clips.len() + 1),

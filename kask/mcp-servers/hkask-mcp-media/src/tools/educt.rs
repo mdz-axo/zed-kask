@@ -25,6 +25,7 @@ use crate::types::{
 use crate::*;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductAnnotationCreateRequest {
     pub transcript_id: String,
     /// Inclusive immutable source-word indices, not corrected-text indices.
@@ -34,15 +35,18 @@ pub struct EductAnnotationCreateRequest {
     pub note: String,
     /// Annotation kind: highlight (default — a labeled selection) or strike
     /// (an unannotated cut over the range; label and note must be blank).
+    #[schemars(schema_with = "crate::types::optional_transcript_annotation_kind_schema")]
     pub kind: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductAnnotationListRequest {
     pub transcript_id: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductAnnotationUpdateRequest {
     pub transcript_id: String,
     pub annotation_id: String,
@@ -53,6 +57,7 @@ pub struct EductAnnotationUpdateRequest {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductAnnotationDeleteRequest {
     pub transcript_id: String,
     pub annotation_id: String,
@@ -150,10 +155,12 @@ fn annotation_layer(
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EductSearchTranscriptsRequest {
     /// Literal substring; ASCII case-insensitive, non-ASCII text is exact.
     pub query: String,
     /// Explicit retrieval method. Only lexical is supported; corpus export is the semantic handoff.
+    #[schemars(schema_with = "crate::types::transcript_search_mode_schema")]
     pub mode: String,
     /// Maximum citations, 1..=100 (default 20).
     pub limit: Option<usize>,
@@ -177,9 +184,10 @@ pub(crate) fn validate_lexical_search(
     let limit = limit.unwrap_or(20);
     let recording_limit = recording_limit.unwrap_or(100);
     let recording_offset = recording_offset.unwrap_or(0);
-    if mode != "lexical" || query.trim().is_empty() || query.len() > 256 {
+    crate::tools::gallery::require_one_of("mode", mode, &crate::types::TRANSCRIPT_SEARCH_MODES)?;
+    if query.trim().is_empty() || query.len() > 256 {
         return Err(McpToolError::invalid_argument(
-            "mode must be lexical; query must be nonblank and at most 256 UTF-8 bytes",
+            "query must be nonblank and at most 256 UTF-8 bytes",
         ));
     }
     if !(1..=100).contains(&limit)
@@ -462,14 +470,26 @@ fn select_layer_of_kind(
             .cmp(&a.created_at)
             .then_with(|| b.id.cmp(&a.id))
     });
-    let selected = match layer_id {
-        Some(id) => matching.into_iter().find(|record| record.id == id),
-        None => matching.into_iter().next(),
+    let Some(id) = layer_id else {
+        return matching.into_iter().next().ok_or_else(|| {
+            McpToolError::not_found(format!(
+                "no {kind} layer found for transcript {transcript_id}"
+            ))
+        });
     };
-    selected.ok_or_else(|| {
-        McpToolError::not_found(format!(
-            "no {kind} layer found for transcript {transcript_id}"
-        ))
+    if let Some(record) = matching.into_iter().find(|record| record.id == id) {
+        return Ok(record);
+    }
+    // A named layer that is missing and a named layer of another kind are
+    // different mistakes; both used to read "no {kind} layer found".
+    Err(match layers.iter().find(|record| record.id == id) {
+        Some(other) => McpToolError::invalid_argument(format!(
+            "layer {id} has kind {}; this needs a layer of kind {kind}",
+            other.layer.kind()
+        )),
+        None => McpToolError::not_found(format!(
+            "layer {id} not found for transcript {transcript_id}"
+        )),
     })
 }
 
@@ -636,6 +656,9 @@ pub(crate) fn map_store_error(error: TranscriptStoreError) -> McpToolError {
         TranscriptStoreError::SourceInspection { path, source } => {
             McpToolError::unavailable(format!("inspect transcript source {path}: {source}"))
         }
+        TranscriptStoreError::InvalidBundle(reason) => {
+            McpToolError::invalid_argument(format!("transcript bundle rejected: {reason}"))
+        }
         TranscriptStoreError::Serialization(message) => McpToolError::internal(message),
         TranscriptStoreError::Db(error) => {
             McpToolError::internal(format!("transcript store: {error}"))
@@ -670,10 +693,10 @@ fn map_pass_error(error: PassError) -> McpToolError {
     }
 }
 
-/// Normalize a loosely-typed (AnyJsonValue) tool input that may arrive
-/// stringified: some MCP transports serialize object params into their
-/// JSON-string form. Accept both — the parsed object or the string form —
-/// so every client can store transcripts and layers.
+/// Decode a structured value that arrived as JSON text nested inside JSON
+/// text. The argument boundary (`types::json_text_or_value`) has already
+/// accepted both the text form and the value itself; a string that
+/// survives it is text encoded twice, which some transports produce.
 pub(crate) fn parse_json_value(
     value: serde_json::Value,
     what: &str,
@@ -688,13 +711,63 @@ pub(crate) fn parse_json_value(
     }
 }
 
-/// Whether a media path is an audio file (extension check) — selects the
-/// audio trim/concat render path over the video path.
-pub(crate) fn is_audio_path(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    [".wav", ".mp3", ".flac", ".m4a", ".ogg", ".aac", ".wma"]
-        .iter()
-        .any(|extension| lower.ends_with(extension))
+/// The layer kinds `educt_store_layer` stores: the ones its description
+/// names. The seventh stored kind, `identification`, is voice_identify's.
+pub(crate) const STORABLE_LAYER_KINDS: [&str; 6] = [
+    "speaker",
+    "paragraph",
+    "correction",
+    "highlight",
+    "edl",
+    "realignment",
+];
+
+/// Classify a selection failure. Out-of-order stored word timings are the
+/// transcript's state, not the caller's argument (`failed_precondition`,
+/// the kind an unaligned correction already answers with); every other
+/// variant names a range or EDL the caller supplied.
+fn map_selection_error(
+    context: &str,
+    error: crate::transcript_select::SelectionError,
+) -> McpToolError {
+    let message = format!("{context}: {error}");
+    match error {
+        crate::transcript_select::SelectionError::InvertedTimeRange { .. } => {
+            McpToolError::failed_precondition(message)
+        }
+        _ => McpToolError::invalid_argument(message),
+    }
+}
+
+/// Admit the media source a stored record names before ffmpeg or a
+/// provider opens it. A transcript keeps the `audio_path` it was stored
+/// with, and `educt_store_transcript` stores what it is given, so the path
+/// is caller input at the moment it is used: a local path must exist
+/// (`not_found`, not an ffmpeg banner as `internal`) and a URL passes the
+/// same network validation as a URL handed to a tool directly.
+pub(crate) async fn admit_media_source(source: &str) -> Result<(), McpToolError> {
+    crate::ensure_local_input_exists(source)?;
+    if !crate::is_local_media_path(source) {
+        validate_tool_url_with_dns(source).await?;
+    }
+    Ok(())
+}
+
+/// Whether a recording renders through the audio path (WAV) or the video
+/// path (MP4): decided by the streams the file holds, never by its name.
+/// An extension list sent an `.opus` recording down the video path (PCM in
+/// an MP4 container) and cannot see what a container actually carries.
+pub(crate) async fn source_is_audio_only(
+    ffmpeg: &crate::FfmpegRunner,
+    source: &str,
+) -> Result<bool, McpToolError> {
+    let probe = ffmpeg.probe(source).await.map_err(crate::map_media_error)?;
+    if !probe.has_audio_stream && !probe.has_video_stream {
+        return Err(McpToolError::invalid_argument(format!(
+            "{source} holds no audio or video stream to render"
+        )));
+    }
+    Ok(!probe.has_video_stream)
 }
 
 /// Store `bundle` as a transcript record and render the summary JSON with
@@ -736,7 +809,13 @@ impl MediaServer {
                     .to_string(),
                 created_at: hkask_types::time::now_rfc3339(),
             };
-            let layer = match request.kind.as_deref().unwrap_or("highlight") {
+            let kind = request.kind.as_deref().unwrap_or("highlight");
+            crate::tools::gallery::require_one_of(
+                "kind",
+                kind,
+                &crate::types::TRANSCRIPT_ANNOTATION_KINDS,
+            )?;
+            let layer = match kind {
                 "highlight" => {
                     let entry = researcher_highlight(request.start_word, request.end_word, request.label, request.note)?;
                     TranscriptLayer::Highlight(crate::transcript_layers::HighlightLayer {
@@ -752,8 +831,8 @@ impl MediaServer {
                     })
                 }
                 other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "kind must be highlight or strike, got {other:?}"
+                    return Err(McpToolError::internal(format!(
+                        "annotation kind '{other}' is enumerated but has no handler"
                     )))
                 }
             };
@@ -969,6 +1048,11 @@ impl MediaServer {
         }): Parameters<EductListTranscriptsRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_list_transcripts", async {
+            if limit == Some(0) {
+                return Err(McpToolError::invalid_argument(
+                    "limit must be at least 1 (default 50, capped at 500)",
+                ));
+            }
             let driver = &**self.gallery_store.driver();
             let filter = TranscriptFilter {
                 media_path,
@@ -1110,7 +1194,32 @@ impl MediaServer {
                      ...}}: {e}"
                 ))
             })?;
+            // An identification layer is a measurement: voice_identify
+            // writes it with the score it computed. It parses here because
+            // it is a stored layer kind, and was accepted with any score,
+            // profile and name a caller typed.
+            if !STORABLE_LAYER_KINDS.contains(&parsed.kind()) {
+                return Err(McpToolError::invalid_argument(format!(
+                    "layers of kind {} are written by the tool that measures them, not stored \
+                     by hand — kind is one of {}",
+                    parsed.kind(),
+                    STORABLE_LAYER_KINDS.join(", ")
+                )));
+            }
             let driver = &**self.gallery_store.driver();
+            // A realignment names the correction it re-anchors; one naming
+            // a layer that is not this transcript's correction was stored
+            // and then ignored by every reader.
+            if let TranscriptLayer::Realignment(realignment) = &parsed {
+                let layers = transcript_store::list_layers(driver, &transcript_id)
+                    .map_err(map_store_error)?;
+                select_layer_of_kind(
+                    &layers,
+                    &transcript_id,
+                    "correction",
+                    Some(&realignment.correction_layer_id),
+                )?;
+            }
             let record = transcript_store::store_layer(driver, &transcript_id, &parsed)
                 .map_err(map_store_error)?;
             Ok(serde_json::json!({ "stored": record }))
@@ -1127,6 +1236,14 @@ impl MediaServer {
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_list_layers", async {
             let driver = &**self.gallery_store.driver();
+            // An unknown transcript is not a transcript without layers.
+            if !transcript_store::transcript_exists(driver, &transcript_id)
+                .map_err(map_store_error)?
+            {
+                return Err(McpToolError::not_found(format!(
+                    "transcript {transcript_id} not found"
+                )));
+            }
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
             Ok(serde_json::json!({
@@ -1200,6 +1317,12 @@ impl MediaServer {
         }): Parameters<EductSpeakerPassRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_speaker_pass", async {
+            let source = source.as_deref().unwrap_or("audio");
+            crate::tools::gallery::require_one_of(
+                "source",
+                source,
+                &crate::types::SPEAKER_SOURCES,
+            )?;
             let _admission = self.admit_heavy_operation()?;
             let driver = &**self.gallery_store.driver();
             let bundle = load_timed_transcript(
@@ -1213,7 +1336,7 @@ impl MediaServer {
             // audio path is prompt-schema (rejected here, never a silent
             // no-op).
             let structured_requested = structured.unwrap_or(false);
-            if structured_requested && !matches!(source.as_deref(), Some("text")) {
+            if structured_requested && source != "text" {
                 return Err(McpToolError::invalid_argument(
                     "structured outputs apply to the text passes (source \"text\"); the \
                      audio path is prompt-schema",
@@ -1229,7 +1352,7 @@ impl MediaServer {
             // The locality gate decides what lands — the model only
             // proposes; long rewrites revert with a surfaced refusal.
             if correct_existing.unwrap_or(false) {
-                if !matches!(source.as_deref(), Some("text")) {
+                if source != "text" {
                     return Err(McpToolError::invalid_argument(
                         "speaker correction mode (correct_existing=true) requires \
                          source \"text\" — it is the lexical post-pass; run the \
@@ -1288,16 +1411,21 @@ impl MediaServer {
             // decision 7) or "text" (the text-cue pass). An audio failure
             // surfaces as its own error — retry with source "text" is the
             // operator's choice, never a silent fallback.
-            let layer = match source.as_deref() {
-                None | Some("audio") => transcript_pass::run_speaker_pass_audio(
-                    &self.vision_port,
-                    &self.template_env,
-                    &bundle,
-                    model.as_deref(),
-                )
-                .await
-                .map_err(map_pass_error)?,
-                Some("text") => transcript_pass::run_speaker_pass(
+            let layer = match source {
+                "audio" => {
+                    // The recording is uploaded to the provider: admit the
+                    // stored path first (a URL is fetched by the audio port).
+                    admit_media_source(&bundle.audio_path).await?;
+                    transcript_pass::run_speaker_pass_audio(
+                        &self.vision_port,
+                        &self.template_env,
+                        &bundle,
+                        model.as_deref(),
+                    )
+                    .await
+                    .map_err(map_pass_error)?
+                }
+                "text" => transcript_pass::run_speaker_pass(
                     &self.vision_port,
                     &self.template_env,
                     &bundle,
@@ -1306,9 +1434,9 @@ impl MediaServer {
                 )
                 .await
                 .map_err(map_pass_error)?,
-                Some(other) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "source must be \"audio\" or \"text\", got \"{other}\""
+                other => {
+                    return Err(McpToolError::internal(format!(
+                        "speaker source '{other}' is enumerated but has no handler"
                     )));
                 }
             };
@@ -1361,8 +1489,10 @@ impl MediaServer {
                     "reversed word range: start {start_word} > end {end_word}"
                 )));
             }
-            let start_ms = bundle.words[start_word].start_ms;
-            let end_ms = bundle.words[end_word].end_ms;
+            let (start_ms, end_ms) =
+                word_range_to_time_range(&bundle.words, WordRange::new(start_word, end_word))
+                    .map_err(|error| McpToolError::failed_precondition(error.to_string()))?;
+            admit_media_source(&bundle.audio_path).await?;
             let span = self
                 .ffmpeg
                 .clip(
@@ -1643,9 +1773,12 @@ impl MediaServer {
             .map_err(|error| {
                 McpToolError::internal(format!("re-anchoring failed on a validated layer: {error}"))
             })?;
+            // The re-anchored words are read through educt_get_transcript
+            // or educt_apply_corrections; returning them here cost a
+            // megabyte per lecture-length transcript that no caller read.
             Ok(serde_json::json!({
                 "alignment": "re_anchored",
-                "working_words": working_words,
+                "working_word_count": working_words.len(),
                 "stored": stored,
                 "reanchored": {
                     "correction_layer_id": record.id,
@@ -1848,26 +1981,7 @@ impl MediaServer {
             )?;
             let layers =
                 transcript_store::list_layers(driver, &transcript_id).map_err(map_store_error)?;
-            let mut edl_layers: Vec<_> = layers
-                .into_iter()
-                .filter(|record| record.layer.kind() == "edl")
-                .collect();
-            // Newest first with the same ID tie-break as every layer
-            // selection in this family (deterministic among ties).
-            edl_layers.sort_by(|a, b| {
-                b.created_at
-                    .cmp(&a.created_at)
-                    .then_with(|| b.id.cmp(&a.id))
-            });
-            let record = match layer_id {
-                Some(id) => edl_layers.into_iter().find(|record| record.id == id),
-                None => edl_layers.into_iter().next(),
-            };
-            let Some(record) = record else {
-                return Err(McpToolError::not_found(format!(
-                    "no EDL layer found for transcript {transcript_id}"
-                )));
-            };
+            let record = select_layer_of_kind(&layers, &transcript_id, "edl", layer_id.as_deref())?;
             let TranscriptLayer::Edl(edl) = &record.layer else {
                 return Err(McpToolError::internal(
                     "layer kind mismatch after EDL filter",
@@ -1878,9 +1992,8 @@ impl MediaServer {
             let selection_edl = Edl {
                 ops: edl.ops.clone(),
             };
-            let plan_ms = edl_to_clip_plan(&bundle.words, &selection_edl).map_err(|error| {
-                McpToolError::invalid_argument(format!("EDL rejected: {error}"))
-            })?;
+            let plan_ms = edl_to_clip_plan(&bundle.words, &selection_edl)
+                .map_err(|error| map_selection_error("EDL rejected", error))?;
             if plan_ms.is_empty() {
                 return Err(McpToolError::invalid_argument(
                     "EDL cuts the entire transcript — nothing to render",
@@ -1891,9 +2004,10 @@ impl MediaServer {
                 .map(|(start_ms, end_ms)| (*start_ms as f64 / 1000.0, *end_ms as f64 / 1000.0))
                 .collect();
 
-            self.require_ffmpeg()?;
             let media_path = bundle.audio_path.clone();
-            let audio = is_audio_path(&media_path);
+            admit_media_source(&media_path).await?;
+            let ffmpeg = self.require_ffmpeg()?;
+            let audio = source_is_audio_only(ffmpeg, &media_path).await?;
             let mut intermediates = crate::assets::ScratchIntermediates::new("EDL render");
             let mut clip_paths: Vec<std::path::PathBuf> = Vec::with_capacity(plan_secs.len());
             for (start_sec, end_sec) in &plan_secs {
@@ -1968,6 +2082,11 @@ impl MediaServer {
         }): Parameters<EductExportRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_export", async {
+            crate::tools::gallery::require_one_of(
+                "format",
+                &format,
+                &crate::transcript_export::EXPORT_FORMATS,
+            )?;
             let driver = &**self.gallery_store.driver();
             let Some((summary, bundle)) = transcript_store::load_transcript(driver, &transcript_id)
                 .map_err(map_store_error)?
@@ -1978,10 +2097,8 @@ impl MediaServer {
             };
             let export_format = crate::transcript_export::TranscriptExportFormat::parse(&format)
                 .ok_or_else(|| {
-                    McpToolError::invalid_argument(format!(
-                        "format must be \"srt\", \"highlights_csv\", \"review_csv\", \
-                         \"corpus_text\", \"webvtt\", \"web_annotation\", or \"otio\", \
-                         got \"{format}\""
+                    McpToolError::internal(format!(
+                        "export format '{format}' is enumerated but has no handler"
                     ))
                 })?;
             match export_format {
@@ -1994,9 +2111,8 @@ impl MediaServer {
                     }
                     let working = working_transcript(driver, &transcript_id, &bundle)?;
                     let working_words = working.require_timed_words("SRT export")?;
-                    let srt = crate::transcript_export::srt_from_words(working_words).map_err(
-                        |error| McpToolError::invalid_argument(format!("SRT export: {error}")),
-                    )?;
+                    let srt = crate::transcript_export::srt_from_words(working_words)
+                        .map_err(|error| map_selection_error("SRT export", error))?;
                     let effective_params = SrtExportEffectiveParams {
                         transcript_id: &transcript_id,
                         cues: srt.matches("\n\n").count(),
@@ -2031,9 +2147,7 @@ impl MediaServer {
                         .sum::<usize>();
                     let csv =
                         crate::transcript_export::highlights_csv(&bundle.words, &highlight_records)
-                            .map_err(|error| {
-                                McpToolError::invalid_argument(format!("CSV export: {error}"))
-                            })?;
+                            .map_err(|error| map_selection_error("CSV export", error))?;
                     let layer_ids = highlight_records
                         .iter()
                         .map(|record| record.id.clone())
@@ -2065,11 +2179,7 @@ impl MediaServer {
                         )));
                     }
                     let csv = crate::transcript_export::review_csv(&bundle.words, &review)
-                        .map_err(|error| {
-                            McpToolError::invalid_argument(format!(
-                                "review CSV export: {error}"
-                            ))
-                        })?;
+                        .map_err(|error| map_selection_error("review CSV export", error))?;
                     let effective_params = ReviewCsvExportEffectiveParams {
                         transcript_id: &transcript_id,
                         paragraph_layer_id: review.paragraph_layer_id.as_deref(),
@@ -2167,9 +2277,8 @@ impl MediaServer {
                     let working = working_transcript(driver, &transcript_id, &bundle)?;
                     let working_words = working.require_timed_words("WebVTT export")?;
                     let vtt =
-                        crate::transcript_export::webvtt_from_words(working_words).map_err(
-                            |error| McpToolError::invalid_argument(format!("WebVTT export: {error}")),
-                        )?;
+                        crate::transcript_export::webvtt_from_words(working_words)
+                            .map_err(|error| map_selection_error("WebVTT export", error))?;
                     let effective_params = WebVttExportEffectiveParams {
                         transcript_id: &transcript_id,
                         cues: vtt.matches(" --> ").count(),
@@ -2200,9 +2309,7 @@ impl MediaServer {
                         &highlight_records,
                         &format!("urn:hkask:transcript:{transcript_id}"),
                     )
-                    .map_err(|error| {
-                        McpToolError::invalid_argument(format!("Web Annotation export: {error}"))
-                    })?;
+                    .map_err(|error| map_selection_error("Web Annotation export", error))?;
                     let layer_ids = highlight_records
                         .iter()
                         .map(|record| record.id.clone())
@@ -2260,26 +2367,25 @@ impl MediaServer {
                             edl_record.layer.kind()
                         )));
                     };
-                    if !edl.ops.iter().any(|entry| entry.op == EdlOp::Keep) {
-                        return Err(McpToolError::invalid_argument(
-                            "the reel contains no keep ops — nothing to serialize",
-                        ));
-                    }
                     let timeline = crate::transcript_export::otio_timeline(
                         &bundle.words,
                         edl,
                         &summary.media_path,
                         &edl_record.id,
                     )
-                    .map_err(|error| {
-                        McpToolError::invalid_argument(format!("OTIO export: {error}"))
-                    })?;
+                    .map_err(|error| map_selection_error("OTIO export", error))?;
                     let clips = timeline["tracks"]["children"]
                         .as_array()
                         .and_then(|tracks| tracks.first())
                         .and_then(|track| track["children"].as_array())
                         .map(|children| children.len())
                         .unwrap_or(0);
+                    // The same refusal educt_render_edl gives the same EDL.
+                    if clips == 0 {
+                        return Err(McpToolError::invalid_argument(
+                            "EDL cuts the entire transcript — nothing to serialize",
+                        ));
+                    }
                     let effective_params = OtioExportEffectiveParams {
                         transcript_id: &transcript_id,
                         edl_layer_id: &edl_record.id,
@@ -2313,15 +2419,14 @@ impl MediaServer {
         }): Parameters<EductLocateRequest>,
     ) -> Result<String, McpToolError> {
         execute_tool(self, "educt_locate", async {
-            let requested_source_basis = match basis.as_deref().unwrap_or("working") {
-                "working" => false,
-                "source" => true,
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "unknown basis {other:?} — basis is \"working\" (default) or \"source\""
-                    )));
-                }
-            };
+            let basis = basis.as_deref().unwrap_or("working");
+            crate::tools::gallery::require_one_of("basis", basis, &crate::types::LOCATE_BASES)?;
+            let requested_source_basis = basis == "source";
+            if text.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "text must name the passage to locate; it is blank",
+                ));
+            }
             let driver = &**self.gallery_store.driver();
             let bundle = load_timed_transcript(
                 driver,
@@ -2419,13 +2524,17 @@ impl MediaServer {
             }
             let mut located = Vec::with_capacity(ranges.len());
             for range in ranges {
-                let (start_ms, end_ms) =
-                    word_range_to_time_range(working_words, range).map_err(|error| {
-                        McpToolError::internal(format!(
+                let (start_ms, end_ms) = word_range_to_time_range(working_words, range).map_err(
+                    |error| match error {
+                        crate::transcript_select::SelectionError::InvertedTimeRange { .. } => {
+                            map_selection_error("educt_locate", error)
+                        }
+                        _ => McpToolError::internal(format!(
                             "impossible: text_to_word_ranges produced an out-of-bounds \
                              range: {error}"
-                        ))
-                    })?;
+                        )),
+                    },
+                )?;
                 // basis="source": the working range maps to its source
                 // range's min..max — expansion and contraction edges map
                 // coarsely (every token of an expansion attributes to the
@@ -3274,7 +3383,7 @@ mod researcher_tests {
             .await
             .expect_err("an unknown kind is refused");
         assert!(
-            refused.message.contains("kind must be highlight or strike"),
+            refused.message.contains("kind is one of highlight, strike"),
             "named: {}",
             refused.message
         );

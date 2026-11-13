@@ -236,6 +236,9 @@ pub enum TranscriptStoreError {
         #[source]
         source: std::io::Error,
     },
+    /// The bundle cannot be stored as given (`TranscriptBundle::validate`).
+    #[error("transcript bundle rejected: {0}")]
+    InvalidBundle(String),
 }
 
 /// Create the transcript aggregate schema and gallery-asset detach trigger.
@@ -275,6 +278,11 @@ pub fn store_transcript(
     bundle: &TranscriptBundle,
     gallery_asset_id: Option<&str>,
 ) -> Result<TranscriptSummary, TranscriptStoreError> {
+    // Every path into the store passes here: the store tool, the
+    // transcribe-and-store tools and the transcription job.
+    bundle
+        .validate()
+        .map_err(TranscriptStoreError::InvalidBundle)?;
     ensure_schema(driver)?;
     if let Some(gallery_asset_id) = gallery_asset_id {
         let exists = driver

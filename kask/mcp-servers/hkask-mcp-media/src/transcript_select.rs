@@ -82,6 +82,19 @@ pub enum SelectionError {
     /// Keep ops overlap — the reel would duplicate words.
     #[error("overlapping Keep ops at word {word}: Keep ranges must be disjoint")]
     OverlappingKeepOps { word: usize },
+    /// The stored word timings put the range's end before its start: the
+    /// last word ends before the first begins. A bundle is stored as it
+    /// arrives, so this is the one place every consumer of a time range
+    /// (render, locate, exports) meets a malformed one.
+    #[error(
+        "words {start_word}..={end_word} map to a time range that ends ({end_ms} ms) before it starts ({start_ms} ms): the stored word timings are out of order"
+    )]
+    InvertedTimeRange {
+        start_word: usize,
+        end_word: usize,
+        start_ms: u64,
+        end_ms: u64,
+    },
 }
 
 /// Map a word range to its media time range `(start_ms, end_ms)`.
@@ -112,6 +125,14 @@ pub fn word_range_to_time_range(
             index: range.end_word,
             len: words.len(),
         })?;
+    if end.end_ms < start.start_ms {
+        return Err(SelectionError::InvertedTimeRange {
+            start_word: range.start_word,
+            end_word: range.end_word,
+            start_ms: start.start_ms,
+            end_ms: end.end_ms,
+        });
+    }
     Ok((start.start_ms, end.end_ms))
 }
 

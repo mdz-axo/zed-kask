@@ -3900,6 +3900,38 @@ mod tool_behavior_tests {
         )
     }
 
+    /// expect: a recording id that is not a live gallery asset is refused
+    /// before the transcription is requested.
+    /// [P1] Constraining: the id was checked only when the finished
+    /// transcript was stored, after the provider call was paid for;
+    /// job_submit already refused the same request at submit.
+    #[tokio::test]
+    async fn transcribe_and_store_refuses_an_unknown_recording_before_transcribing() {
+        let audio_urls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let server = make_server_with_port(Arc::new(MockInferencePort {
+            response: String::new(),
+            media_response: serde_json::json!({"text": "alpha", "duration": 1.0}).to_string(),
+            media_response_is_json: true,
+            audio_urls: audio_urls.clone(),
+        }));
+        let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+        let error = server
+            .transcribe_and_store(
+                crate::test_support::wire(serde_json::json!({
+                    "audio_url": recording.path(),
+                    "gallery_asset_id": "zz-no-such-recording",
+                }))
+                .expect("wire"),
+            )
+            .await
+            .expect_err("an unknown recording id is refused");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(
+            audio_urls.lock().expect("audio URL recorder").is_empty(),
+            "the provider was called before the recording id was checked"
+        );
+    }
+
     /// transcribe_and_store composes transcription + storage server-side and
     /// returns ONLY the summary — the long-media path (an hour-long bundle
     /// is ~550KB of JSON; the two-step flow relays it through the model
@@ -4081,8 +4113,18 @@ mod tool_behavior_tests {
 
     /// Store a two-word transcript and return its ID.
     async fn store_two_word_transcript(server: &MediaServer) -> String {
+        store_two_word_transcript_over(server, "/tmp/a.wav").await
+    }
+
+    /// The same transcript keyed to `audio_path`: the tools that open the
+    /// recording (the audio speaker pass, the renders, the voice tools)
+    /// refuse a source that is not there, so their fixtures name a real file.
+    async fn store_two_word_transcript_over(server: &MediaServer, audio_path: &str) -> String {
         use crate::types::EductStoreTranscriptRequest;
-        let bundle = two_word_bundle();
+        let bundle = crate::transcript::TranscriptBundle {
+            audio_path: audio_path.to_string(),
+            ..two_word_bundle()
+        };
         let stored = server
             .educt_store_transcript(Parameters(EductStoreTranscriptRequest {
                 transcript: hkask_types::AnyJsonValue(
@@ -4397,7 +4439,9 @@ mod tool_behavior_tests {
             r#"{"spans": [{"start_word": 0, "end_word": 0, "speaker": "speaker-1", "confidence": 0.95}, {"start_word": 1, "end_word": 1, "speaker": "speaker-2", "confidence": 0.9}]}"#
                 .to_string(),
         );
-        let transcript_id = store_two_word_transcript(&server).await;
+        let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+        let transcript_id =
+            store_two_word_transcript_over(&server, &recording.path().to_string_lossy()).await;
         let result = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
@@ -4435,8 +4479,9 @@ mod tool_behavior_tests {
             }))
             .await
             .expect_err("unknown source must be rejected");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
         assert!(
-            error.message.contains("source must be"),
+            error.message.contains("source is one of audio, text"),
             "the named error must surface: {}",
             error.message
         );
@@ -4448,7 +4493,9 @@ mod tool_behavior_tests {
             "unused".to_string(),
             "I cannot listen to this audio.".to_string(),
         );
-        let transcript_id = store_two_word_transcript(&server).await;
+        let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+        let transcript_id =
+            store_two_word_transcript_over(&server, &recording.path().to_string_lossy()).await;
         let error = server
             .educt_speaker_pass(Parameters(crate::types::EductSpeakerPassRequest {
                 transcript_id,
@@ -5334,6 +5381,813 @@ mod tool_behavior_tests {
         Ok(())
     }
 
+    /// A stored transcript over `source` with three one-second-apart words,
+    /// sent as the tool boundary receives it.
+    async fn store_three_words_over(server: &MediaServer, source: &str) -> String {
+        let bundle = serde_json::json!({
+            "format": "hkask-transcript-v1", "audio_path": source, "audio_duration_secs": 3.0,
+            "full_text": "alpha beta gamma",
+            "words": [
+                {"word": "alpha", "start_ms": 0, "end_ms": 500},
+                {"word": "beta", "start_ms": 1000, "end_ms": 1500},
+                {"word": "gamma", "start_ms": 2500, "end_ms": 3000}
+            ],
+        });
+        let stored = server
+            .educt_store_transcript(
+                crate::test_support::wire(serde_json::json!({"transcript": bundle.to_string()}))
+                    .expect("wire"),
+            )
+            .await
+            .expect("store succeeds");
+        content_of(&stored)["id"].as_str().expect("id").to_string()
+    }
+
+    /// Store a layer through the tool with the layer as a JSON OBJECT, the
+    /// form the media panel sends.
+    async fn store_layer_object(
+        server: &MediaServer,
+        transcript_id: &str,
+        layer: serde_json::Value,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let request = crate::test_support::wire(
+            serde_json::json!({"transcript_id": transcript_id, "layer": layer}),
+        )
+        .expect("an object-form layer decodes at the boundary");
+        server
+            .educt_store_layer(request)
+            .await
+            .map(|stored| content_of(&stored))
+    }
+
+    const PIN_PROVENANCE: &str =
+        r#"{"model": "test", "prompt_template": "test", "created_at": "2026-11-12T00:00:00Z"}"#;
+
+    fn edl_layer(ops: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "kind": "edl",
+            "provenance": serde_json::from_str::<serde_json::Value>(PIN_PROVENANCE).expect("json"),
+            "ops": ops,
+        })
+    }
+
+    /// expect: a structured argument is accepted as the JSON value itself
+    /// and as JSON text, on every field that carries one.
+    /// [P1] Measured on the installed server (round e3): the media panel's
+    /// correction layer, reel layer and tag payload, all sent as objects,
+    /// were each refused with "invalid type: map, expected a string"; the
+    /// same values as JSON text were stored.
+    #[tokio::test]
+    async fn structured_arguments_decode_as_objects_and_as_json_text() {
+        use crate::test_support::{live_input_schema, wire};
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        // The exact shape media_viewer.rs correction_store_params builds.
+        let correction = serde_json::json!({
+            "kind": "correction",
+            "provenance": {"model": "user", "prompt_template": "researcher_correction", "created_at": "c1"},
+            "edits": [{"start_word": 0, "end_word": 0, "replacement": "ALPHA", "reason": "zz"}],
+        });
+        let as_object = store_layer_object(&server, &transcript_id, correction.clone())
+            .await
+            .expect("the panel's object form stores");
+        assert_eq!(as_object["stored"]["layer"]["kind"], "correction");
+        let as_text = server
+            .educt_store_layer(
+                wire(serde_json::json!({"transcript_id": transcript_id, "layer": correction.to_string()}))
+                    .expect("the schema's text form decodes"),
+            )
+            .await
+            .expect("the text form stores");
+        assert_eq!(
+            content_of(&as_text)["stored"]["layer"]["edits"],
+            as_object["stored"]["layer"]["edits"]
+        );
+        // A bundle as an object, and a layer item payload as an object.
+        let bundle = serde_json::to_value(two_word_bundle()).expect("bundle");
+        wire::<crate::types::EductStoreTranscriptRequest>(
+            serde_json::json!({"transcript": bundle}),
+        )
+        .expect("an object-form bundle decodes");
+        let item = wire::<crate::types::LayersStoreItemRequest>(serde_json::json!({
+            "start_sec": 0.0, "searchable_text": "tag: zz", "payload": {"label": "zz"},
+        }))
+        .expect("an object-form payload decodes")
+        .0;
+        assert_eq!(item.payload.0, serde_json::json!({"label": "zz"}));
+        // Text that is not JSON is refused naming the reason.
+        let error = wire::<crate::types::EductStoreLayerRequest>(
+            serde_json::json!({"transcript_id": "t", "layer": "{"}),
+        )
+        .expect_err("broken JSON text is refused");
+        assert!(
+            error.to_string().contains("expected complete JSON text"),
+            "{error}"
+        );
+        // The schema still declares the text form every provider can emit.
+        assert_eq!(
+            live_input_schema("educt_store_layer")["properties"]["layer"]["type"],
+            serde_json::json!("string")
+        );
+    }
+
+    /// expect: a bundle that cannot be read back is refused at the door,
+    /// and one already in the store does not take the store down with it.
+    /// [P1] Measured on the installed server (round e4): a bundle with
+    /// audio_duration_secs 1e39 was stored; educt_list_transcripts,
+    /// educt_get_transcript and educt_search_transcripts then all failed
+    /// `internal` until that transcript was deleted.
+    #[tokio::test]
+    async fn an_unreadable_bundle_is_refused_and_cannot_poison_the_store() {
+        use crate::test_support::wire;
+        let server = make_pass_server("{}".to_string());
+        let kept = store_two_word_transcript(&server).await;
+        for (field, value, names) in [
+            (
+                "audio_duration_secs",
+                serde_json::json!(1e39),
+                "audio_duration_secs",
+            ),
+            (
+                "audio_duration_secs",
+                serde_json::json!(-5.0),
+                "audio_duration_secs",
+            ),
+            ("audio_path", serde_json::json!("  "), "audio_path is blank"),
+        ] {
+            let mut bundle = serde_json::to_value(two_word_bundle()).expect("bundle");
+            bundle[field] = value.clone();
+            let error = server
+                .educt_store_transcript(
+                    wire(serde_json::json!({"transcript": bundle.to_string()})).expect("wire"),
+                )
+                .await
+                .expect_err("an unreadable bundle is refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{field}={value}"
+            );
+            assert!(error.message.contains(names), "{}", error.message);
+        }
+        let listed = content_of(
+            &server
+                .educt_list_transcripts(wire(serde_json::json!({})).expect("wire"))
+                .await
+                .expect("the store still lists"),
+        );
+        assert_eq!(listed["count"], serde_json::json!(1));
+        assert_eq!(listed["transcripts"][0]["id"], serde_json::json!(kept));
+    }
+
+    /// expect: stored word timings that run backwards are refused where a
+    /// time range is needed, by every consumer, as the transcript's state.
+    /// [P1] Measured on the installed server (round e2): such a transcript
+    /// rendered `status: rendered` with clip_plan [[5.0, 0.02]] and a
+    /// header-only WAV; educt_locate returned start_ms 900000, end_ms 20;
+    /// the OTIO export subtracted the two on u64.
+    #[tokio::test]
+    async fn backwards_word_timings_are_refused_wherever_a_time_range_is_cut() {
+        use crate::test_support::wire;
+        let _artifacts = IsolatedArtifacts::new().await;
+        let server = make_pass_server("{}".to_string());
+        let recording = tempfile::NamedTempFile::new().expect("recording fixture");
+        let bundle = serde_json::json!({
+            "format": "hkask-transcript-v1", "audio_path": recording.path(), "audio_duration_secs": 8.0,
+            "full_text": "zz late early",
+            "words": [
+                {"word": "zz", "start_ms": 5000, "end_ms": 6000},
+                {"word": "late", "start_ms": 900000, "end_ms": 900500},
+                {"word": "early", "start_ms": 10, "end_ms": 20}
+            ],
+        });
+        let stored = server
+            .educt_store_transcript(
+                wire(serde_json::json!({"transcript": bundle.to_string()})).expect("wire"),
+            )
+            .await
+            .expect("a provider's words are stored as they arrive");
+        let transcript_id = content_of(&stored)["id"].as_str().expect("id").to_string();
+        store_layer_object(
+            &server,
+            &transcript_id,
+            edl_layer(
+                serde_json::json!([{"range": {"start_word": 0, "end_word": 2}, "op": "keep"}]),
+            ),
+        )
+        .await
+        .expect("the EDL is valid over the word indices");
+        let refusals = [
+            server
+                .educt_render_edl(
+                    wire(serde_json::json!({"transcript_id": transcript_id})).expect("wire"),
+                )
+                .await,
+            server
+                .educt_export(
+                    wire(serde_json::json!({"transcript_id": transcript_id, "format": "otio"}))
+                        .expect("wire"),
+                )
+                .await,
+            server
+                .educt_export(
+                    wire(serde_json::json!({"transcript_id": transcript_id, "format": "srt"}))
+                        .expect("wire"),
+                )
+                .await,
+            server
+                .educt_export(
+                    wire(serde_json::json!({"transcript_id": transcript_id, "format": "webvtt"}))
+                        .expect("wire"),
+                )
+                .await,
+            server
+                .educt_locate(
+                    wire(serde_json::json!({"transcript_id": transcript_id, "text": "late early"}))
+                        .expect("wire"),
+                )
+                .await,
+        ];
+        for outcome in refusals {
+            let error = outcome.expect_err("a backwards time range is refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::FailedPrecondition,
+                "{}",
+                error.message
+            );
+            assert!(error.message.contains("out of order"), "{}", error.message);
+        }
+    }
+
+    /// expect: the OTIO timeline holds the clips educt_render_edl cuts from
+    /// the same EDL.
+    /// [P1] Measured on the installed server (round e2): keep 1..8 with cut
+    /// 3..4 rendered two clips and exported one; a cut-only EDL (what a
+    /// strike annotation is) rendered and was refused by the export; two
+    /// word-adjacent keeps rendered one clip and exported two.
+    #[tokio::test]
+    async fn otio_export_holds_the_clips_the_render_cuts() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::test_support::wire;
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let wav = gallery_root.path().join("otio-source.wav");
+        sine_fixture(&wav, 3, &["-ac", "1", "-ar", "16000"]).await?;
+        let transcript_id = store_three_words_over(&server, &wav.to_string_lossy()).await;
+        let keep = |start: u64, end: u64| serde_json::json!({"range": {"start_word": start, "end_word": end}, "op": "keep"});
+        let cut = |start: u64, end: u64| serde_json::json!({"range": {"start_word": start, "end_word": end}, "op": "cut"});
+        for (ops, expected_plan) in [
+            (
+                serde_json::json!([keep(0, 2), cut(1, 1)]),
+                serde_json::json!([[0.0, 0.5], [2.5, 3.0]]),
+            ),
+            (
+                serde_json::json!([cut(1, 1)]),
+                serde_json::json!([[0.0, 0.5], [2.5, 3.0]]),
+            ),
+            (
+                serde_json::json!([keep(0, 0), keep(1, 2)]),
+                serde_json::json!([[0.0, 3.0]]),
+            ),
+        ] {
+            let layer_id = store_layer_object(&server, &transcript_id, edl_layer(ops.clone()))
+                .await
+                .map_err(|error| error.message)?["stored"]["id"]
+                .as_str()
+                .ok_or("layer id")?
+                .to_string();
+            let rendered = content_of(
+                &server
+                    .educt_render_edl(wire(
+                        serde_json::json!({"transcript_id": transcript_id, "layer_id": layer_id}),
+                    )?)
+                    .await?,
+            );
+            assert_eq!(
+                rendered["clip_plan"], expected_plan,
+                "render plan for {ops}"
+            );
+            let exported = content_of(
+                &server
+                    .educt_export(wire(serde_json::json!({"transcript_id": transcript_id, "format": "otio", "layer_id": layer_id}))?)
+                    .await?,
+            );
+            let timeline: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                exported["output"].as_str().ok_or("otio path")?,
+            )?)?;
+            let clips: Vec<[f64; 2]> = timeline["tracks"]["children"][0]["children"]
+                .as_array()
+                .ok_or("clips")?
+                .iter()
+                .map(|clip| {
+                    let start = clip["source_range"]["start_time"]["value"]
+                        .as_f64()
+                        .unwrap_or(-1.0);
+                    let duration = clip["source_range"]["duration"]["value"]
+                        .as_f64()
+                        .unwrap_or(-1.0);
+                    [start / 1000.0, (start + duration) / 1000.0]
+                })
+                .collect();
+            assert_eq!(
+                serde_json::json!(clips),
+                expected_plan,
+                "otio clips for {ops}"
+            );
+        }
+        Ok(())
+    }
+
+    /// expect: a reel's container follows the streams of its source, and a
+    /// recording with embedded cover art is an audio recording.
+    /// [P1] Measured on the installed server (round e5): an `.opus` source
+    /// rendered PCM inside an MP4 container through both reel tools (the
+    /// extension list lacked `.opus`). Measured on HEAD before this change
+    /// (round e6): an mp3 with cover art was refused by gallery_add_media as
+    /// "video, not audio".
+    #[tokio::test]
+    async fn a_reel_follows_the_streams_of_its_source_not_its_file_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_support::wire;
+        let (_env_lock, _artifacts, _env, gallery_root, store, _driver, gallery) =
+            media_test_env().await?;
+        let server = server_with_gallery(store.clone(), gallery.id, gallery_root.path());
+        let opus = gallery_root.path().join("talk.opus");
+        sine_fixture(&opus, 3, &["-ac", "1", "-ar", "48000", "-c:a", "libopus"]).await?;
+        // An mp3 carrying cover art: one audio stream, one attached picture.
+        let plain = gallery_root.path().join("plain.mp3");
+        sine_fixture(
+            &plain,
+            3,
+            &["-ac", "1", "-ar", "44100", "-c:a", "libmp3lame"],
+        )
+        .await?;
+        let cover = gallery_root.path().join("cover.png");
+        image::RgbImage::new(64, 64).save(&cover)?;
+        let art = gallery_root.path().join("with-art.mp3");
+        let output = tokio::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-i"])
+            .arg(&plain)
+            .arg("-i")
+            .arg(&cover)
+            .args([
+                "-map",
+                "0:a",
+                "-map",
+                "1:v",
+                "-c:a",
+                "copy",
+                "-c:v",
+                "mjpeg",
+                "-id3v2_version",
+                "3",
+                "-disposition:v",
+                "attached_pic",
+            ])
+            .arg(&art)
+            .output()
+            .await?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let probe = server.ffmpeg.probe(&art.to_string_lossy()).await?;
+        assert!(probe.has_audio_stream);
+        assert!(
+            !probe.has_video_stream,
+            "cover art is not the recording's video"
+        );
+        assert!(
+            (probe.duration_secs - 3.0).abs() < 0.2,
+            "fixture is 3 s: {}",
+            probe.duration_secs
+        );
+
+        for source in [&opus, &art] {
+            let transcript_id = store_three_words_over(&server, &source.to_string_lossy()).await;
+            store_layer_object(
+                &server,
+                &transcript_id,
+                edl_layer(serde_json::json!([
+                    {"range": {"start_word": 0, "end_word": 0}, "op": "keep"},
+                    {"range": {"start_word": 2, "end_word": 2}, "op": "keep"}
+                ])),
+            )
+            .await
+            .map_err(|error| error.message)?;
+            let rendered = content_of(
+                &server
+                    .educt_render_edl(wire(serde_json::json!({"transcript_id": transcript_id}))?)
+                    .await?,
+            );
+            let reel = rendered["output"].as_str().ok_or("output")?;
+            assert!(
+                reel.ends_with(".wav"),
+                "{} renders a WAV: {reel}",
+                source.display()
+            );
+            let reel_probe = server.ffmpeg.probe(reel).await?;
+            assert_eq!(reel_probe.audio_codec, "pcm_s16le", "{}", source.display());
+            assert!(!reel_probe.has_video_stream);
+            assert!(
+                (reel_probe.duration_secs - 1.0).abs() < 0.05,
+                "two 0.5 s clips: {}",
+                reel_probe.duration_secs
+            );
+            assert_eq!(
+                store
+                    .get_by_id(rendered["gallery_asset_id"].as_str().ok_or("asset")?)?
+                    .media_type,
+                "audio"
+            );
+        }
+        // The media layer reel tool takes the same decision.
+        let stored = content_of(
+            &server
+                .layers_store(wire(serde_json::json!({
+                    "media_path": opus, "kind": "researcher", "label": "zz",
+                    "provenance": {"model": "user", "prompt_template": "test"},
+                    "items": [
+                        {"start_sec": 0.0, "end_sec": 0.5, "searchable_text": "one", "payload": {}},
+                        {"start_sec": 2.0, "end_sec": 2.5, "searchable_text": "two", "payload": {}}
+                    ],
+                }))?)
+                .await?,
+        );
+        let composed = content_of(
+            &server
+                .layers_edl_compose(wire(
+                    serde_json::json!({"media_path": opus, "layer_id": stored["id"]}),
+                )?)
+                .await?,
+        );
+        let rendered = content_of(
+            &server
+                .layers_render_edl(wire(
+                    serde_json::json!({"media_path": opus, "layer_id": composed["layer"]["id"]}),
+                )?)
+                .await?,
+        );
+        let reel = rendered["result"]["output"]
+            .as_str()
+            .ok_or("layers reel output")?;
+        assert!(
+            reel.ends_with(".wav"),
+            "layers_render_edl renders a WAV: {reel}"
+        );
+        Ok(())
+    }
+
+    /// expect: a stored source path is admitted like a path handed to a tool:
+    /// a missing file is `not_found`, a URL passes network validation, both
+    /// before ffmpeg or a provider opens it.
+    /// [P1] Measured on the installed server (rounds e1, e2): a stored
+    /// loopback URL reached ffmpeg ("Connection refused", `internal`) through
+    /// educt_render_edl and voice_identify while audio_trim refused the same
+    /// URL as `invalid_argument`; a missing file was `internal` with an
+    /// ffmpeg banner.
+    #[tokio::test]
+    async fn a_stored_source_is_admitted_before_it_is_opened() {
+        use crate::test_support::wire;
+        let server = make_inference_server("unused".to_string(), "unused".to_string());
+        for (source, kind, names) in [
+            (
+                "/nonexistent/zz-absent.wav",
+                hkask_types::McpErrorKind::NotFound,
+                "zz-absent.wav",
+            ),
+            (
+                "http://127.0.0.1:9/zz-probe.wav",
+                hkask_types::McpErrorKind::InvalidArgument,
+                "Loopback",
+            ),
+        ] {
+            let transcript_id = store_three_words_over(&server, source).await;
+            store_layer_object(
+                &server,
+                &transcript_id,
+                edl_layer(
+                    serde_json::json!([{"range": {"start_word": 0, "end_word": 0}, "op": "keep"}]),
+                ),
+            )
+            .await
+            .expect("EDL stores");
+            let outcomes = [
+                (
+                    "educt_render_edl",
+                    server
+                        .educt_render_edl(wire(serde_json::json!({"transcript_id": transcript_id})).expect("wire"))
+                        .await,
+                ),
+                (
+                    "educt_retranscribe_section",
+                    server
+                        .educt_retranscribe_section(
+                            wire(serde_json::json!({"transcript_id": transcript_id, "start_word": 0, "end_word": 1}))
+                                .expect("wire"),
+                        )
+                        .await,
+                ),
+                (
+                    "educt_speaker_pass",
+                    server
+                        .educt_speaker_pass(
+                            wire(serde_json::json!({"transcript_id": transcript_id, "model": "test-model"}))
+                                .expect("wire"),
+                        )
+                        .await,
+                ),
+            ];
+            for (tool, outcome) in outcomes {
+                let error = outcome.expect_err("an unadmitted source is refused");
+                assert_eq!(error.kind, kind, "{tool} over {source}: {}", error.message);
+                assert!(error.message.contains(names), "{tool}: {}", error.message);
+            }
+        }
+    }
+
+    /// expect: educt_store_layer stores the six kinds it names and refuses
+    /// what only a measuring tool writes; a named layer of the wrong kind
+    /// and a missing layer are told apart; listings answer for the
+    /// transcript asked about.
+    /// [P1] Measured on the installed server (round e1): an identification
+    /// layer with an invented profile, name and score 0.99 was stored; a
+    /// realignment naming an unknown correction was stored; a speaker
+    /// layer's id passed as an EDL or correction answered "no … layer
+    /// found"; educt_list_layers on an unknown transcript answered an empty
+    /// list; educt_list_transcripts with limit 0 answered an empty list.
+    #[tokio::test]
+    async fn layer_tools_refuse_what_they_cannot_mean() {
+        use crate::test_support::wire;
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let provenance: serde_json::Value = serde_json::from_str(PIN_PROVENANCE).expect("json");
+        let error = store_layer_object(
+            &server,
+            &transcript_id,
+            serde_json::json!({
+                "kind": "identification", "provenance": provenance, "profile_id": "zz", "speaker_name": "zz Forged",
+                "start_word": 0, "end_word": 1, "score": 0.99, "margin": 0.5, "threshold_version": "zz",
+                "model_family": "zz", "weights_sha256": "zz", "preprocessing": "zz", "dimension": 4,
+            }),
+        )
+        .await
+        .expect_err("an identification layer is not stored by hand");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        assert!(
+            error.message.contains(
+                "kind is one of speaker, paragraph, correction, highlight, edl, realignment"
+            ),
+            "{}",
+            error.message
+        );
+        let error = store_layer_object(
+            &server,
+            &transcript_id,
+            serde_json::json!({"kind": "realignment", "provenance": provenance, "correction_layer_id": "zz-none"}),
+        )
+        .await
+        .expect_err("a realignment names a correction of this transcript");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(
+            error.message.contains("layer zz-none not found"),
+            "{}",
+            error.message
+        );
+
+        let speaker = store_layer_object(
+            &server,
+            &transcript_id,
+            serde_json::json!({"kind": "speaker", "provenance": provenance,
+                "spans": [{"start_word": 0, "end_word": 1, "speaker": "S1", "confidence": 0.9}]}),
+        )
+        .await
+        .expect("speaker layer stores");
+        let speaker_id = speaker["stored"]["id"].as_str().expect("id");
+        let wrong_kind = [
+            server
+                .educt_render_edl(
+                    wire(
+                        serde_json::json!({"transcript_id": transcript_id, "layer_id": speaker_id}),
+                    )
+                    .expect("wire"),
+                )
+                .await,
+            server
+                .educt_apply_corrections(
+                    wire(
+                        serde_json::json!({"transcript_id": transcript_id, "layer_id": speaker_id}),
+                    )
+                    .expect("wire"),
+                )
+                .await,
+            server
+                .educt_edl_from_highlights(
+                    wire(
+                        serde_json::json!({"transcript_id": transcript_id, "layer_id": speaker_id}),
+                    )
+                    .expect("wire"),
+                )
+                .await,
+        ];
+        for outcome in wrong_kind {
+            let error = outcome.expect_err("a layer of another kind is refused");
+            assert_eq!(
+                error.kind,
+                hkask_types::McpErrorKind::InvalidArgument,
+                "{}",
+                error.message
+            );
+            assert!(
+                error
+                    .message
+                    .contains("has kind speaker; this needs a layer of kind"),
+                "{}",
+                error.message
+            );
+        }
+        let error = server
+            .educt_apply_corrections(
+                wire(serde_json::json!({"transcript_id": transcript_id, "layer_id": "zz-none"}))
+                    .expect("wire"),
+            )
+            .await
+            .expect_err("a missing layer is not found");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        assert!(
+            error.message.contains("layer zz-none not found"),
+            "{}",
+            error.message
+        );
+
+        let error = server
+            .educt_list_layers(wire(serde_json::json!({"transcript_id": "zz-none"})).expect("wire"))
+            .await
+            .expect_err("an unknown transcript has no layer listing");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
+        let error = server
+            .educt_list_transcripts(wire(serde_json::json!({"limit": 0})).expect("wire"))
+            .await
+            .expect_err("limit 0 asks for nothing");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+        let error = server
+            .educt_locate(
+                wire(serde_json::json!({"transcript_id": transcript_id, "text": "  "}))
+                    .expect("wire"),
+            )
+            .await
+            .expect_err("a blank quote names no passage");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
+    }
+
+    /// expect: every value a transcript tool's schema enumerates passes its
+    /// handler's vocabulary check, and an unlisted value is refused naming
+    /// the list; every transcript and voice schema is closed.
+    /// [P1] Constraining: `review_csv` was accepted by educt_export and
+    /// absent from its field text; none of these five vocabularies was in a
+    /// schema. Measured on the installed server (round e1): `{"zz_unknown":1}`
+    /// was accepted by educt_store_transcript.
+    #[tokio::test]
+    async fn transcript_vocabularies_are_enumerated_and_enforced_from_one_list() {
+        use crate::test_support::{live_input_schema, wire};
+        let _artifacts = IsolatedArtifacts::new().await;
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let enumerated = |tool: &str, field: &str| -> Vec<String> {
+            let property = &live_input_schema(tool)["properties"][field];
+            property
+                .get("enum")
+                .or_else(|| property["anyOf"][0].get("enum"))
+                .and_then(|values| values.as_array())
+                .unwrap_or_else(|| panic!("{tool}.{field} is not enumerated"))
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        };
+        assert_eq!(
+            enumerated("educt_export", "format"),
+            [
+                "srt",
+                "highlights_csv",
+                "review_csv",
+                "corpus_text",
+                "webvtt",
+                "web_annotation",
+                "otio"
+            ]
+        );
+        for (tool, field) in [
+            ("educt_export", "format"),
+            ("educt_locate", "basis"),
+            ("educt_annotation_create", "kind"),
+            ("educt_search_transcripts", "mode"),
+            ("educt_speaker_pass", "source"),
+        ] {
+            let mut probes: Vec<(String, bool)> = enumerated(tool, field)
+                .into_iter()
+                .map(|value| (value, true))
+                .collect();
+            probes.push(("zz-not-listed".to_string(), false));
+            for (value, listed) in probes {
+                let id = transcript_id.clone();
+                let outcome = match tool {
+                    "educt_export" => server
+                        .educt_export(wire(serde_json::json!({"transcript_id": id, "format": value})).expect("wire"))
+                        .await,
+                    "educt_locate" => server
+                        .educt_locate(wire(serde_json::json!({"transcript_id": id, "text": "alpha", "basis": value})).expect("wire"))
+                        .await,
+                    "educt_annotation_create" => server
+                        .educt_annotation_create(
+                            wire(serde_json::json!({"transcript_id": id, "start_word": 0, "end_word": 0, "label": "", "note": "", "kind": value}))
+                                .expect("wire"),
+                        )
+                        .await,
+                    "educt_search_transcripts" => server
+                        .educt_search_transcripts(wire(serde_json::json!({"query": "alpha", "mode": value})).expect("wire"))
+                        .await,
+                    // correct_existing without source "text" is refused after
+                    // the vocabulary check and before any inference.
+                    _ => server
+                        .educt_speaker_pass(
+                            wire(serde_json::json!({"transcript_id": "zz-none", "source": value})).expect("wire"),
+                        )
+                        .await,
+                };
+                let refusal = outcome.err().map(|error| error.message).unwrap_or_default();
+                let refused_as_unknown = refusal.contains(&format!("unknown {field} "));
+                assert_eq!(
+                    refused_as_unknown, !listed,
+                    "{tool}.{field}={value}: listed={listed}, refusal={refusal:?}"
+                );
+            }
+        }
+        assert!(
+            wire::<crate::types::EductStoreTranscriptRequest>(
+                serde_json::json!({"transcript": "{}", "zz_unknown": 1})
+            )
+            .is_err()
+        );
+        let closed: Vec<String> = MediaServer::combined_router()
+            .list_all()
+            .iter()
+            .map(|entry| entry.name.to_string())
+            .filter(|name| name.starts_with("educt_") || name.starts_with("voice_"))
+            .collect();
+        assert_eq!(closed.len(), 27, "22 transcript tools and 5 voice tools");
+        for tool in &closed {
+            assert_eq!(
+                live_input_schema(tool)["additionalProperties"],
+                serde_json::json!(false),
+                "{tool} schema must be closed"
+            );
+        }
+    }
+
+    /// expect: educt_realign_transcript reports the decision it stored, not
+    /// a copy of the transcript.
+    /// [P1] Measured on the installed server (round e2): 991,380 characters
+    /// for a 14,000-word transcript; the media panel discards the response.
+    #[tokio::test]
+    async fn realign_reports_the_decision_not_the_transcript() {
+        use crate::test_support::wire;
+        let server = make_pass_server("{}".to_string());
+        let transcript_id = store_two_word_transcript(&server).await;
+        let provenance: serde_json::Value = serde_json::from_str(PIN_PROVENANCE).expect("json");
+        store_layer_object(
+            &server,
+            &transcript_id,
+            serde_json::json!({"kind": "correction", "provenance": provenance,
+                "edits": [{"start_word": 0, "end_word": 0, "replacement": "one two three", "reason": "zz"}]}),
+        )
+        .await
+        .expect("correction stores");
+        let realigned = content_of(
+            &server
+                .educt_realign_transcript(
+                    wire(serde_json::json!({"transcript_id": transcript_id})).expect("wire"),
+                )
+                .await
+                .expect("realign"),
+        );
+        assert_eq!(realigned["alignment"], "re_anchored");
+        assert_eq!(realigned["working_word_count"], serde_json::json!(4));
+        assert!(realigned.get("working_words").is_none());
+        // The words are where a reader looks for them.
+        let applied = content_of(
+            &server
+                .educt_apply_corrections(
+                    wire(serde_json::json!({"transcript_id": transcript_id})).expect("wire"),
+                )
+                .await
+                .expect("apply"),
+        );
+        assert_eq!(applied["working_words"].as_array().map(Vec::len), Some(4));
+    }
+
     #[tokio::test]
     async fn educt_render_edl_without_an_edl_is_not_found() {
         let server = make_pass_server("{}".to_string());
@@ -5345,8 +6199,9 @@ mod tool_behavior_tests {
             }))
             .await
             .expect_err("no EDL layer must be not-found");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::NotFound);
         assert!(
-            error.message.contains("no EDL layer"),
+            error.message.contains("no edl layer"),
             "the missing layer must be named: {}",
             error.message
         );
@@ -6124,8 +6979,11 @@ mod tool_behavior_tests {
             }))
             .await
             .expect_err("unknown format must be rejected");
+        assert_eq!(error.kind, hkask_types::McpErrorKind::InvalidArgument);
         assert!(
-            error.message.contains("format must be"),
+            error
+                .message
+                .contains("format is one of srt, highlights_csv, review_csv"),
             "the named error must surface: {}",
             error.message
         );

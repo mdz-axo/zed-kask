@@ -41,7 +41,7 @@ pub(crate) use crate::tools::educt::{
     SEARCH_TEXT_BYTE_BUDGET, WorkingTranscript, lexical_citations, lexical_item_matches,
     map_store_error, validate_lexical_search, working_transcript,
 };
-pub(crate) use crate::tools::educt::{is_audio_path, parse_json_value};
+pub(crate) use crate::tools::educt::{admit_media_source, parse_json_value, source_is_audio_only};
 pub(crate) use crate::tools::processing::SourceSnapshot;
 pub(crate) use crate::transcript_pass::PassMode;
 pub(crate) use crate::transcript_store::{self, TranscriptFilter};

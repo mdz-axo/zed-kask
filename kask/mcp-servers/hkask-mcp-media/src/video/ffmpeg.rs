@@ -576,11 +576,20 @@ impl FfmpegRunner {
         }
         let json: serde_json::Value = serde_json::from_slice(&output.stdout)
             .map_err(|e| crate::MediaError::Io(format!("ffprobe JSON parse: {e}")))?;
-        // Extract the first video stream.
+        // Extract the first video stream. Embedded cover art is a still
+        // picture ffprobe lists as a video stream flagged `attached_pic`:
+        // an mp3 or m4a carrying one is an audio recording, so it is not
+        // the recording's video.
         let streams = json.get("streams").and_then(|s| s.as_array());
         let video_stream = streams.and_then(|s| {
-            s.iter()
-                .find(|st| st.get("codec_type").and_then(|t| t.as_str()) == Some("video"))
+            s.iter().find(|st| {
+                st.get("codec_type").and_then(|t| t.as_str()) == Some("video")
+                    && st
+                        .get("disposition")
+                        .and_then(|d| d.get("attached_pic"))
+                        .and_then(|flag| flag.as_i64())
+                        != Some(1)
+            })
         });
         let audio_stream = streams.and_then(|s| {
             s.iter()
