@@ -47,9 +47,13 @@ Generate Mermaid diagrams from code, using Diátaxis to choose the documentation
 
 4. **Evaluate against a local diagram rubric (P, not Diátaxis's quality formula).** Diátaxis distinguishes measurable functional quality from judged deep quality and prescribes no numeric weights. Use the following project-specific six dimensions only to prioritize revisions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Score each criterion from 0 (perfect) to 1 (severely deficient). Compute `weighted_total` solely via `lisp_eval` `DD-1` (`(+ (* c1 0.30) (* c2 0.25) (* c3 0.15) (* c4 0.15) (* c5 0.10) (* c6 0.05))`), never by hand or inside the template output. The total is the model's estimate of its own diagram, used only to choose what to refine; it is not a stop condition. Produce specific, actionable refinement directives for any criterion scored above 0.00 — each directive must name the criterion, state what is wrong, and describe the expected fix. Do not emit directives for criteria scored at 0.00. Pass `related_docs` as the checked paths actually found; an empty list is not a request to invent a link.
 
-5. **Check against sources, not substrings.** First run deterministic gate `DD-2` via `lisp_eval` to verify that `diagram_type` is one of the 19 supported types and that `mermaid_source` contains no forbidden `%%{init`, `classDef`, or markdown fences (` ``` `):
-   - form: `(and (member diagram_type (list "erd" "flowchart" "state" "sequence" "class" "architecture" "block" "radar" "treemap" "sankey" "kanban" "gantt" "pie" "gitgraph" "mindmap" "timeline" "quadrant" "xychart" "journey")) (not (string-contains "%%{init" mermaid_source)) (not (string-contains "classDef" mermaid_source)) (not (string-contains "\x60\x60\x60" mermaid_source)))`
-   - env: `{ "diagram_type": <diagram_type>, "mermaid_source": <mermaid_source> }`
+5. **Check against sources, not substrings.** First run deterministic gate `DD-2` via `lisp_eval` to verify that `diagram_type` is one of the 19 supported types and that `mermaid_source` is non-empty and contains no forbidden `%%{init` directive, `classDef`, or markdown fence (three backticks — the form carries the literal needle, which is why it sits in a fenced block rather than an inline span):
+
+~~~lisp
+(begin (define src (if (stringp mermaid_source) mermaid_source "")) (define has (lambda (n) (and (>= (length src) (length n)) (string-contains n src)))) (define type-ok (member diagram_type (list "erd" "flowchart" "state" "sequence" "class" "architecture" "block" "radar" "treemap" "sankey" "kanban" "gantt" "pie" "gitgraph" "mindmap" "timeline" "quadrant" "xychart" "journey"))) (define forbidden (append (if (has "%%{init") (list "init-directive") (list)) (if (has "classDef") (list "classDef") (list)) (if (has "```") (list "markdown-fence") (list)))) (list (list "pass" (and type-ok (> (length src) 0) (is_null forbidden))) (list "type_ok" type-ok) (list "nonempty" (> (length src) 0)) (list "forbidden" forbidden)))
+~~~
+
+   - env: `{ "diagram_type": <classify render's diagram_type>, "mermaid_source": <generate render's mermaid_source> }` — returns `{pass, type_ok, nonempty, forbidden}`; `forbidden` names each hit (`init-directive`, `classDef`, `markdown-fence`). A null or empty source fails `nonempty`.
    Then compare the extracted entity/relationship list to *actual Mermaid declarations or edges* for this diagram type, citing the source file:line and generated line for each disputed item. An ID found only in a comment or label is not a node. This mapping is a reviewed judgment unless a suitable type-specific parser ran; report `completeness unverified` rather than treating a `string-contains` hit as proof. If `command -v mmdc` succeeds, parse the generated source with a bounded CLI call; otherwise set `parse unverified` and request a rendered preview. A model-produced invented-node list is a lead, not an oracle. Re-enter generation on one named, observed defect; at most 3 iterations, then present remaining failed/unverified checks without claiming target attainment.
 
 6. **Prepare, then actually write.** Render `diataxis-diagram-write` with a caller-supplied `output_path`, deterministic `entity_count` (`entities | length`) and `relationship_count` (`relationships | length`), and the evaluated `related_docs`; when no output path was supplied, choose a unique run path under `~/Documents/zk-data/skills/diataxis-diagram/{date}-{run}/diagram.md`. The template proposes markdown; it does not write a file. After review, use `terminal` for producer-data paths or the project file tools for an explicitly requested in-project path, and check the write receipt before reporting `file_path`. When `doc-update` explicitly supplies a `kask/docs/diagrams/` destination, update the relevant consolidated doc under its ownership and include a source-backed `DIAGRAM_ALIGNMENT` block; don't insert that metadata into ordinary skill previews. Cross-link only documents whose actual paths were checked. A missing related document is a noted gap, not a license to invent a link.
@@ -82,6 +86,20 @@ over the six-criterion weighted rubric:
 
 - c1=0.2, c2=0.1, rest 0 → `0.085` (the documented deficient case).
 - All criteria 0 → `0.0` — the inverted scale: 0 is perfect.
+
+`DD-2` receipts (env → `.pass`, executed 2026-11-13 through the `hkask_lisp` evaluator; re-evaluated by `~/Documents/zk-data/skills/diataxis-diagram/2026-11-13-dd2-repair/receipts.sh`):
+
+| diagram_type | mermaid_source | pass | why |
+|---|---|---|---|
+| erd | `erDiagram\n A \|\|--o{ B : has` | true | clean source |
+| erd | a source wrapped in a markdown fence | false | `forbidden` = `["markdown-fence"]` |
+| flowchart | `%%{init: …}%%\nflowchart TD` | false | `forbidden` = `["init-directive"]` |
+| flowchart | `flowchart TD\n classDef x fill:#f00` | false | `forbidden` = `["classDef"]` |
+| quadrantChart | `quadrantChart` | false | `type_ok` false — the type vocabulary is the 19 short names |
+| erd | `""` or null | false | `nonempty` false |
+| flowchart | a label containing a single backtick (`` A["`**bold**`"] ``) | true | one backtick is Mermaid markdown-string syntax, not a fence |
+
+Before this repair the fence needle was written `"\x60\x60\x60"`; the interpreter's string unescape has no `\x` form (`kask/crates/hkask-lisp/src/hkask_lisp.rs:505-540`), so the needle was the literal twelve-character text and a fenced source passed the gate.
 
 The skill's forms are executed at use time, never anchored in code.
 
