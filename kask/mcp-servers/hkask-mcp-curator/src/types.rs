@@ -349,7 +349,10 @@ pub struct MemoryUpdateRequest {
     pub h_mem_id: String,
     /// The new confidence value, 0.0 to 1.0 inclusive (a value outside the
     /// range is refused). Bayesian-combined with the existing confidence,
-    /// not replaced: 0.5 leaves it unchanged.
+    /// not replaced: 0.5 leaves it unchanged. A memory whose combined
+    /// confidence is at or below the editor's consolidation floor
+    /// (`kask.memory.confidence_floor`, default 0.3) is deleted by the
+    /// editor's next consolidation pass.
     pub new_confidence: f64,
     /// Optional: a new value to replace the existing one. Missing recall text
     /// is derived automatically and the canonical passage is re-embedded.
@@ -390,7 +393,9 @@ pub struct MemoryResolveContradictionRequest {
     pub target_h_mem_id: String,
     /// For "update_confidence": the confidence to set, 0.0 to 1.0. It
     /// replaces the stored confidence (memory_update combines instead).
-    /// Ignored for "forget".
+    /// A value at or below the editor's consolidation floor
+    /// (`kask.memory.confidence_floor`, default 0.3) means the editor's
+    /// next consolidation pass deletes the memory. Ignored for "forget".
     pub new_confidence: Option<f64>,
     /// Evidence-grounding: the reason for this resolution (must cite the
     /// contradiction observed). Must not be blank.

@@ -4384,3 +4384,84 @@ async fn memory_update_pools_log_odds_as_described() {
         assert!((stored.confidence.value() - combined).abs() < 1e-9);
     }
 }
+
+/// CU-31: a confidence written at or below the editor's consolidation floor
+/// is a deferred delete, and the two tools that can write one say so on the
+/// parameter. The editor's consolidation pass
+/// (`MemoryConsolidator::consolidate`, every
+/// `kask.memory.consolidation_cadence_secs`) deletes every h_mem whose
+/// stored confidence is at or below `kask.memory.confidence_floor`
+/// (default 0.3). Driven through both handlers and the real consolidator;
+/// the schema half is `low_confidence_parameters_name_the_consolidation_floor`
+/// in the crate's tool-surface tests.
+#[tokio::test]
+async fn a_confidence_at_or_below_the_consolidation_floor_is_deleted_by_the_next_pass() {
+    const FLOOR: f64 = 0.3;
+    let (server, memory) = make_server_with_embeddings();
+    let seed = |attribute: &str| {
+        let h_mem = hkask_storage::HMem::new(
+            "zz-probe:floor",
+            attribute,
+            serde_json::Value::String(format!("value for {attribute}")),
+            WebID::new(),
+        )
+        .with_confidence(hkask_types::Confidence::new(0.5));
+        let id = h_mem.id.to_string();
+        memory.store(h_mem).expect("seed");
+        id
+    };
+
+    // Pooling a stored 0.5 with x gives x.
+    let pooled_low = invoke_tool!(
+        server,
+        memory_update,
+        wire(serde_json::json!({"h_mem_id": seed("pooled-low"), "new_confidence": 0.2}))
+    );
+    let pooled_above = invoke_tool!(
+        server,
+        memory_update,
+        wire(serde_json::json!({"h_mem_id": seed("pooled-above"), "new_confidence": 0.31}))
+    );
+    let target = seed("set-at-floor");
+    let set_at_floor = invoke_tool!(
+        server,
+        memory_resolve_contradiction,
+        wire(serde_json::json!({
+            "h_mem_ids": [target],
+            "strategy": "update_confidence",
+            "target_h_mem_id": target,
+            "new_confidence": FLOOR,
+            "reason": "superseded by a later observation"
+        }))
+    );
+    let replacement = |response: &serde_json::Value, key: &str| -> hkask_storage::HMemId {
+        response[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key} in {response}"))
+            .parse()
+            .expect("id")
+    };
+    let low_id = replacement(&pooled_low, "h_mem_id");
+    let above_id = replacement(&pooled_above, "h_mem_id");
+    let floor_id = replacement(&set_at_floor, "target_h_mem_id");
+    for id in [&low_id, &above_id, &floor_id] {
+        assert!(memory.get_by_id(id).expect("read").is_some());
+    }
+
+    let outcome = hkask_memory::MemoryConsolidator::new(Arc::clone(&memory))
+        .consolidate(&WebID::new(), FLOOR)
+        .expect("consolidation pass");
+    assert_eq!(outcome.deleted_count, 2, "{outcome:?}");
+    assert!(
+        memory.get_by_id(&low_id).expect("read").is_none(),
+        "a memory pooled to 0.2 is deleted by the pass"
+    );
+    assert!(
+        memory.get_by_id(&floor_id).expect("read").is_none(),
+        "a memory set to exactly the floor is deleted by the pass"
+    );
+    assert!(
+        memory.get_by_id(&above_id).expect("read").is_some(),
+        "a memory pooled to 0.31 survives the pass"
+    );
+}

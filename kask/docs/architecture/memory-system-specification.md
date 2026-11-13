@@ -1063,14 +1063,18 @@ floor — live in the curator server, pinned by
 `test_curator_memory_edit_tools_available_to_non_curator_threads` in
 `crates/agent/src/tests/mod.rs`):
 
-- **`memory_insert`** — evidence-grounded insert; confidence starts at 0.5,
-  calibrated by outcomes, not self-assessment. It uses the shared
+- **`memory_insert`** — evidence-grounded insert; confidence starts at 0.5 whatever
+  the caller believes; afterwards only `memory_update` and
+  `memory_resolve_contradiction` change it. It uses the shared
   `MemoryStore::prepare_semantic_write` operation: retain a supported canonical
   passage, or derive `recall_text` from entity, attribute, and the supplied JSON
   value. Embedding generation must succeed before publication; `SemanticWrite::publish`
   commits the h_mem and its vector in one transaction. Failure stores neither.
 - **`memory_update`** — Bayesian-combines confidence (log-odds pooling),
-  rather than assigning the incoming confidence directly. The shared
+  rather than assigning the incoming confidence directly. A combined
+  confidence at or below `confidence_floor` (§ consolidation) means the next
+  consolidation pass deletes the row; the same holds for
+  `memory_resolve_contradiction`'s `update_confidence`. The shared
   `MemoryStore::prepare_semantic_revision` derives missing `recall_text` from the
   revised value and re-embeds the canonical passage. Publication atomically
   deletes the old row and inserts its replacement plus vector; the tool returns

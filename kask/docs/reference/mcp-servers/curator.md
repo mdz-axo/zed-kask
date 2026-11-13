@@ -64,9 +64,10 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
     per scope (default 100, at most 500), newest first, with `total` and
     `limit_reached`. Entity recall resets the decay clocks of the rows it
     returns, and only those; axis recall resets none.
-  - `memory_insert` stores at confidence 0.5; nothing changes a stored
-    confidence afterwards except `memory_update` (goal and forecast scores
-    do not write it).
+  - `memory_insert` stores at confidence 0.5; a stored confidence changes
+    afterwards only through `memory_update` or
+    `memory_resolve_contradiction` (goal and forecast scores do not write
+    it).
   - Results carry each h_mem's `provenance` tier (`tool_observed` |
     `model_inference`).
   - A public call context never receives a private-marked row. Every read
@@ -92,6 +93,10 @@ Line numbers are for `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.r
   - `memory_update` combines the given confidence with the stored one by
     log-odds pooling (0.5 leaves it unchanged) and replaces the row; the
     response carries the replacement id.
+  - A confidence written at or below `kask.memory.confidence_floor`
+    (default 0.3), by `memory_update` or by `update_confidence`, is a
+    deferred delete: the editor's consolidation pass removes the row on
+    its next tick. Both `new_confidence` parameters say so.
   - `memory_resolve_contradiction`: `forget` deletes the target;
     `update_confidence` sets the target's confidence to `new_confidence`.
     The `reason` and `h_mem_ids` are returned in the response and are not

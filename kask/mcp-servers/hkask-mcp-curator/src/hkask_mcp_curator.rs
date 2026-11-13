@@ -1315,7 +1315,7 @@ impl CuratorServer {
     /// specific h_mem ID that supports this memory. The tool
     /// rejects inserts without a citation.
     #[tool(
-        description = "Insert a memory that cites an existing h_mem as evidence: it is stored at confidence 0.5, is refused when the entity and attribute already hold a different value, and returns its h_mem_id. Nothing changes the stored confidence afterwards except memory_update, whatever the caller believes."
+        description = "Insert a memory that cites an existing h_mem as evidence: it is stored at confidence 0.5, is refused when the entity and attribute already hold a different value, and returns its h_mem_id. Whatever the caller believes, the stored confidence changes afterwards only through memory_update or memory_resolve_contradiction."
     )]
     pub async fn memory_insert(
         &self,
@@ -2179,6 +2179,31 @@ mod tool_surface_tests {
                     "{name}: the forwarded text must carry {fact:?}: {lead:?}"
                 );
             }
+        }
+    }
+
+    /// mcp-tool-review CU-31 pin (schema half). The editor's consolidation
+    /// pass deletes every h_mem at or below `kask.memory.confidence_floor`,
+    /// so a low confidence written by either tool is a deferred delete. The
+    /// input schema is forwarded to a model whole; the parameter says so.
+    /// The behaviour half is
+    /// `a_confidence_at_or_below_the_consolidation_floor_is_deleted_by_the_next_pass`.
+    #[test]
+    fn low_confidence_parameters_name_the_consolidation_floor() {
+        let tools = CuratorServer::tool_router().list_all();
+        for name in ["memory_update", "memory_resolve_contradiction"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("tool {name} present"));
+            let schema = serde_json::to_value(&tool.input_schema).expect("schema serializes");
+            let text = schema["properties"]["new_confidence"]["description"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{name}: new_confidence is described"));
+            assert!(
+                text.contains("consolidation floor") && text.contains("default 0.3"),
+                "{name}: new_confidence must name the floor: {text:?}"
+            );
         }
     }
 
