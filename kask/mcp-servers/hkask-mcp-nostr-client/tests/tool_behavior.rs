@@ -49,16 +49,16 @@ fn server(npub: Option<&str>, seed_relays: Option<&str>) -> NostrClientServer {
 }
 
 /// expect: the tool reports the identity set in settings in both its forms.
-/// pre: the `npub` of a throwaway key, and two seed relays.
-/// post: state `configured`, that `npub`, the key's bytes in lower-case hex,
-/// and the seed relays in the order given.
+/// pre: the `npub` of a throwaway key. No seed relay: the tool probes the
+/// seed relays it is given, and no test in a default build hands it an
+/// address it would connect to (the probe is tested in `relay_probe.rs`
+/// against relays inside the test).
+/// post: state `configured`, that `npub`, and the key's bytes in lower-case
+/// hex.
 #[tokio::test]
 async fn nostr_account_reports_the_hex_key_for_a_configured_npub() {
     let npub = throwaway_npub();
-    let server = server(
-        Some(&npub),
-        Some("wss://relay.example.com,wss://other.example.com"),
-    );
+    let server = server(Some(&npub), None);
     let account = invoke_tool!(server, nostr_account, AccountRequest {});
 
     assert_eq!(account["server"], "hkask-mcp-nostr-client");
@@ -68,10 +68,46 @@ async fn nostr_account_reports_the_hex_key_for_a_configured_npub() {
         account["identity"]["public_key_hex"],
         lower_hex(&throwaway_key())
     );
-    assert_eq!(
-        account["seed_relays"],
-        serde_json::json!(["wss://relay.example.com", "wss://other.example.com"])
+    assert_eq!(account["seed_relays"], serde_json::json!([]));
+}
+
+/// expect: a seed relay the build will not connect to is reported as refused
+/// and is never contacted, whichever build this is.
+/// pre: three entries no build connects to: a scheme that is not a
+/// websocket, text that is not an address, and an address with credentials.
+/// post: three `refused` reports in order, each with its position and a
+/// reason and without the entry's text.
+#[tokio::test]
+async fn nostr_account_refuses_seed_relays_no_build_connects_to() {
+    let server = server(
+        None,
+        Some(
+            "https://s3cr3tmarker.example.com,s3cr3tmarker,wss://u:s3cr3tmarker@relay.example.com",
+        ),
     );
+    let response = server
+        .nostr_account(Parameters(AccountRequest {}))
+        .await
+        .expect("the tool reports the outcomes; it does not fail");
+    assert!(
+        !response.contains("s3cr3tmarker"),
+        "a refused entry was repeated"
+    );
+    let account = parse_envelope(&response);
+    let reports = account["seed_relays"]
+        .as_array()
+        .expect("seed_relays is a list");
+    assert_eq!(reports.len(), 3);
+    for (index, report) in reports.iter().enumerate() {
+        assert_eq!(report["state"], "refused", "{report}");
+        assert_eq!(report["position"], index + 1);
+        assert!(report.get("address").is_none());
+        assert!(
+            report["reason"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
+        );
+    }
 }
 
 /// expect: with no identity set, the tool says so by name and does not fail.

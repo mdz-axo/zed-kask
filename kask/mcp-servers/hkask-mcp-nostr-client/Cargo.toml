@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 # The local test relays in `src/test_support.rs`. Never enabled by the
 # installer: a build with this feature can be pointed at loopback relays.
-test-fixture = ["dep:nostr-sdk", "nostr-sdk/local-relay", "tokio/net"]
+test-fixture = ["nostr-sdk/local-relay", "tokio/net"]
 
 [dependencies]
 hkask-bridge-ontology.workspace = true
@@ -34,9 +34,14 @@ schemars.workspace = true
 tracing.workspace = true
 # The relay client and, under `test-fixture`, the test relay. The same exact
 # pin and TLS provider the relay server uses (operator ruling 2026-11-12).
-# Optional until the first tool that contacts a relay lands: today only the
-# test relays use it.
-nostr-sdk = { workspace = true, optional = true, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
+nostr-sdk = { workspace = true, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
+# Named only to read the websocket transport's error type: which stage of a
+# relay connection failed (`relays::classify_failure`).
+async-wsocket.workspace = true
+# Probing the seed relays at once.
+futures.workspace = true
+# The workspace's TLS provider, installed once at startup.
+rustls.workspace = true
 
 [build-dependencies]
 regex.workspace = true

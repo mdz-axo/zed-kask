@@ -1013,6 +1013,12 @@ unicode-normalization = "=0.1.25"
 # rest of the workspace) instead of the SDK's default (ring).
 nostr-sdk = { version = "=0.45.6", default-features = false }
 nostr-lmdb = "=0.45.3"
+# The websocket transport under nostr-sdk, named directly by
+# hkask-mcp-nostr-client only to read its error type (which stage of a relay
+# connection failed). Pinned to the version nostr-sdk 0.45.6 resolves: a
+# second version in the tree would make that read miss. No features of its
+# own; nostr-sdk selects the TLS provider.
+async-wsocket = { version = "=0.17.0", default-features = false }
 # The relay's HTTP accept layer (hkask-mcp-nostr-relay). All three were
 # already in Cargo.lock as transitive dependencies.
 hyper = { version = "1", default-features = false }

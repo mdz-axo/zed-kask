@@ -17,6 +17,7 @@
 
 pub mod config;
 pub mod ontology;
+pub mod relays;
 pub mod server;
 #[cfg(feature = "test-fixture")]
 pub mod test_support;
