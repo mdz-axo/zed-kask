@@ -193,6 +193,28 @@ workspace visible rather than flashing the idle browser — `load_transcript_wit
 :3184 retains the prior state; only an explicit open or the back affordance clears
 it, `open_transcript` :2553 / `close_transcript_workspace` :2626).
 
+### Wire contract with the server (mcp-tool-review, 2026-11-12/13)
+
+Every argument object a viewer builder produces decodes into the media
+server's own request type for the tool it is sent to, and a layer it carries
+parses as the server's layer type
+(`every_argument_builder_decodes_into_the_servers_request_type`,
+`crates/media_panel/src/media_viewer.rs`). The pin exists because the review
+measured the installed server refusing the reel-compose, correction, tag and
+redaction builders: they send `layer` and `payload` as JSON objects and the
+server decoded JSON text only ("invalid type: map, expected a string"); the
+server accepts both forms since `a41c7e0fa7`, pinned on both sides. Two
+server-side changes the panel inherits without a code change: all 90 request
+schemas are now closed (an argument the server does not declare is refused as
+`invalid_argument`, not dropped — the builders send no undeclared key,
+measured by `panel-args.sh` over every `call_tool` site), and Trim-to-Marks
+over `video_clip` follows the probed streams rather than the file name, so an
+audio-only `.mp4` publishes a WAV, a start past the end is refused, and an end
+past the end comes back as the cut end in `end_sec`/`duration_sec`. A clip,
+gif, caption or concat request that names a file of the wrong kind (audio to a
+video tool) or clips that cannot be joined is `invalid_argument` naming the
+file — the panel shows it on the status line like any other refused edit.
+
 ## Result-derived Library freshness
 
 Published assets, imports, transcript renders, and deletions carry

@@ -32,11 +32,11 @@ The table below is a partial quick-reference.
 | `image_create_collage` | Create a collage from multiple gallery images. Local composition using image crate. One selection: image_indices (1 to 9), search_terms, or similar_to_index |
 | `youtube_search` | Search YouTube through SerpApi for structured metadata (views, duration, channel, publication date, provider extensions, URL); does not invoke yt-dlp or download media |
 | `video_fetch` | Download a selected YouTube/Vimeo/platform URL with yt-dlp and publish it as a durable local gallery asset |
-| `video_clip` | Trim a video to specified start/end times using local ffmpeg |
-| `video_to_gif` | Convert a video segment to GIF format using local ffmpeg |
-| `video_add_caption` | Add text caption overlay to a video using local ffmpeg |
-| `video_concat` | Concatenate multiple video clips into one using ffmpeg |
-| `video_caption` | Generate a description of video content by extracting keyframes and analyzing them with a vision LLM |
+| `video_clip` | Trim a recording to start/end times with local ffmpeg, routed by the probed streams (video → keyframe-aligned MP4, audio-only → PCM WAV keeping the sample format); a start past the end is refused, an end past the end is cut at the end and reported |
+| `video_to_gif` | Convert a video segment to GIF in two ffmpeg passes (palette file, then paletteuse); width 1..8192, fps 1..100, a video stream and a start inside the recording required; a span that samples no frame is refused by name |
+| `video_add_caption` | Draw a caption over a video with ffmpeg drawtext; the text goes through a file with `expansion=none` (drawn exactly as written, never parsed as a filter); position top, center or bottom; blank text refused |
+| `video_concat` | Join 2 to 64 clips by stream copy; every clip must hold video in the first clip's codec and agree on audio presence, otherwise the clip and the difference are named (`invalid_argument`) |
+| `video_caption` | Describe video content from sampled keyframes with a vision LLM; `style` is descriptive, summary or hashtags and the source must hold a video stream — both checked before any frame is sent |
 | `transcribe_bundle` | Transcribe audio and return a synchronized TranscriptBundle with word-level timings (the former bare `transcribe` tool, merged) |
 | `audio_capture` | Capture audio from the default system microphone and publish a canonical durable WAV asset (16kHz mono) |
 | `record_and_transcribe` | Record audio from the microphone, publish it as a durable WAV gallery asset, and transcribe it in one call. Returns the published recording with the transcript under `transcript` |
@@ -177,7 +177,7 @@ yt-dlp, analysis, capture/transcription, and transcript-pass RPCs share one
 four-slot fail-fast authority with background jobs. The fifth combined operation
 fails before external work; it is never queued, clamped, or silently truncated.
 Job list/status/cancel and cheap gallery reads remain available under load.
-Concat accepts at most 64 audio
+A source that is not media, a start past the end, a span with no frame, or clips that cannot be joined are `invalid_argument` naming the file or range, as is a file of the wrong kind (audio to a video tool) — the kinds the regulation ledger leaves out of the success rate. Concat accepts at most 64 audio
 or video inputs; keyframe extraction accepts 256 frames.
 Cap violations fail before work begins;
 requests are never clamped or silently truncated.
