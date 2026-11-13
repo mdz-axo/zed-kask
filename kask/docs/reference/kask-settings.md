@@ -303,19 +303,24 @@ Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/sett
 ## Nostr (`KaskNostrSettings`)
 
 Public data only; no key is stored in settings, and no field of this section
-may hold one (`nostr_section_has_exactly_its_three_public_fields`).
+may hold one (`nostr_section_has_exactly_its_four_public_fields`).
 
-Two fields name the identity the Nostr client server reads for. They are set
-in `settings.json`; there is no settings-page row for them. No agent tool can
-change them.
+Two fields name the identity the Nostr client server reads for, and one is
+the autopublish switch. All three have rows on Settings > Kask > Nostr
+("Nostr Account"); they are also editable in `settings.json`. No agent tool
+changes them: an agent file edit to the user `settings.json` always prompts
+(`SensitiveSettingsKind::Global`), though a terminal command under a
+`allow_fs_write_all` or `allow_unsandboxed` sandbox grant could rewrite the
+file without that prompt.
 
 | Field | Type | Default | Env var injected | Notes |
 |-------|------|---------|-------------------|-------|
 | `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
 | `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server reads from, comma-joined: the first 8. `nostr_account` tries one connection to each and reports which answer; the read tools ask each one and report how its read ended |
+| `autopublish` | `bool` | `false` | none | Operator ruling 2026-11-13: off, the editor shows each publication the Curator initiates (text, signing `npub`, target relays) and signs only on the operator's approval; on, that step is removed. Read in the editor where the signature is made and delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`, `nostr_autopublish_resolves_off_unless_written_on`). Publishing is not built yet |
 
-Both variables are emitted for every settings state, so the editor's own
-environment never supplies them. The `npub` is trimmed and the relays are
+The two identity variables are emitted for every settings state, so the
+editor's own environment never supplies them. The `npub` is trimmed and the relays are
 trimmed and de-duplicated here; nothing is validated here. The client server
 decides whether the `npub` is usable and reports `configured`,
 `not_configured` or `invalid` in `nostr_account`.
@@ -399,7 +404,7 @@ operator's configured models, verbatim.[^ousterhout-models-settings]
 | `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"OpenRouter/qwen/qwen3-embedding-8b"` — MRL: every embed request carries `dimensions = embedding_dim`, default 1024, so width-bound vec0 stores keep receiving fitting vectors) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
 | `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
 | `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never the chat or classifier model |
-| `ocr_model` | `String` | `"ollama/glm-ocr:latest"` | Injected as `HKASK_OCR_MODEL` |
+| `ocr_model` | `String` | `"RunPod/kask-ocr"` (`DEFAULT_OCR_MODEL`) | Shared constant in `hkask_inference::model_constants` — the corpus server's own settings layer references the same literal; injected as `HKASK_OCR_MODEL` |
 | `rerank_model` | `String` | `"OpenRouter/qwen/qwen3-reranker-8b"` | Shared `DEFAULT_RERANK_MODEL` (repaired 2026-11-06 — the previous `deepinfra/…` literal was unroutable by the native rerank path, so every default-configured deep search silently degraded to heuristic rerank; the default keeps the ruled Qwen3-Reranker-8B on the servable OpenRouter path, pinned by `default_rerank_model_is_routable_by_the_native_path`); injected as `HKASK_RERANK_MODEL`; an `ollama/`-prefixed value serves through the local judge-protocol arm |
 
 QA generation is configured under **Settings → Kask → Models → QA Generation Model**.

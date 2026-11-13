@@ -969,6 +969,46 @@ mod tests {
         }
     }
 
+    /// expect: autopublish (operator ruling 2026-11-13: "unselected by
+    /// default") resolves to off when the section does not mention it, and
+    /// to on only when written `true`.
+    /// pre: a `kask.nostr` section without the key, and one with it on.
+    /// post: `false`, then `true`.
+    #[test]
+    fn nostr_autopublish_resolves_off_unless_written_on() {
+        assert!(!KaskSettings::default().nostr.autopublish);
+        assert!(!nostr_identity_settings().nostr.autopublish);
+        let content: settings_content::KaskSettingsContent =
+            serde_json::from_value(serde_json::json!({ "nostr": { "autopublish": true } }))
+                .expect("kask.nostr parses");
+        let settings: KaskSettings = content.into();
+        assert!(settings.nostr.autopublish);
+    }
+
+    /// expect: autopublish is enforced where the signature is made, in the
+    /// editor, so it is delivered to no MCP server. A copy in the client
+    /// server's environment would be a second place to read the switch, and
+    /// a check there would not be an approval.
+    /// pre: autopublish on.
+    /// post: no emitted variable carries it, in any server's filtered env.
+    #[test]
+    fn nostr_autopublish_reaches_no_mcp_server() {
+        let content: settings_content::KaskSettingsContent =
+            serde_json::from_value(serde_json::json!({ "nostr": { "autopublish": true } }))
+                .expect("kask.nostr parses");
+        let settings: KaskSettings = content.into();
+        let env = settings.mcp_env();
+        for (key, value) in &env {
+            assert!(
+                !key.to_ascii_lowercase().contains("autopublish"),
+                "{key} names the switch"
+            );
+            if key.starts_with("HKASK_NOSTR_") {
+                assert!(!value.contains("autopublish"), "{key} carries the switch");
+            }
+        }
+    }
+
     /// Settings are the only source of the identity. Default settings still
     /// emit both keys, empty: a key left out would be filled from the
     /// editor's own environment by `emit_operator_override_env`, and the

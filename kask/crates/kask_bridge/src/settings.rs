@@ -358,6 +358,11 @@ pub struct KaskNostrSettings {
     /// Relays the Nostr client server starts from, trimmed and
     /// de-duplicated. Delivered as `HKASK_NOSTR_CLIENT_SEED_RELAYS`.
     pub seed_relays: Vec<String>,
+    /// Publish without the operator's approval. Off by default (operator
+    /// ruling 2026-11-13): the editor shows each publication and signs only
+    /// on approval. Read in the editor where the signature is made;
+    /// delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`).
+    pub autopublish: bool,
     /// The local relay server's policy.
     pub relay: KaskNostrRelaySettings,
 }
@@ -561,7 +566,9 @@ impl Default for KaskModelsSettings {
             classifier_model: "OpenRouter/z-ai/glm-5.2".to_string(),
             // No verified generator default (operator ruling 2026-09-11).
             qa_generation_model: String::new(),
-            ocr_model: "ollama/glm-ocr:latest".to_string(),
+            // The dedicated RunPod OCR endpoint (D29); one shared literal with
+            // the corpus server's own settings layer.
+            ocr_model: hkask_inference::model_constants::DEFAULT_OCR_MODEL.to_string(),
             // DeepInfra Qwen3 reranker (operator ruling 2026-09-11): the
             // research server's rerank stage defaults to the verified
             // catalog model instead of failing unconfigured.
@@ -1012,6 +1019,7 @@ impl From<KaskNostrSettingsContent> for KaskNostrSettings {
         Self {
             npub: c.npub.unwrap_or_default().trim().to_string(),
             seed_relays: clean_list(c.seed_relays.unwrap_or_default()),
+            autopublish: c.autopublish.unwrap_or(false),
             relay: c.relay.map(Into::into).unwrap_or_default(),
         }
     }
@@ -1137,6 +1145,20 @@ mod tests {
     // default, and the struct exposes exactly those four fields (defaults
     // live in `Default` impls only, never serde(default) or From<Content>
     // literals).
+    /// The OCR default is the shared constant (the RunPod endpoint, D29),
+    /// so an absent `kask.models.ocr_model` and a directly launched corpus
+    /// server resolve the same model (operator correction 2026-11-13: each
+    /// layer used to carry its own pre-RunPod `glm-ocr` literal).
+    #[test]
+    fn models_default_ocr_is_the_shared_runpod_constant() {
+        let resolved = KaskModelsSettings::from(KaskModelsSettingsContent::default());
+        assert_eq!(
+            resolved.ocr_model,
+            hkask_inference::model_constants::DEFAULT_OCR_MODEL
+        );
+        assert_eq!(resolved.ocr_model, "RunPod/kask-ocr");
+    }
+
     #[test]
     fn media_settings_default_carries_stt_vision_and_role_models() {
         let default = KaskMediaSettings::default();

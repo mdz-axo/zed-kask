@@ -1755,6 +1755,15 @@ pub struct KaskNostrSettingsContent {
     /// Empty or absent: none.
     #[serde(default)]
     pub seed_relays: Option<Vec<String>>,
+    /// Publish without the operator's approval (`"kask.nostr.autopublish"`).
+    /// Absent or `false`: the editor shows each publication the Curator
+    /// initiates (its text, the signing `npub`, the target relays) and signs
+    /// it only when the operator approves. `true`: that step is removed and
+    /// the Curator publishes directly. Operator ruling 2026-11-13. The switch
+    /// is read where the signature is made, in the editor; it is delivered
+    /// to no MCP server.
+    #[serde(default)]
+    pub autopublish: Option<bool>,
     /// The local relay server's policy (`"kask.nostr.relay"`).
     #[serde(default)]
     pub relay: Option<KaskNostrRelaySettingsContent>,
@@ -1959,7 +1968,8 @@ pub struct KaskModelsSettingsContent {
     /// never falls back to the active chat model.
     pub qa_generation_model: Option<String>,
     /// OCR vision model for scanned document OCR (provider-prefixed).
-    /// When empty, falls back to the kask default (`ollama/glm-ocr:latest`).
+    /// When empty, falls back to the kask default (`RunPod/kask-ocr`,
+    /// `hkask_inference::model_constants::DEFAULT_OCR_MODEL`).
     pub ocr_model: Option<String>,
     /// Rerank model for the research server's deep-search rerank stage
     /// (provider-prefixed). When empty, falls back to the kask default
@@ -2250,11 +2260,15 @@ mod nostr_settings_tests {
 
     /// expect: `kask.nostr` holds public data only. A Nostr key cannot be
     /// rotated, so no field of this section may ever hold one; a field added
-    /// here fails this test and needs a ruling first.
+    /// here fails this test and needs a ruling first. `autopublish` was added
+    /// under the operator ruling of 2026-11-13 ("there should be an
+    /// autopublish setting in the nostr settings - and it should be
+    /// unselected by default").
     /// pre: the section's generated JSON schema.
-    /// post: its fields are exactly `npub`, `relay` and `seed_relays`.
+    /// post: its fields are exactly `autopublish`, `npub`, `relay` and
+    /// `seed_relays`.
     #[test]
-    fn nostr_section_has_exactly_its_three_public_fields() {
+    fn nostr_section_has_exactly_its_four_public_fields() {
         let schema = serde_json::to_value(schemars::schema_for!(KaskNostrSettingsContent))
             .expect("schema serializes");
         let mut fields: Vec<&str> = schema["properties"]
@@ -2264,6 +2278,26 @@ mod nostr_settings_tests {
             .map(String::as_str)
             .collect();
         fields.sort_unstable();
-        assert_eq!(fields, ["npub", "relay", "seed_relays"]);
+        assert_eq!(fields, ["autopublish", "npub", "relay", "seed_relays"]);
+    }
+
+    /// expect: a `kask.nostr` section that does not mention autopublish
+    /// leaves it unset, so the resolved default (off) applies; a section
+    /// that turns it on survives a parse and a write.
+    /// pre: one section without the key, one with `"autopublish": true`.
+    /// post: `None` for the first; `Some(true)` written back for the second.
+    #[test]
+    fn nostr_autopublish_is_absent_unless_written_and_round_trips() {
+        let absent: KaskNostrSettingsContent =
+            serde_json::from_value(serde_json::json!({ "npub": PLACEHOLDER_NPUB }))
+                .expect("kask.nostr parses without autopublish");
+        assert_eq!(absent.autopublish, None);
+
+        let on: KaskNostrSettingsContent =
+            serde_json::from_value(serde_json::json!({ "autopublish": true }))
+                .expect("kask.nostr parses with autopublish");
+        assert_eq!(on.autopublish, Some(true));
+        let written = serde_json::to_value(&on).expect("kask.nostr serializes");
+        assert_eq!(written["autopublish"], true);
     }
 }
