@@ -46,7 +46,7 @@ The `media` MCP server is the fleet's largest (71 tools): research-evidence inge
 | `kata-kanban`        | Toyota-Kata task boards and persistent functional goals        | 26 |
 | `media`              | Research evidence ingestion, annotation, transcription, excerpts (gallery, educt) | 71 |
 | `prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 27 |
-| `research`           | Web search, extraction, browsing, RSS feeds, evidence scoring, research-run ledger, paper identity | 27 |
+| `research`           | Web search, extraction, browsing, evidence scoring, research-run ledger, paper identity | 12 |
 | `scenarios`          | Event-tree forecasting (Tetlock/Schwartz/Chermack), equity forecast loop | 22 |
 | `swarm`              | Local swarm agents, local swarms, A2A collaboration, swarm-intelligence substrate | 37 |
 
