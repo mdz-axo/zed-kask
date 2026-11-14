@@ -1456,7 +1456,7 @@ impl ResearchServer {
                 return Err(McpToolError::invalid_argument("sources must not be empty"));
             }
             let list = crate::research::apa::reference_list(&sources)
-                .map_err(McpToolError::invalid_argument)?;
+                .map_err(|error| McpToolError::invalid_argument(error.to_string()))?;
             Ok(serde_json::json!({
                 "count": list.references.len(),
                 "references": list.references,

@@ -282,7 +282,7 @@ pub fn store_transcript(
     // transcribe-and-store tools and the transcription job.
     bundle
         .validate()
-        .map_err(TranscriptStoreError::InvalidBundle)?;
+        .map_err(|error| TranscriptStoreError::InvalidBundle(error.to_string()))?;
     ensure_schema(driver)?;
     if let Some(gallery_asset_id) = gallery_asset_id {
         let exists = driver

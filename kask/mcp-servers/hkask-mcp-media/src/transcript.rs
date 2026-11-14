@@ -12,6 +12,19 @@ use serde::{Deserialize, Serialize};
 
 use hkask_types::Confidence;
 
+/// Why a transcript bundle is refused at the store door. A stored bundle
+/// is read back by every transcript tool, so one that cannot be read back
+/// or tied to its media is refused before it lands.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BundleError {
+    #[error("audio_path is blank; a transcript is keyed to its media")]
+    BlankAudioPath,
+
+    #[error("audio_duration_secs must be a finite, non-negative number of seconds, got {0}")]
+    InvalidDuration(f32),
+}
+
 /// A single timed word in a transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimedWord {
@@ -105,15 +118,12 @@ impl TranscriptBundle {
     /// a provider's words are stored as they arrive, and a range whose
     /// timings run backwards is refused where it is used
     /// (`SelectionError::InvertedTimeRange`).
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), BundleError> {
         if self.audio_path.trim().is_empty() {
-            return Err("audio_path is blank; a transcript is keyed to its media".to_string());
+            return Err(BundleError::BlankAudioPath);
         }
         if !self.audio_duration_secs.is_finite() || self.audio_duration_secs < 0.0 {
-            return Err(format!(
-                "audio_duration_secs must be a finite, non-negative number of seconds, got {}",
-                self.audio_duration_secs
-            ));
+            return Err(BundleError::InvalidDuration(self.audio_duration_secs));
         }
         Ok(())
     }

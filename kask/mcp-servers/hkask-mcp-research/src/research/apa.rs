@@ -19,6 +19,44 @@
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
 
+/// A citation the formatter refuses. Every rejection names the source
+/// index and the field, so the caller's error names what to fix.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ApaError {
+    #[error(
+        "sources[{index}].{field} must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 timestamp, got '{text}'"
+    )]
+    InvalidDate {
+        index: usize,
+        field: &'static str,
+        text: String,
+    },
+
+    #[error("sources[{index}].retrieved must be a full date YYYY-MM-DD, got '{text}'")]
+    RetrievedNeedsADay { index: usize, text: String },
+
+    #[error("sources[{index}].doi must be a DOI (10.…/…), bare or as a doi.org URL, got '{doi}'")]
+    InvalidDoi { index: usize, doi: String },
+
+    #[error("sources[{index}].title must not be empty")]
+    EmptyTitle { index: usize },
+
+    #[error("sources[{index}].authors[{position}] must not be empty")]
+    EmptyAuthor { index: usize, position: usize },
+
+    #[error("sources[{index}] needs a url or a doi")]
+    MissingLocator { index: usize },
+
+    #[error("sources[{index}].{field} is a journal field: pass `journal` as well")]
+    JournalFieldWithoutJournal { index: usize, field: &'static str },
+
+    #[error(
+        "sources[{index}] has both journal and site_name: a journal article takes `journal`, a web page takes `site_name`"
+    )]
+    JournalAndSiteName { index: usize },
+}
+
 /// One author. A string is a group or organization name, emitted as
 /// written. An object is a person, emitted inverted with initials.
 #[derive(Debug, Clone)]
@@ -153,11 +191,11 @@ const MONTHS: [&str; 12] = [
     "December",
 ];
 
-fn parse_ymd(text: &str, field: &str, index: usize) -> Result<PublishedDate, String> {
-    let reject = || {
-        format!(
-            "sources[{index}].{field} must be YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 timestamp, got '{text}'"
-        )
+fn parse_ymd(text: &str, field: &'static str, index: usize) -> Result<PublishedDate, ApaError> {
+    let reject = || ApaError::InvalidDate {
+        index,
+        field,
+        text: text.to_string(),
     };
     let date_part = text.split(['T', 't', ' ']).next().unwrap_or(text);
     if date_part.len() != text.len() && chrono::DateTime::parse_from_rfc3339(text).is_err() {
@@ -281,7 +319,7 @@ fn italic(text: &str) -> String {
 }
 
 /// The DOI as a doi.org URL, from any of its written forms.
-fn doi_url(doi: &str, index: usize) -> Result<String, String> {
+fn doi_url(doi: &str, index: usize) -> Result<String, ApaError> {
     let lowered = doi.trim().to_lowercase();
     let bare = [
         "https://doi.org/",
@@ -295,9 +333,10 @@ fn doi_url(doi: &str, index: usize) -> Result<String, String> {
     .unwrap_or(&lowered)
     .trim();
     if !bare.starts_with("10.") || !bare.contains('/') {
-        return Err(format!(
-            "sources[{index}].doi must be a DOI (10.…/…), bare or as a doi.org URL, got '{doi}'"
-        ));
+        return Err(ApaError::InvalidDoi {
+            index,
+            doi: doi.to_string(),
+        });
     }
     Ok(format!("https://doi.org/{bare}"))
 }
@@ -326,17 +365,15 @@ fn present(value: &Option<String>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn prepare(index: usize, source: &CiteSource) -> Result<Prepared, String> {
+fn prepare(index: usize, source: &CiteSource) -> Result<Prepared, ApaError> {
     let title = source.title.trim();
     if title.is_empty() {
-        return Err(format!("sources[{index}].title must not be empty"));
+        return Err(ApaError::EmptyTitle { index });
     }
     let authors: Vec<CiteAuthor> = source.authors.clone().unwrap_or_default();
     for (position, author) in authors.iter().enumerate() {
         if author_text(author).is_empty() {
-            return Err(format!(
-                "sources[{index}].authors[{position}] must not be empty"
-            ));
+            return Err(ApaError::EmptyAuthor { index, position });
         }
     }
     let date = match present(&source.published) {
@@ -347,9 +384,10 @@ fn prepare(index: usize, source: &CiteSource) -> Result<Prepared, String> {
         Some(text) => {
             let parsed = parse_ymd(&text, "retrieved", index)?;
             if parsed.day.is_none() {
-                return Err(format!(
-                    "sources[{index}].retrieved must be a full date YYYY-MM-DD, got '{text}'"
-                ));
+                return Err(ApaError::RetrievedNeedsADay {
+                    index,
+                    text: text.to_string(),
+                });
             }
             Some(parsed)
         }
@@ -359,7 +397,7 @@ fn prepare(index: usize, source: &CiteSource) -> Result<Prepared, String> {
         (Some(doi), _) => doi_url(&doi, index)?,
         (None, Some(url)) => url,
         (None, None) => {
-            return Err(format!("sources[{index}] needs a url or a doi"));
+            return Err(ApaError::MissingLocator { index });
         }
     };
     let journal = present(&source.journal);
@@ -369,15 +407,11 @@ fn prepare(index: usize, source: &CiteSource) -> Result<Prepared, String> {
         ("pages", &source.pages),
     ] {
         if present(value).is_some() && journal.is_none() {
-            return Err(format!(
-                "sources[{index}].{field} is a journal field: pass `journal` as well"
-            ));
+            return Err(ApaError::JournalFieldWithoutJournal { index, field });
         }
     }
     if journal.is_some() && present(&source.site_name).is_some() {
-        return Err(format!(
-            "sources[{index}] has both journal and site_name: a journal article takes `journal`, a web page takes `site_name`"
-        ));
+        return Err(ApaError::JournalAndSiteName { index });
     }
     Ok(Prepared {
         index,
@@ -489,7 +523,7 @@ fn sort_key(source: &Prepared) -> String {
 /// before dated ones; works by the same author(s) in the same year run
 /// year-only before more specific dates, then by title, and take letter
 /// suffixes.
-pub fn reference_list(sources: &[CiteSource]) -> Result<ReferenceList, String> {
+pub fn reference_list(sources: &[CiteSource]) -> Result<ReferenceList, ApaError> {
     let mut prepared: Vec<Prepared> = sources
         .iter()
         .enumerate()
@@ -773,6 +807,7 @@ mod tests {
             ..page("T", "https://example.org/")
         }])
         .expect_err("refused");
+        let error = error.to_string();
         assert!(error.contains("sources[0].published"), "{error}");
         assert!(error.contains("YYYY-MM-DD"), "{error}");
         assert!(error.contains("3 days ago"), "{error}");
@@ -832,11 +867,13 @@ mod tests {
         assert!(
             reference_list(&[no_locator])
                 .unwrap_err()
+                .to_string()
                 .contains("needs a url or a doi")
         );
         assert!(
             reference_list(&[page("  ", "https://example.org/")])
                 .unwrap_err()
+                .to_string()
                 .contains("title must not be empty")
         );
         let stray_volume = CiteSource {
@@ -846,6 +883,7 @@ mod tests {
         assert!(
             reference_list(&[stray_volume])
                 .unwrap_err()
+                .to_string()
                 .contains("pass `journal`")
         );
     }
