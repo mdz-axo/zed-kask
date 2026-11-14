@@ -24,7 +24,13 @@ set -uo pipefail
 
 selftest_init check-duplication-pin.sh
 
-git init -q "$WORK"
+# A synthetic repo whose merge topology is exactly known. The initial
+# branch is pinned with `git init -b main` — a bare `git init` names it
+# from init.defaultBranch ("main" on the dev machine, "master" on the CI
+# runner), and the `git checkout -q main` below then failed on the runner
+# ("pathspec 'main' did not match", observed run 43536862391) — the merge
+# never formed and case 1 read a one-parent commit as the merge tip.
+git init -q -b main "$WORK"
 git -C "$WORK" config user.email selftest@local
 git -C "$WORK" config user.name selftest
 mkdir -p "$WORK/scripts"
