@@ -23,6 +23,15 @@ Beer, *Brain of the Firm* (1972) — the algedonic channel (`onto_anchor` → de
 2. Gate SENSE health via `lisp_eval` (`ALG-1`) over the `curator_status` field as returned:
    - form: `(cond ((not (stringp loop_reading)) "unobserved") ((member loop_reading (list "wiring-closed" "broken")) "investigate_wiring") ((string= loop_reading "unobserved") "unobserved") (t "proceed"))`
    - env: `{"loop_reading": <curator_status.loop_reading, verbatim — null when the field is absent>}`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate": "ALG-1", "case": "homeostatic-proceeds", "env": {"loop_reading": "homeostatic"}, "expected": "proceed"}
+     {"gate": "ALG-1", "case": "turning-proceeds", "env": {"loop_reading": "turning"}, "expected": "proceed"}
+     {"gate": "ALG-1", "case": "broken-investigates", "env": {"loop_reading": "broken"}, "expected": "investigate_wiring"}
+     {"gate": "ALG-1", "case": "wiring-closed-investigates", "env": {"loop_reading": "wiring-closed"}, "expected": "investigate_wiring"}
+     {"gate": "ALG-1", "case": "unobserved-stays-unknown", "env": {"loop_reading": "unobserved"}, "expected": "unobserved"}
+     {"gate": "ALG-1", "case": "null-stays-unknown", "env": {"loop_reading": null}, "expected": "unobserved"}
+     ```
    - `investigate_wiring` (`wiring-closed` or `broken`): investigate the loop wiring before judging its alerts. `unobserved` (the reading is `unobserved` or absent): state the uncertainty; a quiet loop that cannot be observed is not a healthy one. `proceed` otherwise. A board that could not be read is reported as unknown at step 1; it is not an input here.
 3. Read each open card's description, comments, deliverables and verification criteria. An unreadable card is unknown. Backlog means arrived, Ready triaged, In Progress decided/delegated, Review fixed or self-recovered with evidence, Done verified.
 
