@@ -129,7 +129,7 @@ One pass per tool per cycle. For each tool:
 
 ### Phase F — Findings assembly and verification [P + D gates]
 
-18. Assemble the completed semantic records, then render `mcp-tool-review/findings-artifact` with the full context below. The template is a deterministic JSON formatter: save/parse its exact output, never send it through a model to reconstruct counts, lists or a wrapper object. Pass MTR-1's computed reconciliation unchanged. Gated checks remain `pending-rulings`; use explicit not-run/blocked evidence metadata where checks have not run, not fabricated success. After the citation check, re-render with its actual receipt and retain the prior artifact as history.
+18. Assemble the completed semantic records, then serialize the artifact from the full context below with `instruments/serialize-artifact.jq` — the template's body as jq: same keys, same order, values passed through. `render_template` returns its output to the model and has no file sink, so it cannot produce the artifact bytes; render it once for the shape's contract only. The check is key order against the `.j2` plus `jq ==` per value against the rendered shape (an `artifact-compare` receipt); never send the artifact through a model to reconstruct counts, lists or a wrapper object. Pass MTR-1's computed reconciliation unchanged. Gated checks remain `pending-rulings`; use explicit not-run/blocked evidence metadata where checks have not run, not fabricated success. After the citation check, re-serialize with its actual receipt and retain the prior artifact as history.
 19. Run `bash kask/scripts/check-mcp-review-citations.sh <artifact.json>` — every citation must exist (file present, line in range, excerpt within ±3 lines). Fix and re-run at most twice; a third failure stops the run with the failures listed.
 20. Run the routing invariant in `lisp_eval`: `(and (= unclassified 0) (= ungated 0) (= bad_region 0) (>= operator_roles 1) (>= other_roles 1))` over the run's step classification, and verify citation-check exit and actuator-routing completeness via `MTR-2`: `(and (= citation_script_exit 0) (= unrouted_findings 0) (= unanchored_tools 0))`. Both envs are produced by `jq` over the run's saved records, never typed — the routing counts from the run's `steps.json` (one row per step: `step`, `type` D|P, `gate`, `role` operator|critic|instrument|agent|curator):
     ```jq
@@ -145,7 +145,7 @@ One pass per tool per cycle. For each tool:
 ### Phase G — Fix, pin, and route [D + P]
 
 22. Close the loop on every finding: an in-scope code defect is FIXED in the same pass — the change, its pinning test, and the touched crates' suites green — before the run reports. A finding left unfixed is an unfinished review. Only findings that change a tool's functional contract (behavior a consumer depends on) go to the operator as decisions, and platform-level redesigns go to kanban/algedonic with the evidence.
-23. Verify live where possible: after a fix that changes wire behavior, re-probe the live tool (server rebuild+restart when the running binary predates the fix) and record the before/after. Where live verification is gated on a restart, name the exact remaining step and mark the receipt pending-restart — never claim it.
+23. Verify live where possible: after a fix that changes wire behavior, re-probe the live tool (server rebuild+restart when the running binary predates the fix) and record the before/after. "Predates the fix" is measured, never copied from a handoff note: before writing a pending-restart receipt, hash the running process's executable (`sha256sum /proc/<pid>/exe`), read its start time (`ps -o lstart= -p <pid>`), and compare both with the fix's build (the built binary's hash and mtime); record all three in the artifact's reconciliation. Where live verification is gated on a restart, name the exact remaining step and mark the receipt pending-restart — never claim it.
 24. Report the verdict, the functional outcome, the fixes landed with their test receipts, the acceptance-check execution, the batched ask (when pending), and learnings.
 
 ## D/P labelling
@@ -219,7 +219,7 @@ Render `mcp-tool-review/findings-artifact` for the JSON shape. Load-bearing fiel
 
 | Template | Purpose |
 |---|---|
-| `findings-artifact.j2` | The findings artifact contract: renders the JSON skeleton (reconciliation, per-tool records, findings with citations, gated-pending list, citation-check receipt, ask-first record) that the review fills and the citation script verifies. |
+| `findings-artifact.j2` | The findings artifact contract: the JSON shape (reconciliation, per-tool records, findings with citations, gated-pending list, citation-check receipt, ask-first record). `render_template` supplies the shape's contract only — the artifact bytes are the same context serialized by `instruments/serialize-artifact.jq`, which the citation script verifies. |
 
 Copyable `mcp-tool-review/findings-artifact` context (JSON-encode as the outer context string; replace these initial/not-run values with actual records and receipts):
 ```json
