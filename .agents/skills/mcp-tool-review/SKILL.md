@@ -35,6 +35,8 @@ Ruled (verify with `onto_anchor` → tier `derived`, or a `domain_supplement` pr
 
 Unruled anchors discovered during a server sweep must be surfaced in a batched ask (NEVER assign a private definition while pending — gate the checks that rely on them and mark them `pending-rulings` in the artifact).
 
+Core-rung decision rule (the anchor axis; the scenarios run's Axis B): for a string left on the core rung, ask whether the authority that would define it is held in the corpus. Held in full text → propose a derived entry or alias in the source's words; not held → leave it core and record the ruling path; author names are the authority field of ruled entries, never concepts (the scenarios close cycle settled six pending strings in one cycle with this rule and unblocked four reference-string defects — SC-21).
+
 Fidelity labels: **functional** = check WHAT the model evaluates (purpose, outcomes); **technical** = check HOW the model works (mechanism ported faithfully); **both** = both check families. Labels are operator decisions (ask-first, batched). Recommended starting labels: `both` for the scenario-planning, superforecasting, and Brier groups; `technical` for the Bayesian-network composition group; `functional` for `scenario_assess`. When the operator is unavailable, proceed on the stated recommendation and flag every default — never decide silently, and never run checks written for a recommendation the operator has flipped.
 
 Utility tools (`scenario_status` and the `*_status` / `ping` family) have no published reference model; proposed anchor class = platform observability convention (the review checks cross-server consistency, not fidelity to a published model) — operator decision point.
