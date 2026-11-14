@@ -2402,7 +2402,22 @@ mod tests {
                 for prefix in &prefixes {
                     let mut rest = prod_content;
                     while let Some(idx) = rest.find(prefix) {
+                        // Word boundary: a prefix must not match inside a
+                        // longer identifier. `model_not_configured("…")` in
+                        // hkask-mcp-curator tripped the gate as a phantom env
+                        // var named after the error message (observed
+                        // 2026-11-13) — the character before a real read
+                        // (`.` `(` `:` or whitespace) is never an identifier
+                        // character.
+                        let preceded_by_ident = idx > 0
+                            && rest[..idx]
+                                .chars()
+                                .next_back()
+                                .is_some_and(|c| c.is_alphanumeric() || c == '_');
                         rest = &rest[idx + prefix.len()..];
+                        if preceded_by_ident {
+                            continue;
+                        }
                         if let Some(end) = rest.find('"') {
                             let var_name = &rest[..end];
                             if var_name != "HOME" && var_name != "PATH" {
