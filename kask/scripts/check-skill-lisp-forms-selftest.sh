@@ -10,7 +10,10 @@
 #   5. rejects string=/numeric comparison of one union-typed symbol without guards;
 #   6. accepts the guarded stringp/numberp union comparison;
 #   7. fails visibly on a missing corpus directory;
-#   8. fails non-vacuously when a lisp_eval skill exposes no candidate.
+#   8. fails non-vacuously when a lisp_eval skill exposes no candidate;
+#   9. accepts a clean SKILL.md whose lisp-receipts fence matches its form;
+#  10. rejects a receipt whose expected value disagrees with the form;
+#  11. rejects a receipts fence that names no preceding form.
 
 set -euo pipefail
 
@@ -118,6 +121,64 @@ reset_fixture
 printf '# Demo\n\nCall lisp_eval with a form supplied elsewhere.\n' \
     > "$fixture/skills/demo/SKILL.md"
 expect_fail "lisp_eval without candidate fails non-vacuously" 'exposes no parseable Lisp candidate' "$fixture/vacuous.txt"
+
+# 9. A clean lisp-receipts fence: the walker evaluates every receipt against
+#    the form candidate above the fence, accepts an exact match, and the fence
+#    itself contributes no Lisp candidates (the appended form alone is the
+#    5 -> 6 change; adding the fence keeps the count at 6).
+reset_fixture
+cat >> "$fixture/skills/demo/SKILL.md" <<'EOF'
+
+Gate:
+
+- form: `(if (>= n 3) (list (list "verdict" "ok")) (list (list "verdict" "low")))`
+- env: `{ "n": <int> }`
+EOF
+if ! run_check > "$fixture/receipts.txt" 2>&1; then
+    echo "SELFTEST FAIL: form-only fixture was rejected"; cat "$fixture/receipts.txt"; exit 1
+fi
+grep -q 'parsed 6 Lisp candidates; 0 defects' "$fixture/receipts.txt" || {
+    echo "SELFTEST FAIL: form-only fixture count drifted"; cat "$fixture/receipts.txt"; exit 1; }
+cat >> "$fixture/skills/demo/SKILL.md" <<'EOF'
+
+  ```lisp-receipts
+  {"gate": "DEMO-1", "case": "at-floor", "env": {"n": 3}, "expected": {"verdict": "ok"}}
+  {"gate": "DEMO-1", "case": "below-floor", "env": {"n": 2}, "expected": {"verdict": "low"}}
+  ```
+EOF
+if ! run_check > "$fixture/receipts.txt" 2>&1; then
+    echo "SELFTEST FAIL: clean receipts fixture was rejected"; cat "$fixture/receipts.txt"; exit 1
+fi
+grep -q 'parsed 6 Lisp candidates; 0 defects' "$fixture/receipts.txt" || {
+    echo "SELFTEST FAIL: the receipts fence changed the candidate count"; cat "$fixture/receipts.txt"; exit 1; }
+echo "OK (clean receipts fence evaluates green, adds no candidates)"
+
+# 10. A receipt whose expected value disagrees with the form is a defect.
+reset_fixture
+cat >> "$fixture/skills/demo/SKILL.md" <<'EOF'
+
+Gate:
+
+- form: `(if (>= n 3) (list (list "verdict" "ok")) (list (list "verdict" "low")))`
+
+  ```lisp-receipts
+  {"gate": "DEMO-1", "case": "at-floor", "env": {"n": 3}, "expected": {"verdict": "no"}}
+  ```
+EOF
+expect_fail "receipt mismatch fails" 'receipt DEMO-1 / at-floor: expected' "$fixture/receipt.txt"
+
+# 11. A receipts fence with no form above it is a defect, not a skip.
+reset_fixture
+cat > "$fixture/skills/demo/SKILL.md" <<'EOF'
+# Demo
+
+  ```lisp-receipts
+  {"gate": "DEMO-1", "case": "orphan", "env": {}, "expected": null}
+  ```
+
+Call `lisp_eval` with `(and ok (= count 1))` — the form sits BELOW the fence.
+EOF
+expect_fail "orphan receipts fence fails" 'no form precedes its lisp-receipts block' "$fixture/orphan.txt"
 
 # Pin the production wrapper too: parsing must precede behavioral tests, either
 # failure must reach CI, and a stale filter must not turn zero tests into green.

@@ -211,6 +211,28 @@ fn scan_corpus(skills_dir: &Path, templates_dir: &Path) -> Result<ScanStats, Str
             });
         }
 
+        // Receipts are a SKILL.md mechanism: every `lisp-receipts` fence is
+        // evaluated against the form candidate it was authored under. The
+        // templates corpus carries no receipts, and a green corpus reports
+        // nothing here, so the scan's summary line is unchanged.
+        if is_skill {
+            let (receipts, malformed) = extract_receipts(&content);
+            for (line, message) in malformed {
+                stats.findings.push(Finding {
+                    path: path.clone(),
+                    line,
+                    message: format!("malformed receipt: {message}"),
+                });
+            }
+            evaluate_receipts(&candidates, &receipts, &mut |line, message| {
+                stats.findings.push(Finding {
+                    path: path.clone(),
+                    line,
+                    message,
+                });
+            });
+        }
+
         for candidate in candidates {
             stats.candidates += 1;
             match parse(&candidate.source) {
@@ -441,6 +463,145 @@ fn push_candidate(
 fn looks_like_lisp(candidate: &str) -> bool {
     let trimmed = candidate.trim_start();
     trimmed.starts_with('(') || trimmed.starts_with("'(")
+}
+
+/// One receipt from a `lisp-receipts` fence in a SKILL.md: a full env and the
+/// exact expected result, authored beside the form it pins. The gate and
+/// case name identify the receipt in defect messages; the fence's position
+/// associates it with the nearest form candidate above the fence.
+#[derive(Debug)]
+struct Receipt {
+    line: usize,
+    fence_line: usize,
+    gate: String,
+    case: String,
+    env: serde_json::Value,
+    expected: serde_json::Value,
+}
+
+/// Extract every `lisp-receipts` fence from a SKILL.md body. A fence is a
+/// fenced block whose info string is exactly `lisp-receipts`; every
+/// non-blank line inside it is one receipt, a JSON object carrying `gate`
+/// (string), `case` (string), `env` (object) and `expected` (the exact
+/// result). Malformed lines are returned with their line numbers instead of
+/// being skipped: a receipt that cannot be parsed cannot check anything.
+fn extract_receipts(content: &str) -> (Vec<Receipt>, Vec<(usize, String)>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut receipts = Vec::new();
+    let mut malformed = Vec::new();
+    let mut index = 0usize;
+    while index < lines.len() {
+        let in_receipts_fence = lines[index]
+            .trim_start()
+            .strip_prefix("```")
+            .is_some_and(|info| info.trim() == "lisp-receipts");
+        let fence_line = index + 1;
+        index += 1;
+        if !in_receipts_fence {
+            continue;
+        }
+        while index < lines.len() && !lines[index].trim_start().starts_with("```") {
+            let line_number = index + 1;
+            let line = lines[index].trim();
+            if !line.is_empty() {
+                match parse_receipt_line(line) {
+                    Ok((gate, case, env, expected)) => receipts.push(Receipt {
+                        line: line_number,
+                        fence_line,
+                        gate,
+                        case,
+                        env,
+                        expected,
+                    }),
+                    Err(message) => malformed.push((line_number, message)),
+                }
+            }
+            index += 1;
+        }
+        // `index` now names the closing fence (or the end of input); the
+        // outer loop's increment moves past it.
+        index += 1;
+    }
+    (receipts, malformed)
+}
+
+/// Parse one receipt line. The field set is fixed and minimal on purpose:
+/// `gate`, `case`, `env` and `expected` — anything a receipt needs to say,
+/// it says through these four, so the format cannot grow silent optional
+/// structure the checker interprets differently from a reader.
+fn parse_receipt_line(
+    line: &str,
+) -> Result<(String, String, serde_json::Value, serde_json::Value), String> {
+    let value: serde_json::Value =
+        serde_json::from_str(line).map_err(|error| format!("not valid JSON: {error}"))?;
+    let object = value.as_object().ok_or("a receipt must be a JSON object")?;
+    let string_field = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .ok_or(format!("missing string field \"{key}\""))
+    };
+    let gate = string_field("gate")?;
+    let case = string_field("case")?;
+    let env = object.get("env").cloned().ok_or("missing field \"env\"")?;
+    if !env.is_object() {
+        return Err("field \"env\" must be a JSON object".into());
+    }
+    let expected = object
+        .get("expected")
+        .cloned()
+        .ok_or("missing field \"expected\"")?;
+    Ok((gate, case, env, expected))
+}
+
+/// Evaluate every receipt against its associated form and report each
+/// failure through `report`. The associated form is the form candidate that
+/// starts on the last line before the receipt's fence: the receipt pins the
+/// form it was authored under, and a move of the fence re-associates it
+/// visibly (a mismatch, not a silent skip).
+fn evaluate_receipts(
+    candidates: &[Candidate],
+    receipts: &[Receipt],
+    report: &mut impl FnMut(usize, String),
+) {
+    for receipt in receipts {
+        let form = candidates
+            .iter()
+            .filter(|candidate| candidate.line < receipt.fence_line)
+            .max_by_key(|candidate| candidate.line);
+        let Some(form) = form else {
+            report(
+                receipt.line,
+                format!(
+                    "receipt {} / {}: no form precedes its lisp-receipts block",
+                    receipt.gate, receipt.case
+                ),
+            );
+            continue;
+        };
+        match eval_sandboxed(&form.source, &receipt.env) {
+            Err(error) => report(
+                receipt.line,
+                format!(
+                    "receipt {} / {}: evaluation failed: {error}",
+                    receipt.gate, receipt.case
+                ),
+            ),
+            Ok(actual) if actual != receipt.expected => report(
+                receipt.line,
+                format!(
+                    "receipt {} / {}: expected {}, got {}",
+                    receipt.gate,
+                    receipt.case,
+                    serde_json::to_string(&receipt.expected)
+                        .unwrap_or_else(|_| receipt.expected.to_string()),
+                    serde_json::to_string(&actual).unwrap_or_else(|_| actual.to_string()),
+                ),
+            ),
+            Ok(_) => {}
+        }
+    }
 }
 
 fn lint_form(form: &LispValue, report: &mut impl FnMut(String)) {
@@ -6156,5 +6317,219 @@ form: "(= (+ a b) 3)"
             }
             outcome => panic!("expected a read failure for a missing form file, got {outcome:?}"),
         }
+    }
+
+    /// The receipts walker's fixture body: one pinned form followed by its
+    /// `lisp-receipts` fence, the shape every SKILL.md receipts block uses.
+    fn receipts_fixture() -> String {
+        [
+            "# Demo",
+            "",
+            "Gate (the checker evaluates the receipts beside it):",
+            "",
+            "- form: `(if (>= n 3) (list (list \"verdict\" \"ok\")) (list (list \"verdict\" \"low\")))`",
+            "- env: `{ \"n\": <int> }`",
+            "",
+            "  ```lisp-receipts",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"at-floor\", \"env\": {\"n\": 3}, \"expected\": {\"verdict\": \"ok\"}}",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"below-floor\", \"env\": {\"n\": 2}, \"expected\": {\"verdict\": \"low\"}}",
+            "  ```",
+            "",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn receipts_extract_gate_case_env_and_expected() {
+        let (receipts, malformed) = extract_receipts(&receipts_fixture());
+        assert!(
+            malformed.is_empty(),
+            "unexpected malformed receipts: {malformed:?}"
+        );
+        assert_eq!(receipts.len(), 2);
+        assert_eq!(receipts[0].gate, "DEMO-1");
+        assert_eq!(receipts[0].case, "at-floor");
+        assert_eq!(receipts[0].env, json!({"n": 3}));
+        assert_eq!(receipts[0].expected, json!({"verdict": "ok"}));
+        // The fence's own line, so a defect message names the receipt's line.
+        assert_eq!(receipts[0].fence_line, 8);
+        assert_eq!(receipts[0].line, 9);
+        assert_eq!(receipts[1].line, 10);
+    }
+
+    #[test]
+    fn receipts_flag_malformed_lines_with_their_line_numbers() {
+        let body = [
+            "- form: `(>= n 3)`",
+            "",
+            "  ```lisp-receipts",
+            "  not json at all",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"x\", \"env\": 3, \"expected\": null}",
+            "  {\"case\": \"x\", \"env\": {}, \"expected\": null}",
+            "  {\"gate\": \"DEMO-1\", \"env\": {}, \"expected\": null}",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"x\", \"env\": {}}",
+            "  ```",
+        ]
+        .join("\n");
+        let (receipts, malformed) = extract_receipts(&body);
+        assert!(receipts.is_empty(), "no receipt should parse: {receipts:?}");
+        assert_eq!(
+            malformed.len(),
+            5,
+            "every malformed line is reported: {malformed:?}"
+        );
+        for (line, _message) in &malformed {
+            assert!(
+                *line >= 4 && *line <= 8,
+                "line {line} must name the offending receipt"
+            );
+        }
+        assert!(
+            malformed[0].1.contains("not valid JSON"),
+            "{}",
+            malformed[0].1
+        );
+        assert!(malformed[1].1.contains("env"), "{}", malformed[1].1);
+        assert!(malformed[2].1.contains("gate"), "{}", malformed[2].1);
+        assert!(malformed[3].1.contains("case"), "{}", malformed[3].1);
+        assert!(malformed[4].1.contains("expected"), "{}", malformed[4].1);
+    }
+
+    #[test]
+    fn receipts_evaluate_against_the_nearest_preceding_form() {
+        let content = receipts_fixture();
+        let candidates = extract_candidates(&content);
+        let (receipts, malformed) = extract_receipts(&content);
+        assert!(malformed.is_empty());
+
+        // Clean: both receipts match the authored form exactly.
+        let mut findings: Vec<(usize, String)> = Vec::new();
+        evaluate_receipts(&candidates, &receipts, &mut |line, message| {
+            findings.push((line, message))
+        });
+        assert!(
+            findings.is_empty(),
+            "clean receipts report nothing: {findings:?}"
+        );
+
+        // A SKILL.md-only edit to the form's vocabulary — the floor value and
+        // the verdict word — must break the receipts, not the checker.
+        let mutated = content.replacen(
+            "(if (>= n 3) (list (list \"verdict\" \"ok\")) (list (list \"verdict\" \"low\")))",
+            "(if (>= n 2) (list (list \"verdict\" \"fine\")) (list (list \"verdict\" \"low\")))",
+            1,
+        );
+        let mutated_candidates = extract_candidates(&mutated);
+        let mut findings: Vec<(usize, String)> = Vec::new();
+        evaluate_receipts(&mutated_candidates, &receipts, &mut |line, message| {
+            findings.push((line, message))
+        });
+        assert_eq!(
+            findings.len(),
+            2,
+            "both receipts must disagree with the mutant"
+        );
+        assert!(
+            findings[0].1.contains("DEMO-1 / at-floor"),
+            "{}",
+            findings[0].1
+        );
+        assert!(
+            findings[0].1.contains("got {\"verdict\":\"fine\"}"),
+            "{}",
+            findings[0].1
+        );
+        assert!(
+            findings[1].1.contains("DEMO-1 / below-floor"),
+            "{}",
+            findings[1].1
+        );
+    }
+
+    #[test]
+    fn receipts_report_evaluation_failures_and_missing_forms() {
+        // An env that binds nothing the form names fails visibly, the same
+        // as an unbound symbol at use time.
+        let unbound = [
+            "- form: `(>= n 3)`",
+            "",
+            "  ```lisp-receipts",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"unbound\", \"env\": {\"m\": 1}, \"expected\": true}",
+            "  ```",
+        ]
+        .join("\n");
+        let candidates = extract_candidates(&unbound);
+        let (receipts, malformed) = extract_receipts(&unbound);
+        assert!(malformed.is_empty());
+        let mut findings: Vec<(usize, String)> = Vec::new();
+        evaluate_receipts(&candidates, &receipts, &mut |line, message| {
+            findings.push((line, message))
+        });
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].1.contains("evaluation failed"),
+            "{}",
+            findings[0].1
+        );
+
+        // A receipts fence with no form above it is a defect, not a skip.
+        let orphan = [
+            "  ```lisp-receipts",
+            "  {\"gate\": \"DEMO-1\", \"case\": \"orphan\", \"env\": {}, \"expected\": null}",
+            "  ```",
+        ]
+        .join("\n");
+        let candidates = extract_candidates(&orphan);
+        let (receipts, malformed) = extract_receipts(&orphan);
+        assert!(malformed.is_empty());
+        let mut findings: Vec<(usize, String)> = Vec::new();
+        evaluate_receipts(&candidates, &receipts, &mut |line, message| {
+            findings.push((line, message))
+        });
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0].1.contains("no form precedes"),
+            "{}",
+            findings[0].1
+        );
+    }
+
+    /// The wiring itself: a corpus scan over a skill whose receipts match is
+    /// clean, and the same corpus with one receipt's expected flipped fails
+    /// with file:line. This is the seam the deciding criterion runs through —
+    /// if the scan stopped evaluating receipts, a broken form would pass.
+    #[test]
+    fn receipts_are_evaluated_by_the_corpus_scan() {
+        let root = std::env::temp_dir().join(format!("hkask-lisp-receipts-{}", std::process::id()));
+        let skills = root.join("skills");
+        let templates = root.join("templates");
+        let demo = skills.join("demo");
+        fs::create_dir_all(&demo).expect("fixture skill dir");
+        fs::create_dir_all(&templates).expect("fixture templates dir");
+        fs::write(templates.join("demo.j2"), "{# clean #}\n").expect("fixture template");
+        let clean = receipts_fixture();
+        fs::write(demo.join("SKILL.md"), &clean).expect("fixture skill");
+
+        let stats = scan_corpus(&skills, &templates).expect("scan fixture corpus");
+        assert!(stats.findings.is_empty(), "clean receipts: {stats:#?}");
+
+        let broken = clean.replacen(
+            "\"expected\": {\"verdict\": \"ok\"}",
+            "\"expected\": {\"verdict\": \"no\"}",
+            1,
+        );
+        fs::write(demo.join("SKILL.md"), &broken).expect("overwrite fixture skill");
+        let stats = scan_corpus(&skills, &templates).expect("scan mutated fixture corpus");
+        assert_eq!(
+            stats.findings.len(),
+            1,
+            "one receipt defect expected: {stats:#?}"
+        );
+        assert_eq!(
+            stats.findings[0].line, 9,
+            "the defect names the receipt's line"
+        );
+        assert!(stats.findings[0].message.contains("DEMO-1 / at-floor"));
+        fs::remove_dir_all(&root).ok();
     }
 }
