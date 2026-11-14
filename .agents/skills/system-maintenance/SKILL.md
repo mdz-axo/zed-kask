@@ -111,6 +111,8 @@ After step 8, check in `lisp_eval` (`SYM-1`) over measured bytes. Capture them w
 
 - **Settings can read normal while the CPU is clamped** — from 2026-11-10 14:43 to 2026-11-11 10:33 every core ran at about 607 MHz under load (policy maximum 5158 MHz) with governor, power profile and temperature all normal, and the health check said "healthy". The check now loads one core for a second and fails below 25% of the allowed frequency (added 2026-11-11). Restarts did not clear the clamp; a full power-off did.
 
+- **Piped output hides snap progress bars** — the update script's `exec > >(tee -a …)` pipe swallows snap's progress rendering, so a multi-hundred-MB refresh prints minutes of silence and looks hung; an operator killed a healthy run over it on 2026-11-14. The snap section now prints a pointer to `snap changes` (added same day, scripts commit c4c1711). Two facts around it: snapd finishes a spawned change even when the client terminal dies — probe `snap changes` before assuming a hang or re-running; and never edit `maintenance-update.sh` mid-run, because bash reads scripts incrementally and an in-place edit can corrupt the executing run.
+
 ## Regression case
 
 - The convergence form `SYM-1` (`scientific_gate_sym_1_` in `check-skill-lisp-forms.sh`, over the authored form): 5 GB freed against a 4.5 GB ledger with exit 0 → `done`, unexplained 0.5; exit 1 with nothing freed → `reenter-triage`; 4 GB freed against an empty ledger on the third pass → `stop-and-report`, on the first pass → `reenter-triage`; a textual exit → `not_measured`.
