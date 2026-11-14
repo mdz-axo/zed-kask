@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-10-30
+last_updated: 2026-11-13
 version: "0.41.0"
 status: "Active"
 domain: "Composition"
@@ -91,7 +91,7 @@ is not a successful-tool-call probe: a later call can still fail.
 `server/tool` names. For example (illustrative; not installed automatically):
 
 ```json
-{"kask":{"mcp":{"delegated_tools":{"kata-kanban":["research/rss_search"]}}}}
+{"kask":{"mcp":{"delegated_tools":{"kata-kanban":["research/web_search"]}}}}
 ```
 
 The parent injects only that child's opaque `HKASK_TOOL_GRANT` token. The IPC
@@ -105,7 +105,7 @@ capabilities, not PID-bound credentials or OS isolation against arbitrary same-U
 processes. Grant values and raw request parse failures are not logged.
 
 Worktree creation is a separate host effect selected explicitly in this map:
-`"kata-kanban": ["host/create_worktree_thread", "research/rss_search"]`.
+`"kata-kanban": ["host/create_worktree_thread", "research/web_search"]`.
 The child must also send its agent-card tool narrowing. The host intersects it
 with the grant, bounds the spawn queue to 32 requests, and rechecks revocation
 and disconnect before dequeue admission (`kask_bridge/src/inference_ipc_server.rs`,

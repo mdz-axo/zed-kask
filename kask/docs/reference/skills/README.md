@@ -1,7 +1,7 @@
 ---
 title: "Skill Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-10-30
+last_updated: 2026-11-13
 version: "0.45.0"
 status: "Active"
 domain: "Core"
@@ -43,7 +43,7 @@ mds_categories: [domain, composition]
 >
 > **Layout:** A skill is a directory under `.agents/skills/<name>/` (repo root, not under `kask/`)
 > containing a `SKILL.md` file with YAML frontmatter (`name`, `description`, and optional metadata)
-48:> plus a markdown body of process instructions. **57 skills** are authored here and available in every zed-kask install. **212 Jinja2 templates across 54
+48:> plus a markdown body of process instructions. **58 skills** are authored here and available in every zed-kask install. **215 Jinja2 templates across 53
 > template namespaces** remain under `kask/registry/templates/` for use by `render_template`; these
 > are companion resources, not the source of truth for skill execution.
 
@@ -61,12 +61,12 @@ carrier of the loop itself.
 
 ---
 
-## Registry counts (re-verified 2026-10-30)
+## Registry counts (re-verified 2026-11-13)
 
 | Surface | Count | Notes |
 |---------|-------|-------|
-| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **57** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
-| Template namespaces (`kask/registry/templates/*/`) | **54** (**212** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
+| `SKILL.md` directories (`.agents/skills/*/`, repo root) | **58** | filesystem count: `find .agents/skills -mindepth 2 -maxdepth 2 -name SKILL.md`. |
+| Template namespaces (`kask/registry/templates/*/`) | **53** (**215** `.j2` templates) | Companion Jinja2 resources for `render_template`; counts come directly from the current tree. |
 
 **The SKILL.md is the source of truth.** A skill is its `SKILL.md`. Template crates are
 read-only resources the skill body may reference via `render_template`.
@@ -80,9 +80,9 @@ annual. The embedded seed payload equals the authored tree (pinned in
 
 ---
 
-## Skills (57)
+## Skills (58)
 
-### Capabilities you invoke (32)
+### Capabilities you invoke (33)
 
 The bench instruments — what a zed-kask user (the principal investigator) invokes for their research, coding, and creative work.
 
@@ -115,6 +115,7 @@ The bench instruments — what a zed-kask user (the principal investigator) invo
 | `structured-extraction` | Extract structured data from unstructured text |
 | `grounding-verify` | Verify factual claims in text against source data: extract claims, assign provenance, scan narrative, compute fact_score |
 | `build-corpus-pipeline` | 10-stage corpus pipeline: convert → chunk → tag → embed → query → build_prompts → ingest_qa → assemble_dataset |
+| `direct-model-edit` | Direct weight-space model editing: check a run against a named vendor-card row, route blocker vs capability gap, localize a candidate direction by contrast, test it by intervention (random-direction control, strength series), edit under a surface budget, and attribute the measured change from paired answers (anchored on MIT CSAIL's "Sparks of Weight-Space Programming", 2026-11-02; added 2026-11-06) |
 
 #### Working with the agent
 

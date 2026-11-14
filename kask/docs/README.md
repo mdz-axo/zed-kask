@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-11-01
-version: "2.11.0"
+last_updated: 2026-11-13
+version: "2.11.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,13 +10,13 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # zed-kask Documentation
 
-> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 8 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs`).
+> **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces; 10 managed MCP servers are launched as child processes over stdio by Zed's `context_server` host (`kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 **Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) describes the composition root and current crate inventory. The authoritative integration surface is [`DIVERGENCE.md`](../../DIVERGENCE.md), which lists current and retired numbered seams (retired numbers are never reused).
 
 **Pre-collapse hashes:** commit hashes cited in this corpus predate the 2026-10-27 history collapse (see [`DIVERGENCE.md`](../../DIVERGENCE.md), "History collapse and layered reconstruction") and reference erased pre-collapse history; they do not resolve in this repository. The seam register carries the durable record.
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 17 retained artifacts across 9 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference; `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) lists 16 retained artifacts across 8 cross-cutting sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight per-crate how-to documents were folded into their set references (each reference gained a Procedures section) and the hkask-tool-port explanation was folded into its reference (that set was later deleted with its crate on 2026-11-07, commit `9b6b648a20`); `diataxis/hkask-mcp-server/tutorial.md` is the one retained tutorial.
 
 **Corpus size (measured 2026-11-13):** 82 Markdown documents, one live YAML inventory and one JSON audit record, 84 files total under `find kask/docs -type f | wc -l` — the recorded count for the §3 condensation discipline, checked voluntarily with `kask/scripts/check-docs-count-gate.sh` (advisory agent tool; unwired from push/CI enforcement by operator mandate 2026-10-31 — nothing blocks a push or fails CI on this number) — under the formal **fewer-than-85** cap and the **75-file working target** (cap and target history: operator rulings 2026-09-30 and 2026-10-07, [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) §3; the target is condensation direction, not a gate). `principle-constraints.yaml` is a live governance inventory consumed by `kask/scripts/check-principle-constraints.sh`, not a deletion candidate.
 
@@ -43,7 +43,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — four sovereignty principles. |
 | [`core/magnifica-humanitas.md`](architecture/core/magnifica-humanitas.md) | Magnifica Humanitas — the values charter grounding P1–P12 in human dignity (source: Leo XIV, 2026). |
 | [`core/co-research-environment.md`](architecture/core/co-research-environment.md) | The Co-Research Environment — the thesis charter: what zed-kask is (identity, anatomy, lineage, collaboration test); completes the charter triad with the Magna Carta (liberties) and Magnifica Humanitas (values). |
-| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 17 library/composition crates, and 9 MCP servers. |
+| [`core/MDS.md`](architecture/core/MDS.md) | Minimal Domain Specification — five-category taxonomy, 18 library/composition crates, and 10 MCP servers. |
 | [`DOCUMENTATION_STANDARDS.md`](architecture/DOCUMENTATION_STANDARDS.md) | Metadata, lifecycle, Mermaid alignment, citation, and writing standards, including operator-retained Proposed plans. |
 
 ## Reference
@@ -53,7 +53,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/testing-protocol.md`](reference/testing-protocol.md) | User expectation contracts, test-layer assignment, bounded proofs, and test-evidence validation. |
 | [`reference/verification-ladder.md`](reference/verification-ladder.md) | The five verification rungs (presence, liveness, truth, grounding, binding), their zed-kask homes and clocks, the provenance lattice, and the open rung gaps. |
 | [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation tracing, persisted records, and actual MCP outcome paths. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 8 built-in servers, 241 registered tools fleet-wide (reconciled 2026-11-11 against the `tool_surface_pin!` tests), and the fleet tool surface. |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 10 built-in servers, 236 registered tools fleet-wide (reconciled 2026-11-13 against the `tool_surface_pin!` tests), and the fleet tool surface. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather → process → output pipeline (25 tools). |
 | [`reference/mcp-servers/curator.md`](reference/mcp-servers/curator.md) | Curator server — sovereign memory, regulation readback, and the algedonic log (15 tools). |
 | [`reference/mcp-servers/experimentation.md`](reference/mcp-servers/experimentation.md) | Experimentation server — experiment registry for the sharded experimentation program (8 tools). |
@@ -62,7 +62,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`reference/mcp-servers/prediction-markets.md`](reference/mcp-servers/prediction-markets.md) | Prediction-markets server — Polymarket/Kalshi calibration and economic data. |
 | [`reference/mcp-servers/research.md`](reference/mcp-servers/research.md) | Research server — web retrieval, evidence scoring, run ledger, and paper identity. |
 | [`reference/mcp-servers/scenarios.md`](reference/mcp-servers/scenarios.md) | Scenarios server — Schwartz/Tetlock pipeline (22 tools; the provider-free forecast loop moved here from the removed companies server, and `scenario_from_markets_set` bridges prediction-market records into event trees). |
-| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 57 skills, 54 template namespaces, and 212 `.j2` resources. |
+| [`reference/skills/README.md`](reference/skills/README.md) | Registry of 58 skills, 53 template namespaces, and 215 `.j2` resources. |
 | [`loop-register.md`](loop-register.md) | Loop audit register — 25 system loops (L24 the experimentation protocol, L25 experimentation-health sensing, added 2026-09-30/10-01) with audit verdicts, three-layer (A/B/C) classifications with per-row sense→report→actuate maps and INV1–INV6 alignment verdicts (pass 3), deferred operator decisions, and the change-log ledger. |
 | [`reference/kask-settings.md`](reference/kask-settings.md) | Kask settings and environment reference. |
 | [`reference/lisp-eval-dialect.md`](reference/lisp-eval-dialect.md) | Sandboxed `lisp_eval` dialect and `form`/`env` contract. |
@@ -74,7 +74,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 | --- | --- |
-| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 83 current `DIAGRAM_ALIGNMENT` records representing 83 unique IDs; 18 records are in the four consolidated diagram files and 65 are inline. |
+| [`DIAGRAMS_INDEX.md`](DIAGRAMS_INDEX.md) | Registry of 74 current `DIAGRAM_ALIGNMENT` records representing 74 unique IDs; 17 records are in the four consolidated diagram files and 57 are inline. |
 | [`diagrams/architecture.md`](diagrams/architecture.md) | Cross-cutting architecture diagrams. |
 | [`diagrams/kanban.md`](diagrams/kanban.md) | Kata-kanban state machines: task status, move controller, and the goal lifecycle (create → progress → human closure → assessment → current recall). |
 | [`diagrams/ui-widgets.md`](diagrams/ui-widgets.md) | Native UI-widget structures. |
@@ -97,7 +97,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 - [x] Six-field metadata plus `mds_categories` is present on every active or operator-retained Proposed document (frontmatter gate green over the full working tree, 2026-10-30 — the four private-inference planning drafts gained their seven-field headers when they landed).
 - [x] Current-state Mermaid alignment and the Proposed conceptual exception satisfy `DOCUMENTATION_STANDARDS.md`; `DIAG-ARCH-EUREKA-001` re-verified in its new home 2026-10-30 against the live loop contract.
 - [x] Internal links target retained documents — this pass swept every row and reference orphaned by the 2026-10-30 stale-docs deletion, its own six deletions, and the 2026-11-01 twelve-file deletion (implemented plans, point-in-time pilots, superseded reference-model studies whose subjects are now reified in the surviving code and docs).
-- [x] Diagram metadata has unique-ID/location registry parity (83 records, tree-verified 2026-10-30).
+- [x] Diagram metadata has unique-ID/location registry parity (74 records, tree-verified 2026-11-13).
 - [x] Edited citations use full repository-relative paths; this pass re-anchored the 12 `@sym` citations rotted by `crates/agent/src/thread.rs` line drift (the 2026-10-30 compaction commits) in `skills-and-composition.md` and `lisp-eval-dialect.md` via `kask/scripts/resolve-citation-anchor.sh`, and the citation, anchor, drift and link gates re-ran green over the committed tree.
 - [x] Document count is 84 in the committed tree (measured 2026-11-13: 82 Markdown plus the live YAML and one JSON audit record), under the fewer-than-85 cap and above the 75-file working target — condensation direction, advisory since the 2026-10-31 unwiring.
 

@@ -55,8 +55,8 @@ Offline Cargo metadata reported 299 workspace members, including **19 libraries 
 
 | Responsibility | Libraries |
 | --- | --- |
-| Contracts and vocabulary | `hkask-types`, `hkask-bridge-ontology`, `hkask-tool-port` |
-| Persistence and memory | `hkask-storage`, `hkask-event-store`, `hkask-memory`, `hkask-keystore` |
+| Contracts and vocabulary | `hkask-types`, `hkask-bridge-ontology`, ~~`hkask-tool-port`~~ (deleted 2026-11-07, commit `9b6b648a20` — `ToolPort` types folded into `hkask-mcp`) |
+| Persistence and memory | `hkask-storage`, ~~`hkask-event-store`~~ (deleted 2026-10-31, commit `b415972518` — impact pathway removed), `hkask-memory`, `hkask-keystore` |
 | Execution infrastructure | `hkask-mcp`, `hkask-mcp-server`, `hkask-inference` (`hkask-services-core` folded into `hkask-mcp-corpus`, 2026-10-13, commit `8fb33f8e73`; current settings reader: `hkask-mcp-corpus/src/settings.rs`) |
 | Computation and capabilities | `hkask-forecast`, `hkask-lisp`, `hkask-condenser` |
 | Regulation and interaction support | `hkask-regulation`, `hkask-steer-core` |
@@ -209,7 +209,7 @@ and are retained in prose form as the historical record):**
 **Evidence:**
 - `crates/agent/src/tools/context_server_registry.rs:988–1046` retries non-timeout errors.
 - `kask/crates/hkask-mcp/src/runtime.rs–1653,1686–1698` distinguishes non-delivery and uncertain delivery.
-- `kask/crates/hkask-tool-port/src/tool_port.rs:15–51` defines retry-safe versus interrupted outcomes.
+- `kask/crates/hkask-tool-port/src/tool_port.rs:15–51` defines retry-safe versus interrupted outcomes. *(Re-anchored 2026-11-13: the `hkask-tool-port` crate was deleted 2026-11-07, commit `9b6b648a20` — the semantics live at `kask/crates/hkask-mcp/src/tool_port.rs:29-80` (`ToolPortError`: `Unavailable` retryable, `Interrupted` deliberately not).)*
 
 **Mechanism/impact:** a server commits a mutation and loses its response; the host may repeat that mutation. Non-timeout protocol/decoding errors can also enter the retry branch.
 

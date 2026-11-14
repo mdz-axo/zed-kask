@@ -3,12 +3,14 @@ title: Template inference settings, private-mode template operations, and decisi
 audience: the operator (PI)
 last_updated: 2026-11-06
 version: 1.0
-status: review and design record — every recommendation here is a proposal filed for the algedonic review; nothing is self-approved and nothing is implemented
+status: "Active"
 domain: kask skills registry / private inference / decision models
 mds_categories: research record
 ---
 
 # Template inference settings, private-mode operations, and decision-model composition (2026-11-06)
+
+**Record status:** review and design record — every recommendation here is a proposal filed for the algedonic review; nothing is self-approved and nothing is implemented.
 
 A gated review over three workstreams: (A) the template registry's settings and
 hygiene census, run through skill-maintenance; (B) whether zed-kask should add

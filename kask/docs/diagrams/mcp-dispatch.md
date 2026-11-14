@@ -79,7 +79,7 @@ sequenceDiagram
     participant Agent as Agent (Thread)
     participant Enabled as Thread::enabled_tools<br/>crates/agent/src/thread.rs
     participant ListTools as list_mcp_tools tool<br/>crates/agent/src/tools/list_mcp_tools_tool.rs
-    participant ToolPort as ToolPort trait<br/>hkask-tool-port/src/tool_port.rs
+    participant ToolPort as ToolPort trait<br/>hkask-mcp/src/tool_port.rs
     participant Runtime as McpRuntime<br/>hkask-mcp/src/runtime.rs
     participant Cap as CallCapManager<br/>hkask-regulation/src/energy.rs
     participant Server as MCP server child<br/>kask/mcp-servers/hkask-mcp-*
@@ -118,8 +118,8 @@ sequenceDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-SEQ-MCP-TOOL-CALL-001
-verified_date: 2026-09-28
-verified_against: crates/agent/src/thread.rs (enabled_tools L5156, count_hidden_mcp_tools L6074); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L89, ToolPortError::EnergyBudgetExceeded L12); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/delegation_grants.rs (grant_for_server L16, worktree_tools L67); kask/crates/kask_bridge/src/inference_ipc_server.rs (create_worktree_thread narrowing L954-961); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials)
+verified_date: 2026-11-13
+verified_against: crates/agent/src/thread.rs (enabled_tools L6309, count_hidden_mcp_tools L7409); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); crates/agent/src/templates/system_prompt.hbs (D44 visibility marker L62-63); kask/crates/hkask-mcp/src/tool_port.rs (ToolPort L120, ToolPortError::EnergyBudgetExceeded L33); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime L1500, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/delegation_grants.rs (grant_for_server L19, worktree_tools L85); kask/crates/kask_bridge/src/inference_ipc_server.rs (CreateWorktreeThread narrowing fail-closed L1009-1023); kask/crates/kask_bridge/src/mcp_servers.rs (BuiltinMcpServer credentials)
 status: VERIFIED
 -->
 

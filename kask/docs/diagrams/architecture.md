@@ -187,10 +187,10 @@ architecture-beta
     service thread(agent)[Thread::enabled_tools<br/>crates/agent/src/thread.rs]
     service list_mcp_tools(agent)[list_mcp_tools tool<br/>crates/agent/src/tools/list_mcp_tools_tool.rs]
 
-    service tool_port(mcp)[ToolPort trait<br/>hkask-tool-port/src/tool_port.rs]
+    service tool_port(mcp)[ToolPort trait<br/>hkask-mcp/src/tool_port.rs]
     service mcp_runtime(mcp)[McpRuntime<br/>hkask-mcp/src/runtime.rs]
     service call_cap(mcp)[CallCapManager<br/>hkask-regulation/src/energy.rs]
-    service servers(mcp)[8 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
+    service servers(mcp)[10 MCP servers<br/>kask/mcp-servers/hkask-mcp-*]
 
     service unwrap(agent)[unwrap_tool_envelope<br/>hkask-types/src/tool_response.rs]
 
@@ -211,8 +211,8 @@ architecture-beta
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-ARCH-SKILL-MCP-LISP-001
-verified_date: 2026-10-28
-verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L841); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L324, raw_initial_title L362, run L374, lisp_worker L418, evaluate_lisp_controlled L487); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L83); crates/agent/src/thread.rs (Thread::enabled_tools L5624, AgentTool::raw_initial_title L7197, Erased::initial_title L7347, Thread::run_turn L3025, Thread::process_tool_result L4326, Thread::owns_pending_message L5407, ThreadEventStream::join_lisp_completions L7448); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_cancellation L2505, eval_sandboxed_with_budget L2515, format_json_output L2473); kask/crates/kask_bridge/src/inference_ipc_server.rs (EOF L827-840, authorization L1093-1124); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs (storage_router L108, corpus_query_routed L115, corpus_query L148, corpus_query_inner L155-243, parse_lisp_query L605-705, LispQueryCancellation L707-723); kask/mcp-servers/hkask-mcp-corpus/src/retrieval_tests.rs (h8_rmcp_request_cancel_and_disconnect_capture L2358-2499, h8_rmcp_post_lisp_cancellation_preserves_inference L2520-2642); kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort L98); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 8 servers); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L131, shared_tool_invoker L158)
+verified_date: 2026-11-13
+verified_against: crates/agent/src/tools/skill_tool.rs (SkillTool L127, run L194, render_skill_envelope L48, with_invoker L162); crates/agent_skills/agent_skills.rs (read_skill_body L858); crates/agent/src/tools/lisp_eval_tool.rs (LispEvalTool L334, raw_initial_title L372, run L384, lisp_worker L428, evaluate_lisp_controlled L497); crates/agent/src/tools/render_template_tool.rs (RenderTemplateTool L104); crates/agent/src/thread.rs (Thread::enabled_tools L6309, AgentTool::raw_initial_title L8084, Erased::initial_title L8234, Thread::run_turn L3453, Thread::process_tool_result L5030, Thread::owns_pending_message L6151, ThreadEventStream::join_lisp_completions L8335); crates/agent/src/tools/list_mcp_tools_tool.rs (ListMcpToolsTool L58, enumerate_tool_listing L119); kask/crates/hkask-lisp/src/hkask_lisp.rs (eval_sandboxed_with_cancellation L2505, eval_sandboxed_with_budget L2515, format_json_output L2473); kask/crates/kask_bridge/src/inference_ipc_server.rs (CreateWorktreeThread grant/narrowing fail-closed L1009-1023); kask/mcp-servers/hkask-mcp-corpus/src/tools/storage.rs (storage_router L99, corpus_query_routed L106, corpus_query L139, corpus_query_inner L146, parse_lisp_query L596, LispQueryCancellation L698); kask/mcp-servers/hkask-mcp-corpus/src/retrieval_tests.rs (h8_rmcp_request_cancel_and_disconnect_capture L2413, h8_rmcp_post_lisp_cancellation_preserves_inference L2575); kask/crates/hkask-mcp/src/tool_port.rs (ToolPort L120); kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime L1500, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallCapManager L131, DEFAULT_RUNAWAY_CALL_CEILING L26); kask/crates/hkask-types/src/tool_response.rs (unwrap_tool_envelope L61); kask/crates/kask_bridge/src/mcp_servers.rs (BUILT_IN_MCP_SERVERS — 10 servers, L49-474); crates/hkask-tool-invoker/src/hkask_tool_invoker.rs (ToolInvoker trait L129, shared_tool_invoker L156)
 status: VERIFIED
 -->
 
@@ -334,18 +334,18 @@ with `permission_denied` at tool time.
 
 ## hKask Tool Port
 
-The `hkask-tool-port` crate holds the dispatch port only — no tokens, no
-authorization check, no information-flow labels (the per-call capability
-gate and the FIDES taint lattice were removed 2026-08-12).
+The `ToolPort` dispatch seam lives in `hkask-mcp/src/tool_port.rs` (folded there
+from the deleted `hkask-tool-port` crate on 2026-11-07, commit `9b6b648a20`) —
+no tokens, no authorization check, no information-flow labels (the per-call
+capability gate and the FIDES taint lattice were removed 2026-08-12).
 `McpRuntime::invoke` meters the call and dispatches it; the only pre-dispatch
-refusal is the runaway-loop breaker. Verified current.
+refusal is the runaway-loop breaker. Verified current 2026-11-13.
 
 ```mermaid
 classDiagram
     class ToolPort {
         <<interface>>
         +invoke(server, tool, args, agent) ToolFuture
-        +get_tool_info(server, tool) ToolFuture~Option~ToolInfo~~
     }
 
     class ToolInfo {
@@ -360,7 +360,7 @@ classDiagram
         +NotFound(NotFound)
         +Unavailable(String)
         +Interrupted(String)
-        +InvocationFailed(String)
+        +InvocationFailed {detail, kind}
         +is_retryable() bool
     }
 
@@ -385,17 +385,17 @@ classDiagram
         CeilingReached
     }
 
-    ToolPort ..> ToolInfo : returns
     ToolPort ..> ToolPortError : returns
     McpRuntime ..|> ToolPort : implements
+    McpRuntime ..> ToolInfo : inherent get_tool_info returns
     McpRuntime ..> CallCapManager : charges via CyberneticsLoop
     CallCapManager ..> CallMeterOutcome : returns
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-CAP-001
-verified_date: 2026-09-28
-verified_against: kask/crates/hkask-tool-port/src/tool_port.rs (ToolPort trait L89-116, ToolInfo L121, ToolPortError variants L8-38, is_retryable L50-51); kask/crates/hkask-tool-port/src/hkask_tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs (McpRuntime, impl ToolPort for McpRuntime, start_server_with_env, stop_server, tool_surface_changes); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
+verified_date: 2026-11-13
+verified_against: kask/crates/hkask-mcp/src/tool_port.rs (ToolPort trait L120 — invoke only; ToolInfo L142; ToolPortError variants L29-78, is_retryable L80); kask/crates/hkask-mcp/src/runtime.rs (impl ToolPort for McpRuntime L1500, inherent get_tool_info L1463); kask/crates/hkask-regulation/src/energy.rs (CallMeterOutcome L30-40, DEFAULT_RUNAWAY_CALL_CEILING L26)
 status: VERIFIED
 -->
 

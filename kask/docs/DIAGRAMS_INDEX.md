@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [architects, developers, agents]
-last_updated: 2026-10-27
+last_updated: 2026-11-13
 version: "2.10.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,9 +10,9 @@ mds_categories: [curation, composition]
 
 # hKask Diagram Index — Mermaid Verification Registry
 
-This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-10-28 the corpus contains **83 active alignment records representing 83 unique IDs**: 18 records in the four consolidated diagram files and 65 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
+This registry is generated from the surviving `DIAGRAM_ALIGNMENT` metadata under `kask/docs/`. As of 2026-11-13 the corpus contains **74 active alignment records representing 74 unique IDs**: 17 records in the four consolidated diagram files and 57 inline records. The 2026-09-28 how-to folds moved eleven inline records from the per-crate how-to documents into their set references' Procedures sections (count unchanged by the folds); the deleted `DIAG-SKILL-CFR` (subject removed with the GSR/CFR skills, commit `5eed0134bf`) reduced the count from 106 to 105.
 
-The corpus contains 82 Mermaid blocks (mechanically counted 2026-10-31: 82 `mermaid` fences, 82 `id: DIAG-` records; the 2026-10-31 impact-pathway retirement removed `DIAG-ES-001` (the hkask-event-store class diagram) with the crate in the same pass — the 2026-10-18→22 removal waves deleted four inline diagrams — `DIAG-CAP-003`, `DIAG-MCPSRV-031`, `DIAG-RF-SWARM-001`, `DIAG-SWARM-031` — without same-pass row deletion, which left the parity gate red on main (92 fences vs 95 rows) until this pass reconciled it; this pass also registers `DIAG-ARCH-EUREKA-001`, the eureka-cycle implementation plan's loop diagram; the 2026-10-27 speaker-identity plan pass registers `DIAG-ARCH-SPEAKER-IDENT-001`, the educt speaker-identity plan's §5 suggest-only identification flow; the two `DIAG-RF-004`/`DIAG-RF-004A` rows for the deleted `reference/mcp-servers/companies.md` were removed with the companies capability; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15, the spreadsheet capability's two — the LogiSheets plan's architecture block and the widget's class diagram — were removed with the capability the same day, and the agentic-scientist integration proposal's three unregistered illustrative fences were removed with the implemented design on 2026-10-16). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
+The corpus contains 75 Mermaid fences and 74 `id: DIAG-` records (mechanically counted 2026-11-13; the 2026-11-07 `hkask-tool-port` deletion removed its three registered diagrams — `DIAG-CAP-004`–`006`, tombstoned below — with the crate and its diataxis page, commit `9b6b648a20`; the one unregistered illustrative fence lives in the dated review record `research/curator-nostr-client-review-2026-11-11.md`; the 2026-10-31 count was 82 fences / 82 records: the 2026-10-31 impact-pathway retirement removed `DIAG-ES-001` (the hkask-event-store class diagram) with the crate in the same pass — the 2026-10-18→22 removal waves deleted four inline diagrams — `DIAG-CAP-003`, `DIAG-MCPSRV-031`, `DIAG-RF-SWARM-001`, `DIAG-SWARM-031` — without same-pass row deletion, which left the parity gate red on main (92 fences vs 95 rows) until this pass reconciled it; this pass also registers `DIAG-ARCH-EUREKA-001`, the eureka-cycle implementation plan's loop diagram; the 2026-10-27 speaker-identity plan pass registers `DIAG-ARCH-SPEAKER-IDENT-001`, the educt speaker-identity plan's §5 suggest-only identification flow; the two `DIAG-RF-004`/`DIAG-RF-004A` rows for the deleted `reference/mcp-servers/companies.md` were removed with the companies capability; the CMP program's eight diagrams and the portfolio widget's one were removed with their programs on 2026-10-15, the spreadsheet capability's two — the LogiSheets plan's architecture block and the widget's class diagram — were removed with the capability the same day, and the agentic-scientist integration proposal's three unregistered illustrative fences were removed with the implemented design on 2026-10-16). `architecture/DOCUMENTATION_STANDARDS.md` §3's own lifecycle diagram is exempt by the self-illustration rule (DOCUMENTATION_STANDARDS §4.2, added 2026-09-30: the standards document's own illustrative diagrams depict the standard's definitions rather than the tree's structure) yet retains its pre-exemption record `DIAG-STD-001` (verified 2026-09-28). The compaction pipeline spec's diagram (landed 2026-09-29) carried no record until this run registered it as `DIAG-ARCH-COMPACTION-001` (2026-10-05) — the 2026-09-30 prose had misattributed the gap to the standards' exempt diagram. On 2026-09-26 the skill learning loop registered as `DIAG-ARCH-LEARNING-LOOP-001` in `diagrams/architecture.md`. The LogiSheets plan's architecture block registered as `DIAG-ARCH-SPREADSHEET-001` on 2026-09-19 (implementation began 2026-09-18, converting the plan to `Active` per `kask/docs/architecture/DOCUMENTATION_STANDARDS.md` §4.2). On 2026-09-30 the three-layer review registered two model diagrams in `research/cybernetic-nervous-system-reference-model.md`: `DIAG-RES-CNS-001` (the abstract tiered feedback structure, verified against the external canonical sources) and `DIAG-RES-CNS-002` (the A/B/C pathway mapping, verified against the layer pathway code sites).
 
 ## Consolidated files
 
@@ -21,8 +21,8 @@ The corpus contains 82 Mermaid blocks (mechanically counted 2026-10-31: 82 `merm
 | [`diagrams/architecture.md`](./diagrams/architecture.md) | 7 |
 | [`diagrams/kanban.md`](./diagrams/kanban.md) | 3 |
 | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2 |
-| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 6 |
-| **Total** | **16** |
+| [`diagrams/ui-widgets.md`](./diagrams/ui-widgets.md) | 5 |
+| **Total** | **17** |
 
 ## Current metadata registry
 
@@ -44,9 +44,9 @@ Every row below is an actual `(id, location)` metadata pair. Dates and statuses 
 | `DIAG-CAP-001` | [`diagrams/architecture.md`](./diagrams/architecture.md) | 2026-09-28 | VERIFIED |
 | `DIAG-CAP-002` | [`diagrams/mcp-dispatch.md`](./diagrams/mcp-dispatch.md) | 2026-09-28 | VERIFIED |
 
-| `DIAG-CAP-004` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CAP-005` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
-| `DIAG-CAP-006` | [`diataxis/hkask-tool-port/reference.md`](./diataxis/hkask-tool-port/reference.md) | 2026-09-28 | VERIFIED |
+| `DIAG-CAP-004` | (deleted 2026-11-07 with the `hkask-tool-port` crate and its diataxis page, commit `9b6b648a20`; git history retains the record) | 2026-09-28 | TOMBSTONED |
+| `DIAG-CAP-005` | (deleted 2026-11-07 with the `hkask-tool-port` crate and its diataxis page, commit `9b6b648a20`; git history retains the record) | 2026-09-28 | TOMBSTONED |
+| `DIAG-CAP-006` | (deleted 2026-11-07 with the `hkask-tool-port` crate and its diataxis page, commit `9b6b648a20`; git history retains the record) | 2026-09-28 | TOMBSTONED |
 
 | `DIAG-COND-002` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |
 | `DIAG-COND-003` | [`diataxis/hkask-condenser/reference.md`](./diataxis/hkask-condenser/reference.md) | 2026-09-28 | VERIFIED |

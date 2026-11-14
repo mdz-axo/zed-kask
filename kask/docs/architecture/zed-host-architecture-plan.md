@@ -1,7 +1,7 @@
 ---
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
-last_updated: 2026-10-28
+last_updated: 2026-11-13
 version: "0.45.2"
 status: "Active"
 domain: "Cross-cutting"
@@ -10,7 +10,7 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
-> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 9 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
+> **One-line frame:** `zed-kask` is a fork of Zed that tracks `upstream` and carries a named, test-pinned divergence surface. Zed-side files are not assumed byte-identical: `DIVERGENCE.md` records the current numbered seams and their retired gaps, while hKask libraries live under `kask/`, the editor owns the process-global Regulation/runtime graph, and 10 MCP servers run as governed child processes. The former Kask panel is deleted; the Agent panel, cross-domain Steer panels, and inline widgets are the live surfaces.
 
 ## Table of contents
 
@@ -75,7 +75,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
-> **Status (re-verified 2026-10-28):** **17 kask crates** under `kask/crates/` (16 `hkask-*` + `kask_bridge`; the live settings reader resides directly in `hkask-mcp-corpus/src/settings.rs`) plus **8 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`kanban_panel`, `media_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-panel-ui`). Eight MCP servers remain on disk (curator may be unloaded via `kask.mcp.overrides`).
+> **Status (re-verified 2026-11-13):** **18 kask crates** under `kask/crates/` (16 `hkask-*` + `dme-harness` + `kask_bridge`; the live settings reader resides directly in `hkask-mcp-corpus/src/settings.rs`) plus **10 MCP server crates** under `kask/mcp-servers/` and zed-side crates (`kanban_panel`, `media_panel`, `hkask-steer`, `hkask-viz-core`, `hkask-*-widget`, `hkask-tool-invoker`, `hkask-panel-ui`, `nostr_panel`). Ten MCP servers remain on disk (curator may be unloaded via `kask.mcp.overrides`).
 
 | Crate                                                                                     | Why irreducible                                                                                                                                                                                                                                                                                                            |
 | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -83,7 +83,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-storage`                                                                           | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). SQLCipher-encrypted SQLite with sqlite-vec virtual tables for vectors (`kask/crates/hkask-storage/src/core/connection.rs:157`, `kask/crates/hkask-storage/src/core/sql/schema.sql:7`). The media `GalleryStore` moved to the media server crate (2026-10-13, commit `c85b1e4896` — `kask/mcp-servers/hkask-mcp-media/src/gallery/store.rs`); hkask-storage keeps the storage layer only.                                                                                                                                                       |
 | `hkask-memory`                                                                            | Unique memory + confidence-based consolidation.                                                                                                                                                                                                                                                                           |
 | `hkask-regulation`                                                                        | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). 21 source files / 13,082 lines (measured 2026-09-28: `find src -name '*.rs' -exec cat {} + | wc -l`).                      |
-| `hkask-tool-port`                                                                        | **`ToolPort` dispatch seam** (`kask/crates/hkask-tool-port/src/tool_port.rs:89`). Not an enforcement point: it holds no tokens, no authorization check, and no taint labels (taint check removed: its inputs were constants).                                                                                                                                                                                                                                                                       |
+| ~~`hkask-tool-port`~~ (deleted 2026-11-07, commit `9b6b648a20`) | Deleted: the deletion test found its `Arc<dyn ToolPort>` claim unexercised and its `get_tool_info` arm dead surface (every caller resolves the inherent method). The `ToolPort` dispatch types folded into `hkask-mcp` — trait at `kask/crates/hkask-mcp/src/tool_port.rs:120`, `impl ToolPort for McpRuntime` at `kask/crates/hkask-mcp/src/runtime.rs:1500`. |
 | `hkask-keystore`                                                                          | **Sovereignty crypto only:** DB passphrase, internal-secret derivation w/ versioning. Uses `oo7` (async Secret Service API) directly for all keychain access (no `SecretsPort` trait; `kask/crates/hkask-keystore/Cargo.toml:14`). `DEFAULT_PASSPHRASE` ("allostery") is the single source of truth for first-run provisioning.                                                        |
 | `hkask-steer-core`                                                                            | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's build.rs-generated `TOOL_NAMES`. Split from `crates/hkask-steer` (2026-09-07) so the prompt-truth logic builds without the zed closure. (Replaces `hkask-ledger`, deleted 2026-09-08 with the local budget system.)                                                                                                                                                           |
 | `hkask-inference`                                                                         | **Kept (revised):** MCP children use its process-local `MediaRouter` for media and its `InferenceIpcClient` for chat, vision, embedding, model-list, and rerank calls into the editor (`kask/crates/hkask-inference/src/hkask_inference.rs:156-369`). It reads provider configuration from the child environment (`kask/crates/hkask-inference/src/config.rs:122-137,160-169,235-246`). The removed D34 `generate_batch` bridge is not part of this surface. |
@@ -91,17 +91,17 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-forecast`, `hkask-bridge-ontology`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers.                                                                                                                                                                                                                                                                              |
 | `hkask-mcp`                                                                               | Child-process lifecycle, MCP dispatch, and metering. Per-agent `CallCap` is charged at `McpRuntime::invoke` as a runaway-loop breaker (fail-open on an unseeded agent ); governed completion persists `SpanKind::ToolCompleted`, and persistence failures warn at `reg.mcp` (`kask/crates/hkask-mcp/src/runtime.rs`).                                                                                                                                                                |
 | `hkask-condenser`                                                                         | In-process thread condensation via `kask_bridge::BridgeThreadCondenser`.                                                                                                                                                                                                                                                  |
-| 8 MCP servers (on-disk set)                                                              | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`. |
+| 10 MCP servers (on-disk set)                                                             | **The tools** — child processes over stdio (D3), governed by the in-process `McpRuntime`. |
 
-### 2.3 MCP load set (8 on disk)
+### 2.3 MCP load set (10 on disk)
 
-**8 servers on disk**: `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` is authoritative; `builtin_mcp_server_ids()` derives the ID list.[^anthropic-mcp]
+**10 servers on disk**: `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-client`, `nostr-relay`, `prediction-markets`, `research`, `scenarios`. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` is authoritative; `builtin_mcp_server_ids()` derives the ID list.[^anthropic-mcp]
 
-| On disk (9) |
+| On disk (10) |
 | --- |
-| `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `prediction-markets`, `research`, `scenarios` |
+| `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-client`, `nostr-relay`, `prediction-markets`, `research`, `scenarios` |
 
-> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 102 registered tools by `tool_surface_is_exactly_102_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:485`); its OMC mapping is checked across the same registered set at `:492`.
+> The Curator MCP server is distinct from the native Curator agent and may be disabled by settings. The media server is pinned at exactly 90 registered tools by `tool_surface_is_exactly_90_registered_tools` (`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:506`); its OMC mapping is checked across the same registered set at `:513` (`omc_mapping_covers_all_registered_tools`).
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-10-28
+last_updated: 2026-11-13
 version: "0.45.0"
 status: "Active"
 domain: "Composition"
@@ -28,7 +28,7 @@ mds_categories: [composition, domain]
 
 ## Server Catalog
 
-10 built-in MCP servers, **236 registered tools** fleet-wide (all rows reconciled 2026-11-13 against the live `tool_surface_pin!` tests — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all nine auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
+10 built-in MCP servers, **236 registered tools** fleet-wide (all rows reconciled 2026-11-13 against the live `tool_surface_pin!` tests — every server pins its exact count and generated tool-name set; unified by `ede1ba0ca8`, CI-gated by `kask/scripts/check-mcp-registration.sh`). `KaskMcpSettings::default()` sets `load_default: true`, so all ten auto-load unless the operator disables the fleet or an individual server (`kask/crates/kask_bridge/src/settings.rs:140-165`; `kask/crates/kask_bridge/src/mcp_servers.rs`).
 
 | Server | Crate | Purpose | Tools |
 |--------|-------|---------|------:|
@@ -39,12 +39,11 @@ mds_categories: [composition, domain]
 | [Media](media.md) | `kask/mcp-servers/hkask-mcp-media` | Research evidence ingestion, annotation, transcription, source-linked excerpts, and time-keyed media layers | 90 |
 | Nostr Client | `kask/mcp-servers/hkask-mcp-nostr-client` | Reads Nostr for the identity configured in `kask.nostr`: the account and whether each relay answers, events by author or id, a NIP-10 conversation with its missing notes counted, profiles, an author's NIP-65 relay list, notifications, and NIP-19 identifier decoding. Reads the local relay (found through the address it announces) and up to 8 seed relays (`wss://` with a public host only); relays named inside events are reported and never contacted. Every event is verified and names the relays that returned it; a read no relay answered fails rather than returning nothing. Every tool reads: none signs or publishes. Receives no credential and holds no key; refused on private threads | 7 |
 | Nostr Relay | `kask/mcp-servers/hkask-mcp-nostr-relay` | Loopback Nostr relay archiving allowlisted authors' public events over LMDB: status, archive query, pull-only sync from public relays, admission log. Announces its listener address at `mcp/nostr-relay/listener.json` under the data dir so the client server can read it as a redundant copy. Holds no key; refused on private threads | 4 |
-
 | [Prediction Markets](prediction-markets.md) | `kask/mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, residuals | 28 |
 | [Research](research.md) | `kask/mcp-servers/hkask-mcp-research` | Web search, extraction, evidence scoring, APA citation, research-run ledger, paper identity | 11 |
 | [Scenarios](scenarios.md) | `kask/mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) with prospective declaration, equity persistence and raw loss | 22 |
 
-### Count verification (unified 2026-10-05; re-verified 2026-10-28)
+### Count verification (unified 2026-10-05; re-verified 2026-11-13)
 
 Every server pins its exact tool surface with the shared `tool_surface_pin!` macro (landed `ede1ba0ca8`, 2026-10-05): one macro call pins the exact tool count and the generated `TOOL_NAMES` set against the live router, so additions, drops, and same-count renames fail CI instead of degrading to tool-not-found. `kask/scripts/check-mcp-registration.sh` gates on the pin's presence for every server in `mcp-servers.txt` (CI: `.github/workflows/kask-invariants.yml`). Live pin sites (re-verified 2026-11-12): corpus 25 (`hkask_mcp_corpus.rs` → `tool_surface_is_exactly_25_registered_tools`), curator 15 (`hkask_mcp_curator.rs` → `tool_surface_is_exactly_15_registered_tools`), experimentation 8 (`hkask_mcp_experimentation.rs` → `tool_surface_is_exactly_8_registered_tools`), kata-kanban 26 (`hkask_mcp_kata_kanban.rs` → `tool_surface_is_exactly_26_registered_tools`), media 90 (`hkask_mcp_media.rs` → `tool_surface_is_exactly_90_registered_tools`), nostr-client 7 (`hkask_mcp_nostr_client.rs` → `tool_surface_is_exactly_7_registered_tools`), nostr-relay 4 (`hkask_mcp_nostr_relay.rs` → `tool_surface_is_exactly_4_registered_tools`), prediction-markets 28 (`hkask_mcp_prediction_markets.rs` → `tool_surface_is_exactly_28_registered_tools`), research 11 (`hkask_mcp_research.rs` → `tool_surface_is_exactly_11_registered_tools`), scenarios 22 (`hkask_mcp_scenarios.rs` → `tool_surface_is_exactly_22_registered_tools`).
 

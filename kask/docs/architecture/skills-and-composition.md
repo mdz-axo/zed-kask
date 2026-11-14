@@ -1,7 +1,7 @@
 ---
 title: "Agent System and Skills — Prompt Surfaces, Skill Anatomy, and Composition"
 audience: [architects, developers, agents]
-last_updated: 2026-10-31
+last_updated: 2026-11-13
 version: "2.3.2"
 status: "Active"
 domain: "architecture"
@@ -790,12 +790,12 @@ Routing and discovery are model-coordinated skill behavior; they do not emit ded
 
 ## Building MCP Servers
 
-zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 12
+zed-kask owns one managed `McpRuntime` in the editor process. It spawns the 10
 registered `hkask-mcp-*` binaries as child processes over stdio, performs the MCP
 handshake and tool discovery, and owns child shutdown/reconnect
 (`kask/crates/hkask-mcp/src/runtime.rs`). The canonical
 server-id/binary/env mapping is `BUILT_IN_MCP_SERVERS`
-(`kask/crates/kask_bridge/src/mcp_servers.rs:28-46,55-556`).[^mcp-spec-build][^ousterhout-mcp-build]
+(`kask/crates/kask_bridge/src/mcp_servers.rs:28-474`).[^mcp-spec-build][^ousterhout-mcp-build]
 
 ### Current crate shape
 

@@ -272,9 +272,9 @@ startup-coordinated via the pending slot and is documented in
 #### 5. Pin the registered tool surface
 
 A router can compile while silently omitting a sub-router. Add an end-to-end
-count/name pin in the server crate. The current media server pins exactly 99
-registered tools in `tool_surface_is_exactly_102_registered_tools`
-(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs`).
+count/name pin in the server crate. The current media server pins exactly 90
+registered tools in `tool_surface_is_exactly_90_registered_tools`
+(`kask/mcp-servers/hkask-mcp-media/src/hkask_mcp_media.rs:506`).
 
 #### 6. Validate
 
