@@ -125,7 +125,10 @@ One pass per tool per cycle. For each tool:
 
 ### Phase E — Probes [D calls + P classification; verification: static/live reconciliation]
 
-17. Live-probe charter: read-only and pure-computation tools only; tools that durably mutate state (journal/persistence writes) are excluded from probing and reviewed statically — record which and why. Ephemeral in-memory mutation is allowed with probe-prefixed identifiers and disclosed in the artifact. Every probe result is reconciled against the static source read (second channel); disagreement is a finding. A failing probe is classified failure evidence, not an abort; report tool defects via `curator_report_skill_use_issue` and continue.
+17. Live-probe charter:
+    - Scope: read-only and pure-computation tools only; tools that durably mutate state (journal/persistence writes) are excluded from probing and reviewed statically — record which and why. Ephemeral in-memory mutation is allowed with probe-prefixed identifiers and disclosed in the artifact.
+    - Isolation: every probe server runs with a cleared environment and every kask path on a temp dir, AND sets `XDG_RUNTIME_DIR` to its temp dir — `InferenceIpcClient::from_env` falls back to `{XDG_RUNTIME_DIR or /run/user/<uid>}/kask/inference-socket-path`, so a cleared environment alone still finds the operator's editor bridge (kask/crates/hkask-inference/src/inference_ipc_client.rs, `read_socket_path_from_file` / `runtime_dir_with`); a probe server started without it has sent calls to the live editor bridge. The run records a check that no probe output holds a bridge-side response. `instruments/probe-lib.sh` is the canonical isolated stdio session helper (start/call/stop over a temp HOME, config, runtime, data and artifacts dir; add server-specific env in `start`).
+    - Reconciliation: every probe result is reconciled against the static source read (second channel); disagreement is a finding. A failing probe is classified failure evidence, not an abort; report tool defects via `curator_report_skill_use_issue` and continue.
 
 ### Phase F — Findings assembly and verification [P + D gates]
 
