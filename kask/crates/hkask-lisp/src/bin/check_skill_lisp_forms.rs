@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use hkask_lisp::{LispValue, parse};
+use hkask_lisp::{LispValue, eval_sandboxed, parse};
 
 #[derive(Debug, Clone)]
 struct Candidate {
@@ -32,20 +32,36 @@ struct ScanStats {
 
 fn main() -> ExitCode {
     let mut args = env::args_os().skip(1);
-    let Some(skills_dir) = args.next() else {
-        eprintln!("usage: check-skill-lisp-forms SKILLS_DIR TEMPLATES_DIR");
+    let Some(first) = args.next() else {
+        usage();
         return ExitCode::from(2);
     };
+    if first.as_os_str() == OsStr::new("--eval") {
+        let Some(form_file) = args.next() else {
+            usage();
+            return ExitCode::from(2);
+        };
+        let Some(env_json) = args.next() else {
+            usage();
+            return ExitCode::from(2);
+        };
+        if args.next().is_some() {
+            usage();
+            return ExitCode::from(2);
+        }
+        return eval_main(&PathBuf::from(form_file), &env_json);
+    }
+
     let Some(templates_dir) = args.next() else {
-        eprintln!("usage: check-skill-lisp-forms SKILLS_DIR TEMPLATES_DIR");
+        usage();
         return ExitCode::from(2);
     };
     if args.next().is_some() {
-        eprintln!("usage: check-skill-lisp-forms SKILLS_DIR TEMPLATES_DIR");
+        usage();
         return ExitCode::from(2);
     }
 
-    let skills_dir = PathBuf::from(skills_dir);
+    let skills_dir = PathBuf::from(first);
     let templates_dir = PathBuf::from(templates_dir);
     match scan_corpus(&skills_dir, &templates_dir) {
         Ok(stats) if stats.findings.is_empty() => {
@@ -77,6 +93,70 @@ fn main() -> ExitCode {
             eprintln!("SKILL LISP CHECK FAILED: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn usage() {
+    eprintln!("usage: check-skill-lisp-forms SKILLS_DIR TEMPLATES_DIR");
+    eprintln!("       check-skill-lisp-forms --eval FORM_FILE ENV_JSON");
+}
+
+/// The `--eval FORM_FILE ENV_JSON` outcome. `EnvParse` is the malformed-env
+/// class the CLI prints as `ENV_PARSE_ERROR`; `Failed` carries the engine's
+/// message for form-read, parse and runtime errors.
+#[derive(Debug, PartialEq)]
+enum EvalOutcome {
+    Ok(serde_json::Value),
+    EnvParse(String),
+    Failed(String),
+}
+
+fn eval_main(form_path: &Path, env_json: &OsStr) -> ExitCode {
+    match eval_form_file(form_path, env_json) {
+        EvalOutcome::Ok(value) => {
+            println!("{value}");
+            ExitCode::SUCCESS
+        }
+        EvalOutcome::EnvParse(message) => {
+            eprintln!("ENV_PARSE_ERROR: {message}");
+            ExitCode::FAILURE
+        }
+        EvalOutcome::Failed(message) => {
+            eprintln!("EVAL FAILED: {message}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Read the form file, parse ENV_JSON as a JSON object and evaluate the form
+/// through `eval_sandboxed` — the same path and budget the corpus scan's
+/// gate tests evaluate authored forms with. A non-object env is rejected up
+/// front: the engine would bind nothing and surface the gap as unbound
+/// symbols, the way the `lisp_eval` tool refuses a non-object document
+/// before evaluation.
+fn eval_form_file(form_path: &Path, env_json: &OsStr) -> EvalOutcome {
+    let form = match fs::read_to_string(form_path) {
+        Ok(form) => form,
+        Err(error) => {
+            return EvalOutcome::Failed(format!(
+                "cannot read form file {}: {error}",
+                display_path(form_path)
+            ));
+        }
+    };
+    let Some(env_json) = env_json.to_str() else {
+        return EvalOutcome::EnvParse("ENV_JSON is not valid UTF-8".into());
+    };
+    let env: serde_json::Value = match serde_json::from_str(env_json) {
+        Ok(env) => env,
+        Err(error) => return EvalOutcome::EnvParse(error.to_string()),
+    };
+    if !env.is_object() {
+        return EvalOutcome::EnvParse(format!("ENV_JSON must be a JSON object, got: {env}"));
+    }
+    match eval_sandboxed(form.trim(), &env) {
+        Ok(value) => EvalOutcome::Ok(value),
+        Err(error) => EvalOutcome::Failed(error.to_string()),
     }
 }
 
@@ -6013,5 +6093,68 @@ form: "(= (+ a b) 3)"
             lint_form(form, &mut |message| messages.push(message));
         }
         assert!(messages.is_empty(), "unexpected messages: {messages:?}");
+    }
+
+    fn temp_form(name: &str, content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "check-skill-lisp-forms-eval-{name}-{}.lisp",
+            std::process::id()
+        ));
+        fs::write(&path, content)
+            .unwrap_or_else(|error| panic!("failed to write {}: {error}", path.display()));
+        path
+    }
+
+    #[test]
+    fn eval_form_file_prints_the_env_bound_result() {
+        let form = temp_form("ok", "(+ a 2)");
+        assert_eq!(
+            eval_form_file(&form, OsStr::new(r#"{"a":1}"#)),
+            EvalOutcome::Ok(json!(3))
+        );
+    }
+
+    #[test]
+    fn eval_form_file_rejects_malformed_env_as_env_parse() {
+        let form = temp_form("env-parse", "(+ a 2)");
+        for env in ["{bad", "{\"a\":", "3", "\"text\"", "[1]"] {
+            assert!(
+                matches!(
+                    eval_form_file(&form, OsStr::new(env)),
+                    EvalOutcome::EnvParse(_)
+                ),
+                "expected ENV_PARSE_ERROR for env {env:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn eval_form_file_carries_engine_errors_for_parse_and_runtime_failures() {
+        let runtime = temp_form("runtime", "(car 1)");
+        match eval_form_file(&runtime, OsStr::new("{}")) {
+            EvalOutcome::Failed(message) => assert!(
+                message.contains("expected list"),
+                "the engine's type error is carried: {message}"
+            ),
+            outcome => panic!("expected a runtime failure for (car 1), got {outcome:?}"),
+        }
+        let unparseable = temp_form("unparseable", "(unclosed");
+        match eval_form_file(&unparseable, OsStr::new("{}")) {
+            EvalOutcome::Failed(message) => {
+                assert!(!message.is_empty(), "the engine's parse error is carried")
+            }
+            outcome => panic!("expected a parse failure for (unclosed, got {outcome:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_form_file_names_a_missing_form_file() {
+        let missing = std::env::temp_dir().join("check-skill-lisp-forms-eval-missing.lisp");
+        match eval_form_file(&missing, OsStr::new("{}")) {
+            EvalOutcome::Failed(message) => {
+                assert!(message.contains("cannot read form file"), "{message}")
+            }
+            outcome => panic!("expected a read failure for a missing form file, got {outcome:?}"),
+        }
     }
 }
