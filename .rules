@@ -18,6 +18,9 @@
   the numstat against what you measured. Never run a working-tree-wide
   mutation (bare stash, restore ., reset --hard, fmt --all).
 * If you cannot finish a change in one pass, do not leave the tree broken.
+* File tools resolve only in-project paths: ~/Documents/zk-data, /tmp and
+  scratch dirs are terminal-first (cat/heredoc/sqlite) — an out-of-project
+  file-tool rejection is the boundary firing, not a tool defect.
 * The retired trap corpus (technical traps, protocol traps, environment
   facts) is archived at `kask/docs/reference/agent-trap-history.md` —
   reference on demand, context-injected never again, binding nothing.
