@@ -136,7 +136,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    - Episodic detail that has been superseded by a learned habit (if a skill or rule already captures the lesson, the episodic memories are purge candidates).
 
    **e. System wiring defects** — scan findings that indicate the memory system's own wiring is broken, not just the memories. The scan is the memory system's feedback loop: systematic patterns in the data are wiring symptoms. Check:
-   - **Confidence-floor escapes** — rows above the 0.5 floor: the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers (`rg "HMem::new" --type rust` in the inserting crate) and check each site applies the floor.
+   - **Confidence-floor escapes** — rows above the 0.5 insert level: the writing path used `HMem::new`'s 1.0 default instead of `.with_confidence(0.5)`. Grep the writers (`rg "HMem::new" --type rust` in the inserting crate) and check each site applies the floor.
    - **Embedding-invisible memories** — knowledge-layer entities (structured memories, skill-use reports) with no row in the embeddings table: the insert path doesn't embed, so `curator_semantic_search` cannot see them and absence gets read as "no memory exists." Verify every insert path calls the shared embedding contract (`embed_for_semantic_recall` in hkask-mcp-curator).
    - **Key-scheme drift** — the same knowledge under multiple entity/attribute keys (two writers keyed the same fact differently). Merge candidates — but also check whether the writers share a key convention.
    - **Isolated knowledge** — structured entities absent from `memory_links` (doubly isolated when they also lack embeddings).
@@ -204,8 +204,8 @@ The scan's counts, the approved-proposal count, the execution check and the post
 
    **For miscalibrated confidence** — propose:
    - **Raise confidence**: if a h_mem has been recalled many times without contradiction, or was verified accurate by this session's ground-truth checks (direct read-only DB inspection, code verification, successful reproduction), `memory_update` to raise confidence — verification work is the outcome signal; combine a modest signal (e.g. 0.6–0.7), never a raw write.
-   - **Lower confidence**: if a h_mem has no evidence citation, `memory_update` to lower confidence.
-   - **Reset to floor**: if confidence is clearly wrong, `memory_update` to 0.5 (the floor).
+   - **Lower confidence**: if a h_mem has no evidence citation, `memory_update` to lower confidence. The result is pooled, not set: a value that lands at or below 0.3 (`kask.memory.confidence_floor`) is deleted by the editor's next consolidation pass (every 300 s). Lowering to or past 0.3 is a forget and takes the same per-proposal approval as "forget".
+   - **Reset to insert level**: if confidence is clearly wrong, `memory_update` toward 0.5 (where an insert starts). 0.5 is not a floor; 0.3 is the deletion floor.
 
    **For reification candidates** — propose:
    - **Create skill**: if the pattern is a repeatable process that could guide future action, propose a skill: a `.agents/skills/<name>/SKILL.md` in the user's project with the lesson as proactive contextualized guidance, shown to the user as a draft before it is written; the approved draft is routed through `create-skill`'s Phase 4 validation path rather than written-and-forgotten (see Phase 5).
@@ -263,7 +263,7 @@ The scan's counts, the approved-proposal count, the execution check and the post
    **Memory hygiene proposals:**
    - `memory_insert` for "add_consonant" and "link" strategies.
    - `memory_update` for "reduce_importance", "raise_confidence", "lower_confidence", "reset_confidence" strategies.
-   - `memory_resolve_contradiction` for "remove_dissonant", "merge" strategies.
+   - `memory_resolve_contradiction` with strategy `forget` for "remove_dissonant" and "merge" (merge deletes the isolated duplicate; the tool has no merge strategy — its closed set is `forget` | `update_confidence`).
 
    **Values-alignment proposals:**
    - `memory_update` for "annotate" and "amend" strategies.
@@ -386,12 +386,12 @@ The skill's forms are executed at audit and use time, never anchored in code.
 - **Two distinct processes — do not conflate.** Memory hygiene (resolving contradictions, purging, condensing) is forgetting, not learning. Reification (extracting meaning, creating skills/templates/rules) is learning. Forgetting is a hygiene side-effect of successful reification, not part of the learning loop.
 - **Festinger's three strategies only for contradictions.** Every contradiction resolution must use one of: reduce importance, add consonant, remove dissonant.
 - **The values pass is grounding, not a gate.** The charter adds no enforcement surface: the pass surfaces candidates, the operator judges, nothing auto-modifies. The charter-version trigger is deterministic (compare the charter's `version:` field to the latest values-pass awareness row); the alignment judgments are semantic and route through Phase-4 approval like every other proposal.
-- **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix lands in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 floor, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
+- **Fix the writer, not just the written.** When a hygiene finding has a wiring root cause (a code path producing bad rows), the code fix lands in the same session, before or alongside the hygiene execution. Hygiene executed on buggy wiring is re-corrupted by the next write — the 2026-09-01 recalibration set every row to the 0.5 insert level, and the skill-use reporting path (which defaulted to 1.0) re-created above-floor rows within days.
 - **Reification requires user review of the proposed skill/template/rule content.** The user must see and approve the actual content before it is written.
 - **Post-reification forgetting requires separate approval.** The user approves reification and forgetting as separate decisions — they may reify a lesson but choose to keep the source memories.
 - **Writes are user-approved, never silent.** The `memory_insert`, `memory_update`, and `memory_resolve_contradiction` tools are curator MCP server tools available to all threads (the curator-thread gate was removed 2026-09-01 by operator decision); the safety properties are the Phase-4 per-proposal approval, the server-side evidence-citation and confidence-floor invariants, and the no-deletion-without-reason constraint below — not a thread gate.
 - **No deletion without reason.** Every `memory_resolve_contradiction` call must include a reason citing the contradiction or the reification.
-- **Confidence floor.** New memories inserted via therapy start at confidence 0.5.
+- **Two numbers.** New memories inserted via therapy start at confidence 0.5. The editor's consolidation pass deletes any h_mem at or below `kask.memory.confidence_floor` (default 0.3).
 - **Report honestly.** If no issues are found, say so. If executions fail, report the failures. Do not fabricate success.
 
 ## Registry Templates
