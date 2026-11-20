@@ -1,0 +1,37 @@
+# Provider profile — Semantic Scholar. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: semantic_scholar
+name: Semantic Scholar
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: free scholarly provider — no credential consumed (rate-limited under
+    bulk use)
+consumed_capabilities:
+  - capability: academic paper search + citation data
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/semantic_scholar.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no explicit training/retention clause found — the API terms URL
+    (api.semanticscholar.org/api-docs/terms) serves the API reference
+    (Redocly), not prose terms (read 2026-10-13); the API is free with an x-api-key
+    header for authenticated tiers. Honest evidence gap on a prose
+    terms document.
+  retention_published: >-
+    unverified — no retention policy located in the API docs read 2026-10-13.
+status_surface:
+  status_page: >-
+    https://status.api.semanticscholar.org live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    n/a — free API (product page read via search 2026-10-13); rate limits are
+    documented per-endpoint in the API reference (read 2026-10-13).
+first_audit_pending: false

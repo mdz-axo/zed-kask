@@ -1,0 +1,40 @@
+# Provider profile — Crossref. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: crossref
+name: Crossref
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: free scholarly provider — no credential consumed
+consumed_capabilities:
+  - capability: bibliographic metadata search
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/crossref.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    n/a — metadata service. REST API terms read
+    (crossref.org/documentation REST API intro, extracted 2026-10-13): no
+    sign-up required, "almost none of the metadata is subject to
+    copyright, and you may use it for any purpose"; some abstracts may
+    carry publisher copyright.
+  retention_published: >-
+    n/a — metadata catalog; no customer-data retention clause applies to
+    the free REST API (terms read 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.crossref.org live (HTTP 200, probed 2026-10-13).
+  sla: >-
+    the free REST API carries no SLA; the paid Metadata Plus service has
+    subscriber terms (crossref.org/services/metadata-retrieval/metadata-plus/terms,
+    found via search 2026-10-13).
+pricing:
+  machine_readable: >-
+    free REST API (terms read 2026-10-13); Metadata Plus is the paid tier. No
+    machine-readable pricing source consumed this run.
+first_audit_pending: false

@@ -1,0 +1,64 @@
+# Provider profile — Nebius. RETIRED 2026-10-17: archived in place per the
+# provider-audit retirement pass (Step 9). The sole consumer was the training
+# MCP server, removed because model training is outside the co-researcher
+# mandate. No in-tree code adopts this vendor; the settings rows and config_env
+# allowlist were purged with it. The dated readings below are preserved as the
+# audit record, not as a live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh.
+id: nebius
+name: Nebius
+status: retired
+retired:
+  date: "2026-10-17"
+  reason: >-
+    sole consumer (the training MCP server's GPU training host) removed —
+    model training is out of scope for the co-researcher mandate.
+  purged:
+    - Data Services rows and every in-tree read path for
+      NEBIUS_PROJECT_ID / NEBIUS_SUBNET_ID
+      (kask/crates/kask_bridge/src/inference_providers.rs)
+    - training server config_env NEBIUS_*
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/nebius_project_id or
+      kask://credentials/nebius_subnet_id entry is dormant and left
+      operator-owned; no code exposes, restores, reads, or injects either.
+roles:
+  - training-host  # retired role — no in-tree consumer
+keychain:
+  slot: none
+  env_var: ""
+  note: no API key was consumed in-tree — the training host authenticated via
+    SSH public key plus NEBIUS_* infrastructure IDs. Both the host and the
+    IDs were removed 2026-10-17.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+config_env: []  # purged with the training server
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    yes, scoped and opt-out — Nebius AI Studio Terms of Service (read
+    2026-10-13) process "both Input and Output data for the purpose of training
+    smaller Models used exclusively for Speculative Decoding", with an
+    opt-out ("If you prefer that we (i) do not store Your Inputs and
+    Outputs..."). The retired consumption was the training cloud
+    (nebius_project_id / nebius_subnet_id), not AI Studio inference.
+  retention_published: >-
+    yes — AI Studio privacy policy (docs.studio.nebius.com/legal/privacy-policy,
+    extracted 2026-10-13) §5: personal data retained "only for as long as it is
+    necessary to fulfil the scopes described".
+  operator_ruling: >-
+    accept-as-is (operator ruling 2026-10-13): the AI Studio training clause
+    (speculative-decoding models, opt-out available) was scoped to AI Studio
+    inference; the retired consumption was the training cloud
+    (NEBIUS_PROJECT_ID / NEBIUS_SUBNET_ID), not AI Studio.
+status_surface:
+  status_page: >-
+    https://status.nebius.com live (HTTP 200, probed 2026-10-13).
+  sla: none found in the pages read 2026-10-13.
+pricing:
+  machine_readable: >-
+    pricing page not read this run (nebius.ai/pricing 404; docs.nebius.ai
+    live at 200 — probed 2026-10-13) — evidence gap on the pricing surface.
+first_audit_pending: false

@@ -1,0 +1,39 @@
+# Provider profile — Brave Search. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: brave
+name: Brave Search
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: kask://credentials/brave
+  env_var: HKASK_BRAVE_API_KEY
+consumed_capabilities:
+  - capability: web search
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/brave.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training on customer data stated; instead a LICENSE RESTRICTION on
+    us: Search Results may NOT be used "to create, evaluate, train,
+    re-train, fine-tune, benchmark or otherwise improve artificial
+    intelligence models" (API Terms of Service clause xiii,
+    api-dashboard.search.brave.com/documentation/resources/terms-of-service,
+    extracted 2026-10-13). Search Query Data remains the customer's exclusive
+    property (same terms).
+  retention_published: >-
+    no explicit retention-duration clause found in the API terms read
+    2026-10-13; site privacy surface at brave.com/privacy (200, probed 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.brave.com live (HTTP 200, probed 2026-10-13).
+  sla: >-
+    none found in the API terms read 2026-10-13 (no SLA page located).
+pricing:
+  machine_readable: >-
+    pricing published on brave.com/search/api (200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

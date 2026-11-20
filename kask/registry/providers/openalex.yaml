@@ -1,0 +1,35 @@
+# Provider profile — OpenAlex. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: openalex
+name: OpenAlex
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: none
+  env_var: ""
+  note: free scholarly provider — no credential consumed
+consumed_capabilities:
+  - capability: scholarly metadata search (paper identity resolution)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/openalex.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    n/a — metadata catalog. Terms page read (openalex.org/terms, HTTP
+    200): "OpenAlex is a free and open catalog of the world's research";
+    API verified free and keyless by live call (2026-10-13). The explicit CC0
+    license statement sits on JS-rendered pages not extracted this run —
+    evidence gap on the license text.
+  retention_published: n/a — metadata catalog (terms read 2026-10-13).
+status_surface:
+  status_page: >-
+    https://status.openalex.org live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    n/a — free, keyless API (verified by live call 2026-10-13); no pricing
+    surface exists.
+first_audit_pending: false

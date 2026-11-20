@@ -1,0 +1,53 @@
+# Provider profile — EODHD. RETIRED 2026-10-18: archived in place per the
+# provider-audit retirement pass (Step 9). The sole consumer was the companies
+# MCP server, removed with the companies/FMP/EODHD/FIBO removal. No in-tree
+# code adopts this vendor. The dated readings below are preserved as the audit
+# record, not as a live contract.
+# Structural contract pinned by kask/scripts/check-provider-profiles.sh;
+# semantic reading owned by the provider-audit skill.
+id: eodhd
+name: EODHD
+status: retired
+retired:
+  date: "2026-10-18"
+  reason: >-
+    sole consumer (the companies MCP server's end-of-day market-data path)
+    removed with the companies/FMP/EODHD/FIBO removal — the co-researcher
+    mandate does not carry the companies data surface.
+  purged:
+    - companies server credentials and config_env HKASK_EODHD_API_KEY
+      (kask/crates/kask_bridge/src/mcp_servers.rs)
+  retained_user_data:
+    - Any pre-existing kask://credentials/eodhd keychain entry is dormant and
+      left operator-owned; no code exposes, restores, reads, or injects it.
+roles:
+  - companies-data   # retired role — no in-tree consumer
+keychain:
+  slot: none
+  env_var: ""
+  note: the kask://credentials/eodhd slot has no reader or settings row;
+    any old entry is dormant operator-owned data, not a live capability.
+consumed_capabilities: []  # retired — no in-tree consumer remains
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause found in the terms read (eodhd.com/financial-apis/terms-conditions,
+    extracted 2026-10-13); financial-data vendor — the license restricts
+    redistribution: "Selling, reselling, retransmitting, redistributing..."
+    is prohibited.
+  retention_published: >-
+    yes — Data Retention section of the privacy policy
+    (eodhd.com/financial-apis/privacy-policy, extracted 2026-10-13): personal
+    information retained while the account is active / as needed;
+    deleted when no longer required; deletion on request.
+status_surface:
+  status_page: >-
+    none found — eodhd.com/status returns 404 (probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (eodhd.com/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false

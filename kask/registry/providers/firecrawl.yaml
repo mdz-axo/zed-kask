@@ -1,0 +1,35 @@
+# Provider profile — Firecrawl. Structural contract pinned by
+# kask/scripts/check-provider-profiles.sh; semantic reading owned by the
+# provider-audit skill.
+id: firecrawl
+name: Firecrawl
+status: active
+roles:
+  - research-provider
+keychain:
+  slot: kask://credentials/firecrawl
+  env_var: HKASK_FIRECRAWL_API_KEY
+consumed_capabilities:
+  - capability: web search + extract + browse (markdown output, JS-heavy pages)
+    source: kask/mcp-servers/hkask-mcp-research/src/research/providers/firecrawl.rs
+deliberate_non_consumption: []
+data_terms:
+  # B3 retention anchor: dpv:StorageDuration (DPV 2.3, vendored at kask/crates/hkask-bridge-ontology/sources/dpv/, commit 79311a6664)
+  extracted_at: "2026-10-13"
+  trains_on_customer_data: >-
+    no training clause found in the Terms of Service read
+    (firecrawl.dev/terms-of-service, extracted 2026-10-13) — scraping service;
+    neither permission nor prohibition stated (evidence gap on stance).
+  retention_published: >-
+    yes — privacy policy (firecrawl.dev/privacy-policy, extracted 2026-10-13):
+    personally identifiable information retained "until you request in
+    writing that we delete" — deletion-on-request model.
+status_surface:
+  status_page: >-
+    https://status.firecrawl.dev live (HTTP 200, probed 2026-10-13).
+  sla: none found (probed 2026-10-13).
+pricing:
+  machine_readable: >-
+    pricing published (firecrawl.dev/pricing, HTTP 200, probed 2026-10-13); no
+    machine-readable pricing source found this run.
+first_audit_pending: false
