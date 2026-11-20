@@ -18,7 +18,7 @@ the current code contract, not a completed live corpus run.
 | Boundary | Owner |
 |---|---|
 | Tool registration and shared model/concurrency resolution | `src/hkask_mcp_corpus.rs` |
-| Convert, OCR and directory chunking | `src/tools/document.rs`, `src/services/convert.rs`, `src/ocr/` |
+| Convert, OCR and directory chunking | `src/tools/document.rs`, `src/services/convert.rs`, `src/services/convert/format.rs`, `src/ocr/` |
 | Word-window chunking | `hkask-memory/src/text_chunking.rs`; corpus budget adapter in `src/helpers.rs`, source encoding in `src/text.rs` |
 | Identity-correlated classification | `src/tools/tagging.rs` |
 | Canonical `TaggedChunk`, `ClassificationOutcome`, `QaEvidence`, prompt IDs and passage-ref exclusion | `hkask-types/src/corpus.rs` |
@@ -592,7 +592,8 @@ databases — each query opens its target read-only. Nothing is cached into memo
 no corpus-sized RAM accrues behind queries. Ephemeral chunk
 indexing is not persistent. Durable identity is canonical DB path plus entity ref;
 repeated embed/consolidate replaces that entry (`corpus_embed` supports
-`skip_existing=true` for resumable bulk embedding, prepends `[Source: <stem>]`
+`skip_existing=true` for resumable bulk embedding, `write_hmems=false` to skip
+companion `hmems` writes on read-only retrieval DBs, prepends `[Source: <stem>]`
 to embedding input while retaining raw `passage_text`, packs batches under a
 32K char budget, and commits via single-transaction
 `EmbeddingStore::publish_corpus_batch` with O(1) `vec0` delete). OpenRouter
@@ -608,8 +609,7 @@ it retains the requested model identity and reports that actual identity is
 unavailable. `corpus_embedding_inventory` compares an exact shard ref set with an
 existing DB and expected provider-confirmed model; it neither embeds nor creates a
 DB. Original/synthesized `passage_text`, not annotation-prefixed embedding input,
-supplies retrieved text and answer context. Publication also upserts
-text/method-signals h_mems.
+supplies retrieved text and answer context. Publication also upserts text/method-signals h_mems unless `write_hmems=false`.
 
 `include_text=false` defaults in plain/Lisp modes and affects returned text only.
 Rows without usable stored text expose `text_available=false`,
