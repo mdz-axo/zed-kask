@@ -1674,6 +1674,221 @@ impl NostrClientServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Publish a NIP-25 kind 7 reaction (https://nostr-nips.com/nip-25) such as '+' or an emoji targeting a Nostr event and its author. Signed inside the editor process after operator approval (unless kask.nostr.autopublish is on)."
+    )]
+    pub async fn nostr_publish_reaction(
+        &self,
+        Parameters(request): Parameters<PublishReactionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_reaction", async {
+            let target_event_id_hex = identifiers::parse_event_id(&request.target_event_id)
+                .map_err(|error| refused("target_event_id", error))?
+                .to_hex();
+            let target_pubkey_hex = identifiers::parse_public_key(&request.target_pubkey)
+                .map_err(|error| refused("target_pubkey", error))?
+                .to_hex();
+            let content = request
+                .content
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("+")
+                .to_string();
+            if content.chars().count() > 32 {
+                return Err(McpToolError::invalid_argument(
+                    "reaction content must be at most 32 characters",
+                ));
+            }
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrReactionWire {
+                created_at: now_secs,
+                target_event_id_hex,
+                target_pubkey_hex,
+                content,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_reaction(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Publish a NIP-10 kind 1 reply (https://nostr-nips.com/nip-10) or NIP-22 kind 1111 comment (https://nostr-nips.com/nip-22) targeting a note or article. Signed inside the editor process after operator approval (unless kask.nostr.autopublish is on)."
+    )]
+    pub async fn nostr_publish_reply(
+        &self,
+        Parameters(request): Parameters<PublishReplyRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_reply", async {
+            if request.content.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "reply content cannot be empty",
+                ));
+            }
+            if request.content.chars().count() > MAX_CONTENT_CHARS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "reply content exceeds maximum of {MAX_CONTENT_CHARS} characters"
+                )));
+            }
+            let root_event_id_hex = identifiers::parse_event_id(&request.root_event_id)
+                .map_err(|error| refused("root_event_id", error))?
+                .to_hex();
+            let reply_to_event_id_hex = match request
+                .reply_to_event_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                Some(raw) => Some(
+                    identifiers::parse_event_id(raw)
+                        .map_err(|error| refused("reply_to_event_id", error))?
+                        .to_hex(),
+                ),
+                None => None,
+            };
+            let target_pubkey_hex = identifiers::parse_public_key(&request.target_pubkey)
+                .map_err(|error| refused("target_pubkey", error))?
+                .to_hex();
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = request.created_at.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+            let wire = hkask_types::nostr_wire::NostrReplyWire {
+                created_at: now_secs,
+                root_event_id_hex,
+                reply_to_event_id_hex,
+                target_pubkey_hex,
+                root_kind: request.root_kind.unwrap_or(1),
+                content: request.content,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_reply(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PublishReactionRequest {
+    /// Target event id (`note`, `nevent`, or 64-char hex).
+    pub target_event_id: String,
+    /// Target author pubkey (`npub`, `nprofile`, or 64-char hex).
+    pub target_pubkey: String,
+    /// Reaction text (defaults to `"+"` per NIP-25).
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PublishReplyRequest {
+    /// Reply body text (1..=4000 characters).
+    pub content: String,
+    /// Thread root event id (`note`, `nevent`, or 64-char hex).
+    pub root_event_id: String,
+    /// Immediate parent event id when replying to a nested reply (optional).
+    #[serde(default)]
+    pub reply_to_event_id: Option<String>,
+    /// Target author pubkey (`npub`, `nprofile`, or 64-char hex).
+    pub target_pubkey: String,
+    /// Event kind of the root (default `1` → NIP-10 `kind: 1`; non-1 → NIP-22 `kind: 1111`).
+    #[serde(default)]
+    pub root_kind: Option<u16>,
+    /// Optional Unix timestamp in seconds.
+    #[serde(default)]
+    pub created_at: Option<u64>,
 }
 
 #[tool_handler(router = Self::nostr_client_router())]

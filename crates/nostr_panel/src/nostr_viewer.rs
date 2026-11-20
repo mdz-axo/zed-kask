@@ -29,10 +29,11 @@
 //!   one author's records of one minute collapse under one exact-count
 //!   row.
 //!
-//! There is no follow, like, repost or compose affordance here. The tools
-//! behind this panel read, and one publishes — the ruled
-//! `nostr_publish_note`, which asks the editor to sign on the operator's
-//! approval; the viewer itself only shows what the tools return.
+//! The viewer renders what the Nostr tools return and hosts the panel's
+//! collapsible `kind: 1` note composer, which dispatches to
+//! `nostr_publish_note` so the editor asks the operator's approval before
+//! touching the keychain. Follow, like, repost, zap, and reply affordances are
+//! not wired here yet.
 //!
 //! Three rules:
 //!
@@ -55,19 +56,28 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use crate::blurhash;
+use crate::nostr_composer::{
+    CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_REACTION_TOOL,
+    PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, ReplyContext, WALLET_PAY_INVOICE_TOOL,
+    WALLET_STATUS_TOOL, ZAP_PRESETS_SATS, ZapDraftState, ZapStatus, sanitize_untrusted_text,
+};
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
 use gpui::{
-    Context, DefiniteLength, Entity, Render, ScrollHandle, SharedString, Task, WeakEntity, Window,
-    px,
+    Context, DefiniteLength, Entity, Focusable as _, Render, ScrollHandle, SharedString, Task,
+    WeakEntity, Window, px,
 };
 use gpui::{ImageSource, ObjectFit, RenderImage, img};
 use hkask_media_widget::{MediaKind, MediaRef, MediaWidget, approve_gallery_media_path};
 use hkask_tool_invoker::InvokeError;
 use hkask_types::media_wire::{MEDIA_FETCH_IMAGE_TOOL, MEDIA_SERVER, MEDIA_VIDEO_FETCH_TOOL};
-use hkask_types::nostr_wire::{NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER, WireEvent};
+use hkask_types::nostr_wire::{
+    MAX_CONTENT_CHARS, NOSTR_CLIENT_SERVER, NOSTR_RELAY_SERVER, WireEvent,
+};
+use hkask_types::wallet_wire::WALLET_SERVER_ID;
 use image::Frame;
 use kask_bridge::KaskSettings;
+use kask_bridge::nostr_dm::{self, DmMessage, DmThreadSummary};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1289,6 +1299,7 @@ pub enum ViewerTab {
     Timeline,
     Conversation,
     Relay,
+    Messages,
 }
 
 pub struct NostrViewer {
@@ -1357,6 +1368,28 @@ pub struct NostrViewer {
     conversation_back: Vec<String>,
     timeline_scroll_handle: ScrollHandle,
     detail_scroll_handle: ScrollHandle,
+    composer: ComposerState,
+    composer_editor: Option<Entity<editor::Editor>>,
+    _composer_subscription: Option<gpui::Subscription>,
+    _publish_task: Option<Task<()>>,
+    /// Compact Amethyst-style quick-zap strip state for the selected note (NIP-57).
+    zap: Option<ZapDraftState>,
+    _zap_task: Option<Task<()>>,
+    /// Event id currently sending a NIP-25 `kind: 7` reaction, plus last inline feedback.
+    reaction_in_flight: Option<String>,
+    reaction_feedback: Option<(String, bool, String)>,
+    _reaction_task: Option<Task<()>>,
+    /// Editor-only NIP-17 encrypted DMs (SQLCipher-backed, never in Steer/MCP).
+    dm_threads: Vec<DmThreadSummary>,
+    dm_selected_peer: Option<String>,
+    dm_messages: Vec<DmMessage>,
+    dm_status: Option<(bool, String)>,
+    dm_busy: bool,
+    dm_loaded_local: bool,
+    dm_recipient_editor: Option<Entity<editor::Editor>>,
+    dm_input_editor: Option<Entity<editor::Editor>>,
+    dm_scroll_handle: ScrollHandle,
+    _dm_task: Option<Task<()>>,
 }
 
 // ── Reading tool results ────────────────────────────────────────────
@@ -1617,6 +1650,25 @@ impl NostrViewer {
             conversation_back: Vec::new(),
             timeline_scroll_handle: ScrollHandle::new(),
             detail_scroll_handle: ScrollHandle::new(),
+            composer: ComposerState::new(),
+            composer_editor: None,
+            _composer_subscription: None,
+            _publish_task: None,
+            zap: None,
+            _zap_task: None,
+            reaction_in_flight: None,
+            reaction_feedback: None,
+            _reaction_task: None,
+            dm_threads: Vec::new(),
+            dm_selected_peer: None,
+            dm_messages: Vec::new(),
+            dm_status: None,
+            dm_busy: false,
+            dm_loaded_local: false,
+            dm_recipient_editor: None,
+            dm_input_editor: None,
+            dm_scroll_handle: ScrollHandle::new(),
+            _dm_task: None,
         }
     }
 
@@ -1643,6 +1695,7 @@ impl NostrViewer {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         match self.tab {
             ViewerTab::Relay => self.load_relay(cx),
+            ViewerTab::Messages => self.sync_dms(cx),
             ViewerTab::Timeline if self.timeline_filter == TimelineFilter::Following => {
                 if !matches!(self.follows, Some(Follows::Authors(_))) {
                     self.load_follows(cx);
@@ -2437,7 +2490,7 @@ impl NostrViewer {
         let rows = match self.tab {
             ViewerTab::Timeline => &self.active_timeline_feed()?.rows,
             ViewerTab::Conversation => &self.conversation.as_ref()?.rows,
-            ViewerTab::Relay => return None,
+            ViewerTab::Relay | ViewerTab::Messages => return None,
         };
         rows.iter().find(|row| &row.event.id == id)
     }
@@ -3193,6 +3246,120 @@ impl NostrViewer {
                     ))
                 },
             )
+            // Selected-note feedback & support strip: Like (NIP-25), Comment
+            // (NIP-10 / NIP-22), and Zap (NIP-57 via wallet connection).
+            .when(
+                event.kind == 1 || event.kind == 1111 || event.kind == 30023,
+                |el| {
+                    let like_event_id = event.id.clone();
+                    let like_author = event.author.clone();
+                    let liking = self.reaction_in_flight.as_deref() == Some(event.id.as_str());
+                    let like_count: u64 = self
+                        .reactions
+                        .get(event.id.as_str())
+                        .map(|m| m.values().sum())
+                        .unwrap_or(0);
+                    let like_label = if liking {
+                        "Liking…".to_string()
+                    } else if like_count > 0 {
+                        format!("Like ({like_count})")
+                    } else {
+                        "Like".to_string()
+                    };
+
+                    let reply_target = ReplyContext {
+                        root_event_id: marked_e_tag(event, "root")
+                            .unwrap_or(event.id.as_str())
+                            .to_string(),
+                        reply_to_event_id: if marked_e_tag(event, "root").is_some() {
+                            Some(event.id.clone())
+                        } else {
+                            None
+                        },
+                        target_pubkey: event.author.clone(),
+                        target_label: name
+                            .map(|n| format!("@{}", display_text(n)))
+                            .unwrap_or_else(|| short_hex(&event.author)),
+                        root_kind: event.kind,
+                    };
+
+                    let zap_event_id = event.id.clone();
+                    let zap_author = event.author.clone();
+                    let zap_label = reply_target.target_label.clone();
+                    let zap_open = self
+                        .zap
+                        .as_ref()
+                        .is_some_and(|z| z.target_event_id == event.id);
+                    let reaction_note = self
+                        .reaction_feedback
+                        .as_ref()
+                        .filter(|(id, _, _)| id == &event.id)
+                        .map(|(_, ok, msg)| (*ok, msg.clone()));
+
+                    el.child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .py_1()
+                            .min_w_0()
+                            .flex_wrap()
+                            .child(
+                                ui::Button::new("nostr-detail-like", like_label)
+                                    .label_size(LabelSize::XSmall)
+                                    .disabled(liking)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Send a NIP-25 kind:7 '+' reaction (https://nostr-nips.com/nip-25)",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.send_like(
+                                            like_event_id.clone(),
+                                            like_author.clone(),
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new("nostr-detail-comment", "Comment")
+                                    .label_size(LabelSize::XSmall)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Reply via NIP-10 (kind:1) or NIP-22 (kind:1111) (https://nostr-nips.com/nip-10)",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.open_reply_compose(reply_target.clone(), window, cx);
+                                    })),
+                            )
+                            .child(
+                                ui::Button::new("nostr-detail-zap", "Zap")
+                                    .label_size(LabelSize::XSmall)
+                                    .toggle_state(zap_open)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Zap this post via NIP-57 & wallet connection (https://nostr-nips.com/nip-57)",
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_zap_strip(
+                                            zap_event_id.clone(),
+                                            zap_author.clone(),
+                                            zap_label.clone(),
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    )
+                    .when_some(reaction_note, |el, (ok, msg)| {
+                        el.child(Self::line(
+                            msg,
+                            if ok { Color::Success } else { Color::Error },
+                        ))
+                    })
+                    .when(zap_open, |el| {
+                        if let Some(zap) = self.zap.clone() {
+                            el.child(self.render_zap_strip(&zap, cx))
+                        } else {
+                            el
+                        }
+                    })
+                },
+            )
             // Only a note or a comment has a conversation, and only the
             // client server can read one.
             .when(event.kind == 1 || event.kind == 1111, |el| {
@@ -3731,14 +3898,1129 @@ impl NostrViewer {
             }))
             .into_any_element()
     }
+    /// Ensure the multi-line composer `Editor` exists and syncs edits into `ComposerState`.
+    fn ensure_composer_editor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<editor::Editor> {
+        if let Some(existing) = &self.composer_editor {
+            return existing.clone();
+        }
+        let initial_draft = self.composer.draft.clone();
+        let editor = cx.new(|cx| {
+            let mut ed = editor::Editor::multi_line(window, cx);
+            ed.disable_scrollbars_and_minimap(window, cx);
+            ed.set_show_gutter(false, cx);
+            ed.set_show_line_numbers(false, cx);
+            ed.set_show_git_diff_gutter(false, cx);
+            ed.set_show_code_actions(false, cx);
+            ed.set_show_runnables(false, cx);
+            ed.set_show_bookmarks(false, cx);
+            ed.set_show_breakpoints(false, cx);
+            ed.set_show_wrap_guides(false, cx);
+            ed.set_placeholder_text("Write a Nostr note…", window, cx);
+            if !initial_draft.is_empty() {
+                ed.set_text(initial_draft, window, cx);
+            }
+            ed
+        });
+        let sub = cx.subscribe(&editor, |this, ed, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                let text = ed.read(cx).text(cx);
+                this.composer.set_draft(text);
+                cx.notify();
+            }
+        });
+        self.composer_editor = Some(editor.clone());
+        self._composer_subscription = Some(sub);
+        editor
+    }
+
+    /// Toggle the collapsible compose drawer; collapsing always preserves the draft.
+    fn toggle_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.composer.toggle();
+        if self.composer.is_open() {
+            let editor = self.ensure_composer_editor(window, cx);
+            editor.update(cx, |ed, cx| {
+                if ed.text(cx) != self.composer.draft {
+                    ed.set_text(self.composer.draft.clone(), window, cx);
+                }
+                window.focus(&ed.focus_handle(cx), cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn collapse_compose(&mut self, cx: &mut Context<Self>) {
+        if self.composer.is_open() && !self.composer.is_publishing() {
+            self.composer.toggle();
+            cx.notify();
+        }
+    }
+
+    fn discard_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer.is_publishing() {
+            return;
+        }
+        self.composer.discard();
+        if let Some(editor) = &self.composer_editor {
+            editor.update(cx, |ed, cx| ed.set_text("", window, cx));
+        }
+        cx.notify();
+    }
+
+    /// Open the compose drawer pre-bound to a NIP-10 / NIP-22 reply target.
+    fn open_reply_compose(
+        &mut self,
+        target: ReplyContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.composer.open_reply(target);
+        let editor = self.ensure_composer_editor(window, cx);
+        editor.update(cx, |ed, cx| {
+            if ed.text(cx) != self.composer.draft {
+                ed.set_text(self.composer.draft.clone(), window, cx);
+            }
+            window.focus(&ed.focus_handle(cx), cx);
+        });
+        cx.notify();
+    }
+
+    /// Dispatch a NIP-25 `kind: 7` '+' reaction (`nostr_publish_reaction`).
+    fn send_like(&mut self, event_id: String, author: String, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+
+        let args = json!({
+            "target_event_id": event_id,
+            "target_pubkey": author,
+            "content": "+",
+        });
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_REACTION_TOOL, args) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            let accepted = outcome.receipt().accepted.len();
+                            this.reaction_feedback = Some((
+                                event_id.clone(),
+                                true,
+                                format!("Liked (NIP-25 · {accepted} relay(s))"),
+                            ));
+                            this.load_archive(cx);
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                event_id,
+                                false,
+                                "Like failed: no relay accepted the reaction.".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((event_id, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback =
+                            Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn toggle_zap_strip(
+        &mut self,
+        event_id: String,
+        author: String,
+        label: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .zap
+            .as_ref()
+            .is_some_and(|z| z.target_event_id == event_id)
+        {
+            if !self.zap.as_ref().is_some_and(ZapDraftState::is_busy) {
+                self.zap = None;
+            }
+        } else {
+            self.zap = Some(ZapDraftState::new(event_id, author, label));
+        }
+        cx.notify();
+    }
+
+    /// Execute an Amethyst-style NIP-57 Lightning zap:
+    /// 1) resolve recipient `lud16` via `nostr_profile`,
+    /// 2) call `nostr_prepare_zap` (mandatory editor `Approve Zap` modal),
+    /// 3) detect active wallet rail via `wallet_status` and call `wallet_pay_invoice`
+    ///    (mandatory editor spend approval).
+    fn execute_zap(&mut self, cx: &mut Context<Self>) {
+        let Some(zap) = self.zap.as_mut() else {
+            return;
+        };
+        if zap.is_busy() {
+            return;
+        }
+        let target_event_id = zap.target_event_id.clone();
+        let target_pubkey = zap.target_pubkey.clone();
+        let amount_sats = zap.amount_sats;
+        zap.status = ZapStatus::ResolvingProfile;
+        cx.notify();
+
+        let profile_task = match invoke(
+            NOSTR_CLIENT_SERVER,
+            PROFILE_TOOL,
+            json!({ "authors": [target_pubkey] }),
+        ) {
+            Ok(task) => task,
+            Err(err) => {
+                if let Some(z) = self.zap.as_mut() {
+                    z.status = ZapStatus::Failed(err);
+                }
+                cx.notify();
+                return;
+            }
+        };
+
+        self._zap_task = Some(cx.spawn(async move |this, cx| {
+            // 1. Resolve recipient Lightning Address (`lud16`) from kind:0 profile.
+            let profile_raw = match profile_task.await {
+                Ok(raw) => raw,
+                Err(err) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(format!(
+                                "Profile lookup failed: {}",
+                                sanitize_untrusted_text(&err.to_string())
+                            ));
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let lud16 = serde_json::from_str::<Value>(&profile_raw)
+                .ok()
+                .and_then(|v| {
+                    let first = v.get("profiles")?.as_array()?.first()?;
+                    first
+                        .get("lud16")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            first
+                                .get("metadata")?
+                                .get("lud16")?
+                                .as_str()
+                                .map(str::to_string)
+                        })
+                        .or_else(|| {
+                            first
+                                .get("content")?
+                                .as_str()
+                                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                                .and_then(|m| m.get("lud16")?.as_str().map(str::to_string))
+                        })
+                })
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| s.trim().to_string());
+
+            let Some(lud16) = lud16 else {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(z) = this.zap.as_mut() {
+                        z.status = ZapStatus::Failed(
+                            "Recipient profile has no Lightning Address (lud16).".to_string(),
+                        );
+                    }
+                    cx.notify();
+                });
+                return;
+            };
+
+            // 2. Prepare NIP-57 zap request + verified BOLT11 invoice.
+            let _ = this.update(cx, |this, cx| {
+                if let Some(z) = this.zap.as_mut() {
+                    z.status = ZapStatus::PreparingInvoice;
+                }
+                cx.notify();
+            });
+            let prep_task = match invoke(
+                NOSTR_CLIENT_SERVER,
+                PREPARE_ZAP_TOOL,
+                json!({
+                    "recipient": target_pubkey,
+                    "lud16": lud16,
+                    "amount_sats": amount_sats,
+                    "event_id": target_event_id,
+                }),
+            ) {
+                Ok(t) => t,
+                Err(err) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(err);
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let prep_raw = match prep_task.await {
+                Ok(raw) => raw,
+                Err(err) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()));
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let Some(bolt11) = serde_json::from_str::<Value>(&prep_raw)
+                .ok()
+                .and_then(|v| v.get("bolt11").and_then(Value::as_str).map(str::to_string))
+            else {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(z) = this.zap.as_mut() {
+                        z.status = ZapStatus::Failed(
+                            "nostr_prepare_zap did not return a verified bolt11 invoice."
+                                .to_string(),
+                        );
+                    }
+                    cx.notify();
+                });
+                return;
+            };
+
+            // 3. Pick active wallet rail (`nwc` if configured, else `cashu`) and pay.
+            let rail = match invoke(WALLET_SERVER_ID, WALLET_STATUS_TOOL, json!({})) {
+                Ok(status_task) => match status_task.await {
+                    Ok(raw) => serde_json::from_str::<Value>(&raw)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("nwc_label")
+                                .and_then(Value::as_str)
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|_| "nwc")
+                        })
+                        .unwrap_or("cashu"),
+                    Err(_) => "cashu",
+                },
+                Err(_) => "cashu",
+            };
+
+            let _ = this.update(cx, |this, cx| {
+                if let Some(z) = this.zap.as_mut() {
+                    z.status = ZapStatus::PayingInvoice;
+                }
+                cx.notify();
+            });
+            let idempotency_key = format!(
+                "nostr-zap-{}-{}",
+                target_event_id,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let pay_task = match invoke(
+                WALLET_SERVER_ID,
+                WALLET_PAY_INVOICE_TOOL,
+                json!({
+                    "rail": rail,
+                    "bolt11": bolt11,
+                    "idempotency_key": idempotency_key,
+                }),
+            ) {
+                Ok(t) => t,
+                Err(err) => {
+                    let _ = this.update(cx, |this, cx| {
+                        if let Some(z) = this.zap.as_mut() {
+                            z.status = ZapStatus::Failed(err);
+                        }
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let pay_result = pay_task.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(z) = this.zap.as_mut() {
+                    z.status = match pay_result {
+                        Ok(_) => ZapStatus::Settled(format!(
+                            "Zapped {amount_sats} sats via {rail} (NIP-57)"
+                        )),
+                        Err(err) => ZapStatus::Failed(sanitize_untrusted_text(&err.to_string())),
+                    };
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn render_zap_strip(&self, zap: &ZapDraftState, cx: &Context<Self>) -> AnyElement {
+        let busy = zap.is_busy();
+        let status_line: Option<(String, Color)> = match &zap.status {
+            ZapStatus::Ready => None,
+            ZapStatus::ResolvingProfile => Some((
+                "Resolving recipient Lightning Address…".into(),
+                Color::Muted,
+            )),
+            ZapStatus::PreparingInvoice => Some((
+                "Awaiting Zap approval & BOLT11 invoice…".into(),
+                Color::Muted,
+            )),
+            ZapStatus::PayingInvoice => {
+                Some(("Awaiting wallet spend approval…".into(), Color::Muted))
+            }
+            ZapStatus::Settled(msg) => Some((msg.clone(), Color::Success)),
+            ZapStatus::Failed(msg) => Some((msg.clone(), Color::Error)),
+        };
+
+        v_flex()
+            .w_full()
+            .p_2()
+            .gap_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .flex_wrap()
+                    .items_center()
+                    .child(
+                        Label::new(format!("Zap {}:", zap.target_label))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .children(ZAP_PRESETS_SATS.iter().map(|&sats| {
+                        let selected = zap.amount_sats == sats;
+                        ui::Button::new(("nostr-zap-preset", sats as usize), format!("{sats}"))
+                            .label_size(LabelSize::XSmall)
+                            .toggle_state(selected)
+                            .disabled(busy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if let Some(z) = this.zap.as_mut() {
+                                    z.amount_sats = sats;
+                                    z.status = ZapStatus::Ready;
+                                }
+                                cx.notify();
+                            }))
+                    }))
+                    .child(
+                        ui::Button::new(
+                            "nostr-zap-send",
+                            if busy {
+                                "Zapping…".to_string()
+                            } else {
+                                format!("Zap {} sats", zap.amount_sats)
+                            },
+                        )
+                        .style(ui::ButtonStyle::Filled)
+                        .label_size(LabelSize::XSmall)
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.execute_zap(cx))),
+                    ),
+            )
+            .when_some(status_line, |el, (msg, color)| {
+                el.child(Label::new(msg).size(LabelSize::XSmall).color(color))
+            })
+            .into_any_element()
+    }
+
+    fn submit_compose(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer.is_publishing() {
+            return;
+        }
+        if let Some(editor) = &self.composer_editor {
+            let current_text = editor.read(cx).text(cx);
+            self.composer.set_draft(current_text);
+        }
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let payload = match self.composer.begin_publish(now_secs) {
+            Ok(payload) => payload,
+            Err(_) => {
+                cx.notify();
+                return;
+            }
+        };
+        let reply_target = self.composer.reply_target.clone();
+        cx.notify();
+
+        let (tool, args) = match reply_target {
+            Some(target) => (
+                PUBLISH_REPLY_TOOL,
+                json!({
+                    "content": payload.content,
+                    "root_event_id": target.root_event_id,
+                    "reply_to_event_id": target.reply_to_event_id,
+                    "target_pubkey": target.target_pubkey,
+                    "root_kind": target.root_kind,
+                    "created_at": payload.created_at,
+                }),
+            ),
+            None => (
+                PUBLISH_TOOL,
+                json!({
+                    "content": payload.content,
+                    "created_at": payload.created_at,
+                }),
+            ),
+        };
+        let task = match invoke(NOSTR_CLIENT_SERVER, tool, args) {
+            Ok(task) => task,
+            Err(err) => {
+                self.composer.finish_publish_err(err);
+                cx.notify();
+                return;
+            }
+        };
+
+        let editor_handle = self.composer_editor.clone();
+        let window_handle = window.window_handle();
+        self._publish_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(raw_json) => {
+                        let any_accepted = this.composer.finish_publish_ok(&raw_json);
+                        if any_accepted {
+                            if let Some(ed) = &editor_handle {
+                                let _ = window_handle.update(cx, |_, window, cx| {
+                                    ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                });
+                            }
+                            this.load_archive(cx);
+                        }
+                    }
+                    Err(err) => {
+                        this.composer.finish_publish_err(err.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn render_publish_receipt(&self, outcome: &PublishOutcome, cx: &Context<Self>) -> AnyElement {
+        let receipt = outcome.receipt();
+        let (summary, tone) = match outcome {
+            PublishOutcome::Published(_) => (
+                format!(
+                    "Published to {}/{} relays{}",
+                    receipt.accepted.len(),
+                    receipt.accepted.len(),
+                    if receipt.read_back_found {
+                        " · verified"
+                    } else {
+                        ""
+                    }
+                ),
+                Color::Success,
+            ),
+            PublishOutcome::PartialFailure(_) => (
+                format!(
+                    "Published to {}/{} relays ({} failed)",
+                    receipt.accepted.len(),
+                    receipt.accepted.len() + receipt.failed.len(),
+                    receipt.failed.len()
+                ),
+                Color::Warning,
+            ),
+            PublishOutcome::AllFailed(_) => (
+                format!("Failed on all {} relays", receipt.failed.len()),
+                Color::Error,
+            ),
+        };
+
+        v_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .min_w_0()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().surface_background)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .min_w_0()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new(summary)
+                                .size(LabelSize::Small)
+                                .color(tone)
+                                .truncate(),
+                        ),
+                    )
+                    .child(
+                        ui::IconButton::new("nostr-receipt-dismiss", ui::IconName::Close)
+                            .icon_size(ui::IconSize::XSmall)
+                            .tooltip(ui::Tooltip::text("Dismiss publish receipt"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.composer.dismiss_receipt();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .children(receipt.failed.iter().take(3).map(|relay| {
+                let detail = match &relay.reason {
+                    Some(reason) => {
+                        format!("{} ({}): {}", host_of(&relay.address), relay.state, reason)
+                    }
+                    None => format!("{} ({})", host_of(&relay.address), relay.state),
+                };
+                Label::new(detail)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .truncate()
+            }))
+            .into_any_element()
+    }
+
+    fn render_composer_drawer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.composer.is_open() {
+            return None;
+        }
+        let editor = self.ensure_composer_editor(window, cx);
+        let chars = self.composer.char_count();
+        let publishing = self.composer.is_publishing();
+        let can_publish = !publishing && self.composer.has_draft() && chars <= MAX_CONTENT_CHARS;
+        let counter_color = if chars > MAX_CONTENT_CHARS {
+            Color::Error
+        } else if chars >= CHAR_WARNING_THRESHOLD {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+        let status_text = if publishing {
+            "Awaiting approval / publishing…".to_string()
+        } else {
+            format!("{chars} / {MAX_CONTENT_CHARS}")
+        };
+        let error = self.composer.error.clone();
+        let reply_banner = self.composer.reply_target.as_ref().map(|target| {
+            format!(
+                "Replying to {} ({})",
+                target.target_label,
+                target.nip_label()
+            )
+        });
+
+        Some(
+            v_flex()
+                .id("nostr-compose-drawer")
+                .w_full()
+                .px_2()
+                .py_2()
+                .gap_2()
+                .min_w_0()
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().elevated_surface_background)
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        this.collapse_compose(cx);
+                        cx.stop_propagation();
+                    } else if event.keystroke.key == "enter"
+                        && (event.keystroke.modifiers.secondary(cx)
+                            || event.keystroke.modifiers.control)
+                    {
+                        this.submit_compose(window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .when_some(reply_banner, |this, banner| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .min_w_0()
+                            .items_center()
+                            .child(
+                                div().flex_1().min_w_0().child(
+                                    Label::new(banner)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Accent)
+                                        .truncate(),
+                                ),
+                            )
+                            .child(
+                                ui::IconButton::new("nostr-reply-clear", ui::IconName::Close)
+                                    .icon_size(ui::IconSize::XSmall)
+                                    .disabled(publishing)
+                                    .tooltip(ui::Tooltip::text("Switch back to a top-level note"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.composer.clear_reply_target();
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                })
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .min_h(px(64.))
+                        .max_h(px(120.))
+                        .overflow_hidden()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(if error.is_some() {
+                            cx.theme().status().error_border
+                        } else {
+                            cx.theme().colors().border
+                        })
+                        .bg(cx.theme().colors().editor_background)
+                        .child(editor),
+                )
+                .when_some(error, |this, err| {
+                    this.child(
+                        Label::new(err)
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .min_w_0()
+                        .items_center()
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                Label::new(status_text)
+                                    .size(LabelSize::Small)
+                                    .color(counter_color)
+                                    .truncate(),
+                            ),
+                        )
+                        .child(
+                            div().flex_shrink_0().child(
+                                ui::IconButton::new("nostr-compose-discard", ui::IconName::Trash)
+                                    .icon_size(ui::IconSize::Small)
+                                    .disabled(publishing)
+                                    .tooltip(ui::Tooltip::text("Discard draft"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.discard_compose(window, cx);
+                                    })),
+                            ),
+                        )
+                        .child(
+                            div().flex_shrink_0().child(
+                                ui::Button::new(
+                                    "nostr-compose-publish",
+                                    if publishing { "Publishing…" } else { "Publish" },
+                                )
+                                .style(ui::ButtonStyle::Filled)
+                                .disabled(!can_publish)
+                                .tooltip(ui::Tooltip::text(
+                                    "Publish kind:1 note (Ctrl/Cmd+Enter). Editor asks approval before signing.",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.submit_compose(window, cx);
+                                })),
+                            ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+    fn ensure_dm_editors(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<editor::Editor>, Entity<editor::Editor>) {
+        let recipient = if let Some(existing) = &self.dm_recipient_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::single_line(window, cx);
+                e.set_placeholder_text("Recipient npub1… or 64-char hex", window, cx);
+                e
+            });
+            self.dm_recipient_editor = Some(ed.clone());
+            ed
+        };
+        let input = if let Some(existing) = &self.dm_input_editor {
+            existing.clone()
+        } else {
+            let ed = cx.new(|cx| {
+                let mut e = editor::Editor::multi_line(window, cx);
+                e.disable_scrollbars_and_minimap(window, cx);
+                e.set_show_gutter(false, cx);
+                e.set_show_line_numbers(false, cx);
+                e.set_show_git_diff_gutter(false, cx);
+                e.set_show_code_actions(false, cx);
+                e.set_show_runnables(false, cx);
+                e.set_show_bookmarks(false, cx);
+                e.set_show_breakpoints(false, cx);
+                e.set_show_wrap_guides(false, cx);
+                e.set_placeholder_text("Write an encrypted NIP-17 DM…", window, cx);
+                e
+            });
+            self.dm_input_editor = Some(ed.clone());
+            ed
+        };
+        (recipient, input)
+    }
+
+    fn load_local_dm_threads(&mut self, cx: &mut Context<Self>) {
+        if self.dm_loaded_local || self.dm_busy {
+            return;
+        }
+        self.dm_loaded_local = true;
+        self._dm_task = Some(cx.spawn(async move |this, cx| {
+            let result = nostr_dm::load_local_threads().await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(threads) => {
+                        this.dm_threads = threads;
+                        if this.dm_selected_peer.is_none() {
+                            if let Some(first) = this.dm_threads.first() {
+                                let peer = first.peer_pubkey_hex.clone();
+                                this.select_dm_peer(peer, cx);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        this.dm_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn select_dm_peer(&mut self, peer_hex: String, cx: &mut Context<Self>) {
+        self.dm_selected_peer = Some(peer_hex.clone());
+        self._dm_task = Some(cx.spawn(async move |this, cx| {
+            let result = nostr_dm::load_local_messages(peer_hex).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(messages) => this.dm_messages = messages,
+                    Err(err) => this.dm_status = Some((false, err)),
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn sync_dms(&mut self, cx: &mut Context<Self>) {
+        if self.dm_busy {
+            return;
+        }
+        self.dm_busy = true;
+        self.dm_status = Some((true, "Syncing NIP-17 gift wraps from seed relays…".into()));
+        cx.notify();
+        self._dm_task = Some(cx.spawn(async move |this, cx| {
+            let result = nostr_dm::sync_dms(cx).await;
+            let _ = this.update(cx, |this, cx| {
+                this.dm_busy = false;
+                match result {
+                    Ok(report) => {
+                        let summary = format!(
+                            "Synced {} wrap(s), {} new DM(s) (NIP-17)",
+                            report.fetched_wraps, report.newly_stored
+                        );
+                        this.dm_threads = report.threads;
+                        this.dm_status = Some((true, summary));
+                        if let Some(peer) = this.dm_selected_peer.clone() {
+                            this.select_dm_peer(peer, cx);
+                        } else if let Some(first) = this.dm_threads.first() {
+                            this.select_dm_peer(first.peer_pubkey_hex.clone(), cx);
+                        }
+                    }
+                    Err(err) => {
+                        this.dm_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn send_dm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dm_busy {
+            return;
+        }
+        let (recipient_ed, input_ed) = self.ensure_dm_editors(window, cx);
+        let recipient_raw = self
+            .dm_selected_peer
+            .clone()
+            .unwrap_or_else(|| recipient_ed.read(cx).text(cx));
+        let content = input_ed.read(cx).text(cx);
+        self.dm_busy = true;
+        self.dm_status = Some((true, "Awaiting DM approval & NIP-59 gift wrap…".into()));
+        cx.notify();
+
+        let window_handle = window.window_handle();
+        let input_handle = input_ed;
+        self._dm_task = Some(cx.spawn(async move |this, cx| {
+            let result = nostr_dm::send_dm(recipient_raw, content, cx).await;
+            let _ = this.update(cx, |this, cx| {
+                this.dm_busy = false;
+                match result {
+                    Ok(report) => {
+                        let peer = report.message.peer_pubkey_hex.clone();
+                        this.dm_selected_peer = Some(peer);
+                        this.dm_messages.push(report.message);
+                        this.dm_status = Some((
+                            true,
+                            format!(
+                                "Sent encrypted DM (NIP-17 · {} relay(s) accepted)",
+                                report.relays_accepted
+                            ),
+                        ));
+                        let _ = window_handle.update(cx, |_, window, cx| {
+                            input_handle.update(cx, |ed, cx| ed.set_text("", window, cx));
+                        });
+                        this.dm_loaded_local = false;
+                        this.load_local_dm_threads(cx);
+                    }
+                    Err(err) => {
+                        this.dm_status = Some((false, err));
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn render_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.load_local_dm_threads(cx);
+        let (recipient_ed, input_ed) = self.ensure_dm_editors(window, cx);
+        let busy = self.dm_busy;
+        let selected_peer = self.dm_selected_peer.clone();
+        let status = self.dm_status.clone();
+
+        v_flex()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .p_2()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .min_w_0()
+                    .items_center()
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new("NIP-17 · NIP-44 + NIP-59 · SQLCipher (editor-only)")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate(),
+                        ),
+                    )
+                    .child(
+                        div().flex_shrink_0().child(
+                            ui::Button::new("nostr-dm-sync", if busy { "Syncing…" } else { "Sync DMs" })
+                                .label_size(LabelSize::XSmall)
+                                .disabled(busy)
+                                .tooltip(ui::Tooltip::text(
+                                    "Fetch & unwrap NIP-17 kind:1059 gift wraps from seed relays (https://nostr-nips.com/nip-17)",
+                                ))
+                                .on_click(cx.listener(|this, _, _, cx| this.sync_dms(cx))),
+                        ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .flex_wrap()
+                    .child(
+                        ui::Button::new("nostr-dm-new", "+ New DM")
+                            .label_size(LabelSize::XSmall)
+                            .toggle_state(selected_peer.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dm_selected_peer = None;
+                                this.dm_messages.clear();
+                                cx.notify();
+                            })),
+                    )
+                    .children(self.dm_threads.iter().enumerate().map(|(ix, thread)| {
+                        let peer_hex = thread.peer_pubkey_hex.clone();
+                        let active = selected_peer.as_deref() == Some(peer_hex.as_str());
+                        let label = format!(
+                            "{} ({})",
+                            short_hex(&thread.peer_pubkey_hex),
+                            thread.message_count
+                        );
+                        ui::Button::new(("nostr-dm-peer", ix), label)
+                            .label_size(LabelSize::XSmall)
+                            .toggle_state(active)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.select_dm_peer(peer_hex.clone(), cx);
+                            }))
+                    })),
+            )
+            .when(selected_peer.is_none(), |el| {
+                el.child(
+                    div()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .child(recipient_ed),
+                )
+            })
+            .when_some(status, |el, (ok, msg)| {
+                el.child(
+                    Label::new(display_text(&msg))
+                        .size(LabelSize::XSmall)
+                        .color(if ok { Color::Muted } else { Color::Error }),
+                )
+            })
+            .child(
+                v_flex()
+                    .id("nostr-dm-messages-list")
+                    .w_full()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.dm_scroll_handle)
+                    .gap_1()
+                    .when(self.dm_messages.is_empty(), |el| {
+                        el.child(Self::line(
+                            "No decrypted NIP-17 messages in this thread yet. Click Sync DMs or send a message below.",
+                            Color::Muted,
+                        ))
+                    })
+                    .children(self.dm_messages.iter().map(|msg| {
+                        let who = if msg.outgoing { "You" } else { "Peer" };
+                        v_flex()
+                            .w_full()
+                            .p_1()
+                            .rounded_sm()
+                            .bg(cx.theme().colors().surface_background)
+                            .child(Self::line(
+                                format!("{who} · {}", utc_text(msg.created_at)),
+                                Color::Hint,
+                            ))
+                            .child(Self::line(display_text(&msg.content), Color::Default))
+                    })),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .flex_shrink_0()
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if event.keystroke.key == "enter"
+                            && (event.keystroke.modifiers.secondary(cx)
+                                || event.keystroke.modifiers.control)
+                        {
+                            this.send_dm(window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .child(
+                        div()
+                            .w_full()
+                            .min_h(px(48.))
+                            .max_h(px(96.))
+                            .overflow_hidden()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(input_ed),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .justify_end()
+                            .child(
+                                ui::Button::new(
+                                    "nostr-dm-send",
+                                    if busy { "Sending…" } else { "Send DM" },
+                                )
+                                .style(ui::ButtonStyle::Filled)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(busy)
+                                .tooltip(ui::Tooltip::text(
+                                    "Send NIP-17 encrypted DM (Ctrl/Cmd+Enter). Always prompts for approval.",
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.send_dm(window, cx);
+                                })),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
 }
 
 impl Render for NostrViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let compose_drawer = self.render_composer_drawer(window, cx);
+        let publish_receipt = self
+            .composer
+            .last_outcome
+            .as_ref()
+            .map(|outcome| self.render_publish_receipt(outcome, cx));
+        let compose_open = self.composer.is_open();
+        let has_draft = self.composer.has_draft();
+        let compose_tooltip = if has_draft && !compose_open {
+            "Resume unsent Nostr note draft"
+        } else if compose_open {
+            "Collapse composer (preserves draft · Esc)"
+        } else {
+            "Compose Nostr note"
+        };
+
         let body = match self.tab {
             ViewerTab::Timeline => self.render_timeline(window, cx),
             ViewerTab::Conversation => self.render_conversation(window, cx),
             ViewerTab::Relay => self.render_relay(cx),
+            ViewerTab::Messages => self.render_messages(window, cx),
         };
         v_flex()
             .size_full()
@@ -3758,17 +5040,38 @@ impl Render for NostrViewer {
                     .child(self.tab_button(ViewerTab::Timeline, "Timeline".into(), cx))
                     .child(self.tab_button(ViewerTab::Conversation, "Conversation".into(), cx))
                     .child(self.tab_button(ViewerTab::Relay, "Relay".into(), cx))
+                    .child(self.tab_button(ViewerTab::Messages, "Messages".into(), cx))
                     .child(
-                        div().ml_auto().flex_shrink_0().child(
-                            ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
-                                .icon_size(ui::IconSize::Small)
-                                .tooltip(ui::Tooltip::text(
-                                    "Reload from the local relay. Contacts no other relay.",
-                                ))
-                                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                        ),
+                        h_flex()
+                            .ml_auto()
+                            .gap_1()
+                            .flex_shrink_0()
+                            .child(
+                                ui::IconButton::new("nostr-viewer-compose", ui::IconName::Pencil)
+                                    .icon_size(ui::IconSize::Small)
+                                    .toggle_state(compose_open || has_draft)
+                                    .icon_color(if has_draft && !compose_open {
+                                        Color::Accent
+                                    } else {
+                                        Color::Default
+                                    })
+                                    .tooltip(ui::Tooltip::text(compose_tooltip))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.toggle_compose(window, cx);
+                                    })),
+                            )
+                            .child(
+                                ui::IconButton::new("nostr-viewer-refresh", ui::IconName::RotateCw)
+                                    .icon_size(ui::IconSize::Small)
+                                    .tooltip(ui::Tooltip::text(
+                                        "Reload from the local relay. Contacts no other relay.",
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            ),
                     ),
             )
+            .when_some(compose_drawer, |this, drawer| this.child(drawer))
+            .when_some(publish_receipt, |this, receipt| this.child(receipt))
             .child(
                 v_flex()
                     .w_full()
@@ -3837,6 +5140,7 @@ mod tests {
         assert!(CLIENT_TOOL_NAMES.contains(&THREAD_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&PROFILE_TOOL));
         assert!(CLIENT_TOOL_NAMES.contains(&FETCH_TOOL));
+        assert!(CLIENT_TOOL_NAMES.contains(&PUBLISH_TOOL));
         assert!(
             !CLIENT_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL)
                 && !RELAY_TOOL_NAMES.contains(&MEDIA_FETCH_IMAGE_TOOL),

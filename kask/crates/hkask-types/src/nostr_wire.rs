@@ -57,6 +57,8 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_profile",
     "nostr_publish_note",
     "nostr_publish_nutzap",
+    "nostr_publish_reaction",
+    "nostr_publish_reply",
     "nostr_thread",
 ];
 
@@ -144,6 +146,34 @@ pub struct NostrNutzapWire {
     pub event_id_hex: Option<String>,
     #[serde(default)]
     pub content: String,
+}
+
+/// Wire payload for requesting an editor-signed NIP-25 `kind: 7` reaction
+/// (<https://nostr-nips.com/nip-25>). Gated by `host/sign_nostr_note`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrReactionWire {
+    pub created_at: u64,
+    pub target_event_id_hex: String,
+    pub target_pubkey_hex: String,
+    pub content: String,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-10 (`kind: 1`,
+/// <https://nostr-nips.com/nip-10>) or NIP-22 (`kind: 1111`,
+/// <https://nostr-nips.com/nip-22>) reply/comment. Gated by `host/sign_nostr_note`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrReplyWire {
+    pub created_at: u64,
+    pub root_event_id_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_event_id_hex: Option<String>,
+    pub target_pubkey_hex: String,
+    pub root_kind: u16,
+    pub content: String,
+    #[serde(default)]
+    pub relays: Vec<String>,
 }
 
 /// One Nostr event as any tool reports it.

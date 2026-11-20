@@ -54,8 +54,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         crate::server::NostrClientServer::nostr_client_router(),
         "nostr_client_router",
-        12,
-        tool_surface_is_exactly_12_registered_tools,
+        14,
+        tool_surface_is_exactly_14_registered_tools,
     );
 
     /// The panel names this server's tools from `hkask-types` so it need not
@@ -89,7 +89,7 @@ mod tool_surface_tests {
     #[test]
     fn live_router_schemas_are_strict_for_all_registered_tools() {
         let tools = crate::server::NostrClientServer::nostr_client_router().list_all();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 14);
         for tool in tools {
             let schema =
                 serde_json::to_value(&tool.input_schema).expect("router schema serializes");
@@ -117,19 +117,23 @@ mod tool_surface_tests {
             TOOL_NAMES.contains(&"nostr_publish_note"),
             "the ruled publish path is registered"
         );
+        const RULED_WRITING_TOOLS: &[&str] = &[
+            "nostr_publish_note",
+            "nostr_publish_nutzap",
+            "nostr_publish_reaction",
+            "nostr_publish_reply",
+        ];
         for name in TOOL_NAMES {
+            if RULED_WRITING_TOOLS.contains(name) {
+                continue;
+            }
             for verb in [
                 "sign", "publish", "post", "send", "draft", "react", "repost", "reply", "delete",
                 "follow",
             ] {
-                if (*name == "nostr_publish_note" || *name == "nostr_publish_nutzap")
-                    && verb == "publish"
-                {
-                    continue;
-                }
                 assert!(
                     !name.contains(verb),
-                    "tool {name} is named as another writing verb ({verb}); the publish path is the one ruled"
+                    "tool {name} is named as another writing verb ({verb}); only ruled publish paths are allowed"
                 );
             }
         }

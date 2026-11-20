@@ -1046,6 +1046,7 @@ nwc = { version = "=0.45.2", default-features = false, features = ["aws_lc_rs", 
 # un-yanked 0.45 release, and nostr-lmdb 0.45.0/0.45.1 were yanked. Default
 # features are off so the server picks the TLS provider (aws-lc-rs, as the
 # rest of the workspace) instead of the SDK's default (ring).
+nostr = { version = "=0.45.7", default-features = false, features = ["std", "os-rng", "nip44", "nip59"] }
 nostr-sdk = { version = "=0.45.6", default-features = false }
 nostr-lmdb = "=0.45.3"
 # The websocket transport under nostr-sdk, named directly by

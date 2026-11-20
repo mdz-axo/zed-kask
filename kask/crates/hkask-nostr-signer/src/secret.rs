@@ -105,6 +105,12 @@ impl SecretKey {
         self.signing_key.verifying_key().to_bytes().into()
     }
 
+    /// Return a `Zeroizing` copy of the 32 secret key bytes for editor-only
+    /// NIP-44 / NIP-59 operations (`kask_bridge::nostr_dm`). Wiped on drop.
+    pub fn to_zeroizing_bytes(&self) -> Zeroizing<[u8; 32]> {
+        self.entered.clone()
+    }
+
     /// Build a key from 32 raw bytes, refusing zero and values not below the
     /// curve order.
     pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Result<Self, NsecError> {

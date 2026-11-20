@@ -51,6 +51,7 @@ mod mcp_env;
 mod mcp_servers;
 mod memory;
 mod model_resolution;
+pub mod nostr_dm;
 mod nostr_signing;
 mod nwc_rail;
 mod settings;

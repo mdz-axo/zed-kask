@@ -9,8 +9,14 @@ use zeroize::Zeroizing;
 
 use crate::secret::SecretKey;
 
-/// Short text note kind (NIP-01).
+/// Short text note kind (NIP-01: <https://nostr-nips.com/nip-01>).
 pub const NOTE_KIND: u16 = 1;
+
+/// Reaction kind (NIP-25: <https://nostr-nips.com/nip-25>).
+pub const REACTION_KIND: u16 = 7;
+
+/// Comment kind (NIP-22: <https://nostr-nips.com/nip-22>).
+pub const COMMENT_KIND: u16 = 1111;
 
 /// Blossom authorization token kind (BUD-11).
 pub const BLOSSOM_AUTH_KIND: u16 = 24_242;
@@ -56,6 +62,12 @@ pub enum SignError {
     /// A NIP-57 zap request or NIP-61 nutzap violated its protocol invariants.
     #[error("invalid zap payload: {reason}")]
     InvalidZap { reason: &'static str },
+    /// A NIP-25 reaction violated its protocol invariants.
+    #[error("invalid reaction payload: {reason}")]
+    InvalidReaction { reason: &'static str },
+    /// A NIP-10 or NIP-22 reply violated its protocol invariants.
+    #[error("invalid reply payload: {reason}")]
+    InvalidReply { reason: &'static str },
     /// The operating system did not supply random bytes for the signature's
     /// auxiliary randomness.
     #[error("the operating system did not supply random bytes")]
@@ -207,6 +219,139 @@ pub fn sign_note_with_imeta(
         tags.push(build_imeta_tag(attachment)?);
     }
     sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+}
+
+/// Sign a NIP-25 `kind: 7` reaction (<https://nostr-nips.com/nip-25>) targeting
+/// a specific event and its author.
+pub fn sign_reaction(
+    key: &SecretKey,
+    created_at: u64,
+    target_event_id_hex: &str,
+    target_pubkey_hex: &str,
+    content: &str,
+) -> Result<Event, SignError> {
+    if !is_lower_sha256_hex(target_event_id_hex) {
+        return Err(SignError::InvalidReaction {
+            reason: "target_event_id_hex must be 64 lowercase hex characters",
+        });
+    }
+    if !is_lower_sha256_hex(target_pubkey_hex) {
+        return Err(SignError::InvalidReaction {
+            reason: "target_pubkey_hex must be 64 lowercase hex characters",
+        });
+    }
+    let reaction = content.trim();
+    if reaction.is_empty() || reaction.chars().count() > 32 {
+        return Err(SignError::InvalidReaction {
+            reason: "reaction content must be 1..=32 characters (e.g. '+' or an emoji)",
+        });
+    }
+    let tags = vec![
+        vec!["e".to_string(), target_event_id_hex.to_string()],
+        vec!["p".to_string(), target_pubkey_hex.to_string()],
+    ];
+    sign_verified_parts(key, REACTION_KIND, created_at, tags, reaction)
+}
+
+/// Target metadata for a NIP-10 (`kind: 1`, <https://nostr-nips.com/nip-10>) or
+/// NIP-22 (`kind: 1111`, <https://nostr-nips.com/nip-22>) reply/comment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplyTarget {
+    pub root_event_id_hex: String,
+    pub reply_to_event_id_hex: Option<String>,
+    pub target_pubkey_hex: String,
+    pub root_kind: u16,
+}
+
+/// Sign a reply/comment:
+/// - When `target.root_kind == 1`, emits a NIP-10 marked `kind: 1` reply
+///   (<https://nostr-nips.com/nip-10>).
+/// - For non-`kind: 1` roots (e.g. `kind: 30023` articles), emits a NIP-22
+///   `kind: 1111` comment (<https://nostr-nips.com/nip-22>).
+pub fn sign_reply(
+    key: &SecretKey,
+    created_at: u64,
+    content: &str,
+    target: &ReplyTarget,
+) -> Result<Event, SignError> {
+    if content.trim().is_empty() {
+        return Err(SignError::InvalidReply {
+            reason: "reply content cannot be empty",
+        });
+    }
+    if !is_lower_sha256_hex(&target.root_event_id_hex) {
+        return Err(SignError::InvalidReply {
+            reason: "root_event_id_hex must be 64 lowercase hex characters",
+        });
+    }
+    if !is_lower_sha256_hex(&target.target_pubkey_hex) {
+        return Err(SignError::InvalidReply {
+            reason: "target_pubkey_hex must be 64 lowercase hex characters",
+        });
+    }
+    if let Some(reply_to) = &target.reply_to_event_id_hex {
+        if !is_lower_sha256_hex(reply_to) {
+            return Err(SignError::InvalidReply {
+                reason: "reply_to_event_id_hex must be 64 lowercase hex characters",
+            });
+        }
+    }
+
+    if target.root_kind == NOTE_KIND {
+        let mut tags = vec![vec![
+            "e".to_string(),
+            target.root_event_id_hex.clone(),
+            String::new(),
+            "root".to_string(),
+        ]];
+        if let Some(reply_to) = target
+            .reply_to_event_id_hex
+            .as_deref()
+            .filter(|id| *id != target.root_event_id_hex)
+        {
+            tags.push(vec![
+                "e".to_string(),
+                reply_to.to_string(),
+                String::new(),
+                "reply".to_string(),
+            ]);
+        }
+        tags.push(vec!["p".to_string(), target.target_pubkey_hex.clone()]);
+        sign_verified_parts(key, NOTE_KIND, created_at, tags, content)
+    } else {
+        let parent_id = target
+            .reply_to_event_id_hex
+            .as_deref()
+            .unwrap_or(&target.root_event_id_hex);
+        let parent_kind = if target
+            .reply_to_event_id_hex
+            .as_deref()
+            .is_some_and(|id| id != target.root_event_id_hex)
+        {
+            COMMENT_KIND
+        } else {
+            target.root_kind
+        };
+        let tags = vec![
+            vec![
+                "E".to_string(),
+                target.root_event_id_hex.clone(),
+                String::new(),
+                target.target_pubkey_hex.clone(),
+            ],
+            vec!["K".to_string(), target.root_kind.to_string()],
+            vec!["P".to_string(), target.target_pubkey_hex.clone()],
+            vec![
+                "e".to_string(),
+                parent_id.to_string(),
+                String::new(),
+                target.target_pubkey_hex.clone(),
+            ],
+            vec!["k".to_string(), parent_kind.to_string()],
+            vec!["p".to_string(), target.target_pubkey_hex.clone()],
+        ];
+        sign_verified_parts(key, COMMENT_KIND, created_at, tags, content)
+    }
 }
 
 /// Sign a short-lived BUD-11 `kind: 24242` Blossom upload authorization token
@@ -465,6 +610,71 @@ mod tests {
         let read_back = Event::from_json(&event.to_json())
             .unwrap_or_else(|error| panic!("the signed event must verify: {error}"));
         assert_eq!(read_back, event);
+    }
+
+    #[test]
+    fn sign_reaction_emits_verified_nip25_kind_7() {
+        let key = SecretKey::from_nsec(NIP19_NSEC).expect("published nsec parses");
+        let target_id = "a".repeat(64);
+        let target_pk = "b".repeat(64);
+        let event = sign_reaction(&key, 1_700_000_000, &target_id, &target_pk, "+")
+            .expect("valid NIP-25 reaction signs");
+        assert_eq!(event.kind(), REACTION_KIND);
+        assert_eq!(event.content(), "+");
+        assert_eq!(
+            event.tags(),
+            &[
+                vec!["e".to_string(), target_id],
+                vec!["p".to_string(), target_pk]
+            ]
+        );
+        assert_eq!(Event::from_json(&event.to_json()).expect("verifies"), event);
+    }
+
+    #[test]
+    fn sign_reply_emits_nip10_for_kind_1_and_nip22_for_articles() {
+        let key = SecretKey::from_nsec(NIP19_NSEC).expect("published nsec parses");
+        let root = "1".repeat(64);
+        let parent = "2".repeat(64);
+        let author = "3".repeat(64);
+
+        let nip10 = sign_reply(
+            &key,
+            1_700_000_001,
+            "great point",
+            &ReplyTarget {
+                root_event_id_hex: root.clone(),
+                reply_to_event_id_hex: Some(parent.clone()),
+                target_pubkey_hex: author.clone(),
+                root_kind: 1,
+            },
+        )
+        .expect("NIP-10 reply signs");
+        assert_eq!(nip10.kind(), NOTE_KIND);
+        assert_eq!(
+            nip10.tags(),
+            &[
+                vec!["e".into(), root.clone(), String::new(), "root".into()],
+                vec!["e".into(), parent, String::new(), "reply".into()],
+                vec!["p".into(), author.clone()],
+            ]
+        );
+
+        let nip22 = sign_reply(
+            &key,
+            1_700_000_002,
+            "nice article",
+            &ReplyTarget {
+                root_event_id_hex: root.clone(),
+                reply_to_event_id_hex: None,
+                target_pubkey_hex: author.clone(),
+                root_kind: 30023,
+            },
+        )
+        .expect("NIP-22 comment signs");
+        assert_eq!(nip22.kind(), COMMENT_KIND);
+        assert_eq!(nip22.tags()[0], vec!["E", &root, "", &author]);
+        assert_eq!(nip22.tags()[1], vec!["K", "30023"]);
     }
 
     /// expect: nothing but a kind 1 note is signed.

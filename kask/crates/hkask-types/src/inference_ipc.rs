@@ -178,6 +178,15 @@ pub enum InferenceMethod {
     /// `kask.nostr.autopublish`. Returns `InferenceOutcome::NostrSignedEvent`.
     SignNostrNutzap,
 
+    /// Sign a NIP-25 `kind: 7` reaction (<https://nostr-nips.com/nip-25>).
+    /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
+    SignNostrReaction,
+
+    /// Sign a NIP-10 (`kind: 1`, <https://nostr-nips.com/nip-10>) or NIP-22
+    /// (`kind: 1111`, <https://nostr-nips.com/nip-22>) reply/comment.
+    /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
+    SignNostrReply,
+
     /// Unlock `hkask-mcp-wallet`'s SQLCipher database by requesting the
     /// keychain-held passphrase over the authenticated IPC socket (D110).
     /// Gated by [`WALLET_DB_UNLOCK_GRANT`]. Returns `InferenceOutcome::WalletDbKey`.
@@ -304,6 +313,12 @@ pub struct InferenceParams {
     /// NIP-61 nutzap payload for `InferenceMethod::SignNostrNutzap` (D110 Phase 4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_nutzap: Option<crate::nostr_wire::NostrNutzapWire>,
+    /// NIP-25 reaction payload for `InferenceMethod::SignNostrReaction`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_reaction: Option<crate::nostr_wire::NostrReactionWire>,
+    /// NIP-10/NIP-22 reply payload for `InferenceMethod::SignNostrReply`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_reply: Option<crate::nostr_wire::NostrReplyWire>,
 }
 
 /// A response from the zed inference bridge to the MCP server.

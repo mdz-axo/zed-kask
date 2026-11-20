@@ -20,7 +20,7 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrMediaAttachment, NostrNutzapWire, NostrZapRequestWire,
+    NostrMediaAttachment, NostrNutzapWire, NostrReactionWire, NostrReplyWire, NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -52,6 +52,10 @@ pub(crate) enum NostrSignOperation {
     /// Sign a NIP-61 `kind: 9321` nutzap event (D110 Phase 4 — gated by
     /// `NOSTR_ZAP_SIGN`, NEVER bypassed by `autopublish`).
     Nutzap(NostrNutzapWire),
+    /// Sign a NIP-25 `kind: 7` reaction (<https://nostr-nips.com/nip-25>).
+    Reaction(NostrReactionWire),
+    /// Sign a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply/comment.
+    Reply(NostrReplyWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -343,6 +347,61 @@ pub(crate) fn admit_nutzap(
     Ok(NostrSignOperation::Nutzap(payload.clone()))
 }
 
+/// Admit a NIP-25 `kind: 7` reaction (requires `host/sign_nostr_note`).
+pub(crate) fn admit_reaction(
+    grant: Option<&str>,
+    payload: Option<&NostrReactionWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr reaction requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_reaction payload is required",
+        ));
+    };
+    if payload.content.trim().is_empty() || payload.content.trim().chars().count() > 32 {
+        return Err(refusal(
+            "InvalidArgument",
+            "reaction content must be 1..=32 characters",
+        ));
+    }
+    Ok(NostrSignOperation::Reaction(payload.clone()))
+}
+
+/// Admit a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply (requires `host/sign_nostr_note`).
+pub(crate) fn admit_reply(
+    grant: Option<&str>,
+    payload: Option<&NostrReplyWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr reply requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_reply payload is required",
+        ));
+    };
+    if payload.content.trim().is_empty() {
+        return Err(refusal("InvalidArgument", "the reply has no text"));
+    }
+    if payload.content.chars().count() > MAX_CONTENT_CHARS {
+        return Err(refusal(
+            "InvalidArgument",
+            format!("the reply is longer than {MAX_CONTENT_CHARS} characters"),
+        ));
+    }
+    Ok(NostrSignOperation::Reply(payload.clone()))
+}
+
 /// What the operator is shown when autopublish is off. The whole text is in
 /// the detail so what is approved is what is signed.
 pub(crate) fn approval_text(npub: &str, relays: &[String]) -> String {
@@ -526,6 +585,24 @@ pub(crate) fn sign_operation_with_slots(
             &nz.content,
         )
         .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::Reaction(rx) => hkask_nostr_signer::sign_reaction(
+            &key,
+            rx.created_at,
+            &rx.target_event_id_hex,
+            &rx.target_pubkey_hex,
+            &rx.content,
+        )
+        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
+        NostrSignOperation::Reply(reply) => {
+            let target = hkask_nostr_signer::ReplyTarget {
+                root_event_id_hex: reply.root_event_id_hex.clone(),
+                reply_to_event_id_hex: reply.reply_to_event_id_hex.clone(),
+                target_pubkey_hex: reply.target_pubkey_hex.clone(),
+                root_kind: reply.root_kind,
+            };
+            hkask_nostr_signer::sign_reply(&key, reply.created_at, &reply.content, &target)
+                .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
+        }
     };
     drop(key);
     serde_json::from_str(&event.to_json()).map_err(|error| {
@@ -638,6 +715,33 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 ),
                 [ZAP_APPROVE_LABEL, ZAP_DECLINE_LABEL],
                 "the operator declined the nutzap; nothing was signed",
+            ),
+            NostrSignOperation::Reaction(rx) => (
+                approval_text(&configured_npub, &rx.relays),
+                format!(
+                    "NIP-25 Reaction: {}\nTarget event: {}\nTarget author: {}",
+                    rx.content, rx.target_event_id_hex, rx.target_pubkey_hex
+                ),
+                [APPROVE_LABEL, DECLINE_LABEL],
+                "the operator did not approve the reaction; nothing was signed",
+            ),
+            NostrSignOperation::Reply(reply) => (
+                approval_text(&configured_npub, &reply.relays),
+                format!(
+                    "Reply ({} to {}):\n\n{}",
+                    if reply.root_kind == hkask_nostr_signer::NOTE_KIND {
+                        "NIP-10 kind:1"
+                    } else {
+                        "NIP-22 kind:1111"
+                    },
+                    reply
+                        .reply_to_event_id_hex
+                        .as_deref()
+                        .unwrap_or(&reply.root_event_id_hex),
+                    reply.content
+                ),
+                [APPROVE_LABEL, DECLINE_LABEL],
+                "the operator did not approve the reply; nothing was signed",
             ),
         };
         let answer = cx.update_window(window, |_, window, cx| {
@@ -1005,7 +1109,9 @@ mod tests {
             }
             NostrSignOperation::Note { .. }
             | NostrSignOperation::ZapRequest(_)
-            | NostrSignOperation::Nutzap(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::Nutzap(_)
+            | NostrSignOperation::Reaction(_)
+            | NostrSignOperation::Reply(_) => panic!("expected BlossomUpload"),
         }
     }
 

@@ -30,7 +30,10 @@ hkask-keystore.workspace = true
 hkask-nostr-core.workspace = true
 hkask-nostr-signer.workspace = true
 hkask-wallet-core.workspace = true
+nostr.workspace = true
+nostr-sdk = { workspace = true, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
 nwc.workspace = true
+rusqlite.workspace = true
 zeroize.workspace = true
 hkask-regulation.workspace = true
 hkask-condenser.workspace = true

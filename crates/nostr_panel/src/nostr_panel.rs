@@ -20,6 +20,7 @@
 //! conversation in this panel that is marked private has no Nostr tools.
 
 mod blurhash;
+pub(crate) mod nostr_composer;
 
 pub mod nostr_viewer;
 
@@ -384,8 +385,8 @@ mod tests {
         let tools = all_tool_names();
         assert_eq!(
             tools.len(),
-            17,
-            "10 client tools, 4 relay tools, and 3 Blossom tools"
+            21,
+            "14 client tools, 4 relay tools, and 3 Blossom tools"
         );
         for tool in tools {
             assert!(prompt.contains(tool), "the prompt never names `{tool}`");
@@ -416,23 +417,28 @@ mod tests {
         }
     }
 
-    /// The publish path is the one ruled writing tool, and the only one
-    /// the prompt advertises. Rulings, verbatim: "when the curator
-    /// publishes the editor shows it and the user approves" (2026-11-13)
-    /// and "please proceed" (2026-11-14, building the publish path). No
-    /// other advertised tool is a signing or publishing verb.
+    /// Only the ruled writing tools (`nostr_publish_note`, `nostr_publish_reaction`,
+    /// `nostr_publish_reply`, `nostr_publish_nutzap`, `nostr_prepare_zap`) carry
+    /// writing verbs. All require editor-side signing approval.
     #[test]
     fn the_only_advertised_publishing_tool_is_nostr_publish_note() {
+        const RULED_WRITING_TOOLS: &[&str] = &[
+            "nostr_publish_note",
+            "nostr_publish_reaction",
+            "nostr_publish_reply",
+            "nostr_publish_nutzap",
+            "nostr_prepare_zap",
+        ];
         for name in all_tool_names() {
+            if RULED_WRITING_TOOLS.contains(&name) {
+                continue;
+            }
             for verb in [
                 "sign", "publish", "post", "send", "draft", "react", "follow",
             ] {
-                if name == "nostr_publish_note" && verb == "publish" {
-                    continue;
-                }
                 assert!(
                     !name.contains(verb),
-                    "`{name}` reads as another writing tool ({verb}); the publish path is the one ruled"
+                    "`{name}` reads as another writing tool ({verb}); only ruled writing tools may carry it"
                 );
             }
         }

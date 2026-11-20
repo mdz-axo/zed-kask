@@ -1022,6 +1022,8 @@ async fn dispatch(
             | InferenceMethod::SignBlossomUpload
             | InferenceMethod::SignNostrZapRequest
             | InferenceMethod::SignNostrNutzap
+            | InferenceMethod::SignNostrReaction
+            | InferenceMethod::SignNostrReply
     ) {
         let admitted = match request.method {
             InferenceMethod::SignNostrNote => crate::nostr_signing::admit_note(
@@ -1046,6 +1048,14 @@ async fn dispatch(
             InferenceMethod::SignNostrNutzap => crate::nostr_signing::admit_nutzap(
                 params.tool_grant.as_deref(),
                 params.nostr_nutzap.as_ref(),
+            ),
+            InferenceMethod::SignNostrReaction => crate::nostr_signing::admit_reaction(
+                params.tool_grant.as_deref(),
+                params.nostr_reaction.as_ref(),
+            ),
+            InferenceMethod::SignNostrReply => crate::nostr_signing::admit_reply(
+                params.tool_grant.as_deref(),
+                params.nostr_reply.as_ref(),
             ),
             _ => unreachable!(),
         };
@@ -1469,6 +1479,8 @@ async fn dispatch(
         | InferenceMethod::SignBlossomUpload
         | InferenceMethod::SignNostrZapRequest
         | InferenceMethod::SignNostrNutzap
+        | InferenceMethod::SignNostrReaction
+        | InferenceMethod::SignNostrReply
         | InferenceMethod::WalletDbUnlock
         | InferenceMethod::WalletSpendApprove
         | InferenceMethod::WalletNwcQuery => {
