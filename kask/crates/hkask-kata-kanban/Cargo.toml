@@ -1,0 +1,33 @@
+[package]
+name = "hkask-kata-kanban"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kata-Kanban domain service, board/task/goal types, mermaid serialization, and idempotency store"
+
+[lib]
+name = "hkask_kata_kanban"
+path = "src/hkask_kata_kanban.rs"
+
+[dependencies]
+hkask-types.workspace = true
+hkask-storage.workspace = true
+hkask-forecast.workspace = true
+hkask-bridge-ontology.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+url.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+schemars = { workspace = true, features = ["chrono04"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true
