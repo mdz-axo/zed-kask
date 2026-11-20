@@ -1,0 +1,516 @@
+//! Embedded Jinja2 prompt templates for media tools.
+//!
+//! Templates are compiled into the binary at build time.
+//! Rendered at runtime with tool parameters via minijinja.
+
+use minijinja::Environment;
+use std::collections::HashMap;
+
+/// Initialize the template environment with all media prompt templates.
+///
+/// Registration failures are propagated — a template that fails to parse
+/// must not be silently absent from the environment (pipelines would only
+/// discover the gap at render time, far from the cause).
+pub fn create_env() -> Result<Environment<'static>, crate::MediaError> {
+    let mut env = Environment::new();
+    let templates: &[(&str, &str)] = &[
+        ("tag_faces", TAG_FACES),
+        ("tag_objects", TAG_OBJECTS),
+        ("tag_colors", TAG_COLORS),
+        ("tag_composition", TAG_COMPOSITION),
+        ("caption", CAPTION),
+        ("video_caption", VIDEO_CAPTION),
+        ("validate_face_ref", VALIDATE_FACE_REF),
+        ("match_faces", MATCH_FACES),
+        ("educt_paragraph_pass", EDUCT_PARAGRAPH_PASS),
+        ("educt_speaker_pass", EDUCT_SPEAKER_PASS),
+        ("educt_speaker_audio_pass", EDUCT_SPEAKER_AUDIO_PASS),
+        (
+            "educt_speaker_correction_pass",
+            EDUCT_SPEAKER_CORRECTION_PASS,
+        ),
+        ("educt_correction_pass", EDUCT_CORRECTION_PASS),
+        ("educt_highlight_pass", EDUCT_HIGHLIGHT_PASS),
+        ("layers_semantic_pass", LAYERS_SEMANTIC_PASS),
+        (
+            "layers_semantic_pass_grounded",
+            LAYERS_SEMANTIC_PASS_GROUNDED,
+        ),
+        ("layers_audio_pass", LAYERS_AUDIO_PASS),
+    ];
+    for (name, source) in templates {
+        env.add_template(name, source).map_err(|e| {
+            crate::MediaError::Template(format!("Template '{}' failed to register: {}", name, e))
+        })?;
+    }
+    Ok(env)
+}
+
+/// Render a template with string key-value variables.
+pub fn render(
+    env: &Environment,
+    name: &str,
+    vars: &HashMap<&str, &str>,
+) -> Result<String, crate::MediaError> {
+    let tmpl = env.get_template(name).map_err(|e| {
+        crate::MediaError::Template(format!("Template '{}' not found: {}", name, e))
+    })?;
+    tmpl.render(vars)
+        .map_err(|e| crate::MediaError::Template(format!("Render error for '{}': {}", name, e)))
+}
+
+/// Media layers semantic vision pass — one chunk's prompt. The chunk's
+/// sampled frames arrive as images (the schema rides here: vision inputs
+/// have no provider-enforced schema path); the model returns per-kind
+/// items keyed by frame_index, never timestamps.
+/// The audio pass's chunk prompt (t5): one bounded audio span per call,
+/// chunk-relative event times, the JSON Schema embedded (v1 — audio
+/// inputs have no provider-enforced strict-schema path).
+const LAYERS_AUDIO_PASS: &str = r#"You are analyzing one bounded chunk of a recording's audio.
+
+The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
+timeline; the attached audio is exactly this chunk. Times in your output
+are chunk-relative seconds: 0.0 is the chunk's first sample, and the
+chunk's duration is {{ end_sec }} minus {{ start_sec }}.
+
+Label every distinct audible NON-SPEECH event (a beep, chime, clap, door,
+tone, machine sound — not silence, not spoken words): its label, its
+chunk-relative start and end seconds, and a confidence in 0..1.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- Events are non-speech sounds; do not transcribe speech.
+- 0 <= start_sec <= end_sec <= chunk duration.
+- No audible events? Return {"events": []}.
+"#;
+
+const LAYERS_SEMANTIC_PASS: &str = r#"You are analyzing one sampled chunk of a video recording.
+
+The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
+timeline. The attached images are the chunk's sampled frames, in order;
+their source-PTS seconds are: {{ frame_pts }}. Frame indices in your
+output refer to this attached order, 0-based.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "caption": one or two sentences describing what the frames show,
+  with your confidence in the reading.
+- "events": discrete observed events (a door opening, a hand wave) with
+  a label and confidence — empty if none.
+- "objects": visible objects with a normalized box {x, y, w, h} where x,y
+  is the top-left corner in 0..1 relative to the frame image and w,h its
+  extent — every value in 0..1, x+w <= 1, y+h <= 1 (the box lies inside
+  the frame) — plus a confidence in 0..1 and the frame_index it was seen
+  in. Empty if none.
+- "ocr": visible on-screen text with its box, confidence, and
+  frame_index — empty if none.
+- Report only what the frames show; do not invent events, objects, or
+  text. Reflect uncertainty in the confidence values.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// The grounded variant of the vision pass's chunk prompt (S2, design
+/// §4 delta 2): the identical output schema, raised box density and label
+/// specificity — every visible object is boxed in every frame it appears
+/// in, with specific labels. The template name rides provenance, so the
+/// modes stay distinguishable at the data layer.
+const LAYERS_SEMANTIC_PASS_GROUNDED: &str = r#"You are analyzing one sampled chunk of a video recording, grounding every observation to a frame and a box.
+
+The chunk covers [{{ start_sec }}, {{ end_sec }}) seconds on the source
+timeline. The attached images are the chunk's sampled frames, in order;
+their source-PTS seconds are: {{ frame_pts }}. Frame indices in your
+output refer to this attached order, 0-based.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "caption": one or two sentences describing what the frames show,
+  with your confidence in the reading.
+- "events": discrete observed events (a door opening, a hand wave) with
+  a label and confidence — empty if none.
+- "objects": ground EVERY visible object in EVERY frame it appears in
+  — one detection per object per frame, each with a normalized box
+  {x, y, w, h} where x,y is the top-left corner in 0..1 relative to the
+  frame image and w,h its extent (every value in 0..1, x+w <= 1,
+  y+h <= 1 — the box lies inside the frame), a confidence in 0..1, and
+  the frame_index it was seen in. The same physical object seen across
+  multiple frames yields one detection per frame with that frame's box.
+- Label objects SPECIFICALLY: the type plus its distinctive attributes
+  (e.g. "red ceramic mug", "black sedan car", "wooden chair") — never a
+  bare generic noun when the frames carry more detail. Include partially
+  visible and small objects; reflect partial visibility in the confidence.
+- "ocr": visible on-screen text with its box, confidence, and
+  frame_index — empty if none.
+- Report only what the frames show; do not invent events, objects, or
+  text. Reflect uncertainty in the confidence values.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt paragraph pass — the model sees indexed words and the schema of
+/// the expected output; it returns word indices only (never timestamps).
+const EDUCT_PARAGRAPH_PASS: &str = r#"You are annotating a transcript for paragraph structure.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Identify the paragraph boundaries: the places where one coherent passage
+ends and a new one begins (a shift of topic, a new argument, an extended
+digression ending). Do not break on every sentence — only at discourse
+boundaries.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "breaks_after" lists word indices AFTER which a paragraph break occurs
+  (a break after word 12 means a new paragraph starts at word 13).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- Return {"breaks_after": []} if the whole transcript is one paragraph.
+- Output the JSON object only — no prose, no code fences, no explanation."#;
+
+/// Educt speaker pass (text-cue attribution, v1) — the model infers
+/// speaker turns from textual cues over indexed words; approximate by
+/// nature, carried honestly in the confidence field.
+const EDUCT_SPEAKER_PASS: &str = r#"You are attributing speakers in a transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Infer the speaker turns from textual cues: discourse markers, changes in
+register or vocabulary, direct address, question-answer patterns, role
+language (interviewer/interviewee, host/guest, teacher/student), and
+punctuation. You cannot hear the audio — attribute only what the text
+supports, and reflect your uncertainty in the confidence field.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns you can attribute, in transcript
+  order, without overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label: "speaker-1", "speaker-2", or an inferred
+  role ("interviewer", "host") — never empty.
+- "confidence" is between 0.0 and 1.0; use lower values for uncertain
+  attributions.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt speaker correction pass — the gated lexical post-pass (plan §7
+/// Phase 1b): the model re-reads the transcript WITH the current
+/// attribution and proposes corrections to short, lexically-resolvable
+/// attribution errors. Locality is NOT trusted to the model — the
+/// deterministic gate (transcript_pass::gate_speaker_corrections) accepts
+/// only contiguous changes of at most
+/// SPEAKER_CORRECTION_MAX_LOCALITY_WORDS and reverts longer rewrites with
+/// a surfaced refusal (the DiarizationLM boundary: text-only corrections
+/// of long monologues measurably corrupt multi-speaker attribution).
+const EDUCT_SPEAKER_CORRECTION_PASS: &str = r#"You are correcting speaker attribution in a transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Current speaker attribution (start_word..=end_word, speaker, confidence):
+{{ request }}
+
+Some words may be attributed to the wrong speaker. Re-read the transcript
+and return the corrected attribution — the same word ranges or adjusted
+ranges, with the speakers you believe are correct. Correct ONLY errors the
+text itself resolves: short turn-boundary mistakes, backchannels,
+interjections attributed to the wrong turn. Do NOT reassign long
+monologues on textual intuition alone.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns you can attribute, in transcript
+  order, without overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label — keep the existing labels where they are
+  right ("speaker-1", "speaker-2", or an inferred role) — never empty.
+- "confidence" is between 0.0 and 1.0; use lower values for uncertain
+  attributions.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt speaker pass, audio source — the model HEARS the recording and
+/// reads the indexed transcript; the audio is the ground truth for WHO
+/// speaks, the indices for WHERE.
+const EDUCT_SPEAKER_AUDIO_PASS: &str = r#"You are attributing speakers in a recording. You will HEAR the audio (attached to this message) and READ its indexed transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as transcribed.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Listen to the audio and identify the speaker turns you hear. Align them
+with the indexed transcript: attribute each turn to the word range it
+covers. The audio is the ground truth for WHO speaks; the indices are
+the ground truth for WHERE — cite them exactly.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "spans" covers the speaker turns, in transcript order, without
+  overlaps (every word belongs to at most one span).
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "speaker" is a short label: "speaker-1", "speaker-2", or an inferred
+  role ("interviewer", "host") — never empty.
+- "confidence" is between 0.0 and 1.0.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt correction pass — the model proposes text replacements over word
+/// ranges; edits are proposals, the timings are never touched.
+const EDUCT_CORRECTION_PASS: &str = r#"You are correcting a speech-to-text transcript.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as transcribed.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+Propose corrections for likely speech-to-text errors: misrecognized
+words, homophones, misheard names, garbled fragments. Corrections are
+PROPOSALS over word ranges — timings are never touched, and applying
+them produces a corrected text view while the original words stay
+immutable.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- Each edit replaces the text of words [start_word..end_word] (inclusive)
+  with "replacement".
+- Edits must not overlap each other.
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "reason" is short: "misheard name", "homophone", "garbled".
+- Only propose edits you are confident about — do not rewrite style.
+- Return {"edits": []} if the transcript needs no corrections.
+- Output the JSON object only — no prose, no code fences."#;
+
+/// Educt highlight pass — the semantic selection: a natural-language
+/// request resolved to word ranges (the agent-as-selection-engine target).
+const EDUCT_HIGHLIGHT_PASS: &str = r#"You are selecting passages from a transcript that match a request.
+
+The transcript is a sequence of indexed words. Each token is INDEX:WORD —
+INDEX is the word's 0-based position, WORD is the word as spoken.
+
+Transcript ({{ words_count }} words, indices 0..{{ last_word_index }}):
+{{ words }}
+
+The request: {{ request }}
+
+Select the passages that answer the request — the word ranges where the
+request's subject is actually discussed. Label each selection with a
+short theme label.
+
+Return ONLY a JSON object matching this JSON Schema:
+{{ schema }}
+
+Rules:
+- "highlights" lists the matching passages as word ranges.
+- Every index must be an integer between 0 and {{ last_word_index }},
+  inclusive.
+- "label" is a short theme tag (e.g. "cinderella-curve"); "note" is one
+  sentence on why the passage matches.
+- Overlapping selections are allowed (independent annotations).
+- Return {"highlights": []} if nothing in the transcript matches the request.
+- Output the JSON object only — no prose, no code fences."#;
+
+// ── Embedded templates ──────────────────────────────────────────────────────
+
+const TAG_FACES: &str = r#"Analyze this image and detect all visible human faces.
+
+{% if detail_level == "basic" %}
+For each face, provide position and estimated age range.
+Return ONLY a JSON array. Each element: face_index, age_range, position.
+{% else %}
+For each face, provide:
+1. Estimated age range (e.g., "25-35", "child", "elderly")
+2. Apparent gender presentation
+3. Notable features (glasses, beard, expression, hair color/style)
+4. Position in image (e.g., "left third", "center-right", "foreground")
+5. Approximate face size relative to image (small / medium / large)
+6. Bounding box as percentages of image dimensions: x_pct (left edge), y_pct (top edge), w_pct (width), h_pct (height). All values 0-100.
+
+Return ONLY a JSON array. Each element: face_index, age_range, gender_presentation, features, position, size, bbox { x_pct, y_pct, w_pct, h_pct }.
+{% endif %}"#;
+
+const TAG_OBJECTS: &str = r#"Analyze this image and detect all visible objects.
+
+{% if detail_level == "detailed" %}
+For each object, provide:
+1. Object name (be specific — e.g., "golden retriever" not "dog")
+2. Bounding box description (e.g., "upper-left", "center", "lower-right")
+3. Confidence level (high / medium / low)
+4. Brief description of appearance (color, size, condition, distinctive features)
+{% else %}
+List each object with its name and general location in the image.
+{% endif %}
+
+Limit to the {{ max_objects }} most prominent objects.
+
+Return ONLY a JSON array. Each element: name, location, confidence{% if detail_level == "detailed" %}, description{% endif %}."#;
+
+const TAG_COLORS: &str = r##"Analyze this image and identify its color palette.
+
+For each dominant color, provide:
+1. Color name (e.g., "crimson", "teal", "warm amber")
+2. Hex code (e.g., "#FF5733")
+3. Approximate percentage of image area
+4. Role in composition (primary, secondary, accent, background)
+
+Also describe:
+- Overall palette style (monochromatic, complementary, analogous, triadic, warm, cool, neutral)
+- Color temperature (warm-dominant, cool-dominant, balanced)
+- Saturation level (vibrant, muted, desaturated)
+
+Limit to the {{ max_colors }} most dominant colors.
+
+Return ONLY a JSON object with these fields:
+- colors: array of {name, hex, percentage, role}
+- palette_style: string
+- temperature: string
+- saturation: string"##;
+
+const TAG_COMPOSITION: &str = r#"Analyze the photographic composition of this image.
+
+Evaluate these compositional elements:
+1. Focal point — what draws the eye first? Where is it positioned?
+2. Rule of thirds — does the composition follow it? Describe the grid placement.
+3. Leading lines — are there lines guiding the viewer's eye? Describe them.
+4. Depth of field — shallow or deep? What is in focus vs blurred?
+5. Perspective — eye-level, low angle, high angle, bird's eye, worm's eye?
+6. Framing — natural frames (doorways, arches, foliage) within the image?
+7. Symmetry — is the composition symmetrical, asymmetrical, or balanced?
+8. Negative space — how is empty space used?
+
+Return ONLY a JSON object with these fields:
+- focal_point: string
+- rule_of_thirds: string
+- leading_lines: string
+- depth_of_field: string
+- perspective: string
+- framing: string
+- symmetry: string
+- negative_space: string"#;
+
+const CAPTION: &str = r#"{% if style == "descriptive" %}
+Describe this image in detail. Cover the subject, setting, lighting, colors, composition, mood, and any notable details. Write 2-4 sentences.
+
+{% elif style == "artistic" %}
+Write an artistic, evocative caption for this image. Use poetic language and focus on mood, emotion, and aesthetic quality. Write 2-3 sentences.
+
+{% elif style == "technical" %}
+Provide a technical description of this image. Note the photographic/compositional elements: focal point, depth of field, lighting conditions, color palette, perspective, and any post-processing effects visible. Write 2-4 sentences.
+
+{% elif style == "alt_text" %}
+Write concise alt text for this image suitable for accessibility. Describe only what is visually present — no interpretation. Keep to 1-2 sentences, max 125 characters.
+
+{% endif %}
+
+Return ONLY the caption text. No markdown, no preamble, no labels."#;
+
+const VIDEO_CAPTION: &str = r#"You are viewing keyframes extracted from a short video clip, shown in chronological order.
+
+{% if style == "descriptive" %}
+Describe what happens in this video. Cover the subject, action, setting, and any notable visual elements. Write 3-5 sentences covering the full sequence.
+{% elif style == "summary" %}
+Write a concise 1-2 sentence summary of what this video shows.
+{% elif style == "hashtags" %}
+Generate 5-10 relevant hashtags for this video content. Each should start with # and be a single concept. Focus on discoverability.
+{% endif %}
+
+Return ONLY the text. No markdown, no preamble, no labels."#;
+
+const VALIDATE_FACE_REF: &str = r#"You are validating a reference image for facial recognition. This image will be used as the canonical reference for matching a specific person across a photo gallery. Assess it against these criteria:
+
+1. FACE COUNT: How many human faces are visible? Must be exactly 1.
+2. FACE COVERAGE: What percentage of the image does the face occupy? Must be ≥15%.
+3. POSE: Is the face frontal (facing the camera directly) or near-frontal (slight angle, both eyes visible)? Profile/side views are unacceptable.
+4. LIGHTING: Is the face well-lit with even illumination? Heavy shadows, backlighting, or severe underexposure are unacceptable.
+5. OCCLUSION: Are there any objects covering significant portions of the face? Sunglasses, masks, hands, hair covering eyes, or other obstructions are unacceptable.
+6. CLARITY: Is the face in sharp focus? Blur, motion blur, or heavy noise/grain are unacceptable.
+
+Return ONLY a JSON object with these fields:
+- valid: boolean (true if ALL criteria pass)
+- face_count: integer
+- face_coverage_pct: integer (estimated percentage)
+- pose: string ("frontal" | "near-frontal" | "profile" | "other")
+- lighting: string ("good" | "acceptable" | "poor")
+- occlusion: string ("none" | "minor" | "significant")
+- clarity: string ("sharp" | "acceptable" | "blurry")
+- issues: array of strings (list each failing criterion with a brief explanation, empty if all pass)
+
+No markdown, no preamble."#;
+
+const MATCH_FACES: &str = r#"You are comparing two face images to determine if they show the same person.
+
+Image 1 is a reference portrait of a known person.
+Image 2 is a face detected in a gallery photo.
+
+Compare these key identity markers:
+- Facial structure (bone structure, face shape, jawline)
+- Eye shape, spacing, and color
+- Nose shape and proportions
+- Mouth and lip shape
+- Ear shape (if visible)
+- Distinctive features (moles, scars, freckles, etc.)
+
+Return ONLY a JSON object with these fields:
+- match: boolean (true if same person, false if different)
+- confidence: number (0.0 to 1.0, where 1.0 is absolute certainty)
+- reasoning: string (1-2 sentences explaining the key similarities or differences that led to your conclusion)
+
+No markdown, no preamble."#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn educt_pass_templates_emit_object_wrappers_never_bare_array() {
+        let env = create_env().expect("templates compile");
+        let mut vars = HashMap::new();
+        vars.insert("schema", "{\"type\":\"object\"}");
+        vars.insert("words", "0:hello 1:world");
+        vars.insert("words_count", "2");
+        vars.insert("last_word_index", "1");
+        vars.insert("request", "find greetings");
+
+        for (name, expected_empty) in [
+            ("educt_paragraph_pass", r#"Return {"breaks_after": []}"#),
+            ("educt_correction_pass", r#"Return {"edits": []}"#),
+            ("educt_highlight_pass", r#"Return {"highlights": []}"#),
+        ] {
+            let rendered = render(&env, name, &vars).expect("renders");
+            assert!(
+                !rendered.contains("Return []"),
+                "{name} must not instruct model to emit bare []: {rendered}"
+            );
+            assert!(
+                rendered.contains(expected_empty),
+                "{name} must instruct model to emit {expected_empty}: {rendered}"
+            );
+        }
+    }
+}

@@ -1,0 +1,1249 @@
+//! Types for hkask-mcp-media — MCP tool request input structs.
+//!
+//! All types implement `Deserialize + JsonSchema` for MCP tool input validation.
+//! Transcript types (`TimedWord`/`TranscriptSegment`/`TranscriptBundle`) are
+//! defined in this server's `transcript` module (`src/transcript.rs`) —
+//! `hkask_types` carries no transcript types (verified by grep 2026-08-30).
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+// ── Image description ────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeImageRequest {
+    /// A local image path (file:// accepted), an http(s) URL, or a
+    /// data:<mime>;base64 URI.
+    pub image_url: String,
+    /// Caption style: "descriptive" (default), "artistic", "technical", "alt_text".
+    #[serde(default)]
+    #[schemars(schema_with = "optional_caption_style_schema")]
+    pub style: Option<String>,
+}
+
+/// The closed vocabularies of the gallery tools. Each list is the single
+/// source for its input schema's enumeration and for the handler's refusal.
+pub const CAPTION_STYLES: [&str; 4] = ["descriptive", "artistic", "technical", "alt_text"];
+pub const GALLERY_MODES: [&str; 3] = ["read-only", "copy-on-write", "destructive"];
+pub const SEARCH_MODES: [&str; 2] = ["tags", "semantic"];
+pub const ANALYZE_MODES: [&str; 3] = ["new", "all", "selection"];
+pub const TIMELINE_PERIODS: [&str; 3] = ["year", "month", "decade"];
+pub const FACE_STATUSES: [&str; 2] = ["valid", "rejected"];
+pub const IMPORT_MEDIA_TYPES: [&str; 2] = ["video", "audio"];
+pub const ANNOTATION_KINDS: [&str; 2] = ["tag", "note"];
+/// The closed vocabularies of the transcript tools, on the same terms.
+pub use hkask_media::wire::{LOCATE_BASES, TRANSCRIPT_ANNOTATION_KINDS};
+pub const SPEAKER_SOURCES: [&str; 2] = ["audio", "text"];
+pub const TRANSCRIPT_SEARCH_MODES: [&str; 1] = ["lexical"];
+
+fn string_enum(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"type": "string", "enum": values})
+}
+fn optional_string_enum(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [{"type": "string", "enum": values}, {"type": "null"}]})
+}
+fn optional_string_enum_list(values: &[&str]) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [
+        {"type": "array", "items": {"type": "string", "enum": values}},
+        {"type": "null"}
+    ]})
+}
+fn optional_caption_style_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&CAPTION_STYLES)
+}
+fn gallery_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&GALLERY_MODES)
+}
+fn optional_search_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&SEARCH_MODES)
+}
+fn optional_tag_types_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum_list(&crate::tools::gallery::TAG_TYPES)
+}
+fn analyze_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&ANALYZE_MODES)
+}
+fn optional_pipelines_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum_list(&crate::tools::gallery::ANALYSIS_PIPELINES)
+}
+fn optional_face_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&FACE_STATUSES)
+}
+fn timeline_period_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&TIMELINE_PERIODS)
+}
+fn collage_layout_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&crate::tools::processing::COLLAGE_LAYOUTS)
+}
+fn import_media_type_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&IMPORT_MEDIA_TYPES)
+}
+pub(crate) fn annotation_kind_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&ANNOTATION_KINDS)
+}
+pub(crate) fn transcript_search_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&TRANSCRIPT_SEARCH_MODES)
+}
+fn optional_speaker_source_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&SPEAKER_SOURCES)
+}
+fn export_format_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    string_enum(&crate::transcript_export::EXPORT_FORMATS)
+}
+fn optional_caption_position_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    optional_string_enum(&crate::video::ffmpeg::CAPTION_POSITIONS)
+}
+
+pub(crate) use hkask_media::wire::json_text_or_value;
+
+// ── Gallery request types ────────────────────────────────────────────────
+
+/// The request of a tool that takes no arguments. A handler with no
+/// parameter is served an open schema and anything sent to it is dropped;
+/// this makes "no arguments" a contract the boundary enforces.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoArguments {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryOrganizeRequest {
+    /// Absolute path to the gallery folder.
+    pub path: String,
+    /// Policy mode: "read-only" (default), "copy-on-write", or "destructive".
+    /// A gallery keeps the mode it was first organized with; the response
+    /// reports mode_preserved when the requested mode was not applied.
+    #[serde(default = "default_mode")]
+    #[schemars(schema_with = "gallery_mode_schema")]
+    pub mode: String,
+    /// Whether to scan subdirectories recursively (default: true).
+    #[serde(default = "default_true")]
+    pub recursive: bool,
+    /// Whether to automatically run AI analysis on newly added images (default: false).
+    /// Vision LLM calls incur cost and latency. Only use when you want immediate searchability.
+    #[serde(default)]
+    pub auto_analyze: bool,
+}
+
+fn default_mode() -> String {
+    "read-only".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GallerySearchRequest {
+    pub query: String,
+    /// Search mode: "tags" (default — fuzzy match against researcher tags and
+    /// notes and model suggestions; works without embeddings) or "semantic"
+    /// (caption-embedding cosine similarity; requires gallery_analyze to have
+    /// generated captions; one embedding call per captioned image).
+    #[serde(default)]
+    #[schemars(schema_with = "optional_search_mode_schema")]
+    pub mode: Option<String>,
+    /// Semantic mode only: find images similar to this gallery image (by its
+    /// caption embedding) instead of the query text. Refused in tags mode.
+    pub image_index: Option<usize>,
+    /// Maximum results, 1 to 100 (default 10 in tags mode, 5 in semantic mode).
+    pub limit: Option<usize>,
+    /// Tags mode only: restrict matches to these tag types.
+    #[serde(default)]
+    #[schemars(schema_with = "optional_tag_types_schema")]
+    pub tag_types: Option<Vec<String>>,
+    /// Minimum similarity, 0.0 to 1.0 (default 0.3).
+    pub min_similarity: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryAnalyzeRequest {
+    /// Which images to analyze: "new" (untagged only), "all" (everything), or "selection" (specific indices).
+    #[serde(default = "default_analyze_mode")]
+    #[schemars(schema_with = "analyze_mode_schema")]
+    pub mode: String,
+    /// Specific image indices (only when mode="selection").
+    pub image_indices: Option<Vec<usize>>,
+    /// Which pipelines to run: "faces", "objects", "colors", "composition", "scene". Default: "objects", "colors", "composition", "scene"; faces require explicit selection.
+    #[serde(default)]
+    #[schemars(schema_with = "optional_pipelines_schema")]
+    pub pipelines: Option<Vec<String>>,
+    /// Maximum images to process (safety limit, default: 50).
+    #[serde(default = "default_analyze_limit")]
+    pub max_images: usize,
+}
+
+fn default_analyze_mode() -> String {
+    "new".to_string()
+}
+fn default_analyze_limit() -> usize {
+    50
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryRefreshRequest {
+    /// Whether to scan subdirectories recursively (default: true).
+    #[serde(default = "default_true")]
+    pub recursive: bool,
+    /// Whether to include face detection in the pipeline (default: false).
+    /// Face tagging is a separate workflow — enable this only when you want to re-tag faces.
+    #[serde(default)]
+    pub include_faces: bool,
+    /// Maximum images to process (safety limit, default: 50).
+    #[serde(default = "default_analyze_limit")]
+    pub max_images: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryNameFaceRequest {
+    /// The face group number (from analyze results).
+    pub face_group: usize,
+    /// Human-readable name for this person.
+    /// If face_id is provided, this is ignored — the name is pulled from the registry.
+    pub name: Option<String>,
+    /// Optional: face registry ID. When provided, the name is resolved from the registry
+    /// instead of using the free-text name field.
+    pub face_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceValidateRequest {
+    /// Gallery image index to validate as a face reference.
+    pub image_index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceRegisterRequest {
+    /// Gallery image index of the validated reference portrait.
+    pub image_index: usize,
+    /// Person's first name.
+    pub first_name: String,
+    /// Person's last name.
+    pub last_name: String,
+    /// Skip validation and register directly as valid (default: false).
+    /// Use when you know the image is a good reference but validation is overly strict.
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceListRequest {
+    /// Optional status filter: "valid" or "rejected".
+    #[serde(default)]
+    #[schemars(schema_with = "optional_face_status_schema")]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceRemoveRequest {
+    /// Face registry ID to remove.
+    pub face_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FaceScanFolderRequest {
+    /// Absolute path to the folder of reference face images. Each image must
+    /// have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`,
+    /// `last_name`, and optional `notes`. Defaults to `mcp/media/faces/`.
+    pub folder_path: Option<String>,
+    /// Skip validation and register each image directly as valid (default: false).
+    /// Use when you know the image is a good reference but validation is overly strict.
+    #[serde(default)]
+    pub force: bool,
+}
+
+// ── Educt transcript-store requests ─────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductStoreTranscriptRequest {
+    /// The full TranscriptBundle JSON exactly as returned by transcribe_bundle.
+    #[serde(deserialize_with = "json_text_or_value")]
+    pub transcript: hkask_types::AnyJsonValue,
+    /// Optional gallery asset ID linking this transcript to a gallery asset
+    /// (the asset JOIN for recall by asset).
+    pub gallery_asset_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductListTranscriptsRequest {
+    /// Filter by the transcribed media's path (the bundle's audio_path).
+    pub media_path: Option<String>,
+    /// Filter by gallery asset ID.
+    pub gallery_asset_id: Option<String>,
+    /// Maximum transcripts to return (default 50, capped at 500).
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductGetTranscriptRequest {
+    pub transcript_id: String,
+    /// Include stored layers in the response (default true).
+    pub include_layers: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductDeleteTranscriptRequest {
+    pub transcript_id: String,
+}
+
+pub use hkask_media::wire::EductStoreLayerRequest;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductListLayersRequest {
+    pub transcript_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductParagraphPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, falling back to the media server's
+    /// configured analysis model (HKASK_MEDIA_VISION_MODEL) — a chat-capable
+    /// default. An explicit per-call override wins.
+    pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false — v1 (schema-in-prompt), the
+    /// mode every catalog model serves.
+    pub structured: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductSpeakerPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, falling back to the media server's
+    /// configured analysis model (HKASK_MEDIA_VISION_MODEL) — a chat-capable
+    /// default. An explicit per-call override wins.
+    pub model: Option<String>,
+    /// Speaker attribution source: "audio" (default — an audio-capable
+    /// model hears the recording; the scaffold's primary source) or
+    /// "text" (the text-cue pass — works with every model, approximate).
+    #[serde(default)]
+    #[schemars(schema_with = "optional_speaker_source_schema")]
+    pub source: Option<String>,
+    /// Opt into the v2 structured-outputs mode for the "text" source
+    /// (provider-enforced JSON Schema). Not supported with source
+    /// "audio" — the audio path is prompt-schema. Default false.
+    pub structured: Option<bool>,
+    /// Gated correction mode (plan §7 Phase 1b): instead of attributing
+    /// from scratch, refine the latest stored speaker layer. The model
+    /// proposes corrections to the current attribution and the
+    /// deterministic locality gate accepts only contiguous changes of at
+    /// most 5 words, reverting longer rewrites with a surfaced refusal.
+    /// Requires source "text". Default false.
+    pub correct_existing: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceEnrollRequest {
+    pub transcript_id: String,
+    /// Inclusive immutable source-word range authorizing one named speaker.
+    pub start_word: usize,
+    pub end_word: usize,
+    pub speaker_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceListRequest {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceRemoveRequest {
+    pub profile_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoicePruneRequest {
+    /// Delete profiles enrolled more than this many days ago. Maximum 365000.
+    pub max_age_days: u32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceIdentifyRequest {
+    pub transcript_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductRetranscribeSectionRequest {
+    pub transcript_id: String,
+    /// Inclusive source word range to re-transcribe. Indices anchor the
+    /// immutable source words, like every layer — working-view selections
+    /// must be translated to source indices first (the reanchored index
+    /// map).
+    pub start_word: usize,
+    pub end_word: usize,
+    /// Optional ISO 639-1 language hint for the STT — same semantics as
+    /// transcribe_bundle.
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductCorrectionPassRequest {
+    pub transcript_id: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, falling back to the media server's
+    /// configured analysis model (HKASK_MEDIA_VISION_MODEL) — a chat-capable
+    /// default. An explicit per-call override wins.
+    pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false.
+    pub structured: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductApplyCorrectionsRequest {
+    pub transcript_id: String,
+    /// Apply a specific correction layer by ID; defaults to the latest.
+    pub layer_id: Option<String>,
+}
+
+pub use hkask_media::wire::EductRealignTranscriptRequest;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductHighlightPassRequest {
+    pub transcript_id: String,
+    /// The natural-language selection request (e.g. "where he explains
+    /// the Cinderella curve") — resolved to word ranges with labels.
+    pub request: String,
+    /// Optional model override (provider-prefixed, e.g. "OpenRouter/…").
+    /// Default: HKASK_MEDIA_PASS_MODEL, falling back to the media server's
+    /// configured analysis model (HKASK_MEDIA_VISION_MODEL) — a chat-capable
+    /// default. An explicit per-call override wins.
+    pub model: Option<String>,
+    /// Opt into the v2 structured-outputs mode (provider-enforced JSON
+    /// Schema via chat_json). Default false.
+    pub structured: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductEdlFromHighlightsRequest {
+    pub transcript_id: String,
+    /// Compose only highlights with this exact label; all highlights when
+    /// omitted.
+    pub label: Option<String>,
+    /// Compose from a specific highlight layer by ID; defaults to the
+    /// latest.
+    pub layer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductRenderEdlRequest {
+    pub transcript_id: String,
+    /// Render a specific EDL layer by ID; defaults to the latest.
+    pub layer_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EductExportRequest {
+    pub transcript_id: String,
+    /// Export format: "srt" (captions from the word timings, cues split
+    /// at sentence punctuation), "highlights_csv" (every stored highlight
+    /// with time ranges), "review_csv" (paragraph blocks with their
+    /// speaker-confidence review flags), "corpus_text" (the rendered transcript for
+    /// corpus ingestion — repository-wide semantic search by composition),
+    /// "webvtt" (word-level karaoke captions beside SRT), "web_annotation"
+    /// (highlights as W3C Web Annotation JSON with position and quote
+    /// selectors), or "otio" (a composed reel serialized to
+    /// OpenTimelineIO).
+    #[schemars(schema_with = "export_format_schema")]
+    pub format: String,
+    /// The specific EDL layer to serialize for the "otio" format. When
+    /// omitted, the latest stored EDL layer is used. Ignored by the other
+    /// formats.
+    #[serde(default)]
+    pub layer_id: Option<String>,
+}
+
+pub use hkask_media::wire::EductLocateRequest;
+
+/// Lifecycle status of a face registry entry, set at registration by the
+/// validation result. Stored as TEXT in SQLite; the storage layer accepts
+/// `&str` and this enum implements `AsRef<str>` for a typed call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceStatus {
+    Valid,
+    Rejected,
+}
+
+impl std::fmt::Display for FaceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_ref())
+    }
+}
+
+impl AsRef<str> for FaceStatus {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Valid => "valid",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryTimelineRequest {
+    /// Time period: "year" (default), "month", or "decade".
+    #[serde(default = "default_period")]
+    #[schemars(schema_with = "timeline_period_schema")]
+    pub period: String,
+    /// How many periods to include, newest first (default 5, 1 to 500).
+    #[serde(default = "default_count")]
+    pub count: usize,
+    /// Max images per period (default 3, 1 to 500).
+    #[serde(default = "default_per_period")]
+    pub per_period: usize,
+    /// Optional: keep only images with a tag containing one of these terms.
+    pub search_terms: Option<Vec<String>>,
+}
+
+fn default_period() -> String {
+    "year".to_string()
+}
+fn default_count() -> usize {
+    5
+}
+fn default_per_period() -> usize {
+    3
+}
+
+// ── Image editing request types ──────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCollageRequest {
+    pub search_terms: Option<Vec<String>>,
+    pub similar_to_index: Option<usize>,
+    pub image_indices: Option<Vec<usize>>,
+    /// Images taken by search_terms or similar_to_index, 1 to 9 (default 6).
+    /// An explicit image_indices list is used whole.
+    #[serde(default = "default_max_items")]
+    pub max_items: usize,
+    /// "grid" (default), "horizontal", "vertical" or "masonry".
+    #[serde(default = "default_layout")]
+    #[schemars(schema_with = "collage_layout_schema")]
+    pub layout: String,
+    #[serde(default = "default_spacing")]
+    /// Gap between cells in pixels (default 8).
+    pub spacing: u32,
+    /// WIDTHxHEIGHT in pixels, each edge 1 to 8192 (default 1200x900).
+    #[serde(default = "default_canvas")]
+    pub canvas_size: String,
+}
+
+fn default_max_items() -> usize {
+    6
+}
+fn default_layout() -> String {
+    "grid".to_string()
+}
+fn default_spacing() -> u32 {
+    8
+}
+fn default_canvas() -> String {
+    "1200x900".to_string()
+}
+
+// ── Video request types ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoClipRequest {
+    pub video_url: String,
+    pub start_sec: f32,
+    pub end_sec: f32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoToGifRequest {
+    /// Local path or URL of the video.
+    pub video_url: String,
+    /// Where the GIF starts, in seconds (default 0).
+    pub start_sec: Option<f32>,
+    /// How long the GIF runs, in seconds (default 5).
+    pub duration_sec: Option<f32>,
+    /// Width in pixels, 1 to 8192 (default 480); height keeps the aspect ratio.
+    pub width: Option<u32>,
+    /// Frames per second, 1 to 100 (default 10).
+    pub fps: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoAddCaptionRequest {
+    /// Local path or URL of the video.
+    pub video_url: String,
+    /// The caption, drawn exactly as written.
+    pub text: String,
+    /// Where the caption sits: "top", "center" or "bottom" (default).
+    #[serde(default)]
+    #[schemars(schema_with = "optional_caption_position_schema")]
+    pub position: Option<String>,
+    /// Font size in pixels (default 24).
+    pub font_size: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoConcatRequest {
+    pub video_urls: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoExtractFramesRequest {
+    /// URL of the video to extract frames from.
+    pub video_url: String,
+    /// Interval between frames in seconds (default 2.0).
+    #[serde(default = "default_frame_interval")]
+    pub interval_sec: f32,
+    /// Maximum number of frames to extract (default 10).
+    #[serde(default = "default_max_frames")]
+    pub max_frames: u32,
+}
+
+fn default_frame_interval() -> f32 {
+    2.0
+}
+
+fn default_max_frames() -> u32 {
+    10
+}
+
+// ── Audio request types ──────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TranscribeBundleRequest {
+    /// URL or local path of the audio/video to transcribe (local paths and
+    /// file:// URIs naming existing files are read directly). An inline
+    /// data: URI is not accepted.
+    pub audio_url: String,
+    /// Optional ISO 639-1 language code (e.g., "en", "ja").
+    pub language: Option<String>,
+    /// Optional provider-prefixed STT model override for this
+    /// transcription — e.g. a configured cross-check model from
+    /// `model_list` (transcript-reel Phase 1b). Default: the configured
+    /// STT model; an explicit override makes the bounded cross-check
+    /// restart-free (no settings change, no server restart).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Optional stable gallery asset id of the RECORDING this
+    /// transcription belongs to (R5, operator ruling 2026-10-28). The
+    /// transcribe JOB stores and links the finished transcript to the
+    /// recording on completion, so a panel-initiated transcription closes
+    /// the loop end-to-end; the synchronous transcribe_bundle REFUSES it
+    /// (storing belongs to transcribe_and_store) instead of silently
+    /// dropping it.
+    #[serde(default)]
+    pub gallery_asset_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TranscribeAndStoreRequest {
+    /// URL or local path of the audio/video to transcribe (local paths and
+    /// file:// URIs naming existing files are read directly).
+    pub audio_url: String,
+    /// Optional ISO 639-1 language code (e.g., "en", "ja").
+    pub language: Option<String>,
+    /// Optional provider-prefixed STT model override for this
+    /// transcription — e.g. a configured cross-check model from
+    /// `model_list` (transcript-reel Phase 1b). Default: the configured
+    /// STT model; an explicit override makes the bounded cross-check
+    /// restart-free (no settings change, no server restart).
+    pub model: Option<String>,
+    /// Optional gallery asset id to key the transcript record to.
+    pub gallery_asset_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AudioCaptureRequest {
+    /// Duration to record in seconds (0.1 to 3600 = 1 hour).
+    pub duration_secs: f32,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordAndTranscribeRequest {
+    /// Duration to record in seconds (0.1 to 3600 = 1 hour).
+    pub duration_secs: f32,
+    /// Optional ISO 639-1 language code for transcription.
+    pub language: Option<String>,
+}
+
+// ── Historical lineage request types ─────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryLineageRequest {
+    /// Index of the gallery image whose lineage to read.
+    pub image_index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryDeleteImageRequest {
+    /// Index of the gallery image to delete from the index (positional —
+    /// resolves against the active gallery). Supply exactly one of
+    /// image_index or image_id.
+    #[serde(default)]
+    pub image_index: Option<usize>,
+    /// Stable asset id — the identity that survives reordering, rescan, and
+    /// gallery switches. Preferred over the positional index for callers
+    /// holding a listing record (the panel's delete action).
+    #[serde(default)]
+    pub image_id: Option<String>,
+    /// Whether to also delete the file on disk (default: false — only removes
+    /// the gallery index entry, leaving the file untouched). Requires destructive
+    /// gallery mode; read-only and copy-on-write modes preserve originals.
+    #[serde(default)]
+    pub delete_file: bool,
+}
+
+// ── Model browser request types ─────────────────────────────────────────
+
+/// Information about an available research media model.
+/// Returned by `model_list` and `model_info` tools. Maps to the OMC `Participant`
+/// concept — the model/provider is a participant in the creation task.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MediaModelInfo {
+    /// Unique model identifier (the full prefixed name, e.g. "Provider/model").
+    pub id: String,
+    /// Human-readable model name without provider prefix.
+    pub name: String,
+    /// Provider name (e.g. "deepinfra", "openrouter").
+    pub provider: String,
+    /// Media modality: "audio" (speech-to-text) or "vision".
+    pub modality: String,
+    /// Supported research operations, such as transcription or visual analysis.
+    pub capabilities: Vec<String>,
+    /// Whether this is the configured default model for its modality.
+    pub is_default: bool,
+    /// Optional human-readable description.
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelListRequest {
+    /// Optional provider filter (e.g. "deepinfra", "openrouter").
+    /// If omitted, lists models from all providers.
+    pub provider: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelInfoRequest {
+    /// The model id to look up (the full prefixed name returned by `model_list`).
+    pub model_id: String,
+}
+
+// ── Research job queue request types ──────────────────────────────────
+
+pub use hkask_media::jobs_contract::{JOB_STATUSES, JobListPayload, JobRecord};
+
+/// The research operations `job_submit` accepts — the schema's enumeration
+/// and the refusal text read this one list.
+pub const RESEARCH_OPS: [&str; 5] = [
+    "transcribe",
+    "audio_trim",
+    "audio_concat",
+    "video_clip",
+    "video_concat",
+];
+
+fn research_op_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "string", "enum": RESEARCH_OPS})
+}
+
+fn optional_job_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"anyOf": [{"type": "string", "enum": JOB_STATUSES}, {"type": "null"}]})
+}
+
+/// Request to submit a new async research media job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JobSubmitRequest {
+    /// The research operation: "transcribe", "audio_trim", "audio_concat",
+    /// "video_clip", or "video_concat".
+    #[schemars(schema_with = "research_op_schema")]
+    pub op: String,
+    /// JSON-serialized request for the selected research operation, with its source fields.
+    pub params: String,
+}
+
+/// Request to list research media jobs.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JobListRequest {
+    /// Optional status filter: "queued", "running", "cancelling", "completed", "failed", or "cancelled".
+    #[serde(default)]
+    #[schemars(schema_with = "optional_job_status_schema")]
+    pub status: Option<String>,
+    /// Maximum number of jobs to return (default 20, maximum 256).
+    pub limit: Option<usize>,
+}
+
+/// Request to get the status of a specific job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JobStatusRequest {
+    /// The job id (returned by `job_submit`).
+    pub job_id: String,
+}
+
+/// Request to cancel a running job.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct JobCancelRequest {
+    /// The job id to cancel.
+    pub job_id: String,
+}
+
+// ── Media import request types ──────────────────────────────────────────
+
+/// Request for gallery_add_media: import a video or audio file into the
+/// gallery index (the former gallery_add_video / gallery_add_audio pair,
+/// merged — the bodies differed only in media type and dimensions).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryAddMediaRequest {
+    /// Absolute path to the media file.
+    pub path: String,
+    /// Media kind: "video" or "audio". Must match the file's streams.
+    #[schemars(schema_with = "import_media_type_schema")]
+    pub media_type: String,
+    /// Video width in pixels (video only; read from the file when omitted).
+    pub width: Option<u32>,
+    /// Video height in pixels (video only; optional metadata).
+    pub height: Option<u32>,
+}
+
+// ── Asset detail request types ──────────────────────────────────────────
+
+/// Request to get complete details for a gallery asset — record, tags,
+/// lineage, and face associations in a single call.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryAssetDetailRequest {
+    /// Active asset position. Supply exactly one of image_index or image_id.
+    pub image_index: Option<usize>,
+    /// Stable asset ID, including retained missing records in the active gallery.
+    pub image_id: Option<String>,
+}
+
+/// Request for `gallery_list_assets` — the panel/library data source.
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryListAssetsRequest {
+    /// 0-based offset (matches gallery index semantics — index `offset + i`
+    /// in the result is the `image_index` other gallery tools accept).
+    #[serde(default)]
+    pub offset: usize,
+    /// Page size (1–500, default 100).
+    #[serde(default = "default_asset_list_limit")]
+    pub limit: usize,
+}
+
+fn default_asset_list_limit() -> usize {
+    100
+}
+
+// ── Album request types ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryCreateAlbumRequest {
+    /// Album name.
+    pub name: String,
+    /// Optional parent album ID for nested grouping.
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryMoveToAlbumRequest {
+    /// Gallery image index to add to the album.
+    pub image_index: usize,
+    /// Album ID to add the image to.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryRemoveFromAlbumRequest {
+    /// Gallery image index to remove from the album.
+    pub image_index: usize,
+    /// Album ID to remove the image from.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryDeleteAlbumRequest {
+    /// Album ID to delete.
+    pub album_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GalleryListAlbumMembersRequest {
+    /// Album ID to list members for.
+    pub album_id: String,
+}
+
+// ── Video info request types ────────────────────────────────────────────
+
+/// Request to probe a video file for metadata (duration, dimensions, codec, fps).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoInfoRequest {
+    /// URL or path of the video to probe.
+    pub video_url: String,
+}
+
+// ── Audio editing request types ─────────────────────────────────────────
+
+/// Request to trim an audio file to specified start/end times.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AudioTrimRequest {
+    /// URL or path of the audio file to trim.
+    pub audio_url: String,
+    /// Start time in seconds.
+    pub start_sec: f32,
+    /// End time in seconds.
+    pub end_sec: f32,
+}
+
+/// Request to concatenate multiple audio files into one.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AudioConcatRequest {
+    /// List of audio file URLs or paths to concatenate, in order.
+    pub audio_urls: Vec<String>,
+}
+
+// ── YouTube search and video fetch request types ────────────────────────
+
+/// Request to search YouTube metadata through SerpApi.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct YoutubeSearchRequest {
+    /// YouTube search query.
+    pub query: String,
+    /// Maximum number of video results to return (default 20, maximum 50).
+    pub max_results: Option<u32>,
+}
+
+/// Request to download a video from a URL (YouTube, Vimeo, direct file, etc.)
+/// to local storage and index it in the gallery.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VideoFetchRequest {
+    /// URL of the video to download (YouTube, Vimeo, direct file URL, etc.).
+    pub url: String,
+}
+
+/// Request to fetch one image over HTTPS from a public host into the
+/// content-addressed image cache. Not the gallery: one-off reading
+/// material never becomes a curated asset.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MediaFetchImageRequest {
+    /// HTTPS URL of the image to fetch. Refused unless the scheme is
+    /// `https`, the host is public, and the address carries no
+    /// credentials.
+    pub url: String,
+}
+
+// ── Media layer requests ──────────────────────────────────────────────
+
+pub use hkask_media::wire::{LayersProvenanceRequest, LayersStoreItemRequest, LayersStoreRequest};
+
+/// Request to list stored media layers.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersListRequest {
+    /// Filter by the annotated media's path.
+    pub media_path: Option<String>,
+    /// Filter by layer kind (same closed set as layers_store).
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+    /// Maximum layers to return (default 50, at least 1, capped at 500).
+    pub limit: Option<u32>,
+}
+
+/// Request to load one stored media layer with its full items.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersGetRequest {
+    /// The layer ID returned by layers_store.
+    pub layer_id: String,
+}
+
+/// Request to detect shot boundaries as a deterministic layer over a video
+/// file.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersShotPassRequest {
+    /// Absolute local path (or URL) of the source video to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the layer to a gallery asset.
+    pub gallery_asset_id: Option<String>,
+    /// Scene score a frame must exceed to count as a cut, in (0.0, 1.0]
+    /// (ffmpeg's conventional default 0.3 when omitted).
+    pub threshold: Option<f64>,
+    /// Minimum shot length in seconds — a boundary closer than this to the
+    /// previous one is suppressed (default 0.5; 0.0 disables the guard).
+    pub min_shot_length: Option<f64>,
+}
+
+/// A bounded source-PTS time range for the vision pass.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersTimeRangeRequest {
+    /// Range start in source-PTS seconds (>= 0).
+    pub start_sec: f64,
+    /// Range end in source-PTS seconds; omitted means to the probed media
+    /// duration.
+    pub end_sec: Option<f64>,
+}
+
+/// Request to generate semantic, object and OCR layers over a video's
+/// sampled frames via the bounded vision pass.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersSemanticPassRequest {
+    /// Absolute local path (or URL) of the source video to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layers to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Bound the pass to a source-PTS time range (mutually exclusive with
+    /// shot_layer_id).
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Bound the pass to the shots of one stored shot layer (the
+    /// layers_shot_pass output) — each shot item is one chunk. Mutually
+    /// exclusive with time_range.
+    pub shot_layer_id: Option<String>,
+    /// Frames sampled per chunk (default 4, 1..=12).
+    pub frames_per_chunk: Option<u32>,
+    /// Chunk duration in seconds for time_range mode (default 5.0) — the
+    /// chunking granularity; ignored in shot mode (shots are the chunks).
+    pub chunk_duration_secs: Option<f64>,
+    /// Maximum chunks processed per call (default 8, 1..=64); a larger
+    /// plan returns a resume cursor.
+    pub max_chunks: Option<u32>,
+    /// Chunk index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+    /// Opt into structured outputs (v2): the schema rides in the prompt and
+    /// the structured-output counters are used — image inputs have no
+    /// provider-enforced strict-schema path (chat_json is text-only), so
+    /// the response names the mode actually used. Default false (v1).
+    pub structured: Option<bool>,
+    /// Opt into the grounded mode (default false): the grounded template
+    /// raises box density and label specificity over the identical output
+    /// schema, and the pass resolves its model per-call, then the tagging
+    /// model setting (`HKASK_MEDIA_TAGGING_MODEL`), then the configured
+    /// analysis model — the tagging-role chain (settings card 9fc54490).
+    /// Provenance records `layers_semantic_pass_grounded` so the modes stay
+    /// distinguishable.
+    pub grounded: Option<bool>,
+    /// Optional model override (provider-prefixed). Default:
+    /// HKASK_MEDIA_PASS_MODEL, falling back to HKASK_MEDIA_VISION_MODEL —
+    /// an explicit per-call override wins.
+    pub model: Option<String>,
+}
+
+/// Request to export media layer items as corpus passages.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersExportRequest {
+    /// Absolute local path (or URL) of the annotated media.
+    pub media_path: String,
+    /// Optional kind filter (same closed set as layers_store).
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+}
+
+/// Request to read a recording's visual transcript: every stored layer
+/// item as one time-ordered event list across layer kinds (S1).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersTranscriptRequest {
+    /// Absolute local path (or URL) of the annotated media.
+    pub media_path: String,
+    /// Optional kind filter (same closed set as layers_store); omitted
+    /// reads every stored layer kind.
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+    /// Optional source-PTS window; events overlapping the window are
+    /// returned (point-in-time items intersect it); omitted reads the
+    /// full recording.
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Maximum events returned (default 500, 1..=5000); a longer
+    /// transcript returns a resume cursor.
+    pub limit: Option<u32>,
+    /// Event index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+}
+
+/// Request to compose researcher selections into a media EDL layer (t8).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersEdlComposeRequest {
+    /// Absolute local path (or URL) of the source media.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layer to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Layer ID of a researcher-authored selection layer to compose from
+    /// (mutually exclusive with query).
+    pub layer_id: Option<String>,
+    /// Label query to search for (mutually exclusive with layer_id).
+    pub query: Option<String>,
+}
+
+/// Request to generate labeled audio_event items over a recording's audio
+/// via the bounded audio pass (t5).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersAudioPassRequest {
+    /// Absolute local path (or URL) of the source media to analyze.
+    pub media_path: String,
+    /// Optional gallery asset ID linking the produced layer to a gallery
+    /// asset.
+    pub gallery_asset_id: Option<String>,
+    /// Bound the pass to a source-PTS time range; omitted means the full
+    /// probed duration.
+    pub time_range: Option<LayersTimeRangeRequest>,
+    /// Chunk duration in seconds (default 5.0) — the chunking granularity;
+    /// each chunk is one inference call.
+    pub chunk_duration_secs: Option<f64>,
+    /// Maximum chunks processed per call (default 8, 1..=64); a larger
+    /// plan returns a resume cursor.
+    pub max_chunks: Option<u32>,
+    /// Chunk index to resume from (the resume cursor of a prior call).
+    pub resume_from: Option<u32>,
+    /// Opt into structured outputs (v2): the schema rides in the prompt and
+    /// the structured-output counters are used — audio inputs have no
+    /// provider-enforced strict-schema path (chat_json is text-only), so
+    /// the response names the mode actually used. Default false (v1).
+    pub structured: Option<bool>,
+    /// Optional model override (provider-prefixed). Default:
+    /// the sound-annotation model setting (env
+    /// `HKASK_MEDIA_SOUND_ANNOTATION_MODEL`) — an explicit per-call override
+    /// wins. Audio passes never route audio-only models via the shared
+    /// pass-model env (`HKASK_MEDIA_PASS_MODEL` serves the text/vision
+    /// passes); an unset setting fails visibly (NotConfigured names it).
+    pub model: Option<String>,
+}
+
+/// Request to render a media EDL layer into a durable reel asset (t9).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersRenderEdlRequest {
+    /// Absolute local path (or URL) of the source media.
+    pub media_path: String,
+    /// Layer ID of the EDL layer to render. If omitted, renders the
+    /// latest EDL layer for the given media path.
+    pub layer_id: Option<String>,
+}
+
+/// Request to render approved redaction decisions over one recording into
+/// a durable gallery asset (S3, tier 1 of the visual-event-tagging design
+/// §6). The layer id is REQUIRED — the render consumes an approved,
+/// researcher-authored decision layer, never free parameters (the hard
+/// human gate: no redaction renders without one).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersRenderRedactionsRequest {
+    /// Absolute local path (or URL) of the source media. Never modified:
+    /// the render publishes a new gallery asset; layers are database rows.
+    pub media_path: String,
+    /// Layer ID of the researcher-authored redaction decision layer
+    /// (provenance model "user") whose approved items carry the redaction
+    /// vocabulary {op: redact, status: approved, effect: blur|pixelate|
+    /// black|delogo, target: {kind: box, box: {x,y,w,h} in 0..1}}.
+    pub layer_id: String,
+}
+
+/// Request to stitch an object layer's detections into deterministic
+/// tracks (S2, design §4 delta 3) — a derived object-kind layer.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersStitchTracksRequest {
+    /// Absolute local path (or URL) of the source media the layer
+    /// annotates (duration anchor for validation).
+    pub media_path: String,
+    /// Layer ID of the kind=object source layer to stitch (the
+    /// layers_semantic_pass output).
+    pub layer_id: String,
+    /// Box IoU threshold for linking consecutive detections of the same
+    /// label into one track (default 0.3; 0..1).
+    pub iou_threshold: Option<f64>,
+    /// Maximum frame-PTS gap in seconds that still links two detections
+    /// into one track (default 2.0; a larger gap ends the track — the
+    /// object is treated as gone and returned).
+    pub max_gap_secs: Option<f64>,
+    /// Allow tracks to merge across shot boundaries when the source pass
+    /// was chunked by shots (default false — shot boundaries are hard
+    /// cuts by construction; a blocked merge is counted in stats).
+    pub cross_shot: Option<bool>,
+}
+
+/// Request for the unified lexical search over media layers plus
+/// transcript working text (Media layers v1 t6).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayersSearchRequest {
+    /// Literal substring; ASCII case-insensitive, non-ASCII text is exact.
+    pub query: String,
+    /// Explicit retrieval method. Only lexical is supported; corpus
+    /// export is the semantic handoff.
+    pub mode: String,
+    /// Maximum citations, 1..=100 (default 20).
+    pub limit: Option<usize>,
+    /// Maximum recordings examined in this page, 1..=500 (default 100).
+    pub recording_limit: Option<usize>,
+    /// Recording-page offset, default 0. Stable order: newest artifact
+    /// timestamp, then media path.
+    pub recording_offset: Option<usize>,
+    /// Resume byte offset in the first recording's scan stream (its layer
+    /// items, then its newest transcript's working text). Use
+    /// next_start_byte with next_recording_offset from the previous page.
+    pub start_byte: Option<usize>,
+    /// Restrict the corpus to one recording's media path.
+    pub media_path: Option<String>,
+    /// Restrict layer hits to one kind; transcript hits are unaffected.
+    pub kind: Option<crate::layer_store::MediaLayerKind>,
+}
