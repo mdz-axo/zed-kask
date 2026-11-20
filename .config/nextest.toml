@@ -1,6 +1,26 @@
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 1 }
 
+# Kask-specific profile — timeouts, test groups, failing-fast and termination
+# for kask crates.
+# Usage: cargo nextest run --profile kask -p hkask-types -p hkask-mcp ...
+#        kask/scripts/test            (the canonical kask runner; package list,
+#                                     profile and fallback in one script)
+# Note: nextest profiles do not support `extends` (that's a cargo profile
+# concept); the `slow-timeout` below is standalone, not inherited.
+[profile.kask]
+# Canonical failing-fast: stop scheduling new tests after the first failure,
+# but wait for running tests to finish naturally so their cleanup completes
+# (nextest termination behavior: `wait` is the safe default; `immediate`
+# sends termination signals respecting the grace period below).
+fail-fast = { max-fail = 1, terminate = "wait" }
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+# Kask SQLite-heavy crates that share a database — serialize to avoid contention.
+[[profile.kask.overrides]]
+filter = "package(hkask-storage)"
+test-group = "sequential-db-tests"
+
 [test-groups]
 sequential-db-tests = { max-threads = 1 }
 
@@ -13,10 +33,6 @@ test-group = 'sequential-db-tests'
 [[profile.default.overrides]]
 filter = 'package(worktree) and test(test_random_worktree_changes)'
 priority = 100
-
-[[profile.default.overrides]]
-filter = 'package(collab) and (test(random_project_collaboration_tests) or test(random_channel_buffer_tests) or test(test_contact_requests) or test(test_basic_following))'
-priority = 99
 
 [[profile.default.overrides]]
 filter = 'package(extension_host) and test(test_extension_store_with_test_extension)'

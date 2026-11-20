@@ -1,20 +1,7 @@
 #!/usr/bin/env bash
 
-# This script is intended to be run after `snap-build`.
-#
-# It expects the `zed.snap` built by `snap-build` to be in the current
-# directory.
-#
-# This will uninstall the current `zed` snap, replacing it with a snap
-# that directly uses the `snap/unpacked` directory.
+set -euo pipefail
 
-set -euxo pipefail
-
-# Rerun as root
-[ "$UID" -eq 0 ] || exec sudo bash -e "$0" "$@"
-
-snap remove zed || true
-mkdir -p snap
-rm -rf snap/unpacked
-unsquashfs -dest snap/unpacked zed.snap
-snap try --classic snap/unpacked
+echo "error: script/snap-try is disabled in zed-kask" >&2
+echo "zed-kask does not maintain a Snap installation path." >&2
+exit 1

@@ -16,18 +16,13 @@ members = [
     "crates/askpass",
     "crates/assets",
     "crates/audio",
-    "crates/auto_update",
-    "crates/auto_update_helper",
-    "crates/auto_update_ui",
     "crates/aws_http_client",
     "crates/bedrock",
     "crates/bench_metrics",
     "crates/benchmarks",
     "crates/breadcrumbs",
     "crates/buffer_diff",
-    "crates/call",
     "crates/call_hierarchy",
-    "crates/channel",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -35,8 +30,6 @@ members = [
     "crates/cloud_api_types",
     "crates/cloud_llm_client",
     "crates/codestral",
-    "crates/collab",
-    "crates/collab_ui",
     "crates/collections",
     "crates/command_palette",
     "crates/command_palette_hooks",
@@ -45,6 +38,7 @@ members = [
     "crates/context_server",
     "crates/copilot",
     "crates/copilot_chat",
+    "crates/copilot_ui",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
@@ -55,6 +49,8 @@ members = [
     "crates/debugger_ui",
     "crates/deepseek",
     "crates/dev_container",
+    "crates/kanban_panel",
+    "crates/hkask-panel-ui",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
@@ -135,8 +131,6 @@ members = [
     "crates/language_tools",
     "crates/languages",
     "crates/line_ending_selector",
-    "crates/livekit_api",
-    "crates/livekit_client",
     "crates/llama_cpp",
     "crates/lmstudio",
     "crates/lsp",
@@ -184,6 +178,7 @@ members = [
     "crates/remote",
     "crates/remote_connection",
     "crates/remote_server",
+    "crates/remote_server_download",
     "crates/repl",
     "crates/reqwest_client",
     "crates/rope",
@@ -274,12 +269,73 @@ members = [
     "tooling/crates_io_client",
     "tooling/perf",
     "tooling/xtask",
+
+    #
+    # kask/ — hKask integration (additive; upstream never touches here)
+    # See kask/docs/architecture/zed-host-architecture-plan.md
+    #
+    "kask/crates/hkask-types",
+    "kask/crates/kask_bridge",
+    "kask/crates/hkask-keystore",
+    "kask/crates/hkask-regulation",
+    "kask/crates/hkask-forecast",
+    "kask/crates/hkask-lisp",
+
+    "kask/crates/hkask-memory",
+    "kask/crates/hkask-mcp",
+    "kask/crates/hkask-mcp-server",
+    "kask/crates/hkask-mcp-test-support",
+    "kask/crates/hkask-storage",
+    "kask/crates/hkask-inference",
+    "kask/crates/hkask-bridge-ontology",
+    "kask/crates/hkask-condenser",
+    "kask/crates/hkask-steer-core",
+    "kask/crates/dme-harness",
+    "kask/crates/hkask-nostr-core",
+    "kask/crates/hkask-nostr-signer",
+    "kask/crates/hkask-wallet-core",
+    "kask/crates/hkask-experimentation",
+    "kask/crates/hkask-kata-kanban",
+    "kask/crates/hkask-media",
+
+    "crates/hkask-tool-invoker",
+    "crates/hkask-viz-core",
+    "crates/hkask-graph-widget",
+    "crates/hkask-kanban-widget",
+    "crates/hkask-steer",
+
+    "crates/media_panel",
+    "crates/nostr_panel",
+    "crates/hkask-scenarios-widget",
+    "crates/hkask-media-widget",
+    "crates/hkask-media-benchmarks",
+
+    #
+    # kask/mcp-servers/ — MCP server source crates (on-disk set)
+    #
+    "kask/mcp-servers/hkask-mcp-scenarios",
+    "kask/mcp-servers/hkask-mcp-prediction-markets",
+    "kask/mcp-servers/hkask-mcp-research",
+    "kask/mcp-servers/hkask-mcp-curator",
+    "kask/mcp-servers/hkask-mcp-kata-kanban",
+
+    "kask/mcp-servers/hkask-mcp-corpus",
+    "kask/mcp-servers/hkask-mcp-media",
+    "kask/mcp-servers/hkask-mcp-experimentation",
+    "kask/mcp-servers/hkask-mcp-nostr-relay",
+    "kask/mcp-servers/hkask-mcp-nostr-client",
+    "kask/mcp-servers/hkask-mcp-nostr-blossom",
+    "kask/mcp-servers/hkask-mcp-wallet",
 ]
 default-members = ["crates/zed"]
 
 [workspace.package]
 publish = false
 edition = "2024"
+# hKask crates and the zed-kask application inherit these; upstream libraries set their own.
+version = "0.42.0"
+license = "MIT"
+repository = "https://github.com/mdz-axo/zed-kask"
 
 [workspace.dependencies]
 
@@ -291,6 +347,7 @@ acp_thread = { path = "crates/acp_thread" }
 acp_tools = { path = "crates/acp_tools" }
 action_log = { path = "crates/action_log" }
 activity_indicator = { path = "crates/activity_indicator" }
+ab_glyph = "0.2"
 agent = { path = "crates/agent" }
 agent_servers = { path = "crates/agent_servers" }
 agent_settings = { path = "crates/agent_settings" }
@@ -302,15 +359,11 @@ askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
 audio = { path = "crates/audio" }
 bench_metrics = { path = "crates/bench_metrics" }
-auto_update = { path = "crates/auto_update" }
-auto_update_ui = { path = "crates/auto_update_ui" }
 aws_http_client = { path = "crates/aws_http_client" }
 bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
-call = { path = "crates/call" }
 call_hierarchy = { path = "crates/call_hierarchy" }
-channel = { path = "crates/channel" }
 cli = { path = "crates/cli", default-features = false }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
@@ -318,8 +371,6 @@ cloud_api_client = { path = "crates/cloud_api_client" }
 cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
 codestral = { path = "crates/codestral" }
-collab = { path = "crates/collab" }
-collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
@@ -341,6 +392,20 @@ debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
+
+kanban_panel = { path = "crates/kanban_panel" }
+hkask_panel_ui = { path = "crates/hkask-panel-ui", package = "hkask-panel-ui" }
+kask_bridge = { path = "kask/crates/kask_bridge" }
+hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
+hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
+hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
+hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
+hkask_steer = { path = "crates/hkask-steer", package = "hkask-steer" }
+
+media_panel = { path = "crates/media_panel" }
+nostr_panel = { path = "crates/nostr_panel" }
+hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
+hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 diagnostics = { path = "crates/diagnostics" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
@@ -382,6 +447,7 @@ gpui_platform = { path = "crates/gpui_platform", default-features = false }
 gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 gpui_util = { path = "crates/gpui_util" }
+ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling"] }
 gpui_web = { path = "crates/gpui_web", default-features = false }
 gpui_wgpu = { path = "crates/gpui_wgpu" }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
@@ -413,8 +479,6 @@ language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
 line_ending_selector = { path = "crates/line_ending_selector" }
-livekit_api = { path = "crates/livekit_api" }
-livekit_client = { path = "crates/livekit_client" }
 llama_cpp = { path = "crates/llama_cpp" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
@@ -461,9 +525,10 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
+remote_server_download = { path = "crates/remote_server_download" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
-rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18db593155016e7ce024aeb", default-features = false, features = ["wav", "playback", "wav_output", "recording"] }
+rodio = { git = "https://github.com/RustAudio/rodio", rev = "3ee9745862279ce1d18db593155016e7ce024aeb", default-features = false, features = ["wav", "mp3", "flac", "vorbis", "mp4", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 sandbox = { path = "crates/sandbox" }
@@ -644,7 +709,9 @@ fork = "0.4.0"
 futures = "0.3.34"
 futures-concurrency = "7.7.1"
 futures-lite = "2"
+futures-util = "0.3.32"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
+tokio-rustls = "0.26"
 globset = "0.4"
 handlebars = "4.3"
 hdrhistogram = { version = "7", default-features = false }
@@ -686,16 +753,16 @@ inventory = "0.3.19"
 is_executable = "1.0"
 itertools = "0.14.0"
 js-sys = "0.3"
+nom-exif = "3"
+json_dotpath = "1.1"
 jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = { version = "10.0", default-features = false }
 jupyter-protocol = "2.0.3"
 jupyter-websocket-client = "3.0.0"
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
-libwebrtc = "0.3.26"
 linkify = "0.10.0"
-livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
-log = { version = "0.4", default-features = false, features = ["std"] }
+log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lru = "0.16"
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "82d7fc66ebdfabcfeb26ba16bbed9f3d26211fc3" }
 mach2 = "0.6"
@@ -866,14 +933,17 @@ proxyvars = "0.2"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.41"
 quote = "1.0.9"
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng", "thread_rng"] }
 raw-window-handle = "0.6"
 rayon = "1.8"
-regex = { version = "1.5", default-features = false, features = ["std", "perf"] }
+regex = { version = "1.5", default-features = false, features = ["std", "perf", "unicode"] }
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [
+    "charset",
     "http2",
+    "json",
     "macos-system-configuration",
+    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",
@@ -910,6 +980,92 @@ serde_urlencoded = "0.7"
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
+blake3 = "1"
+hkask-types = { path = "kask/crates/hkask-types" }
+hkask-keystore = { path = "kask/crates/hkask-keystore" }
+hkask-forecast = { path = "kask/crates/hkask-forecast" }
+hkask-inference = { path = "kask/crates/hkask-inference" }
+
+hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
+hkask-steer-core = { path = "kask/crates/hkask-steer-core" }
+hkask-nostr-core = { path = "kask/crates/hkask-nostr-core" }
+# Editor process only: the Nostr settings page (key entry) and the editor's
+# signer. No MCP server may depend on it.
+hkask-nostr-signer = { path = "kask/crates/hkask-nostr-signer" }
+# D110 wallet core types, BOLT11 validation, SSRF URL guard, and spend-cap
+# policy. Isolates `lightning-invoice` (`secp256k1`) from `hkask-nostr-core`
+# and `hkask-nostr-signer`.
+hkask-wallet-core = { path = "kask/crates/hkask-wallet-core" }
+
+hkask-lisp = { path = "kask/crates/hkask-lisp" }
+
+hkask-memory = { path = "kask/crates/hkask-memory" }
+hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
+hkask-mcp-test-support = { path = "kask/crates/hkask-mcp-test-support" }
+
+minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
+serde_yaml_neo = "0.11"
+rmcp = "3"
+tokio-util = { version = "0.7", features = ["rt"] }
+hkask-regulation = { path = "kask/crates/hkask-regulation" }
+hkask-storage = { path = "kask/crates/hkask-storage" }
+hkask-condenser = { path = "kask/crates/hkask-condenser" }
+hkask-mcp = { path = "kask/crates/hkask-mcp" }
+hkask-experimentation = { path = "kask/crates/hkask-experimentation" }
+hkask-kata-kanban = { path = "kask/crates/hkask-kata-kanban" }
+hkask-media = { path = "kask/crates/hkask-media" }
+# Nostr signing set, used only by hkask-nostr-core and hkask-nostr-signer.
+# Pinned exactly: these crates verify and produce signatures for an identity
+# key that cannot be rotated, so a version change is a reviewed change and
+# never a side effect of `cargo update`.
+k256 = { version = "=0.14.0", default-features = false, features = ["schnorr"] }
+bech32 = "=0.12.0"
+scrypt = { version = "=0.12.0", default-features = false }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["getrandom", "zeroize"] }
+unicode-normalization = "=0.1.25"
+# D110 wallet crypto/BOLT11 crates — pinned exact versions, isolated to
+# `hkask-wallet-core` and `hkask-mcp-wallet` so `secp256k1` never leaks into
+# `hkask-nostr-core` or `hkask-nostr-signer`.
+lightning-invoice = { version = "=0.34.2", default-features = false, features = ["std"] }
+bip39 = { version = "=2.2.2", default-features = false, features = ["std", "zeroize"] }
+# Cashu Dev Kit (CDK) — ALPHA, pinned exact versions (D110).
+# `cdk-sql-common` is adapted over the workspace's `rusqlite@0.32` (`bundled-sqlcipher`)
+# instead of `cdk-sqlite` (`rusqlite@0.31`) to avoid a duplicate `links = "sqlite3"`
+# conflict across the workspace.
+cdk = { version = "=0.18.3", default-features = false, features = ["wallet"] }
+cdk-common = { version = "=0.18.3", default-features = false, features = ["wallet"] }
+cdk-sql-common = { version = "=0.18.3", default-features = false, features = ["wallet"] }
+cdk-http-client = { version = "=0.18.3", default-features = false, features = ["reqwest"] }
+cdk-fake-wallet = "=0.18.3"
+# NIP-47 Nostr Wallet Connect (NWC) client — ALPHA, pinned exact version (D110 Phase 3).
+# Linked ONLY by `kask_bridge` (editor process) so `wallet_nwc_uri` never leaves
+# the editor keychain or enters `hkask-mcp-wallet`.
+nwc = { version = "=0.45.2", default-features = false, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
+# Nostr relay engine and its LMDB store, used only by hkask-mcp-nostr-relay.
+# Pinned exactly: the SDK states its API is unstable, 0.45.6 is the only
+# un-yanked 0.45 release, and nostr-lmdb 0.45.0/0.45.1 were yanked. Default
+# features are off so the server picks the TLS provider (aws-lc-rs, as the
+# rest of the workspace) instead of the SDK's default (ring).
+nostr-sdk = { version = "=0.45.6", default-features = false }
+nostr-lmdb = "=0.45.3"
+# The websocket transport under nostr-sdk, named directly by
+# hkask-mcp-nostr-client only to read its error type (which stage of a relay
+# connection failed). Pinned to the version nostr-sdk 0.45.6 resolves: a
+# second version in the tree would make that read miss. No features of its
+# own; nostr-sdk selects the TLS provider.
+async-wsocket = { version = "=0.17.0", default-features = false }
+# The relay's HTTP accept layer (hkask-mcp-nostr-relay). All three were
+# already in Cargo.lock as transitive dependencies.
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false }
+sha1 = "0.10"
+ed25519-dalek = "2"
+# `zeroize` feature: without it the GHASH subkey inside a long-lived `Aes256Gcm`
+# is not wiped on drop (upstream gates `ghash_key.zeroize()` behind it), leaving
+# derived key material in freed memory. Key material must be zeroized.
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+argon2 = "0.5"
+hmac = "0.12"
 shellexpand = "3.1"
 shlex = "2.0"
 similar = "2.7"
@@ -941,14 +1097,17 @@ time = { version = "0.3", features = [
     "local-offset",
 ] }
 tiny_http = "0.12"
-tokio = "1"
-tokio-rustls = { version = "0.26", default-features = false }
-toml = { version = "0.9", default-features = false, features = ["std", "serde", "parse"] }
-toml_edit = { version = "0.22", default-features = false, features = ["parse"] }
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+toml_edit = { version = "0.22", default-features = false, features = [
+    "display",
+    "parse",
+    "serde",
+] }
 tower-http = "0.4.4"
 tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "cf5d3a63f9fa069fc32b9a73dc28830e427d5ee0" }
 tracing = "0.1.40"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -982,7 +1141,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 usvg = { version = "0.46.0", default-features = false }
-uuid = { version = "1.1", features = ["serde"] }
+uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.254"
@@ -1007,7 +1166,6 @@ wax = { version = "0.7", default-features = false }
 web-sys = "0.3"
 web-time = "1.1.0"
 webpki-roots = "1.0.10"
-webrtc-sys = "0.3.23"
 # 30.0.1 lacks the Vulkan surface-drop fix (wgpu#10230) and WebGL resize fix (wgpu#10348).
 wgpu = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", default-features = false }
 which = "8"
@@ -1018,6 +1176,23 @@ yaml-rust2 = { version = "0.8", default-features = false }
 yawc = { version = "0.4", default-features = false }
 zeroize = "1.8"
 zstd = { version = "0.13", default-features = false, features = ["legacy", "arrays"] }
+
+# hKask workspace dependencies (kask/ crates inherit these)
+# Only deps not already defined above in the root [workspace.dependencies].
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
+utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
+# Single-source-of-truth for kask-only third-party crates consumed by hKask crates.
+sqlite-vec = "0.1"
+docx-rs = "0.4"
+calamine = "0.36"
+pptx-to-md = "0.1"
+pdf-extract = "0.12"
+hf-hub = "1.0.0"
+# hkask-bridge-ontology build.rs: reads the vendored RDF ontology sources.
+oxrdf = "0.3"
+oxrdfio = "0.2"
 
 [workspace.dependencies.windows]
 version = "0.62"
@@ -1050,28 +1225,13 @@ async-process = { git = "https://github.com/zed-industries/async-process.git", r
 async-task = { git = "https://github.com/smol-rs/async-task", rev = "41fd3359c75e221bd8b187a8ee361aa309c1714c" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
 notify = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "d842f16b2716bd60f09caf3ae3a894237ab38f54" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "fbda05eb278b4a7c5be8fc9b2a92e9b62e732236" }
 # Avoid panicking when a failed EGL call reports EGL_SUCCESS.
 # https://github.com/timothee-haudebourg/khronos-egl/pull/37
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
 # Includes https://github.com/rust-minidump/minidump-writer/pull/249 to fix crashes on `cmd-q` (https://github.com/zed-industries/zed/issues/57664)
 crash-context = { git = "https://github.com/rust-minidump/minidump-writer", rev = "911b04e09b79b736cc15cbe712e83e2d3f348bb9" }
-
-# corgi runs build.rs/proc-macros in a sandbox with no write access outside the
-# action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via
-# `env!` and hands every crate one shared directory, which the sandbox can't
-# grant and a content-addressed build can't share. This patch reads OUT_DIR at
-# runtime, so each build script gets a private, writable dir in its own entry —
-# where cxx-build writes its shared cxxbridge headers. Kept local rather than a
-# cxx git fork so Windows cargo builds are unaffected (a git checkout of cxx
-# needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
-# per-crate scratch dirs are sufficient. Upstream issue:
-# https://github.com/dtolnay/cxx/issues/1752
-scratch = { path = "tooling/corgi/patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -1117,6 +1277,10 @@ wasmtime-environ = { opt-level = 3 }
 wasmtime-internal-cranelift = { opt-level = 3 }
 minidumper = { opt-level = 3 }
 serde_json = { opt-level = 3 }
+# NIP-49 key derivation (hkask-nostr-signer) is scrypt at 256 MiB. Measured
+# 2026-11-12: the signer's unit tests took 35 s unoptimized and under 2 s here.
+scrypt = { opt-level = 3 }
+salsa20 = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
@@ -1162,15 +1326,41 @@ codegen-units = 1
 
 [profile.release.package]
 zed = { codegen-units = 16 }
+# zed-kask: D50 — bound per-dependency codegen memory; keep thin LTO.
+"*" = { codegen-units = 16 }
 
+# zed-kask: D46 — MCP server binaries build here, not on `release`. The
+# servers are I/O daemons: thin LTO and codegen-units=1 buy them nothing and
+# pin one core per crate for minutes (the historical install CPU-burn
+# defect). The `zed` binary remains on release with its upstream package
+# override of 16 codegen units. Like release-fast, the profile splits its
+# (limited) DWARF into .dwo sidecars under the target tree — the install
+# publishes editor and servers through one path, so they share the split
+# protocol — keeping the linked server binaries small in every install
+# mode. Pinned by kask/scripts/build/check-build-profile.sh
+# (kask-invariants.yml).
+[profile.release-mcp]
+inherits = "release"
+lto = false
+codegen-units = 16
+split-debuginfo = "unpacked"
+
+# zed-kask: D46 — the --fast route's full DWARF splits into .dwo sidecars
+# under the target tree (split-debuginfo = "unpacked"): the linked binary
+# lands ~1.4 GB instead of ~7 GB (measured 2026-11-02; the split carries
+# .debug_info/.debug_loc/.debug_str to the sidecars — rustc keeps the
+# address and line tables embedded), and debugger workflows resolve
+# through the sidecars. Upstream carries this profile without the split.
+# Pinned by kask/scripts/build/check-build-profile.sh.
 [profile.release-fast]
 inherits = "release"
 debug = "full"
+split-debuginfo = "unpacked"
 lto = false
 codegen-units = 16
 
 [workspace.lints.rust]
-unexpected_cfgs = { level = "allow" }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("hedera"))', 'cfg(kani)'] }
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
