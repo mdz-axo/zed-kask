@@ -7,7 +7,7 @@ use agent::{
     DeletePathToolInput, ListDirectoryTool, ListDirectoryToolInput, MovePathTool,
     MovePathToolInput, NativeAgent, NativeAgentConnection, ReadFileTool, ReadFileToolInput,
     SkillTool, SkillToolInput, SkillToolOutput, Templates, ThreadStore, ToolCallEventStream,
-    ToolCallEventStreamReceiver, ToolInput, WriteFileTool, WriteFileToolInput,
+    ToolCallEventStreamReceiver, ToolInput, WriteFileTool, WriteFileToolInput, ZED_AGENT_ID,
     skill_body_resolver_for_project, skills_resolver_for_project,
 };
 use agent_skills::SkillIndex;
@@ -550,6 +550,18 @@ async fn test_remote_telemetry_event_forwarding(
 
     let ssh = RemoteClient::connect_mock(opts, cx).await;
     let project = build_project(ssh, cx);
+    // zed-kask disables telemetry metrics by default in
+    // `assets/settings/default.json` (a fork sending events to Zed's
+    // pipeline is noise + a minor info leak). This test exercises remote
+    // telemetry forwarding, so it must opt back in — otherwise the client's
+    // `report_event` early-returns and the forwarded event is dropped before
+    // it reaches `queued_events()`. This pins the divergence: production
+    // defaults off, tests that need it opt in.
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.telemetry.get_or_insert_default().metrics = Some(true);
+        });
+    });
     project
         .update(cx, {
             let headless = headless.clone();
@@ -5216,7 +5228,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
     let thread_store = cx.new(|cx| ThreadStore::new(cx));
     let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
-    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+    let connection = Rc::new(NativeAgentConnection(agent.clone(), ZED_AGENT_ID.clone()));
     let _acp_thread = cx
         .update(|cx| {
             connection.clone().new_session(
@@ -5237,6 +5249,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let input = SkillToolInput {
         name: "test-skill".into(),
+        ..Default::default()
     };
     let task = cx.update(|cx| {
         skill_tool
@@ -5257,6 +5270,10 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let output = task.await.unwrap();
     cx.run_until_parked();
+    // zed-kask: skills execute via body injection — the `skill` tool reads
+    // the `SKILL.md` body from disk and injects it via `render_skill_envelope`.
+    // The envelope structure — wrapper tag, source, worktree, directory — and
+    // the body content must all be present.
     let expected = format!(
         concat!(
             "<skill_content name=\"test-skill\">\n",
@@ -5289,6 +5306,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let input2 = SkillToolInput {
         name: "test-2".into(),
+        ..Default::default()
     };
     let task = cx.update(|cx| {
         skill_tool
@@ -5306,6 +5324,7 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
 
     let output = task.await.unwrap();
+    // Same envelope as above — the SKILL.md body is injected.
     let expected2 = format!(
         concat!(
             "<skill_content name=\"test-2\">\n",

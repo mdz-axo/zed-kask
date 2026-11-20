@@ -99,6 +99,9 @@ pub struct HangTelemetry {
     reporter: Reporter,
     send_event: Box<dyn Fn(FlexibleEvent) + Send>,
     observe_incidents: Option<Box<dyn FnMut(&[SerializedHangIncident]) + Send>>,
+    /// zed-kask: D89 — durable hang-incident record sink, called with every
+    /// non-empty send batch (see `with_incident_sink`).
+    incident_sink: Option<Box<dyn Fn(&[SerializedHangIncident], u64, u64) + Send>>,
 }
 
 impl HangTelemetry {
@@ -111,7 +114,23 @@ impl HangTelemetry {
             reporter: Reporter::new(),
             send_event: Box::new(send_event),
             observe_incidents: None,
+            incident_sink: None,
         }
+    }
+
+    /// zed-kask: D89 — also passes every non-empty send batch, with its
+    /// threshold/budget incident counts summed across triggers, to `sink` on
+    /// the monitor thread. The telemetry event stream is an upload spool
+    /// that restarts truncate; the sink is how a caller keeps a durable,
+    /// append-only record of the same payload. Failures inside `sink` are
+    /// the caller's to log — they must not block or panic, and they never
+    /// suppress the telemetry event itself.
+    pub fn with_incident_sink(
+        mut self,
+        sink: impl Fn(&[SerializedHangIncident], u64, u64) + Send + 'static,
+    ) -> Self {
+        self.incident_sink = Some(Box::new(sink));
+        self
     }
 
     /// Also passes each poll's serialized incidents to `observer` on the
@@ -151,7 +170,27 @@ impl HangTelemetry {
         }
         self.reporter.active_time += active_time;
         if flush || self.reporter.last_send.elapsed() > SEND_INTERVAL {
-            (self.send_event)(self.reporter.take_event().into_flexible_event());
+            let event = self.reporter.take_event();
+            // zed-kask: D89 — telemetry.log is an upload spool that
+            // `Client::start` recreates (truncates) at every app launch, so a
+            // session's evidence dies with the restart that follows it.
+            // Append the same batch to the durable incident record; empty
+            // windows are not recorded.
+            if let Some(sink) = self.incident_sink.as_ref()
+                && !event.incidents.is_empty()
+            {
+                let (threshold_incidents, budget_incidents) = event.incident_counts.values().fold(
+                    (0, 0),
+                    |(threshold, budget), (per_trigger_threshold, per_trigger_budget)| {
+                        (
+                            threshold + per_trigger_threshold,
+                            budget + per_trigger_budget,
+                        )
+                    },
+                );
+                sink(&event.incidents, threshold_incidents, budget_incidents);
+            }
+            (self.send_event)(event.into_flexible_event());
         }
     }
 }

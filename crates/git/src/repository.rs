@@ -632,12 +632,21 @@ async fn is_shallow_boundary_commit(
     shallow_file_path: &Path,
     commit: &str,
 ) -> Result<bool> {
+    anyhow::ensure!(
+        !commit.is_empty() && !commit.starts_with('-'),
+        "invalid commit reference {commit:?}"
+    );
     let Some(shallow_contents) = read_shallow_file(shallow_file_path).await? else {
         return Ok(false);
     };
 
     let oid = git
-        .run(&["rev-parse", "--verify", &format!("{commit}^{{commit}}")])
+        .run(&[
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            &format!("{commit}^{{commit}}"),
+        ])
         .await
         .context("resolving commit for shallow boundary check")?;
     Ok(shallow_contents
@@ -1398,18 +1407,28 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
+                anyhow::ensure!(
+                    !commit.is_empty() && !commit.starts_with('-'),
+                    "invalid commit reference {commit:?}: cannot be empty or start with '-'"
+                );
                 let output = git
                     .build_command(&[
                         "show",
                         "--no-patch",
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
-                        &commit,
-                        // `commit` reaches here as whatever the user typed, so it can name
-                        // a branch that also names a path in the working tree.
-                        "--",
                     ])
+                    .arg("--end-of-options")
+                    .arg(&commit)
+                    // `commit` reaches here as whatever the user typed, so it can name
+                    // a branch that also names a path in the working tree.
+                    .arg("--")
                     .output()
                     .await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "git show failed for {commit:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 let output = std::str::from_utf8(&output.stdout)?;
                 let fields = output.split('\0').collect::<Vec<_>>();
                 if fields.len() != 6 {
@@ -1440,6 +1459,10 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         let shallow_file_path = self.common_dir.join("shallow");
         cx.background_spawn(async move {
+            anyhow::ensure!(
+                !commit.is_empty() && !commit.starts_with('-'),
+                "invalid commit reference {commit:?}: cannot be empty or start with '-'"
+            );
             if !ignore_shallow_boundary
                 && is_shallow_boundary_commit(&git, &shallow_file_path, &commit).await?
             {
@@ -1459,6 +1482,7 @@ impl GitRepository for RealGitRepository {
                     "--no-abbrev",
                     "--first-parent",
                 ])
+                .arg("--end-of-options")
                 .arg(&commit)
                 .arg("--")
                 .stdin(Stdio::null())
@@ -5480,6 +5504,71 @@ mod tests {
 
         let details = repo.show("docs/rewrite".to_string()).await.unwrap();
         assert_eq!(details.sha.as_ref(), commit_sha.to_string());
+    }
+
+    #[gpui::test]
+    async fn test_show_and_load_commit_reject_leading_dash_option_injection(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("hello.txt"), "hello\n").unwrap();
+        git_command(repo_dir.path(), ["add", "."]);
+        git_command(repo_dir.path(), ["commit", "-m", "Initial commit"]);
+
+        let commit_sha: Oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"])
+            .parse()
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let show_canary = repo_dir.path().join("show-canary.txt");
+        let injected_show = format!("--output={}", show_canary.display());
+        assert!(
+            repo.show(injected_show).await.is_err(),
+            "show must reject leading '-' option injection"
+        );
+        assert!(
+            !show_canary.exists(),
+            "git show must never write --output file"
+        );
+
+        let diff_canary = repo_dir.path().join("diff-canary.txt");
+        let injected_diff = format!("--output={}", diff_canary.display());
+        assert!(
+            repo.load_commit(injected_diff, false, cx.to_async())
+                .await
+                .is_err(),
+            "load_commit must reject leading '-' option injection"
+        );
+        assert!(
+            !diff_canary.exists(),
+            "git show in load_commit must never write --output file"
+        );
+
+        assert!(repo.show("-n".to_string()).await.is_err());
+        assert!(
+            repo.load_commit("-n".to_string(), false, cx.to_async())
+                .await
+                .is_err()
+        );
+
+        let details = repo.show(commit_sha.to_string()).await.unwrap();
+        assert_eq!(details.sha.as_ref(), commit_sha.to_string());
+        let diff = repo
+            .load_commit(commit_sha.to_string(), false, cx.to_async())
+            .await
+            .unwrap();
+        assert_eq!(diff.files.len(), 1);
     }
 
     #[test]

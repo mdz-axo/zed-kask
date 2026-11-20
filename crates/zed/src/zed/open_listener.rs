@@ -4,7 +4,7 @@ use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, CliResponseSink};
 use cli::{IpcHandshake, ipc};
-use client::{ZedLink, parse_zed_link};
+use client::ZED_URL_SCHEME;
 use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
@@ -40,8 +40,6 @@ pub struct OpenRequest {
     pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
     pub dev_container: bool,
-    pub open_channel_notes: Vec<(u64, Option<String>)>,
-    pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub open_behavior: Option<cli::OpenBehavior>,
 }
@@ -61,7 +59,8 @@ pub enum OpenRequestKind {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
     InstallSkill {
-        /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
+        /// Full `SKILL.md` contents embedded in a share link
+        /// (`zed-kask://skill?data=…`).
         content: String,
     },
     DockMenuAction {
@@ -128,8 +127,6 @@ impl OpenRequest {
             && self.open_paths.is_empty()
             && self.diff_paths.is_empty()
             && self.remote_connection.is_none()
-            && self.join_channel.is_none()
-            && self.open_channel_notes.is_empty()
     }
 
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
@@ -154,7 +151,12 @@ impl OpenRequest {
             }));
         }
 
+        let app_url_prefix = format!("{ZED_URL_SCHEME}://");
         for url in request.urls {
+            let app_path = url
+                .strip_prefix(&app_url_prefix)
+                .or_else(|| url.strip_prefix("zed://"));
+
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
             } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
@@ -163,49 +165,47 @@ impl OpenRequest {
                 });
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_local_file_path(file)
-            } else if let Some(file) = url.strip_prefix("zed://file") {
+            } else if let Some(file) = app_path.and_then(|path| path.strip_prefix("file")) {
                 this.parse_local_file_path(file)
-            } else if let Some(file) = url.strip_prefix("zed://ssh") {
+            } else if let Some(file) = app_path.and_then(|path| path.strip_prefix("ssh")) {
                 let ssh_url = "ssh:/".to_string() + file;
                 this.parse_ssh_file_path(&ssh_url, cx)?
-            } else if let Some(extension_id) = url.strip_prefix("zed://extension/") {
+            } else if let Some(extension_id) =
+                app_path.and_then(|path| path.strip_prefix("extension/"))
+            {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
             } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
                 this.parse_skill_install_url(&url)?
-            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+            } else if let Some(agent_path) = app_path.and_then(|path| path.strip_prefix("agent")) {
                 this.parse_agent_url(agent_path)
-            } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
+            } else if matches!(app_path, Some("" | "open" | "open/")) {
                 this.kind = Some(OpenRequestKind::FocusApp);
-            } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
+            } else if let Some(schema_path) =
+                app_path.and_then(|path| path.strip_prefix("schemas/"))
+            {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
                 });
-            } else if url == "zed://settings" || url == "zed://settings/" {
+            } else if matches!(app_path, Some("settings" | "settings/")) {
                 this.kind = Some(OpenRequestKind::Setting { setting_path: None });
-            } else if let Some(setting_path) = url.strip_prefix("zed://settings/") {
+            } else if let Some(setting_path) =
+                app_path.and_then(|path| path.strip_prefix("settings/"))
+            {
                 this.kind = Some(OpenRequestKind::Setting {
                     setting_path: Some(setting_path.to_string()),
                 });
-            } else if let Some(clone_path) = url.strip_prefix("zed://git/clone") {
+            } else if let Some(clone_path) =
+                app_path.and_then(|path| path.strip_prefix("git/clone"))
+            {
                 this.parse_git_clone_url(clone_path)?
-            } else if let Some(commit_path) = url.strip_prefix("zed://git/commit/") {
+            } else if let Some(commit_path) =
+                app_path.and_then(|path| path.strip_prefix("git/commit/"))
+            {
                 this.parse_git_commit_url(commit_path)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
-            } else if let Some(zed_link) = parse_zed_link(&url, cx) {
-                match zed_link {
-                    ZedLink::Channel { channel_id } => {
-                        this.join_channel = Some(channel_id);
-                    }
-                    ZedLink::ChannelNotes {
-                        channel_id,
-                        heading,
-                    } => {
-                        this.open_channel_notes.push((channel_id, heading));
-                    }
-                }
             } else {
                 log::error!("unhandled url: {}", url);
             }
@@ -241,7 +241,7 @@ impl OpenRequest {
     }
 
     fn parse_skill_install_url(&mut self, url: &str) -> Result<()> {
-        // Format: zed://skill?data=<base64url of SKILL.md contents>
+        // Format: <scheme>://skill?data=<base64url of SKILL.md contents>
         let content = agent_skills::decode_skill_share_link(url)?;
         self.kind = Some(OpenRequestKind::InstallSkill { content });
         Ok(())
@@ -273,6 +273,12 @@ impl OpenRequest {
             .split_once('?')
             .context("invalid git commit url: missing query string")?;
         anyhow::ensure!(!sha.is_empty(), "invalid git commit url: missing sha");
+        anyhow::ensure!(
+            !sha.starts_with('-')
+                && (7..=64).contains(&sha.len())
+                && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+            "invalid git commit url: sha must be 7..=64 ASCII hexadecimal characters"
+        );
 
         let repo = url::form_urlencoded::parse(query.as_bytes())
             .find_map(|(key, value)| (key == "repo").then_some(value))
@@ -1611,7 +1617,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent".into()],
+                    urls: vec!["zed-kask://agent".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1627,6 +1633,12 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
+    }
+
+    fn agent_url_with_prompt(prompt: &str) -> String {
+        let mut serializer = url::form_urlencoded::Serializer::new("zed-kask://agent?".to_string());
+        serializer.append_pair("prompt", prompt);
+        serializer.finish()
     }
 
     #[gpui::test]
@@ -1665,7 +1677,7 @@ mod tests {
         let result = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://skill?data=!!!notbase64".into()],
+                    urls: vec!["zed-kask://skill?data=!!!notbase64".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1673,12 +1685,6 @@ mod tests {
         });
 
         assert!(result.is_err());
-    }
-
-    fn agent_url_with_prompt(prompt: &str) -> String {
-        let mut serializer = url::form_urlencoded::Serializer::new("zed://agent?".to_string());
-        serializer.append_pair("prompt", prompt);
-        serializer.finish()
     }
 
     #[gpui::test]
@@ -1719,7 +1725,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://agent/?prompt=hello".into()],
+                    urls: vec!["zed-kask://agent/?prompt=hello".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1746,7 +1752,7 @@ mod tests {
     fn test_parse_focus_app_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
-        for url in ["zed://", "zed://open", "zed://open/"] {
+        for url in ["zed-kask://", "zed-kask://open", "zed-kask://open/"] {
             let request = cx.update(|cx| {
                 OpenRequest::parse(
                     RawOpenRequest {
@@ -1802,7 +1808,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://git/commit/abc123?repo=path/to/repo".into()],
+                    urls: vec!["zed://git/commit/abc1234?repo=path/to/repo".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1812,7 +1818,7 @@ mod tests {
 
         match request.kind.unwrap() {
             OpenRequestKind::GitCommit { sha } => {
-                assert_eq!(sha, "abc123");
+                assert_eq!(sha, "abc1234");
             }
             _ => panic!("expected GitCommit variant"),
         }
@@ -1823,7 +1829,7 @@ mod tests {
         let request = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://git/commit/def456?repo=path%20with%20spaces".into()],
+                    urls: vec!["zed://git/commit/def4567?repo=path%20with%20spaces".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1833,7 +1839,7 @@ mod tests {
 
         match request.kind.unwrap() {
             OpenRequestKind::GitCommit { sha } => {
-                assert_eq!(sha, "def456");
+                assert_eq!(sha, "def4567");
             }
             _ => panic!("expected GitCommit variant"),
         }
@@ -1844,7 +1850,7 @@ mod tests {
             assert!(
                 OpenRequest::parse(
                     RawOpenRequest {
-                        urls: vec!["zed://git/commit/abc123?repo=".into()],
+                        urls: vec!["zed://git/commit/abc1234?repo=".into()],
                         ..Default::default()
                     },
                     cx,
@@ -1855,11 +1861,11 @@ mod tests {
             );
         });
 
-        // Test error case: missing SHA
+        // Test error case: missing repo query parameter
         let result = cx.update(|cx| {
             OpenRequest::parse(
                 RawOpenRequest {
-                    urls: vec!["zed://git/commit/abc123?foo=bar".into()],
+                    urls: vec!["zed://git/commit/abc1234?foo=bar".into()],
                     ..Default::default()
                 },
                 cx,
@@ -1872,6 +1878,53 @@ mod tests {
                 .to_string()
                 .contains("missing repo query parameter")
         );
+    }
+
+    #[gpui::test]
+    fn test_parse_git_commit_url_validates_hex_sha_and_rejects_injection(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for invalid_url in [
+            "zed://git/commit/--output=/tmp/pwned?repo=/tmp/repo",
+            "zed://git/commit/-n?repo=/tmp/repo",
+            "zed://git/commit/abc123?repo=/tmp/repo",
+            "zed://git/commit/deadbeef/../../etc?repo=/tmp/repo",
+            "zed://git/commit/zzzzzzz?repo=/tmp/repo",
+            &format!("zed://git/commit/{}?repo=/tmp/repo", "a".repeat(65)),
+        ] {
+            cx.update(|cx| {
+                let err = OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![invalid_url.to_string()],
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                assert!(
+                    err.is_err(),
+                    "expected invalid git commit URL to be rejected: {invalid_url}"
+                );
+            });
+        }
+
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        for valid_sha in ["abc1234", "ABCDEF0", sha1, sha256] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![format!("zed://git/commit/{valid_sha}?repo=/tmp/repo")],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap_or_else(|e| panic!("expected valid sha {valid_sha} to parse: {e}"))
+            });
+            match request.kind.expect("GitCommit kind") {
+                OpenRequestKind::GitCommit { sha } => assert_eq!(sha, valid_sha),
+                _ => panic!("expected GitCommit variant"),
+            }
+        }
     }
 
     #[gpui::test]

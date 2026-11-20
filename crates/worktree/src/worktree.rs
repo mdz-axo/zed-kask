@@ -1691,26 +1691,55 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        // Avoid queueing a root scan when opening a not-yet-created single-file
+        // worktree; wait until the read succeeds so canonicalize doesn't race ENOENT.
+        let entry = self
+            .snapshot
+            .root_entry()
+            .is_some()
+            .then(|| self.refresh_entry(path.clone(), None, cx));
         let is_private = self.is_path_private(&path);
 
-        let worktree = cx.weak_entity();
-        cx.background_spawn(async move {
-            let content = fs.load_bytes(&abs_path).await?;
+        cx.spawn(async move |this, cx| {
+            let content = cx
+                .background_spawn({
+                    let fs = fs.clone();
+                    let abs_path = abs_path.clone();
+                    async move { fs.load_bytes(&abs_path).await }
+                })
+                .await?;
 
-            let worktree = worktree.upgrade().context("worktree was dropped")?;
+            let entry = match entry {
+                Some(entry) => entry,
+                None => this.update(cx, |this, cx| {
+                    this.as_local()
+                        .context("worktree is not local")
+                        .map(|local| local.refresh_entry(path.clone(), None, cx))
+                })??,
+            };
+
+            let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
-                    let metadata = fs
-                        .metadata(&abs_path)
-                        .await
-                        .with_context(|| {
-                            format!("Loading metadata for excluded file {abs_path:?}")
-                        })?
-                        .with_context(|| {
-                            format!("Excluded file {abs_path:?} got removed during loading")
-                        })?;
+                    let metadata = cx
+                        .background_spawn({
+                            let fs = fs.clone();
+                            let abs_path = abs_path.clone();
+                            async move {
+                                fs.metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("Loading metadata for excluded file {abs_path:?}")
+                                    })?
+                                    .with_context(|| {
+                                        format!(
+                                            "Excluded file {abs_path:?} got removed during loading"
+                                        )
+                                    })
+                            }
+                        })
+                        .await?;
                     Arc::new(File {
                         entry_id: None,
                         worktree,
@@ -1734,41 +1763,73 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        // Avoid queueing a root scan when opening a not-yet-created single-file
+        // worktree; wait until the read succeeds so canonicalize doesn't race ENOENT.
+        let entry = self
+            .snapshot
+            .root_entry()
+            .is_some()
+            .then(|| self.refresh_entry(path.clone(), None, cx));
         let is_private = self.is_path_private(path.as_ref());
 
-        let this = cx.weak_entity();
-        cx.background_spawn(async move {
-            // WARN: Temporary workaround for #27283.
-            //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
-            //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
-            //       if it is too large
-            //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
-            //       reasonable limit
-            const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
-            let metadata = fs.metadata(&abs_path).await?;
-            if let Some(metadata) = metadata.as_ref()
-                && metadata.len >= FILE_SIZE_MAX
-            {
-                anyhow::bail!("File is too large to load");
-            }
-            let (text, line_ending, encoding, has_bom) =
-                decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
-            let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
+        cx.spawn(async move |this, cx| {
+            let (text, line_ending, encoding, has_bom, is_writable) = cx
+                .background_spawn({
+                    let fs = fs.clone();
+                    let abs_path = abs_path.clone();
+                    async move {
+                        // WARN: Temporary workaround for #27283.
+                        //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
+                        //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
+                        //       if it is too large
+                        //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
+                        //       reasonable limit
+                        const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
+                        let metadata = fs.metadata(&abs_path).await?;
+                        if let Some(metadata) = metadata.as_ref()
+                            && metadata.len >= FILE_SIZE_MAX
+                        {
+                            anyhow::bail!("File is too large to load");
+                        }
+                        let (text, line_ending, encoding, has_bom) =
+                            decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
+                        let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
+                        anyhow::Ok((text, line_ending, encoding, has_bom, is_writable))
+                    }
+                })
+                .await?;
+
+            let entry = match entry {
+                Some(entry) => entry,
+                None => this.update(cx, |this, cx| {
+                    this.as_local()
+                        .context("worktree is not local")
+                        .map(|local| local.refresh_entry(path.clone(), None, cx))
+                })??,
+            };
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
-                    let metadata = fs
-                        .metadata(&abs_path)
-                        .await
-                        .with_context(|| {
-                            format!("Loading metadata for excluded file {abs_path:?}")
-                        })?
-                        .with_context(|| {
-                            format!("Excluded file {abs_path:?} got removed during loading")
-                        })?;
+                    let metadata = cx
+                        .background_spawn({
+                            let fs = fs.clone();
+                            let abs_path = abs_path.clone();
+                            async move {
+                                fs.metadata(&abs_path)
+                                    .await
+                                    .with_context(|| {
+                                        format!("Loading metadata for excluded file {abs_path:?}")
+                                    })?
+                                    .with_context(|| {
+                                        format!(
+                                            "Excluded file {abs_path:?} got removed during loading"
+                                        )
+                                    })
+                            }
+                        })
+                        .await?;
                     Arc::new(File {
                         entry_id: None,
                         worktree,
@@ -8255,6 +8316,78 @@ mod tests {
         assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
         assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
         assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
+    }
+
+    #[gpui::test]
+    async fn test_load_nonexistent_single_file_worktree_defers_refresh(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let new_file_path = Path::new(path!("/root/new-file.md"));
+        let tree = Worktree::local(
+            new_file_path,
+            false,
+            fs.clone(),
+            Arc::default(),
+            true,
+            WorktreeId::from_usize(1),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        cx.run_until_parked();
+
+        // Replace the scan request channel with one we can observe directly so we
+        // can assert no scan request is enqueued while the file does not exist.
+        let (scan_requests_tx, scan_requests_rx) = async_channel::unbounded();
+        tree.update(cx, |tree, _cx| {
+            let local = tree.as_local_mut().unwrap();
+            assert!(local.snapshot.root_entry().is_none());
+            local.scan_requests_tx = scan_requests_tx;
+        });
+
+        let load_err = tree
+            .update(cx, |tree, cx| tree.load_file(rel_path(""), cx))
+            .await;
+        assert!(load_err.is_err(), "loading a nonexistent file should fail");
+        assert!(
+            scan_requests_rx.try_recv().is_err(),
+            "load_file must not enqueue a scan request when root_entry is absent and the file does not exist"
+        );
+
+        let load_bin_err = tree
+            .update(cx, |tree, cx| tree.load_binary_file(rel_path(""), cx))
+            .await;
+        assert!(
+            load_bin_err.is_err(),
+            "loading a nonexistent binary file should fail"
+        );
+        assert!(
+            scan_requests_rx.try_recv().is_err(),
+            "load_binary_file must not enqueue a scan request when root_entry is absent and the file does not exist"
+        );
+
+        // Once the file actually exists on disk, a subsequent load_file succeeds
+        // and refreshes the worktree root entry.
+        fs.save(new_file_path, &"hello".into(), Default::default())
+            .await
+            .unwrap();
+        tree.update(cx, |tree, cx| {
+            tree.as_local_mut().unwrap().restart_background_scanners(cx);
+        });
+        cx.run_until_parked();
+
+        let loaded = tree
+            .update(cx, |tree, cx| tree.load_file(rel_path(""), cx))
+            .await
+            .unwrap();
+        assert_eq!(loaded.text.to_string(), "hello");
+        assert!(loaded.file.entry_id.is_some());
     }
 
     #[gpui::test]

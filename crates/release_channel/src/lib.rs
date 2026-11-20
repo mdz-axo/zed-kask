@@ -44,10 +44,10 @@ pub static RELEASE_CHANNEL: LazyLock<ReleaseChannel> =
 #[cfg(target_os = "windows")]
 pub fn app_identifier() -> &'static str {
     match *RELEASE_CHANNEL {
-        ReleaseChannel::Dev => "Zed-Editor-Dev",
-        ReleaseChannel::Nightly => "Zed-Editor-Nightly",
-        ReleaseChannel::Preview => "Zed-Editor-Preview",
-        ReleaseChannel::Stable => "Zed-Editor-Stable",
+        ReleaseChannel::Dev => "Zed-Kask-Editor",
+        ReleaseChannel::Nightly => "Zed-Kask-Editor-Nightly",
+        ReleaseChannel::Preview => "Zed-Kask-Editor-Preview",
+        ReleaseChannel::Stable => "Zed-Kask-Editor-Stable",
     }
 }
 
@@ -205,10 +205,10 @@ impl ReleaseChannel {
     /// Returns the display name for this [`ReleaseChannel`].
     pub fn display_name(&self) -> &'static str {
         match self {
-            ReleaseChannel::Dev => "Zed Dev",
-            ReleaseChannel::Nightly => "Zed Nightly",
-            ReleaseChannel::Preview => "Zed Preview",
-            ReleaseChannel::Stable => "Zed",
+            ReleaseChannel::Dev => "Zed-Kask Dev",
+            ReleaseChannel::Nightly => "Zed-Kask Nightly",
+            ReleaseChannel::Preview => "Zed-Kask Preview",
+            ReleaseChannel::Stable => "Zed-Kask",
         }
     }
 
@@ -227,10 +227,10 @@ impl ReleaseChannel {
     /// This also has to match the bundle identifier for Zed on macOS.
     pub fn app_id(&self) -> &'static str {
         match self {
-            ReleaseChannel::Dev => "dev.zed.Zed-Dev",
-            ReleaseChannel::Nightly => "dev.zed.Zed-Nightly",
-            ReleaseChannel::Preview => "dev.zed.Zed-Preview",
-            ReleaseChannel::Stable => "dev.zed.Zed",
+            ReleaseChannel::Dev => "dev.zed-kask.Zed-Kask",
+            ReleaseChannel::Nightly => "dev.zed-kask.Zed-Kask-Nightly",
+            ReleaseChannel::Preview => "dev.zed-kask.Zed-Kask-Preview",
+            ReleaseChannel::Stable => "dev.zed-kask.Zed-Kask",
         }
     }
 

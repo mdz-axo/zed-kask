@@ -5710,7 +5710,6 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             }
             Match::Absolute(path) => search_entries.absolute.push(path.clone()),
             Match::CreateNew(_) => {}
-            Match::Channel { .. } => {}
         }
     }
     search_entries
@@ -5968,7 +5967,6 @@ fn assert_match_at_position(
         Match::Search(path_match) => path_match.0.path.file_name(),
         Match::Absolute(path) => path.file_name().and_then(|name| name.to_str()),
         Match::CreateNew(project_path) => project_path.path.file_name(),
-        Match::Channel { channel_name, .. } => Some(channel_name.as_str()),
     }
     .unwrap();
     assert_eq!(match_file_name, expected_file_name);
@@ -6286,11 +6284,9 @@ async fn test_start_of_word_preferred_over_scattered_match(cx: &mut TestAppConte
             "/src",
             json!({
                 "crates": {
-                    "livekit_client": {
+                    "language": {
                         "src": {
-                            "livekit_client": {
-                                "playback.rs": "",
-                            }
+                            "syntax_map.rs": "",
                         }
                     },
                     "vim": {
@@ -6309,7 +6305,7 @@ async fn test_start_of_word_preferred_over_scattered_match(cx: &mut TestAppConte
         .update_in(cx, |picker, window, cx| {
             picker
                 .delegate
-                .spawn_search(test_path_position("live pla"), window, cx)
+                .spawn_search(test_path_position("lan syn"), window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
@@ -6317,7 +6313,7 @@ async fn test_start_of_word_preferred_over_scattered_match(cx: &mut TestAppConte
         assert!(!matches.is_empty(),);
         assert_eq!(
             matches[0].path.as_unix_str(),
-            "crates/livekit_client/src/livekit_client/playback.rs",
+            "crates/language/src/syntax_map.rs",
         );
     });
 }

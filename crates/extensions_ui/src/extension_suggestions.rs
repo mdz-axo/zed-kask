@@ -787,6 +787,10 @@ mod tests {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
             AppState::set_global(app_state.clone(), cx);
+            // zed-kask: D93 — the extension-install fetch reads zed.dev
+            // credentials through the keychain-backed provider; without a
+            // fake, that I/O parks the GPUI test scheduler.
+            zed_credentials_provider::set_fake_credentials_provider(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |content| {
                     content

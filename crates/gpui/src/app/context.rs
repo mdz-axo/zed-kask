@@ -774,6 +774,7 @@ impl<T> AppContext for Context<'_, T> {
     }
 
     #[inline]
+    #[track_caller]
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
@@ -791,6 +792,7 @@ impl<T> AppContext for Context<'_, T> {
     }
 
     #[inline]
+    #[track_caller]
     fn read_entity<U, R>(&self, handle: &Entity<U>, read: impl FnOnce(&U, &App) -> R) -> R
     where
         U: 'static,

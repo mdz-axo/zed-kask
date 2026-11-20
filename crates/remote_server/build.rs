@@ -1,17 +1,30 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 use std::process::Command;
 
-const ZED_MANIFEST: &str = include_str!("../zed/Cargo.toml");
+// zed-kask: D56 — D7 unifies the app version at the workspace level
+// (`version.workspace = true` in crates/zed/Cargo.toml, enforced by
+// `kask/scripts/check-version-sync.sh`). Resolve the version from the
+// workspace root's [workspace.package] only. The former literal-in-zed-
+// manifest branch (upstream-layout tolerance) fired only in a tree where
+// that sync gate already fails — and when it fired it silently reported
+// upstream's literal here while the app reported the workspace version,
+// the split-brain D7 exists to prevent — so it is removed rather than
+// kept as dead tolerance.
+const WORKSPACE_MANIFEST: &str = include_str!("../../Cargo.toml");
+
+fn zed_pkg_version() -> String {
+    let root: toml::Value =
+        toml::from_str(WORKSPACE_MANIFEST).expect("failed to parse workspace Cargo.toml");
+    root.get("workspace")
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(|package| package.get("version"))
+        .and_then(|version| version.as_str())
+        .expect("workspace [workspace.package].version is missing — D7 requires it")
+        .to_string()
+}
 
 fn main() {
-    let zed_cargo_toml =
-        toml_edit::ImDocument::parse(ZED_MANIFEST).expect("failed to parse zed Cargo.toml");
-    let version = zed_cargo_toml
-        .get("package")
-        .and_then(|package| package.get("version"))
-        .and_then(toml_edit::Item::as_str)
-        .expect("zed Cargo.toml must declare a package version string");
-    println!("cargo:rustc-env=ZED_PKG_VERSION={version}");
+    println!("cargo:rustc-env=ZED_PKG_VERSION={}", zed_pkg_version());
     println!(
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()

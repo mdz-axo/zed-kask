@@ -62,6 +62,7 @@ worktree.workspace = true
 zed_credentials_provider.workspace = true
 
 [dev-dependencies]
+zed_credentials_provider = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 fs.workspace = true

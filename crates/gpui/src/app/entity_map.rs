@@ -176,21 +176,25 @@ impl EntityMap {
         self.end_lease_erased(lease.id, lease.inner);
     }
 
-    #[inline(always)]
+    #[track_caller]
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
         self.assert_valid_context(entity);
-        self.read_inner(entity.entity_id)
+        match self
+            .read_inner(entity.entity_id)
             .and_then(|entity| entity.downcast_ref())
-            .unwrap_or_else(|| double_lease_panic("read", type_name::<T>()))
+        {
+            Some(entity) => entity,
+            None => double_lease_panic("read", type_name::<T>()),
+        }
     }
 
     #[track_caller]
     pub(super) fn lease_erased(&mut self, pointer: &AnyEntity, entity_type: &str) -> LeaseInner {
         self.assert_valid_context(pointer);
-        let entity = Some(
-            self.lease_inner(pointer.entity_id)
-                .unwrap_or_else(|| double_lease_panic("update", entity_type)),
-        );
+        let entity = Some(match self.lease_inner(pointer.entity_id) {
+            Some(entity) => entity,
+            None => double_lease_panic("update", entity_type),
+        });
         LeaseInner { entity }
     }
 
@@ -309,7 +313,8 @@ impl EntityMap {
 
 #[track_caller]
 fn double_lease_panic(operation: &str, entity_type: &str) -> ! {
-    panic!("cannot {operation} {entity_type} while it is already being updated")
+    let caller = std::panic::Location::caller();
+    panic!("cannot {operation} {entity_type} while it is already being updated (at {caller})")
 }
 
 pub(crate) struct Lease<T> {
@@ -562,18 +567,21 @@ impl<T: 'static> Entity<T> {
 
     /// Grab a reference to this entity from the context.
     #[inline]
+    #[track_caller]
     pub fn read<'a>(&self, cx: &'a App) -> &'a T {
         cx.entities.read(self)
     }
 
     /// Read the entity referenced by this handle with the given function.
     #[inline]
+    #[track_caller]
     pub fn read_with<R, C: AppContext>(&self, cx: &C, f: impl FnOnce(&T, &App) -> R) -> R {
         cx.read_entity(self, f)
     }
 
     /// Updates the entity referenced by this handle with the given function.
     #[inline]
+    #[track_caller]
     pub fn update<R, C: AppContext>(
         &self,
         cx: &mut C,
@@ -600,6 +608,7 @@ impl<T: 'static> Entity<T> {
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the window has been closed.
     #[inline]
+    #[track_caller]
     pub fn update_in<R, C: VisualContext>(
         &self,
         cx: &mut C,
@@ -879,7 +888,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
-    #[inline(always)]
+    #[track_caller]
     pub fn update<C, R>(
         &self,
         cx: &mut C,
@@ -895,7 +904,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
-    #[inline(always)]
+    #[track_caller]
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
@@ -914,7 +923,7 @@ impl<T: 'static> WeakEntity<T> {
     /// Reads the entity referenced by this handle with the given function if
     /// the referenced entity still exists. Returns an error if the entity has
     /// been released.
-    #[inline(always)]
+    #[track_caller]
     pub fn read_with<C, R>(&self, cx: &C, read: impl FnOnce(&T, &App) -> R) -> Result<R>
     where
         C: AppContext,

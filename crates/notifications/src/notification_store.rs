@@ -221,9 +221,6 @@ impl NotificationStore {
 
         for entry in &notifications {
             match entry.notification {
-                Notification::ChannelInvitation { inviter_id, .. } => {
-                    user_ids.push(inviter_id);
-                }
                 Notification::ContactRequest {
                     sender_id: requester_id,
                 } => {

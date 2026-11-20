@@ -18,6 +18,7 @@ use cloud_llm_client::{
     },
     predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response},
 };
+use credentials_provider::CredentialsProvider;
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::FeatureFlagsSettings;
@@ -27,7 +28,7 @@ use futures::{
 };
 use gpui::App;
 use gpui::{
-    Entity, TestAppContext, UpdateGlobal,
+    AsyncApp, Entity, TestAppContext, UpdateGlobal,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
@@ -2908,6 +2909,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
+        install_in_memory_credentials_provider(cx);
         zlog::init_test();
 
         if let Some(legacy_data_collection_choice) = legacy_data_collection_choice {
@@ -3542,6 +3544,7 @@ fn init_test(cx: &mut TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         disable_jumps_feature_flag(cx);
+        install_in_memory_credentials_provider(cx);
     });
 }
 
@@ -3551,6 +3554,64 @@ fn disable_jumps_feature_flag(cx: &mut App) {
     });
     set_jumps_feature_flag_override(cx, "off");
     cx.update_flags(false, vec![]);
+}
+
+// zed-kask: tests must never touch the OS keychain. The production
+// credentials provider is always the keystore keychain (see
+// `zed_credentials_provider::global`), and upstream's
+// `FakeServer::for_client` sign-in path persists credentials through it —
+// writing real keychain entries from tests on the async-std runtime, which
+// also trips the test scheduler's cross-thread determinism check. Install
+// an in-memory provider global before any `Client::new` reads it.
+#[derive(Default)]
+struct InMemoryCredentialsProvider(
+    parking_lot::Mutex<std::collections::HashMap<String, (String, Vec<u8>)>>,
+);
+
+impl CredentialsProvider for InMemoryCredentialsProvider {
+    fn read_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Option<(String, Vec<u8>)>>> + 'a>,
+    > {
+        let entry = self.0.lock().get(url).cloned();
+        async move { Ok(entry) }.boxed_local()
+    }
+
+    fn write_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        username: &'a str,
+        password: &'a [u8],
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+        self.0
+            .lock()
+            .insert(url.to_string(), (username.to_string(), password.to_vec()));
+        async move { Ok(()) }.boxed_local()
+    }
+
+    fn delete_credentials<'a>(
+        &'a self,
+        url: &'a str,
+        _cx: &'a AsyncApp,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + 'a>> {
+        self.0.lock().remove(url);
+        async move { Ok(()) }.boxed_local()
+    }
+}
+
+fn install_in_memory_credentials_provider(cx: &mut App) {
+    if cx
+        .try_global::<zed_credentials_provider::ZedCredentialsProvider>()
+        .is_none()
+    {
+        cx.set_global(zed_credentials_provider::ZedCredentialsProvider(Arc::new(
+            InMemoryCredentialsProvider::default(),
+        )));
+    }
 }
 
 fn set_jumps_feature_flag_override(cx: &mut App, value: &str) {

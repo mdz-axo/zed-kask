@@ -2,6 +2,7 @@ use std::{sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use client::ZED_URL_SCHEME;
 use parking_lot::Mutex;
 use release_channel::app_identifier;
 use util::{ResultExt, paths::parse_path_with_position};
@@ -111,7 +112,7 @@ fn split_paths_and_urls(paths_or_urls: &[String]) -> (Vec<String>, Vec<String>) 
     let mut paths = vec![];
     let mut urls = vec![];
     for path in paths_or_urls {
-        if path.starts_with("zed://")
+        if path.starts_with(&format!("{ZED_URL_SCHEME}://"))
             || path.starts_with("http://")
             || path.starts_with("https://")
             || path.starts_with("file://")

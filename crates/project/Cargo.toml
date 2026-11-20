@@ -112,6 +112,7 @@ zlog.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]
+zed_credentials_provider = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
