@@ -18,9 +18,7 @@ use language_model::{
     CompletionIntent, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     Role,
 };
-use language_models::provider::anthropic::telemetry::{
-    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
-};
+
 use project::Project;
 use prompt_store::PromptBuilder;
 use std::sync::Arc;
@@ -308,18 +306,10 @@ impl TerminalInlineAssistant {
                 let model_telemetry_id = model.telemetry_id();
                 let model_provider_id = model.provider_id().to_string();
 
-                let (phase, event_type, anthropic_event_type) = if undo {
-                    (
-                        "rejected",
-                        "Assistant Response Rejected",
-                        AnthropicEventType::Reject,
-                    )
+                let (phase, event_type) = if undo {
+                    ("rejected", "Assistant Response Rejected")
                 } else {
-                    (
-                        "accepted",
-                        "Assistant Response Accepted",
-                        AnthropicEventType::Accept,
-                    )
+                    ("accepted", "Assistant Response Accepted")
                 };
 
                 // Fire Zed telemetry
@@ -331,17 +321,6 @@ impl TerminalInlineAssistant {
                     model_provider = model_provider_id,
                     message_id = message_id,
                     session_id = session_id,
-                );
-
-                report_anthropic_event(
-                    &model,
-                    AnthropicEventData {
-                        completion_type: AnthropicCompletionType::Terminal,
-                        event: anthropic_event_type,
-                        language_name: None,
-                        message_id,
-                    },
-                    cx,
                 );
             }
 

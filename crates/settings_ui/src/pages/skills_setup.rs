@@ -2,7 +2,8 @@ use agent_skills::{Skill, SkillIndex, SkillSource, encode_skill_share_link};
 use anyhow::Context as _;
 use fs::RemoveOptions;
 use gpui::{
-    App, ClipboardItem, Entity, EntityId, PromptLevel, ScrollHandle, SharedString, Task, prelude::*,
+    App, ClipboardItem, Entity, EntityId, FontWeight, PromptLevel, ScrollHandle, SharedString,
+    Task, prelude::*,
 };
 use project::{Project, Worktree, WorktreeId};
 use std::path::PathBuf;
@@ -73,7 +74,6 @@ fn skill_location(
     cx: &App,
 ) -> SkillLocation {
     let worktree_id = match &skill.source {
-        SkillSource::BuiltIn => return SkillLocation::Local,
         SkillSource::Global => return SkillLocation::global(remote_project),
         SkillSource::ProjectLocal { worktree_id, .. } => worktree_id,
     };
@@ -135,6 +135,11 @@ pub(crate) fn copy_skill_share_link(
     })
 }
 
+/// Move a skill directory to the trash, project-aware: a project-local
+/// skill trashes through the project entry (so worktrees see the deletion)
+/// and a global skill through the host filesystem. The row is hidden from
+/// the settings list immediately (`hidden_deleted_skill_directory_paths`)
+/// and re-shown only if the trash fails.
 pub(crate) fn trash_skill(
     skill: &Skill,
     remote_project: Option<Entity<Project>>,
@@ -355,6 +360,7 @@ fn render_skill_row(
     let skill_file_path = skill.skill_file_path.clone();
     let directory_path = skill.directory_path.clone();
     let skill_name = skill.name.clone();
+    let is_core = skill.core;
 
     let (skill_scope, shared_scope) = match &skill.source {
         SkillSource::ProjectLocal { .. } => ("project", "used in this project"),
@@ -379,25 +385,51 @@ fn render_skill_row(
     let title = h_flex()
         .ml(rems_from_px(-22.0_f32))
         .gap_1()
-        .child({
+        // Core skills: show a shield icon with "Core skill" tooltip instead
+        // of the visibility toggle. Core skills cannot be edited or deleted.
+        .when(is_core, |this| {
+            this.child(
+                IconButton::new(
+                    SharedString::from(format!("core-{}", skill.name)),
+                    IconName::BoltOutlined,
+                )
+                .tab_index(0_isize)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Accent)
+                .tooltip(Tooltip::text("Core skill — always on, not editable")),
+            )
+        })
+        .when(!is_core, |this| {
             let share_skill = skill.clone();
             let remote_project = remote_project.clone();
-            IconButton::new(
-                SharedString::from(format!("share-{}", skill.name)),
-                share_icon,
+            this.child(
+                IconButton::new(
+                    SharedString::from(format!("share-{}", skill.name)),
+                    share_icon,
+                )
+                .tab_index(0_isize)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(share_icon_color)
+                .tooltip(Tooltip::text("Copy Share Link"))
+                .visible_on_hover(&group)
+                .on_click(cx.listener(
+                    move |settings_window, _event, _window, cx| {
+                        copy_skill_share_link(
+                            &share_skill,
+                            remote_project.clone(),
+                            settings_window,
+                            cx,
+                        )
+                        .detach();
+                    },
+                )),
             )
-            .tab_index(0_isize)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::Small)
-            .icon_color(share_icon_color)
-            .tooltip(Tooltip::text("Copy Share Link"))
-            .visible_on_hover(&group)
-            .on_click(cx.listener(move |settings_window, _event, _window, cx| {
-                copy_skill_share_link(&share_skill, remote_project.clone(), settings_window, cx)
-                    .detach();
-            }))
         })
-        .child(Label::new(skill.name.clone()))
+        .child(
+            Label::new(skill.name.clone()).when(is_core, |this| this.weight(FontWeight::SEMIBOLD)),
+        )
         .when_some(warning_message, |this, warning_message| {
             this.child(
                 h_flex()
@@ -429,97 +461,101 @@ fn render_skill_row(
         .child(
             h_flex()
                 .gap_2()
-                .child(
-                    IconButton::new(
-                        SharedString::from(format!("delete-{}", skill.name)),
-                        IconName::Trash,
-                    )
-                    .tab_index(0_isize)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Delete Skill"))
-                    .on_click(cx.listener(
-                        move |settings_window, _event, window, cx| {
-                            let directory_path = directory_path.clone();
-                            if settings_window
-                                .hidden_deleted_skills
-                                .contains(&deleted_skill)
-                            {
-                                return;
-                            }
-
-                            let prompt_message =
-                                format!("Delete the {skill_scope} skill \"{skill_name}\"?");
-                            let prompt_detail = format!(
-                                "This will move {} to the trash. This skill is shared with other \
-                                 agent tools {shared_scope}, so it will no longer be available to \
-                                 them either.",
-                                directory_path.compact().display(),
-                            );
-                            let answer = window.prompt(
-                                PromptLevel::Info,
-                                &prompt_message,
-                                Some(&prompt_detail),
-                                &["Delete", "Cancel"],
-                                cx,
-                            );
-
-                            let delete_skill = delete_skill.clone();
-                            let remote_project = remote_project.clone();
-                            cx.spawn(async move |settings_window, cx| {
-                                if answer.await != Ok(0) {
+                // Core skills: no delete or open buttons — they are locked.
+                .when(!is_core, |this| {
+                    this.child(
+                        IconButton::new(
+                            SharedString::from(format!("delete-{}", skill.name)),
+                            IconName::Trash,
+                        )
+                        .tab_index(0_isize)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Delete Skill"))
+                        .on_click(cx.listener(
+                            move |settings_window, _event, window, cx| {
+                                let directory_path = directory_path.clone();
+                                if settings_window
+                                    .hidden_deleted_skills
+                                    .contains(&deleted_skill)
+                                {
                                     return;
                                 }
-                                let Ok(trash_task) =
-                                    settings_window.update(cx, |settings_window, cx| {
-                                        trash_skill(
-                                            &delete_skill,
-                                            remote_project,
-                                            settings_window,
-                                            cx,
-                                        )
-                                    })
-                                else {
-                                    return;
-                                };
-                                trash_task.await;
-                            })
-                            .detach();
-                        },
-                    )),
-                )
-                .child(
-                    Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
-                        .tab_index(0_isize)
-                        .style(ButtonStyle::OutlinedGhost)
-                        .size(ButtonSize::Medium)
-                        .end_icon(
-                            Icon::new(IconName::ArrowUpRight)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .on_click(cx.listener(move |settings_window, _event, window, cx| {
-                            let skill_file_path = skill_file_path.clone();
-                            let Some(original_window) = settings_window.original_window else {
-                                return;
-                            };
-                            original_window
-                                .update(cx, |multi_workspace, original_window, cx| {
-                                    let workspace = multi_workspace.workspace().clone();
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace
-                                            .open_abs_path(
-                                                skill_file_path,
-                                                Default::default(),
-                                                original_window,
+
+                                let prompt_message =
+                                    format!("Delete the {skill_scope} skill \"{skill_name}\"?");
+                                let prompt_detail = format!(
+                                    "This will move {} to the trash. This skill is shared with other \
+                                     agent tools {shared_scope}, so it will no longer be available to \
+                                     them either.",
+                                    directory_path.compact().display(),
+                                );
+                                let answer = window.prompt(
+                                    PromptLevel::Info,
+                                    &prompt_message,
+                                    Some(&prompt_detail),
+                                    &["Delete", "Cancel"],
+                                    cx,
+                                );
+
+                                let delete_skill = delete_skill.clone();
+                                let remote_project = remote_project.clone();
+                                cx.spawn(async move |settings_window, cx| {
+                                    if answer.await != Ok(0) {
+                                        return;
+                                    }
+
+                                    let Ok(trash_task) =
+                                        settings_window.update(cx, |settings_window, cx| {
+                                            trash_skill(
+                                                &delete_skill,
+                                                remote_project,
+                                                settings_window,
                                                 cx,
                                             )
-                                            .detach_and_log_err(cx);
-                                    });
+                                        })
+                                    else {
+                                        return;
+                                    };
+                                    trash_task.await;
                                 })
-                                .log_err();
-                            window.remove_window();
-                        })),
-                ),
+                                .detach();
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .size(ButtonSize::Medium)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(move |settings_window, _event, window, cx| {
+                                let skill_file_path = skill_file_path.clone();
+                                let Some(original_window) = settings_window.original_window else {
+                                    return;
+                                };
+                                original_window
+                                    .update(cx, |multi_workspace, original_window, cx| {
+                                        let workspace = multi_workspace.workspace().clone();
+                                        workspace.update(cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(
+                                                    skill_file_path,
+                                                    Default::default(),
+                                                    original_window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
+                                        });
+                                    })
+                                    .log_err();
+                                window.remove_window();
+                            })),
+                    )
+                })
         )
         .into_any_element()
 }

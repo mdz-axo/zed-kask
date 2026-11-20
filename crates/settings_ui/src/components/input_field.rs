@@ -14,8 +14,9 @@ use ui::{Tooltip, prelude::*, rems};
 pub struct SettingsInputField {
     id: ElementId,
     initial_text: Option<String>,
-    placeholder: Option<&'static str>,
+    placeholder: Option<SharedString>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
+    change: Option<Rc<dyn Fn(String, &mut App)>>,
     tab_index: Option<isize>,
     use_buffer_font: bool,
     display_confirm_button: bool,
@@ -41,6 +42,7 @@ impl SettingsInputField {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            change: None,
             tab_index: None,
             use_buffer_font: false,
             display_confirm_button: false,
@@ -59,8 +61,8 @@ impl SettingsInputField {
         self
     }
 
-    pub fn with_placeholder(mut self, placeholder: &'static str) -> Self {
-        self.placeholder = Some(placeholder);
+    pub fn with_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.placeholder = Some(placeholder.into());
         self
     }
 
@@ -69,6 +71,13 @@ impl SettingsInputField {
         confirm: impl Fn(Option<String>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.confirm = Some(Rc::new(confirm));
+        self
+    }
+
+    /// Observe edits immediately when a form must invalidate a preview before
+    /// focus leaves the input. Existing confirmation behavior is unchanged.
+    pub fn on_change(mut self, change: impl Fn(String, &mut App) + 'static) -> Self {
+        self.change = Some(Rc::new(change));
         self
     }
 
@@ -147,7 +156,7 @@ impl RenderOnce for SettingsInputField {
 
         let editor = window.use_keyed_state((self.id.clone(), "editor"), cx, {
             let initial_text = self.initial_text.clone();
-            let placeholder = self.placeholder;
+            let placeholder = self.placeholder.clone();
             let mut confirm = self.confirm.clone();
 
             move |window, cx| {
@@ -174,8 +183,17 @@ impl RenderOnce for SettingsInputField {
                     .detach();
                 }
 
+                if let Some(change) = self.change.clone() {
+                    cx.subscribe_self(move |editor, event: &editor::EditorEvent, cx| {
+                        if matches!(event, editor::EditorEvent::BufferEdited) {
+                            change(editor.text(cx), cx);
+                        }
+                    })
+                    .detach();
+                }
+
                 if let Some(placeholder) = placeholder {
-                    editor.set_placeholder_text(placeholder, window, cx);
+                    editor.set_placeholder_text(placeholder.as_ref(), window, cx);
                 }
                 editor.set_text_style_refinement(styles);
                 editor
@@ -217,9 +235,7 @@ impl RenderOnce for SettingsInputField {
         let confirm_for_button = self.confirm.clone();
         let is_editor_empty = editor_text.trim().is_empty();
 
-        let aria_label = self
-            .aria_label
-            .or_else(|| self.placeholder.map(SharedString::new_static));
+        let aria_label = self.aria_label.or_else(|| self.placeholder.clone());
         let aria_description = self.aria_description;
 
         let (a11y_value, a11y_text_runs) =

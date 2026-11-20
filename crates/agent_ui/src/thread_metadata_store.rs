@@ -1889,14 +1889,17 @@ mod tests {
             request_token_usage: Default::default(),
             model: None,
             profile: None,
+            delegation_authority: None,
             subagent_context: None,
             speed: None,
-            thinking_enabled: false,
             thinking_effort: None,
+            thinking_enabled: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Default::default(),
+            private_inference_marked: false,
+            request_provenance: Default::default(),
         }
     }
 
@@ -1939,6 +1942,8 @@ mod tests {
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            // Use an isolated DB so parallel tests can't overwrite our global key.
+            cx.set_global(db::AppDatabase::test_new());
         });
         cx.run_until_parked();
     }

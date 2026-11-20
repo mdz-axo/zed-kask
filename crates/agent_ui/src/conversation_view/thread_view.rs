@@ -16,15 +16,14 @@ use acp_thread::{
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
-    SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
+    SkillLoadingIssuesUpdated, ThreadSandbox, ThreadSaveFailed, VerifiedSandboxStatus,
 };
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
-use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
-use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
+use crate::completion_provider::{AvailableSkill, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
@@ -41,8 +40,8 @@ use itertools::Itertools;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
+    ZED_CLOUD_PROVIDER_NAME,
 };
-use notifications::status_toast::StatusToast;
 use project::ResolvedPath;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
@@ -76,6 +75,48 @@ pub(super) fn subagent_label(thread: &AcpThread) -> SharedString {
 pub(crate) const UNSETTLED_SUBMISSION_REVEAL_DELAY: Duration = Duration::from_secs(1);
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+
+// zed-kask: D39 — provider-aware PaymentRequired copy. Only Zed's own
+// backend bills against the user's Zed plan; every other provider returning
+// 402/billing codes is reporting that its own account is out of credit, so
+// the message must name that provider instead of offering a Zed upgrade.
+fn payment_required_message(provider: &SharedString) -> String {
+    if provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref() {
+        "You reached your free usage limit. Upgrade to Zed Pro for more prompts.".to_string()
+    } else {
+        format!(
+            "{provider} rejected the request because your {provider} account is out of credit \
+             or over its spend limit. Add credit to your {provider} account to continue."
+        )
+    }
+}
+
+// zed-kask: D39 — pins the provider-aware PaymentRequired copy.
+#[cfg(test)]
+mod payment_required_message_tests {
+    use super::*;
+
+    #[test]
+    fn zed_cloud_provider_keeps_upgrade_copy() {
+        let message = payment_required_message(&ZED_CLOUD_PROVIDER_NAME.0);
+        assert_eq!(
+            message,
+            "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
+        );
+    }
+
+    #[test]
+    fn third_party_provider_names_its_credit_balance() {
+        let provider: SharedString = "OpenRouter".into();
+        let message = payment_required_message(&provider);
+        assert!(message.contains("OpenRouter"), "{message}");
+        assert!(message.contains("out of credit"), "{message}");
+        assert!(
+            !message.contains("Zed Pro"),
+            "third-party billing failure must not offer a Zed upgrade: {message}"
+        );
+    }
+}
 
 pub(super) struct ThreadRecovery {
     pub session_id: acp_v2::SessionId,
@@ -128,157 +169,6 @@ impl ThreadRecovery {
                 .map(|submission| (submission.content.as_ref(), &submission.state))
                 .collect(),
         })?)
-    }
-}
-
-#[derive(Default)]
-struct ThreadFeedbackState {
-    feedback: Option<ThreadFeedback>,
-    comments_editor: Option<Entity<Editor>>,
-}
-
-impl ThreadFeedbackState {
-    pub fn submit(
-        &mut self,
-        thread: Entity<AcpThread>,
-        feedback: ThreadFeedback,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
-            return;
-        };
-
-        let project = thread.read(cx).project().read(cx);
-        let client = project.client();
-        let user_store = project.user_store();
-        let organization = user_store.read(cx).current_organization();
-
-        if self.feedback == Some(feedback) {
-            return;
-        }
-
-        self.feedback = Some(feedback);
-        match feedback {
-            ThreadFeedback::Positive => {
-                self.comments_editor = None;
-            }
-            ThreadFeedback::Negative => {
-                self.comments_editor = Some(Self::build_feedback_comments_editor(window, cx));
-            }
-        }
-        let session_id = thread.read(cx).session_id().clone();
-        let parent_session_id = thread.read(cx).parent_session_id().cloned();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let task = telemetry.thread_data(&session_id, cx);
-        let rating = match feedback {
-            ThreadFeedback::Positive => "positive",
-            ThreadFeedback::Negative => "negative",
-        };
-        cx.background_spawn(async move {
-            let organization_id = organization
-                .map(|organization| organization.id.clone())
-                .context("no organization selected")?;
-            let thread = task.await?;
-
-            client
-                .cloud_client()
-                .submit_agent_feedback(SubmitAgentThreadFeedbackBody {
-                    organization_id,
-                    agent: agent_telemetry_id.to_string(),
-                    session_id: session_id.to_string(),
-                    parent_session_id: parent_session_id.map(|id| id.to_string()),
-                    rating: rating.to_string(),
-                    thread,
-                })
-                .await?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn submit_comments(&mut self, thread: Entity<AcpThread>, cx: &mut App) {
-        let Some(telemetry) = thread.read(cx).connection().telemetry() else {
-            return;
-        };
-
-        let Some(comments) = self
-            .comments_editor
-            .as_ref()
-            .map(|editor| editor.read(cx).text(cx))
-            .filter(|text| !text.trim().is_empty())
-        else {
-            return;
-        };
-
-        self.comments_editor.take();
-
-        let project = thread.read(cx).project().read(cx);
-        let client = project.client();
-        let user_store = project.user_store();
-        let organization = user_store.read(cx).current_organization();
-
-        let session_id = thread.read(cx).session_id().clone();
-        let agent_telemetry_id = thread.read(cx).connection().telemetry_id();
-        let task = telemetry.thread_data(&session_id, cx);
-        cx.background_spawn(async move {
-            let organization_id = organization
-                .map(|organization| organization.id.clone())
-                .context("no organization selected")?;
-            let thread = task.await?;
-
-            client
-                .cloud_client()
-                .submit_agent_feedback_comments(SubmitAgentThreadFeedbackCommentsBody {
-                    organization_id,
-                    agent: agent_telemetry_id.to_string(),
-                    session_id: session_id.to_string(),
-                    comments,
-                    thread,
-                })
-                .await?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::default()
-    }
-
-    pub fn dismiss_comments(&mut self) {
-        self.comments_editor.take();
-    }
-
-    fn build_feedback_comments_editor(window: &mut Window, cx: &mut App) -> Entity<Editor> {
-        let buffer = cx.new(|cx| {
-            let empty_string = String::new();
-            MultiBuffer::singleton(cx.new(|cx| Buffer::local(empty_string, cx)), cx)
-        });
-
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
-                    min_lines: 1,
-                    max_lines: Some(4),
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
-            editor.set_placeholder_text(
-                "What went wrong? Share your feedback so we can improve.",
-                window,
-                cx,
-            );
-            editor
-        });
-
-        editor.read(cx).focus_handle(cx).focus(window, cx);
-        editor
     }
 }
 
@@ -757,7 +647,6 @@ pub struct ThreadView {
     pub thread_error_markdown: Option<Entity<Markdown>>,
     pub token_limit_callout_dismissed: bool,
     pub last_token_limit_telemetry: Option<acp_thread::TokenUsageRatio>,
-    thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub session_capabilities: SharedSessionCapabilities,
     pub expanded_tool_call_raw_inputs: HashSet<acp_v2::ToolCallId>,
@@ -1098,6 +987,11 @@ impl ThreadView {
                         should_auto_submit = auto_submit;
                         Some(blocks)
                     }
+                    AgentInitialContent::DelegatedSibling { blocks, .. } => {
+                        // ConversationView applies authority before constructing this view.
+                        should_auto_submit = true;
+                        Some(blocks)
+                    }
                     AgentInitialContent::FromExternalSource(prompt) => {
                         show_external_source_prompt_warning = true;
                         // SECURITY: Be explicit about not auto submitting prompt from external source.
@@ -1219,6 +1113,26 @@ impl ThreadView {
                 },
             ));
 
+            // A failed thread-content save is surfaced as a thread error so
+            // the operator learns immediately (a readonly/corrupt threads.db
+            // otherwise loses content silently until restart).
+            subscriptions.push(cx.subscribe(
+                &native_connection.0,
+                move |this: &mut Self, _agent, event: &ThreadSaveFailed, cx| {
+                    let session_id = this.thread.read(cx).session_id();
+                    if event.session_id != *session_id {
+                        return;
+                    }
+                    this.handle_thread_error(
+                        anyhow::anyhow!(
+                            "Failed to save this conversation: {:#}\n\nYour messages are still visible here, but they were not written to disk — restarting the app would lose them. Check the threads database (disk space, permissions, integrity).",
+                            event.error
+                        ),
+                        cx,
+                    );
+                },
+            ));
+
             // A "no model selected" error is stale as soon as the thread has a
             // usable model
             if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
@@ -1231,6 +1145,11 @@ impl ThreadView {
                         }
                     },
                 ));
+                // zed-kask: D100 (Seam A) — the thread-header privacy toggle
+                // renders from the native thread's mark state; a mark flip
+                // (`Thread::set_private_inference` → `cx.notify`) must
+                // re-render the bar so the lock reflects the live routing.
+                subscriptions.push(cx.observe(&native_thread, |_, _, cx| cx.notify()));
             }
         }
 
@@ -1303,7 +1222,6 @@ impl ThreadView {
             thread_error_markdown: None,
             token_limit_callout_dismissed: false,
             last_token_limit_telemetry: None,
-            thread_feedback: Default::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
@@ -1438,46 +1356,9 @@ impl ThreadView {
             }
             MessageEditorEvent::LostFocus => {}
             MessageEditorEvent::SlashAutocompleteOpened => {}
-            MessageEditorEvent::LocalCommandInvoked(command) => {
-                self.run_local_command(*command, window, cx);
-            }
             MessageEditorEvent::InputAttempted { .. } => {}
             MessageEditorEvent::Edited => {}
         }
-    }
-
-    fn run_local_command(
-        &mut self,
-        command: PromptLocalCommand,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match command {
-            PromptLocalCommand::ThumbsUp => {
-                self.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                self.show_local_command_toast("Thanks for your feedback!", cx);
-            }
-            PromptLocalCommand::ThumbsDown => {
-                self.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-            }
-        }
-    }
-
-    fn show_local_command_toast(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
-        // Shown after positive feedback, replacing the inline button state.
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            let toast = StatusToast::new(message, cx, |this, _cx| {
-                this.icon(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Success),
-                )
-            });
-            workspace.toggle_status_toast(toast, cx);
-        });
     }
 
     pub(crate) fn as_native_connection(
@@ -1651,7 +1532,6 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
-            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::LocalCommandInvoked(_)) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Edited) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -2276,9 +2156,9 @@ impl ThreadView {
             }
         }
 
-        // A built-in command (e.g. `/compact`): run the bare command without
-        // echoing it as a user message, and queue any trailing text the user
-        // typed so it isn't silently dropped.
+        // A native command with no declared input (e.g. `/compact`) runs alone,
+        // with trailing text queued as a follow-up. Input-taking native commands
+        // must receive the complete prompt in the same turn.
         let native_command =
             leading_native_command(text, self.session_capabilities.read().available_commands());
         if let Some(command_name) = native_command {
@@ -2306,7 +2186,6 @@ impl ThreadView {
         // reads the editor lazily, so clearing first would wipe the contents.
         let contents = self.resolve_message_contents(&message_editor, cx);
         self.thread_error.take();
-        self.thread_feedback.clear();
         self.editing_message.take();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -2361,7 +2240,6 @@ impl ThreadView {
         let contents = self.resolve_message_contents(&message_editor, cx);
 
         self.thread_error.take();
-        self.thread_feedback.clear();
         self.editing_message.take();
         // Sending a message is active engagement: un-freeze the queue if it
         // was paused by a manual stop.
@@ -2630,11 +2508,11 @@ impl ThreadView {
     fn emit_thread_error_telemetry(&self, error: &ThreadError, cx: &mut Context<Self>) {
         let (error_kind, acp_error_code, message): (&str, Option<SharedString>, SharedString) =
             match error {
-                ThreadError::ZedPaymentRequired => (
+                // zed-kask: D39 — telemetry carries the provider-aware message.
+                ThreadError::PaymentRequired { provider } => (
                     "payment_required",
                     None,
-                    "You reached your free usage limit. Upgrade to Zed Pro for more prompts."
-                        .into(),
+                    payment_required_message(provider).into(),
                 ),
                 ThreadError::Refusal => {
                     let model_or_agent_name = self.current_model_name(cx);
@@ -5708,7 +5586,13 @@ impl ThreadView {
                                         None => this
                                             .children(self.render_fast_mode_control(cx))
                                             .children(self.render_thinking_control(cx)),
-                                    }),
+                                    })
+                                    // zed-kask: D100 (Seam A) — the PI's
+                                    // mark/unmark surface for private-inference
+                                    // routing.
+                                    .children(self.render_private_inference_control(cx))
+                                    // zed-kask: D43 — native compaction recovery control.
+                                    .children(self.render_compact_control(cx)),
                             )
                             .child(
                                 h_flex()
@@ -6525,6 +6409,48 @@ impl ThreadView {
         Some((provider_id, model_id, confirmation))
     }
 
+    fn compact_control_enabled(&self, cx: &App) -> Option<bool> {
+        self.as_native_thread(cx)?;
+        leading_native_command(
+            &format!("/{}", agent::COMPACT_COMMAND_NAME),
+            self.session_capabilities.read().available_commands(),
+        )?;
+        let thread = self.thread.read(cx);
+        Some(
+            !self.is_loading_contents
+                && thread.status() == ThreadStatus::Idle
+                && !thread.entries().is_empty(),
+        )
+    }
+
+    fn render_compact_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let enabled = self.compact_control_enabled(cx)?;
+        Some(
+            IconButton::new("compact-context", IconName::Compact)
+                .icon_size(IconSize::Small)
+                .aria_label("Compact context")
+                .tooltip(Tooltip::text("Compact context"))
+                .disabled(!enabled)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.compact_control_enabled(cx) != Some(true) {
+                        return;
+                    }
+                    cx.emit(AcpThreadViewEvent::Interacted);
+                    this.thread_error.take();
+                    // Use the native command turn, preserving the unsent editor draft.
+                    let command =
+                        acp_v2::ContentBlock::from(format!("/{}", agent::COMPACT_COMMAND_NAME));
+                    this.send_content(
+                        Task::ready(Ok(Some((vec![command], Vec::new())))),
+                        true,
+                        window,
+                        cx,
+                    );
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
@@ -6598,8 +6524,11 @@ impl ThreadView {
             thinking_toggle.on_click(cx.listener(move |this, _, _window, cx| {
                 if let Some(thread) = this.as_native_thread(cx) {
                     thread.update(cx, |thread, cx| {
-                        let enable_thinking = !thread.thinking_enabled();
-                        thread.set_thinking_enabled(enable_thinking, cx);
+                        let enable_thinking = thread.thinking_effort().is_none();
+                        thread.set_thinking_effort(
+                            enable_thinking.then(|| "default".to_string()),
+                            cx,
+                        );
 
                         let favorite_key = thread
                             .model()
@@ -6642,6 +6571,104 @@ impl ThreadView {
                 .style(SplitButtonStyle::Transparent)
                 .into_any_element(),
         )
+    }
+
+    /// zed-kask: D100 (Seam A) — the thread-header privacy toggle: the PI's
+    /// mark/unmark surface for private-thread routing. Both directions
+    /// live here — a PI-owned surface — never on an agent-callable tool
+    /// (unmarking widens exposure, so it cannot be agent-callable). The
+    /// tooltip text IS the routing decision shown at the thread surface,
+    /// and the marked direction surfaces the
+    /// tool-perimeter's disabled-server set (the review's F5 — the
+    /// perimeter is a PI-owned policy, and its decision text belongs next
+    /// to the lock; the set reads through the one resolution home,
+    /// `agent::private_thread_disabled_servers`); pins:
+    /// `private_inference_toggle_label_renders_the_routing_decision`.
+    /// The label pair is a pure function so the decision text is unit-pinned
+    /// (see `private_inference_toggle_label`).
+    fn render_private_inference_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.as_native_thread(cx)?;
+        let (marked, active_model_pair) = {
+            let thread_ref = thread.read(cx);
+            let marked = thread_ref.is_private_inference();
+            let pair = thread_ref
+                .model()
+                .map(|m| (m.provider_id().0.to_string(), m.id().0.to_string()));
+            (marked, pair)
+        };
+        let disabled_servers = agent::private_thread_disabled_servers(cx);
+        let active_pair_refs = active_model_pair
+            .as_ref()
+            .map(|(provider, model)| (provider.as_str(), model.as_str()));
+        let (icon, icon_color, tooltip_label) =
+            Self::private_inference_toggle_label(marked, &disabled_servers, active_pair_refs);
+
+        Some(
+            IconButton::new("private-inference-toggle", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(icon_color)
+                .tooltip(Tooltip::text(tooltip_label))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    let Some(thread) = this.as_native_thread(cx) else {
+                        return;
+                    };
+                    thread.update(cx, |thread, cx| {
+                        let marked = thread.is_private_inference();
+                        thread.set_private_inference(!marked, cx);
+                    });
+                }))
+                .into_any_element(),
+        )
+    }
+
+    /// D100 — the toggle's icon/color/tooltip pair. Pure so the routing-
+    /// decision text is asserted without a window: both directions name
+    /// what a marked thread may run and the boundary. The
+    /// marked direction also surfaces the tool-perimeter's disabled-server
+    /// set (the review's F5 — the perimeter is a PI-owned policy, and its
+    /// decision text belongs next to the lock); the unmarked direction does
+    /// not carry it (the set is a marked-state policy).
+    fn private_inference_toggle_label(
+        marked: bool,
+        disabled_servers: &[String],
+        active_model: Option<(&str, &str)>,
+    ) -> (IconName, Color, SharedString) {
+        if marked {
+            let provenance_fragment = match active_model {
+                Some((provider, model)) => {
+                    format!(" Provenance: provider={provider}, model={model}, private=true.")
+                }
+                None => String::new(),
+            };
+            let perimeter = if disabled_servers.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Tools off on this thread: {} \
+                     (kask.private_inference.private_thread_disabled_servers).",
+                    disabled_servers.join(", ")
+                )
+            };
+            (
+                IconName::Lock,
+                Color::Accent,
+                SharedString::from(format!(
+                    "Private inference: on — this thread runs only local models \
+                     served by Zed's Ollama or llama.cpp provider; no request \
+                     dispatches to a public provider while the mark is on.{provenance_fragment}{perimeter} \
+                     Click to allow public providers."
+                )),
+            )
+        } else {
+            (
+                IconName::LockOff,
+                Color::Muted,
+                SharedString::from(
+                    "Private inference: off — click to restrict this thread to local \
+                     models served by Zed's Ollama or llama.cpp provider.",
+                ),
+            )
+        }
     }
 
     fn render_effort_selector(
@@ -6697,7 +6724,7 @@ impl ThreadView {
                             .border_color(cx.theme().colors().border_variant)
                             .child(Label::new("Cycle Thinking Effort"))
                             .child(KeyBinding::for_action_in(
-                                &CycleThinkingEffort,
+                                &CycleReasoningEffort,
                                 &focus_handle,
                                 cx,
                             )),
@@ -7761,6 +7788,7 @@ impl ThreadView {
                 chunks,
                 indented: _,
                 is_subagent_output: _,
+                provenance: _,
             }) => {
                 let mut is_blank = true;
 
@@ -8009,8 +8037,6 @@ impl ThreadView {
 
         let is_assistant = matches!(entry, AgentThreadEntry::AssistantMessage(_));
 
-        let comments_editor = self.thread_feedback.comments_editor.clone();
-
         let primary = if is_thread_bottom {
             v_flex()
                 .w_full()
@@ -8022,9 +8048,6 @@ impl ThreadView {
                         ThreadControlsPosition::ThreadBottom,
                         cx,
                     ))
-                })
-                .when_some(comments_editor, |this, editor| {
-                    this.child(Self::render_feedback_feedback_editor(editor, cx))
                 })
                 .into_any_element()
         } else {
@@ -8150,48 +8173,6 @@ impl ThreadView {
         )
     }
 
-    fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
-        h_flex()
-            .key_context("AgentFeedbackMessageEditor")
-            .on_action(cx.listener(move |this, _: &menu::Cancel, _, cx| {
-                this.thread_feedback.dismiss_comments();
-                cx.notify();
-            }))
-            .on_action(cx.listener(move |this, _: &menu::Confirm, _window, cx| {
-                this.submit_feedback_message(cx);
-            }))
-            .p_2()
-            .mb_2()
-            .mx_5()
-            .gap_1()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().editor_background)
-            .child(div().w_full().child(editor))
-            .child(
-                h_flex()
-                    .child(
-                        IconButton::new("dismiss-feedback-message", IconName::Close)
-                            .icon_color(Color::Error)
-                            .icon_size(IconSize::XSmall)
-                            .shape(ui::IconButtonShape::Square)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread_feedback.dismiss_comments();
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        IconButton::new("submit-feedback-message", IconName::Return)
-                            .icon_size(IconSize::XSmall)
-                            .shape(ui::IconButtonShape::Square)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.submit_feedback_message(cx);
-                            })),
-                    ),
-            )
-    }
-
     /// A turn ends when no further assistant output (message or tool call)
     /// follows before the next user message, and it's finalized once a user
     /// message follows it.
@@ -8309,63 +8290,26 @@ impl ThreadView {
             })
             .flatten();
 
-        let feedback_buttons = is_thread_bottom
-            .then(|| {
-                (self.is_subagent() && self.is_thread_feedback_enabled(cx)).then(|| {
-                    let feedback = self.thread_feedback.feedback;
-                    let tooltip_meta =
-                        "Rating the thread sends all of your current conversation to the Zed team.";
-
-                    h_flex()
-                        .child(
-                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                                .icon_size(IconSize::Small)
-                                .icon_color(match feedback {
-                                    Some(ThreadFeedback::Positive) => Color::Accent,
-                                    _ => Color::Muted,
-                                })
-                                .tooltip(move |window, cx| match feedback {
-                                    Some(ThreadFeedback::Positive) => {
-                                        Tooltip::text("Thanks for your feedback!")(window, cx)
-                                    }
-                                    _ => Tooltip::with_meta(
-                                        "Helpful Response",
-                                        None,
-                                        tooltip_meta,
-                                        cx,
-                                    ),
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                                })),
-                        )
-                        .child(
-                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                                .icon_size(IconSize::Small)
-                                .icon_color(match feedback {
-                                    Some(ThreadFeedback::Negative) => Color::Accent,
-                                    _ => Color::Muted,
-                                })
-                                .tooltip(move |window, cx| match feedback {
-                                    Some(ThreadFeedback::Negative) => Tooltip::text(
-                                        "We appreciate your feedback and will use it to improve in the future.",
-                                    )(
-                                        window, cx
-                                    ),
-                                    _ => Tooltip::with_meta(
-                                        "Not Helpful Response",
-                                        None,
-                                        tooltip_meta,
-                                        cx,
-                                    ),
-                                })
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                                })),
-                        )
+        let provenance_label = {
+            let entries = thread.read(cx).entries();
+            entries
+                .get(..=entry_ix)
+                .and_then(|slice| {
+                    slice.iter().rev().find_map(|entry| match entry {
+                        AgentThreadEntry::UserMessage(_) => Some(None),
+                        AgentThreadEntry::AssistantMessage(msg) => {
+                            msg.provenance.as_ref().map(|p| Some(p.summary_text()))
+                        }
+                        _ => None,
+                    })
                 })
-            })
-            .flatten();
+                .flatten()
+                .map(|summary| {
+                    Label::new(summary)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })
+        };
 
         let separator_dots = || {
             Label::new("•")
@@ -8378,66 +8322,40 @@ impl ThreadView {
             .w_full()
             .py_1p5()
             .px_4()
-            .justify_end()
-            .opacity(0.4)
-            .hover(|s| s.opacity(1.))
-            .when(
-                last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .px_1()
-                            .gap_1()
-                            .when_some(last_turn_tokens_label, |this, label| {
-                                this.child(label).child(separator_dots())
-                            })
-                            .when_some(last_turn_clock, |this, label| {
-                                this.child(label).child(separator_dots())
-                            }),
-                    )
-                },
-            )
-            .when_some(feedback_buttons, |this, buttons| this.child(buttons))
-            .when_some(copy_response_button, |this, button| this.child(button))
-            .child(scroll_to_recent_user_prompt)
-            .when_some(scroll_to_top, |this, button| this.child(button))
-            .into_any_element()
-    }
-
-    fn is_thread_feedback_enabled(&self, cx: &App) -> bool {
-        util::maybe!({
-            let project = self.thread.read(cx).project().read(cx);
-            let user_store = project.user_store();
-            if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
-                if !configuration.is_agent_thread_feedback_enabled {
-                    return false;
+            .map(|this| {
+                if provenance_label.is_some() {
+                    this.justify_between()
+                } else {
+                    this.justify_end()
                 }
-            }
-
-            AgentSettings::get_global(cx).enable_feedback
-                && self.thread.read(cx).connection().telemetry().is_some()
-        })
-    }
-
-    // The local slash commands the message editor should currently expose.
-    // Kept in sync with the availability of the corresponding actions via
-    // `sync_local_commands`.
-    fn available_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
-        let mut commands = Vec::new();
-
-        if self.is_thread_feedback_enabled(cx) {
-            commands.push(PromptLocalCommand::ThumbsUp);
-            commands.push(PromptLocalCommand::ThumbsDown);
-        }
-
-        commands
-    }
-
-    // Pushes the current set of available local commands to the message
-    // editor so they appear in its slash-command popup.
-    pub(crate) fn sync_local_commands(&self, cx: &App) {
-        let commands = self.available_local_commands(cx);
-        self.message_editor.read(cx).set_local_commands(commands);
+            })
+            .opacity(if provenance_label.is_some() { 0.7 } else { 0.4 })
+            .hover(|s| s.opacity(1.))
+            .when_some(provenance_label, |this, label| this.child(label))
+            .child(
+                h_flex()
+                    .items_center()
+                    .when(
+                        last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .px_1()
+                                    .gap_1()
+                                    .when_some(last_turn_tokens_label, |this, label| {
+                                        this.child(label).child(separator_dots())
+                                    })
+                                    .when_some(last_turn_clock, |this, label| {
+                                        this.child(label).child(separator_dots())
+                                    }),
+                            )
+                        },
+                    )
+                    .when_some(copy_response_button, |this, button| this.child(button))
+                    .child(scroll_to_recent_user_prompt)
+                    .when_some(scroll_to_top, |this, button| this.child(button)),
+            )
+            .into_any_element()
     }
 
     fn render_request_elicitations(&self, cx: &Context<Self>) -> Vec<AnyElement> {
@@ -8491,23 +8409,6 @@ impl ThreadView {
             item_ix: entry_ix,
             offset_in_item: px(0.),
         });
-        cx.notify();
-    }
-
-    fn handle_feedback_click(
-        &mut self,
-        feedback: ThreadFeedback,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.thread_feedback
-            .submit(self.thread.clone(), feedback, window, cx);
-        cx.notify();
-    }
-
-    fn submit_feedback_message(&mut self, cx: &mut Context<Self>) {
-        let thread = self.thread.clone();
-        self.thread_feedback.submit_comments(thread, cx);
         cx.notify();
     }
 
@@ -10355,6 +10256,25 @@ impl ThreadView {
 
                     )
                 }
+            })
+            // Render the live thinking trace from the skill execution (if any).
+            // This is the accumulating reasoning the user sees while the
+            // cascade runs — not just a one-line title.
+            .when_some(tool_call.thoughts.clone(), |this, thoughts| {
+                this.child(
+                    div()
+                        .id(("tool-call-thinking", entry_ix))
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .child(
+                            self.render_markdown(
+                                thoughts,
+                                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                cx,
+                            )
+                        ),
+                )
             })
             .children(tool_output_display);
 
@@ -12949,7 +12869,10 @@ impl ThreadView {
             ThreadError::AuthenticationRequired(error) => {
                 self.render_authentication_required_error(error.clone(), cx)
             }
-            ThreadError::ZedPaymentRequired => self.render_zed_payment_required_error(cx),
+            // zed-kask: D39 — pass the provider through to the renderer.
+            ThreadError::PaymentRequired { provider } => {
+                self.render_payment_required_error(provider.clone(), cx)
+            }
             ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
                 "Rate Limit Reached",
                 format!(
@@ -13082,20 +13005,32 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_zed_payment_required_error(&self, cx: &mut Context<Self>) -> Callout {
-        const ERROR_MESSAGE: &str =
-            "You reached your free usage limit. Upgrade to Zed Pro for more prompts.";
+    // zed-kask: D39 — render PaymentRequired with provider-aware copy. The
+    // upgrade button only makes sense when Zed's own backend rejected the
+    // request; a third-party 402 (OpenRouter credits, Anthropic billing, …)
+    // must not be presented as a Zed free-tier cap.
+    fn render_payment_required_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let is_zed_cloud = provider.as_ref() == ZED_CLOUD_PROVIDER_NAME.0.as_ref();
+        let message: SharedString = payment_required_message(&provider).into();
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
-            .title("Free Usage Exceeded")
-            .description(ERROR_MESSAGE)
+            .title(if is_zed_cloud {
+                "Free Usage Exceeded"
+            } else {
+                "Payment Required"
+            })
+            .description(message.clone())
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.upgrade_button(cx))
-                    .child(self.create_copy_button(ERROR_MESSAGE)),
+                    .when(is_zed_cloud, |this| this.child(self.upgrade_button(cx)))
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -13225,19 +13160,18 @@ impl ThreadView {
     }
 
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
-        const MESSAGE: &str = "This conversation is too long for the model's context window. \
-            Start a new thread or remove some attached files to continue.";
+        let message = prompt_too_large_message(self.compact_control_enabled(cx).is_some());
 
         Callout::new()
             .severity(Severity::Error)
             .icon(IconName::XCircle)
             .title("Context Too Large")
-            .description(MESSAGE)
+            .description(message)
             .actions_slot(
                 h_flex()
                     .gap_0p5()
                     .child(self.new_thread_button(cx))
-                    .child(self.create_copy_button(MESSAGE)),
+                    .child(self.create_copy_button(message)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
@@ -14150,11 +14084,6 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Keep the message editor's local slash commands in sync with the
-        // current availability of feedback/sharing, which can change between
-        // renders (settings, connection state, feature flags).
-        self.sync_local_commands(cx);
-
         let has_messages = self.has_visible_conversation(cx);
         let list_state = self.list_state.clone();
 
@@ -14317,7 +14246,7 @@ impl Render for ThreadView {
                     });
                 }
             }))
-            .on_action(cx.listener(|this, _: &CycleThinkingEffort, window, cx| {
+            .on_action(cx.listener(|this, _: &CycleReasoningEffort, window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
                     return;
                 }
@@ -14855,16 +14784,11 @@ fn file_link_candidates(
     candidates
 }
 
-/// Returns the name of the leading built-in (native-category) slash command —
-/// e.g. `compact` for `/compact` or `/compact summarize the API work` — whether
-/// or not the user typed any trailing text after it. Built-in commands ignore
-/// trailing arguments, so the caller sends the bare command and queues any
-/// remainder rather than discarding it. Commands from MCP servers and ACP
-/// agents are excluded: their trailing text is a real argument the agent
-/// consumes.
-///
-/// Native commands run a turn that produces its own thread entry, so the typed
-/// command is never echoed as a user message (see `send_command_queueing_remainder`).
+/// Returns the leading native command only when it declares no input.
+/// Such commands (e.g. `/compact`) run alone and queue trailing text as a
+/// follow-up without echoing the command. Input-taking native commands,
+/// MCP prompts and external ACP commands consume their own arguments
+/// and must travel through the normal, complete-prompt submission path.
 fn leading_native_command(
     text: &str,
     available_commands: &[acp_v2::AvailableCommand],
@@ -14874,6 +14798,7 @@ fn leading_native_command(
     let name = &rest[..name_end];
     let is_native = available_commands.iter().any(|command| {
         command.name() == name
+            && matches!(command, acp_v2::AvailableCommand::Command(command) if command.input.is_none())
             && acp_thread::command_category_from_meta(command.meta())
                 == Some(acp_thread::CommandCategory::Native)
     });
@@ -14889,6 +14814,14 @@ fn strip_leading_command(text: &str, command_name: &str) -> String {
         .and_then(|rest| rest.strip_prefix(command_name))
         .map(|rest| rest.trim_start().to_string())
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+fn prompt_too_large_message(can_compact: bool) -> &'static str {
+    if can_compact {
+        "The provider rejected this request because its input and reserved output exceed its context window. Try Compact context below to summarize earlier conversation. If that fails, remove attached files or start a new thread. Retrying unchanged is unlikely to help."
+    } else {
+        "The provider rejected this request because its input and reserved output exceed its context window. Remove attached files or start a new thread. Retrying unchanged is unlikely to help."
+    }
 }
 
 #[cfg(test)]
@@ -14997,6 +14930,7 @@ mod tests {
                         .collect(),
                     indented: false,
                     is_subagent_output: false,
+                    provenance: None,
                 })
             };
             let thought = assistant_message(&[(true, "private thought")]);
@@ -15069,6 +15003,38 @@ mod tests {
         acp_v2::AvailableCommand::Command(acp_v2::Command::new(name, "").meta(
             acp_thread::meta_with_command_category(acp_thread::CommandCategory::Mcp),
         ))
+    }
+
+    #[test]
+    fn context_overflow_message_names_available_recovery_without_promising_retry() {
+        let with_compact = prompt_too_large_message(true);
+        assert!(with_compact.contains("Compact context"));
+        assert!(with_compact.contains("summarize earlier conversation"));
+        assert!(with_compact.contains("If that fails"));
+        assert!(with_compact.contains("Retrying unchanged is unlikely to help"));
+        let without_compact = prompt_too_large_message(false);
+        assert!(!without_compact.contains("Compact context"));
+        assert!(without_compact.contains("start a new thread"));
+    }
+
+    #[test]
+    fn test_compact_command_gate_requires_native_category() {
+        let name = agent::COMPACT_COMMAND_NAME;
+        let command = format!("/{name}");
+        assert_eq!(
+            leading_native_command(&command, &[native_command(name)]),
+            Some(name.to_string()),
+        );
+        for commands in [
+            vec![],
+            vec![mcp_command(name)],
+            vec![acp_v2::AvailableCommand::Command(acp_v2::Command::new(
+                name, "",
+            ))],
+            vec![native_command("other")],
+        ] {
+            assert_eq!(leading_native_command(&command, &commands), None);
+        }
     }
 
     #[test]
@@ -16213,4 +16179,98 @@ pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
             .log_err();
     })
     .detach();
+}
+
+#[cfg(test)]
+mod private_inference_toggle_tests {
+    use super::*;
+
+    /// zed-kask: D100 (Seam A) — the routing-decision text renders at the
+    /// thread surface. Both toggle directions name what a marked thread
+    /// may run (Zed's Ollama or llama.cpp provider) and the boundary, so
+    /// the operator sees the routing decision — never a mystery lock. F5: the
+    /// marked direction surfaces the tool-perimeter's disabled-server set
+    /// (the PI-owned policy visible at the lock) — and ONLY the marked
+    /// direction carries it.
+    #[test]
+    fn private_inference_toggle_label_renders_the_routing_decision() {
+        let perimeter_set = vec!["media".to_string(), "vision-server".to_string()];
+        let (marked_icon, marked_color, marked_label) =
+            ThreadView::private_inference_toggle_label(true, &perimeter_set, None);
+        assert!(matches!(marked_icon, IconName::Lock));
+        assert!(matches!(marked_color, Color::Accent));
+        let marked_text = marked_label.as_ref();
+        assert!(
+            marked_text.contains("runs only local models"),
+            "the marked tooltip names the routing decision: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("Ollama or llama.cpp"),
+            "the marked tooltip names the providers that serve it: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("no request dispatches to a public provider"),
+            "the marked tooltip names the privacy boundary — the per-request \
+             claim the gates enforce, transition-true for a mid-turn mark: {marked_text}"
+        );
+        // F5: the perimeter's disabled-server set surfaces on the marked
+        // tooltip — every server named, and the policy field that owns it.
+        assert!(
+            marked_text.contains("Tools off on this thread: media, vision-server"),
+            "the marked tooltip surfaces the disabled-server set: {marked_text}"
+        );
+        assert!(
+            marked_text.contains("private_thread_disabled_servers"),
+            "the perimeter fragment names the PI-owned policy field: {marked_text}"
+        );
+
+        // An empty set adds no fragment (the trailing text stays clean).
+        let (_, _, empty_set_label) = ThreadView::private_inference_toggle_label(true, &[], None);
+        assert!(
+            !empty_set_label.as_ref().contains("Tools off"),
+            "no disabled servers, no perimeter fragment: {empty_set_label}"
+        );
+
+        let (unmarked_icon, unmarked_color, unmarked_label) =
+            ThreadView::private_inference_toggle_label(false, &perimeter_set, None);
+        assert!(matches!(unmarked_icon, IconName::LockOff));
+        assert!(matches!(unmarked_color, Color::Muted));
+        let unmarked_text = unmarked_label.as_ref();
+        assert!(
+            unmarked_text.contains("restrict this thread to local models"),
+            "the unmarked tooltip names what marking does: {unmarked_text}"
+        );
+        assert!(
+            unmarked_text.contains("Ollama or llama.cpp"),
+            "the unmarked tooltip names the providers that serve it: {unmarked_text}"
+        );
+        assert!(
+            !unmarked_text.contains("Tools off"),
+            "the disabled-server set is a marked-state policy — the unmarked \
+             tooltip does not carry it: {unmarked_text}"
+        );
+
+        let (_, _, model_marked_label) = ThreadView::private_inference_toggle_label(
+            true,
+            &perimeter_set,
+            Some(("ollama", "qwen3:1.7b")),
+        );
+        assert!(
+            model_marked_label
+                .as_ref()
+                .contains("provider=ollama, model=qwen3:1.7b, private=true"),
+            "active model provenance must surface on the lock tooltip: {model_marked_label}"
+        );
+
+        let prov = acp_thread::RequestProvenance {
+            provider: "ollama".into(),
+            model: "qwen3:1.7b".into(),
+            private: true,
+            memory_status: Some("private_memory=saved (curator-private.db)".into()),
+        };
+        assert_eq!(
+            prov.summary_text(),
+            "provider=ollama, model=qwen3:1.7b, private=true · private_memory=saved (curator-private.db)"
+        );
+    }
 }

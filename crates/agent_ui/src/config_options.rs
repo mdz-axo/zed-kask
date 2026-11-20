@@ -27,7 +27,7 @@ use zed_actions::agent::ToggleModelSelector;
 use crate::model_search;
 use crate::ui::{documentation_aside_side, fast_mode_button, thinking_effort_trigger};
 use crate::{
-    CycleFavoriteModels, CycleModeSelector, CycleThinkingEffort, ToggleFastMode,
+    CycleFavoriteModels, CycleModeSelector, CycleReasoningEffort, ToggleFastMode,
     ToggleProfileSelector, ToggleThinkingEffortMenu,
 };
 
@@ -654,7 +654,7 @@ impl Render for ConfigOptionSelector {
                                     ))
                                     .child(action_tooltip_container(
                                         "Cycle Thinking Effort",
-                                        KeyBinding::for_action(&CycleThinkingEffort, cx),
+                                        KeyBinding::for_action(&CycleReasoningEffort, cx),
                                     ));
                             }
                             _ => {}

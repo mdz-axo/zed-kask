@@ -503,14 +503,9 @@ impl MentionSet {
         skill_file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        // Built-in skills have synthetic paths that don't exist on disk;
-        // serve their content directly from the compiled-in data.
-        if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-            return Task::ready(Ok(Mention::Text {
-                content: content.to_string(),
-                tracked_buffers: Vec::new(),
-            }));
-        }
+        // zed-kask: D1 — the fork seeds built-in skills to disk, so there is no
+        // compiled-in `builtin_skill_content` read path; upstream's builtin branch
+        // is dropped and every skill body is read from its on-disk file.
         // Project skills may be on a remote machine, so read them through the project.
         // So are global skills in remote projects. Otherwise global skills are local,
         // even if a worktree contains their path.

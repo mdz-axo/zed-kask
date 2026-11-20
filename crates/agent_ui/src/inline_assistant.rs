@@ -1,6 +1,3 @@
-use language_models::provider::anthropic::telemetry::{
-    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
-};
 use std::mem;
 use std::ops::Range;
 use std::sync::Arc;
@@ -410,17 +407,6 @@ impl InlineAssistant {
                     model = model.telemetry_id(),
                     model_provider = model.provider_id().to_string(),
                     language_name = buffer.language().map(|language| language.name().to_proto())
-                );
-
-                report_anthropic_event(
-                    &model,
-                    AnthropicEventData {
-                        completion_type: AnthropicCompletionType::Editor,
-                        event: AnthropicEventType::Invoked,
-                        language_name: buffer.language().map(|language| language.name().to_proto()),
-                        message_id: None,
-                    },
-                    cx,
                 );
             }
         }
@@ -993,18 +979,10 @@ impl InlineAssistant {
                 let model_telemetry_id = model.telemetry_id();
                 let model_provider_id = model.provider_id().to_string();
 
-                let (phase, event_type, anthropic_event_type) = if undo {
-                    (
-                        "rejected",
-                        "Assistant Response Rejected",
-                        AnthropicEventType::Reject,
-                    )
+                let (phase, event_type) = if undo {
+                    ("rejected", "Assistant Response Rejected")
                 } else {
-                    (
-                        "accepted",
-                        "Assistant Response Accepted",
-                        AnthropicEventType::Accept,
-                    )
+                    ("accepted", "Assistant Response Accepted")
                 };
 
                 telemetry::event!(
@@ -1016,17 +994,6 @@ impl InlineAssistant {
                     model_provider = model_provider_id,
                     language_name = language_name,
                     message_id = message_id.as_deref(),
-                );
-
-                report_anthropic_event(
-                    &model,
-                    AnthropicEventData {
-                        completion_type: AnthropicCompletionType::Editor,
-                        event: anthropic_event_type,
-                        language_name,
-                        message_id,
-                    },
-                    cx,
                 );
             }
 

@@ -221,6 +221,15 @@ impl KeymapFile {
         }
     }
 
+    // zed-kask: D96 — the full load result for a built-in keymap asset.
+    // `load_asset` collapses `SomeFailedToLoad` into an `Err` (discarding
+    // the loadable bindings) and `load_asset_allow_partial_failure` discards
+    // the error message; a caller that must surface a partial failure
+    // honestly needs both halves.
+    pub fn load_asset_result(asset_path: &str, cx: &App) -> KeymapFileLoadResult {
+        Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx)
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn load_asset_cached(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
         static CACHED: std::sync::OnceLock<KeymapFile> = std::sync::OnceLock::new();

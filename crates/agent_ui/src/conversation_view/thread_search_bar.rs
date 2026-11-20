@@ -340,13 +340,16 @@ impl ThreadSearchBar {
             return;
         };
 
+        // Historical user editors hydrate at entry creation (upstream's
+        // `synced_source_version` mechanism), so search sees their content
+        // without pre-materialization.
         let mut targets: Vec<SearchTarget> = Vec::new();
         let mut patch_buffers = Vec::new();
         let thread = self.thread.read(cx);
         let entry_view_state = self.entry_view_state.read(cx);
         for (entry_ix, entry) in thread.entries().iter().enumerate() {
             match entry {
-                // Past user messages render through `MessageEditor`, not markdown.
+                // User messages render through `MessageEditor`, not markdown.
                 AgentThreadEntry::UserMessage(_) => {
                     let editor = entry_view_state
                         .entry(entry_ix)

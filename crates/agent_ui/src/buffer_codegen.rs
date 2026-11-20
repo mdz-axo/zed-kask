@@ -21,9 +21,7 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
     TokenUsage,
 };
-use language_models::provider::anthropic::telemetry::{
-    AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
-};
+
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use prompt_store::PromptBuilder;
@@ -658,7 +656,6 @@ impl CodegenAlternative {
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let anthropic_reporter = AnthropicEventReporter::new(&model, cx);
         let session_id = self.session_id;
         let model_telemetry_id = model.telemetry_id();
         let model_provider_id = model.provider_id().to_string();
@@ -733,7 +730,6 @@ impl CodegenAlternative {
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                 let message_id = message_id.clone();
                 let line_based_stream_diff: Task<anyhow::Result<()>> = cx.background_spawn({
-                    let anthropic_reporter = anthropic_reporter.clone();
                     let language_name = language_name.clone();
                     async move {
                         let mut response_latency = None;
@@ -850,13 +846,6 @@ impl CodegenAlternative {
                             response_latency = response_latency,
                             error_message = error_message.as_deref(),
                         );
-
-                        anthropic_reporter.report(AnthropicEventData {
-                            completion_type: AnthropicCompletionType::Editor,
-                            event: AnthropicEventType::Response,
-                            language_name: language_name.map(|n| n.to_string()),
-                            message_id,
-                        });
 
                         result?;
                         Ok(())
@@ -1355,6 +1344,7 @@ impl CodegenAlternative {
                         | LanguageModelCompletionEvent::Text(_)
                         | LanguageModelCompletionEvent::Thinking { .. }
                         | LanguageModelCompletionEvent::RedactedThinking { .. }
+                        | LanguageModelCompletionEvent::ResponseModel(_)
                         | LanguageModelCompletionEvent::ReasoningDetails(_)
                         | LanguageModelCompletionEvent::InputTransformations(_)
                         | LanguageModelCompletionEvent::Compaction(_),
@@ -1433,6 +1423,7 @@ impl CodegenAlternative {
                             | LanguageModelCompletionEvent::Thinking { .. }
                             | LanguageModelCompletionEvent::RedactedThinking { .. }
                             | LanguageModelCompletionEvent::StartMessage { .. }
+                            | LanguageModelCompletionEvent::ResponseModel(_)
                             | LanguageModelCompletionEvent::ReasoningDetails(_)
                             | LanguageModelCompletionEvent::InputTransformations(_)
                             | LanguageModelCompletionEvent::Compaction(_),

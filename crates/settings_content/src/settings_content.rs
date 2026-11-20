@@ -226,9 +226,6 @@ pub struct SettingsContent {
     /// Default: Zed
     pub base_keymap: Option<BaseKeymapContent>,
 
-    /// Configuration for the collab panel visual settings.
-    pub collaboration_panel: Option<PanelSettingsContent>,
-
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -314,9 +311,6 @@ pub struct SettingsContent {
     /// Default: false
     pub vim_mode: Option<bool>,
 
-    // Settings related to calls in Zed
-    pub calls: Option<CallSettingsContent>,
-
     /// Settings for the which-key popup.
     pub which_key: Option<WhichKeySettingsContent>,
 
@@ -336,6 +330,11 @@ pub struct SettingsContent {
     /// Settings for developer-oriented instrumentation tools (profilers,
     /// tracers, etc.) that can be toggled at runtime.
     pub instrumentation: Option<InstrumentationSettingsContent>,
+
+    /// hKask-specific settings (D9a). Non-secret config for kask features:
+    /// MCP server load set, data-service toggles, curator/guard/memory settings.
+    /// API keys are stored in the keychain via CredentialsProvider (D9b).
+    pub kask: Option<KaskSettingsContent>,
 }
 
 /// Configuration for developer-oriented instrumentation tools that collect
@@ -407,13 +406,13 @@ fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
         call_hierarchy, command_palette, file_finder, git_panel, git_graph, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
-        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        agent_servers, audio, auto_update, base_keymap, debugger, diagnostics,
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
-        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
-        instrumentation,
+        title_bar, vim_mode, which_key, vim, modeline_lines, feature_flags,
+        instrumentation, kask,
     },
     defaults: {},
 });
@@ -568,30 +567,11 @@ pub struct AudioSettingsContent {
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Select specific input audio device.
-    #[serde(rename = "experimental.input_audio_device")]
-    pub input_audio_device: Option<AudioInputDeviceName>,
 }
 
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct AudioOutputDeviceName(pub Option<String>);
-
-impl AsRef<Option<String>> for AudioInputDeviceName {
-    fn as_ref(&self) -> &Option<String> {
-        &self.0
-    }
-}
-
-impl From<Option<String>> for AudioInputDeviceName {
-    fn from(value: Option<String>) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(transparent)]
-pub struct AudioInputDeviceName(pub Option<String>);
 
 impl AsRef<Option<String>> for AudioOutputDeviceName {
     fn as_ref(&self) -> &Option<String> {
@@ -611,11 +591,11 @@ impl From<Option<String>> for AudioOutputDeviceName {
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
-    /// Default: true
+    /// Default: false
     pub diagnostics: Option<bool>,
     /// Send anonymized usage data like what languages you're using Zed with.
     ///
-    /// Default: true
+    /// Default: false
     pub metrics: Option<bool>,
     /// Allow sending requests to Anthropic models that cannot be offered with
     /// Zero Data Retention.
@@ -627,8 +607,8 @@ pub struct TelemetrySettingsContent {
 impl Default for TelemetrySettingsContent {
     fn default() -> Self {
         Self {
-            diagnostics: Some(true),
-            metrics: Some(true),
+            diagnostics: Some(false),
+            metrics: Some(false),
             anthropic_retention: Some(false),
         }
     }
@@ -720,21 +700,6 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
-}
-
-/// Configuration of voice calls in Zed.
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct CallSettingsContent {
-    /// Whether the microphone should be muted when joining a channel or a call.
-    ///
-    /// Default: false
-    pub mute_on_join: Option<bool>,
-
-    /// Whether your current project should be shared when joining an empty channel.
-    ///
-    /// Default: false
-    pub share_on_join: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -965,23 +930,6 @@ pub struct ScrollbarSettings {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct PanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the panel.
-    ///
-    /// Default: right (Agentic layout), left (Classic layout)
-    pub dock: Option<DockPosition>,
-    /// Default width of the panel in pixels.
-    ///
-    /// Default: 240
-    pub default_width: Option<PixelSetting>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct CommandPaletteSettingsContent {
     /// Whether to use command history ranking for sorting in the command palette.
     ///
@@ -1009,10 +957,6 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: Smart
     pub include_ignored: Option<IncludeIgnoredContent>,
-    /// Whether to include text channels in file finder results.
-    ///
-    /// Default: false
-    pub include_channels: Option<bool>,
     /// Whether to pre-fill the file finder's query with the text selected in the
     /// focused item (e.g. an editor or a terminal) when it is opened.
     ///
@@ -1709,5 +1653,977 @@ impl std::str::FromStr for DelayMs {
             .parse::<u64>()
             .map(DelayMs)
             .with_context(|| format!("failed to parse delay duration: {s}"))
+    }
+}
+
+/// hKask settings content (the `"kask"` section in settings.json).
+///
+/// This is the settings-content representation (deserialized from JSON).
+/// The actual settings struct is `kask_bridge::KaskSettings` (D9a).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskSettingsContent {
+    /// Kask data directory — root for all kask databases and agent state
+    /// (the hidden infrastructure tree). When empty, the runtime resolves a
+    /// platform default (~/.local/share/zed-kask on Linux).
+    #[serde(default)]
+    pub data_dir: Option<String>,
+
+    /// Kask artifacts directory — the visible root for ALL artifact files
+    /// and outputs of the MCP servers (reports, screens, transactions,
+    /// generated media, corpus cache) at `{server}-mcp/{artifact-type}/`.
+    /// When empty, the runtime resolves a platform default
+    /// (~/Documents/zk-data/).
+    #[serde(default)]
+    pub artifacts_dir: Option<String>,
+
+    /// Kask-wide general configuration: global inference concurrency + batching.
+    #[serde(default)]
+    pub general: Option<KaskGeneralSettingsContent>,
+
+    /// MCP server configuration.
+    #[serde(default)]
+    pub mcp: Option<KaskMcpSettingsContent>,
+
+    /// Curator configuration.
+    #[serde(default)]
+    pub curator: Option<KaskCuratorSettingsContent>,
+
+    /// Per-turn instrument-affordance injection (spec B): surfaces the
+    /// task-matched skill candidates and the exact instrument handles at
+    /// the request tail for substantive prompts. Default false — flip
+    /// after reading the native-first-rate baseline so the pre/post
+    /// comparison stays clean.
+    #[serde(default)]
+    pub affordance: Option<KaskAffordanceSettingsContent>,
+
+    /// Memory consolidation and recall configuration.
+    #[serde(default)]
+    pub memory: Option<KaskMemorySettingsContent>,
+
+    /// Condenser configuration for context management.
+    #[serde(default)]
+    pub condenser: Option<KaskCondenserSettingsContent>,
+
+    /// Research MCP server configuration.
+    #[serde(default)]
+    pub research: Option<KaskResearchSettingsContent>,
+
+    /// Corpus MCP server configuration.
+    #[serde(default)]
+    pub corpus: Option<KaskCorpusSettingsContent>,
+
+    /// Scenarios MCP server configuration.
+    #[serde(default)]
+    pub scenarios: Option<KaskScenariosSettingsContent>,
+
+    /// Prediction-markets MCP server configuration.
+    #[serde(default)]
+    pub prediction_markets: Option<KaskPredictionMarketsSettingsContent>,
+
+    /// Media MCP server configuration: research transcription and vision models.
+    #[serde(default)]
+    pub media: Option<KaskMediaSettingsContent>,
+
+    /// Kask-wide model configuration: default inference model, embedding model,
+    /// and classifier model. These are provider-prefixed strings (e.g.
+    /// `"openrouter/z-ai/glm-5.2"`) that override the kask defaults.
+    #[serde(default)]
+    pub models: Option<KaskModelsSettingsContent>,
+
+    /// Private-thread policy: the MCP servers disabled on privacy-marked
+    /// threads and the local models that serve private memory. Which
+    /// models a private thread may run is not configurable — see
+    /// [`PRIVATE_THREAD_LOCAL_PROVIDERS`].
+    #[serde(default)]
+    pub private_inference: Option<KaskPrivateInferenceSettingsContent>,
+
+    /// Nostr configuration (the `"kask.nostr"` section in settings.json).
+    /// Public data only: no key is ever stored in settings.
+    #[serde(default)]
+    pub nostr: Option<KaskNostrSettingsContent>,
+
+    /// Cashu + Lightning wallet policy (the `"kask.wallet"` section in settings.json, D110).
+    /// Public policy only: no seed, DB passphrase, or NWC secret URI is ever stored here.
+    #[serde(default)]
+    pub wallet: Option<KaskWalletSettingsContent>,
+}
+
+/// Nostr configuration (the `"kask.nostr"` section in settings.json).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskNostrSettingsContent {
+    /// The public identity the Nostr client server reads for, as an `npub`
+    /// (`"kask.nostr.npub"`). Public data: never put an `nsec` here. The
+    /// client server reports a value it cannot read as an `npub`, in
+    /// `nostr_account`, without repeating it.
+    pub npub: Option<String>,
+    /// Relays the Nostr client server starts from (`"kask.nostr.seed_relays"`).
+    /// Empty or absent: none.
+    #[serde(default)]
+    pub seed_relays: Option<Vec<String>>,
+    /// Public Blossom media servers (`"kask.nostr.blossom_servers"`, BUD-02)
+    /// the Nostr client server uploads media files to when `nostr_publish_note`
+    /// is called with `media_paths`. Empty or absent: none.
+    #[serde(default)]
+    pub blossom_servers: Option<Vec<String>>,
+    /// Publish without the operator's approval (`"kask.nostr.autopublish"`).
+    /// Absent or `false`: the editor shows each publication the Curator
+    /// initiates (its text, the signing `npub`, the target relays) and signs
+    /// it only when the operator approves. `true`: that step is removed and
+    /// the Curator publishes directly. Operator ruling 2026-11-13. The switch
+    /// is read where the signature is made, in the editor; it is delivered
+    /// to no MCP server.
+    #[serde(default)]
+    pub autopublish: Option<bool>,
+    /// The local relay server's policy (`"kask.nostr.relay"`).
+    #[serde(default)]
+    pub relay: Option<KaskNostrRelaySettingsContent>,
+    /// The local Blossom media sidecar's policy (`"kask.nostr.blossom"`).
+    #[serde(default)]
+    pub blossom: Option<KaskNostrBlossomSettingsContent>,
+}
+
+/// Bitcoin/Lightning network for `kask.wallet.network` (D110).
+#[derive(
+    Debug, PartialEq, Eq, Default, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WalletNetworkContent {
+    #[default]
+    Regtest,
+    Signet,
+    Mainnet,
+}
+
+/// Cashu + Lightning wallet policy (`"kask.wallet"`, D110).
+///
+/// Public policy only — zero secrets. Mnemonic seed, SQLCipher DB passphrase,
+/// and NWC connection URI live exclusively in dedicated OS keychain slots in
+/// `kask_bridge::credentials`.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskWalletSettingsContent {
+    /// Target network: `"regtest"` (default), `"signet"`, or `"mainnet"`.
+    #[serde(default)]
+    pub network: Option<WalletNetworkContent>,
+    /// Explicit opt-in required before mainnet payments are admitted. Default: `false`.
+    #[serde(default)]
+    pub mainnet_enabled: Option<bool>,
+    /// Hard per-transaction cap in satoshis (enforced in editor). Default: `10_000`.
+    #[serde(default)]
+    pub per_tx_cap_sats: Option<u64>,
+    /// Hard rolling 24-hour spend cap in satoshis (enforced in editor). Default: `50_000`.
+    #[serde(default)]
+    pub daily_cap_sats: Option<u64>,
+    /// Hard maximum fee cap in satoshis (enforced in editor). Default: `100`.
+    #[serde(default)]
+    pub max_fee_sats: Option<u64>,
+    /// Operator-allowlisted Cashu mint URLs (`https://` only on mainnet/signet).
+    #[serde(default)]
+    pub allowed_mints: Option<Vec<String>>,
+    /// Default Cashu mint URL (must be in `allowed_mints`).
+    #[serde(default)]
+    pub default_mint: Option<String>,
+    /// Optional NWC display label (public metadata only — never the secret URI).
+    #[serde(default)]
+    pub nwc_label: Option<String>,
+}
+
+/// Policy for the local Blossom media sidecar (`"kask.nostr.blossom"`).
+///
+/// Reuses `kask.nostr.relay.allowed_authors` as its upload/delete allowlist.
+/// The operator sets this; no agent tool can change it.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskNostrBlossomSettingsContent {
+    /// Loopback port the Blossom sidecar listens on. Absent or 0 picks a free
+    /// port at each start.
+    pub port: Option<u16>,
+    /// Maximum total bytes stored in the local Blossom blob directory. Absent
+    /// defaults to 10 GiB; 0 means unlimited.
+    pub max_bytes: Option<u64>,
+    /// Optional public `https://` base URL when the sidecar is fronted by a
+    /// reverse proxy / Tailscale Funnel. Empty or absent: loopback only.
+    pub public_base_url: Option<String>,
+}
+
+/// Policy for the local Nostr relay MCP server (`"kask.nostr.relay"`).
+///
+/// The operator sets this; no agent tool can change it. The relay server
+/// validates each value at startup and reports any it could not use in
+/// `nostr_relay_status`.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskNostrRelaySettingsContent {
+    /// Loopback port the relay listens on. Absent or 0 picks a free port at
+    /// each start; set a port to give other Nostr apps a stable address.
+    pub port: Option<u16>,
+    /// Authors whose events the relay archives, as npubs or 64-character
+    /// hex public keys. Empty or absent: the relay admits nothing.
+    #[serde(default)]
+    pub allowed_authors: Option<Vec<String>>,
+    /// Public relays the relay's sync reads from. Each must be `wss://`
+    /// with a public host. Empty or absent: sync has nothing to ask.
+    #[serde(default)]
+    pub sync_relays: Option<Vec<String>>,
+}
+
+/// Per-turn instrument-affordance injection (D94, spec B). Surfaces the
+/// task-matched skill candidates and the exact instrument handles in a
+/// bounded block at the request tail — converting skill discovery from
+/// recall into perception (the measured failure: 100% activation when the
+/// operator names a skill, 0/3 primary-contract discovery otherwise).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskAffordanceSettingsContent {
+    /// Inject the per-turn affordance block. Default `false`: the operator
+    /// enables it after reading the native-first-rate baseline (the affordance
+    /// study record was removed 2026-10-30 — git history retains it), keeping
+    /// the pre/post comparison clean. Flips apply to the next turn
+    /// without a restart (read per turn at the call site).
+    pub enabled: Option<bool>,
+}
+
+/// Kask-wide general configuration for inference admission, deadlines, and
+/// local circuit-breaker resilience.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskGeneralSettingsContent {
+    /// Maximum concurrent cloud inference provider calls across the whole
+    /// process — skills, corpus OCR, MCP tool calls, any consumer of the
+    /// global concurrency service. Default 96. Providers throttle at
+    /// different levels; OpenRouter scales to this ceiling.
+    pub max_concurrency: Option<u32>,
+
+    /// Wall-clock timeout for a single inference call. 0 disables (legacy
+    /// behavior). Default 300 (5 minutes).
+    pub inference_timeout_secs: Option<u64>,
+
+    /// Consecutive transient failures required to open the inference circuit.
+    /// Default 3.
+    pub inference_circuit_failure_threshold: Option<u32>,
+
+    /// Seconds an open inference circuit rejects work before one half-open
+    /// recovery probe is admitted. Default 30.
+    pub inference_circuit_open_secs: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMcpSettingsContent {
+    /// Parent-owned tool grants by child server ID. Missing entries deny delegated tools.
+    pub delegated_tools: Option<HashMap<String, Vec<String>>>,
+    pub load_default: Option<bool>,
+    #[serde(default)]
+    pub overrides: HashMap<String, bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCuratorSettingsContent {
+    pub always_on: Option<bool>,
+    pub algedonic_threshold: Option<f64>,
+    /// How the user works with the Curator (the user–Curator dyad level).
+    /// Set only by the user. Default: `collaboration` (Level 2).
+    pub interaction_mode: Option<CuratorInteractionMode>,
+}
+
+/// The level the user–Curator dyad works at, chosen by the user
+/// (`kask/docs/architecture/functional-interaction-spec.md` §9). Level 4 (trust, protected
+/// expectations, mutual delegation) is a future release and has no variant.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CuratorInteractionMode {
+    /// Level 1 — the user is controller and regulator; the Curator proposes.
+    Control,
+    /// Level 2 — the user and the Curator collaborate toward shared
+    /// understanding and shared solutions.
+    #[default]
+    Collaboration,
+    /// Level 3 — collaboration plus bidirectional learning: the user and the
+    /// Curator challenge and learn from each other.
+    LearningCollaboration,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMemorySettingsContent {
+    pub consolidation_cadence_secs: Option<u64>,
+    pub confidence_floor: Option<f64>,
+    pub recall_limit: Option<u32>,
+    pub recall_min_confidence: Option<f64>,
+    pub auto_inject: Option<bool>,
+    /// Opt in to injecting selected federated sources into curator chat.
+    pub federated_auto_inject: Option<bool>,
+    /// IDs selected from the curator federated sources manifest.
+    pub federated_source_ids: Option<Vec<String>>,
+    /// Memory life S in days (Wozniak-Gorzelanczyk 1995 forgetting curve:
+    /// R(t) = exp(-t/S)). After S days without recall, confidence decays to
+    /// exp(-1) ≈ 36.8%; the half-life is S·ln(2). Recalling a memory resets
+    /// its decay clock. Overridden by the `HKASK_MEMORY_LIFE_DAYS` env var.
+    pub memory_life_days: Option<f64>,
+    /// ALWAYS-mode distillation cadence in seconds (0 = disabled). The
+    /// curator server's background pass distills finished threads into
+    /// candidate lesson h_mems on this cadence.
+    pub distillation_cadence_secs: Option<u64>,
+    /// A thread counts as finished when its newest turn is at least this
+    /// many seconds old — the distillation pass skips younger threads.
+    pub distillation_idle_secs: Option<u64>,
+    /// Distillation-gated forgetting age in days (0 = disabled). The
+    /// curator server's background pass forgets (expires) the
+    /// shared-copy turns of threads whose distillation watermark is
+    /// older than this — the goldfish principle's automatic leg.
+    pub forgetting_days: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCondenserSettingsContent {
+    pub profile: Option<String>,
+    pub auto_compress_tool_results: Option<bool>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskResearchSettingsContent {
+    /// Research database path (feed substrate + research-run ledger). When
+    /// empty, the server resolves a default path under the hKask data
+    /// directory.
+    pub research_db: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskCorpusSettingsContent {
+    pub embedding_dim: Option<u32>,
+    pub embedding_model: Option<String>,
+    pub template_root: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskScenariosSettingsContent {}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPredictionMarketsSettingsContent {
+    /// Cache TTL in seconds for market-data responses.
+    pub cache_ttl_secs: Option<u64>,
+}
+
+/// Media MCP server configuration (the `"kask.media"` section in settings.json).
+///
+/// Provider-prefixed transcription and vision model overrides. Absent fields
+/// use settings-layer defaults; an explicitly empty value disables that
+/// pipeline with a visible configuration error, never a server-side fallback.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskMediaSettingsContent {
+    pub stt_model: Option<String>,
+    /// Additional STT models for the bounded transcription cross-check
+    /// (transcript-reel Phase 1b) — addressed per call via the transcribe
+    /// tools' `model` override and listed by `model_list`. Absent uses the
+    /// settings-layer default fleet; an explicitly empty list disables the
+    /// cross-check fleet.
+    pub cross_check_stt_models: Option<Vec<String>>,
+    pub vision_model: Option<String>,
+    pub sound_annotation_model: Option<String>,
+    pub tagging_model: Option<String>,
+}
+
+/// Kask-wide model configuration (the `"kask.models"` section in settings.json).
+///
+/// These fields let the user override the kask defaults for the primary
+/// inference model, the embedding model used by the corpus/memory subsystems,
+/// and the classifier model used for guard/regulation classification tasks.
+/// All are provider-prefixed strings (e.g. `"openrouter/z-ai/glm-5.2"`).
+/// Defaults are resolved by KaskModelsSettings; QA generation and verification
+/// have no default models.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskModelsSettingsContent {
+    /// Default inference model for kask subsystems (provider-prefixed).
+    /// When set, overrides the kask default for the Curator, skill execution,
+    /// and kask panel inference.
+    pub default_model: Option<String>,
+    /// Embedding model for corpus indexing and memory semantic recall
+    /// (provider-prefixed). When empty, falls back to the corpus MCP server's
+    /// `embedding_model` setting, then to the kask default.
+    pub embedding_model: Option<String>,
+    /// Classifier model for guard/regulation classification tasks
+    /// (provider-prefixed). When empty, falls back to the kask default.
+    pub classifier_model: Option<String>,
+    /// Dedicated QA generator (provider-prefixed). Empty means unconfigured;
+    /// never falls back to the active chat model.
+    pub qa_generation_model: Option<String>,
+    /// OCR vision model for scanned document OCR (provider-prefixed).
+    /// When empty, falls back to the kask default (`RunPod/kask-ocr`,
+    /// `hkask_inference::model_constants::DEFAULT_OCR_MODEL`).
+    pub ocr_model: Option<String>,
+    /// Rerank model for the research server's deep-search rerank stage
+    /// (provider-prefixed). When empty, falls back to the kask default
+    /// (`OpenRouter/qwen/qwen3-reranker-8b`).
+    pub rerank_model: Option<String>,
+    /// Decision model for bounded structured judgments (provider-prefixed;
+    /// served over the provider's Decisions API — e.g.
+    /// `OpenRouter/typesafe/jev-1.14`, NOT a chat endpoint). When empty,
+    /// decision routes refuse rather than serve the chat model.
+    pub decision_model: Option<String>,
+}
+
+/// Private-thread policy (the `"kask.private_inference"` section in
+/// settings.json).
+///
+/// Private inference is served by the local Ollama or llama.cpp install
+/// through Zed's built-in providers; this section carries only what a
+/// privacy-marked thread still needs from kask: the tool perimeter and
+/// the local models that embed, tag and rerank private memory. The set of
+/// providers a private thread may run is fixed
+/// ([`PRIVATE_THREAD_LOCAL_PROVIDERS`]) and has no key here — the
+/// retired `provider_id`, `host`, `port` and `local_provider_ids` keys
+/// are ignored if an older settings file still carries them.
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPrivateInferenceSettingsContent {
+    /// zed-kask: D100 (operator ruling 2026-11-05) — MCP servers whose
+    /// tool surface is DISABLED on privacy-marked threads: their
+    /// assisting inference cannot run locally, so the tool itself is
+    /// refused rather than let it route private content to cloud models
+    /// (the named default: the media server — its vision/STT/OCR passes
+    /// rely on cloud inference with no local path). Absent uses the
+    /// settings-layer default.
+    #[serde(default)]
+    pub private_thread_disabled_servers: Option<Vec<String>>,
+    /// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's
+    /// LOCAL embedding model (provider-qualified for the local ollama
+    /// provider, e.g. `"ollama/qwen3-embedding:0.6b"`). Private-store
+    /// chunks at ingest and private-context recall queries embed through
+    /// the local port bound to this model ONLY — the configured cloud
+    /// embedder never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (private content stays keyword-only, surfaced).
+    #[serde(default)]
+    pub embedding_model: Option<String>,
+    /// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL classifier model (provider-qualified for a
+    /// local provider, e.g. `"ollama/qwen3.5:4b"`). Private-turn chunk
+    /// tagging runs through this model only; the configured cloud
+    /// classifier never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (structural tags only, surfaced).
+    #[serde(default)]
+    pub classifier_model: Option<String>,
+    /// zed-kask: D100 §8.1 routed shape (operator ruling 2026-11-06) — the
+    /// private leg's LOCAL rerank model (provider-qualified for a local
+    /// provider, e.g. `"ollama/qwen3-reranker-4b:latest"`).
+    /// Private-provenance deep-search rerank runs through this model only,
+    /// served by the local ollama instance's judge protocol; the configured
+    /// cloud reranker never sees private content. Absent uses the
+    /// settings-layer default; an EXPLICITLY EMPTY string is the
+    /// operator's opt-out (the surfaced heuristic skip).
+    #[serde(default)]
+    pub rerank_model: Option<String>,
+}
+
+/// zed-kask: D100 (operator ruling 2026-11-11) — the providers whose
+/// models a privacy-marked thread may run: Zed's built-in Ollama and
+/// llama.cpp providers, by their registered provider ids. Fixed: no
+/// setting adds to it, so a thread cannot be widened to a cloud provider
+/// by configuration. Both providers' server URLs are user-editable in
+/// Zed's own provider settings; "local" holds only while those point at
+/// this machine.
+pub const PRIVATE_THREAD_LOCAL_PROVIDERS: &[&str] = &["ollama", "llama.cpp"];
+
+/// The Ollama provider id — the one member of
+/// [`PRIVATE_THREAD_LOCAL_PROVIDERS`] that can also list cloud-proxied
+/// models.
+const OLLAMA_PROVIDER_ID: &str = "ollama";
+
+/// zed-kask: D100 — may a privacy-marked thread run this model? True iff
+/// the provider is in [`PRIVATE_THREAD_LOCAL_PROVIDERS`] and, for Ollama,
+/// the model is not a cloud-proxied entry
+/// ([`is_ollama_cloud_model_name`]). The one admission home: the
+/// thread's storage and request gates and the agent panel's model list
+/// all resolve through it.
+pub fn is_private_thread_local_model(provider_id: &str, model_name: &str) -> bool {
+    PRIVATE_THREAD_LOCAL_PROVIDERS.contains(&provider_id)
+        && !(provider_id == OLLAMA_PROVIDER_ID && is_ollama_cloud_model_name(model_name))
+}
+
+/// Minimum parameter count (in billions) for auto-discovered local models to
+/// advertise tool-calling by default. Sub-3B local models (such as
+/// `qwen3:1.7b`, `qwen3:0.6b`, `llama3.2:1b`) emit malformed or unsolicited
+/// tool calls on conversational prompts even when their chat template carries
+/// a `.Tools` block. Users can still opt a specific model in via
+/// `available_models` (`supports_tools: true`).
+pub const MIN_LOCAL_TOOL_MODEL_BILLIONS: f64 = 3.0;
+
+/// True when a local provider's configured `api_url` resolves to this machine
+/// (empty default or loopback `http`/`https` host with no userinfo). Used by
+/// both context-window capping and private-thread dispatch so a remote
+/// `ollama.api_url` or `llama.cpp.api_url` cannot carry private-thread traffic
+/// off-machine.
+pub fn is_local_provider_api_url(api_url: &str) -> bool {
+    if api_url.is_empty() {
+        return true;
+    }
+    let Some((scheme, rest)) = api_url.split_once("://") else {
+        return false;
+    };
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return false;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') || authority.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some((ipv6_str, remainder)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if !remainder.is_empty() {
+            let Some(port) = remainder.strip_prefix(':') else {
+                return false;
+            };
+            if port.parse::<u16>().is_err() {
+                return false;
+            }
+        }
+        return ipv6_str
+            .parse::<std::net::Ipv6Addr>()
+            .is_ok_and(|addr| addr.is_loopback() || addr.is_unspecified());
+    }
+    let host = match authority.rsplit_once(':') {
+        Some((host_part, port_part)) => {
+            if host_part.contains(':') || port_part.parse::<u16>().is_err() {
+                return false;
+            }
+            host_part
+        }
+        None => authority,
+    };
+    if host.is_empty() {
+        return false;
+    }
+    if let Ok(ipv4) = host.parse::<std::net::Ipv4Addr>() {
+        return ipv4.is_loopback() || ipv4.is_unspecified();
+    }
+    let domain = host.to_ascii_lowercase();
+    (domain == "localhost" || (domain.ends_with(".localhost") && !domain.starts_with('.')))
+        && domain
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+}
+
+fn parse_size_token_billions(token: &str) -> Option<f64> {
+    let trimmed = token.trim();
+    let last = trimmed.chars().last()?;
+    let multiplier = match last {
+        'b' | 'B' => 1.0,
+        'm' | 'M' => 0.001,
+        _ => return None,
+    };
+    let number_part = &trimmed[..trimmed.len() - last.len_utf8()];
+    if number_part.is_empty() || !number_part.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let value = number_part.parse::<f64>().ok()?;
+    (value.is_finite() && value > 0.0).then_some(value * multiplier)
+}
+
+/// True when a local model's reported `parameter_size` (e.g. `"1.7B"`,
+/// `"500M"`) or tag name (e.g. `"qwen3:1.7b"`, `"llama3.2:1b"`) places it
+/// strictly below [`MIN_LOCAL_TOOL_MODEL_BILLIONS`]. For MoE model names
+/// carrying both total and active counts (e.g. `"16b-a2.4b"`), the largest
+/// size token in the name governs so total model capacity is respected.
+pub fn is_unsupported_small_local_tool_model(
+    model_name: &str,
+    parameter_size: Option<&str>,
+) -> bool {
+    if let Some(size_billions) = parameter_size.and_then(parse_size_token_billions) {
+        return size_billions < MIN_LOCAL_TOOL_MODEL_BILLIONS;
+    }
+    let max_tag_billions = model_name
+        .split([':', '-', '_', '/'])
+        .filter_map(parse_size_token_billions)
+        .fold(None::<f64>, |acc, val| {
+            Some(acc.map_or(val, |prev| prev.max(val)))
+        });
+    max_tag_billions.is_some_and(|b| b < MIN_LOCAL_TOOL_MODEL_BILLIONS)
+}
+
+/// zed-kask: D100/F1 (2026-11-08) — true when a provider model name
+/// carries ollama's cloud namespace token as its final `:`/`-`
+/// segment. Ollama >= 0.40 lists cloud-proxied entries
+/// (`remote_host: "https://ollama.com"` in `/api/tags`) under names
+/// like `glm-5.3:cloud` and `qwen3.5:397b-cloud`; locally served
+/// entries never end in a `cloud` token (both forms verified live
+/// against ollama 0.40.12, 2026-11-08). The registry's model type
+/// carries only provider and id — the structured `remote_host` field
+/// never reaches the policy layers — so the naming convention is the
+/// one model-level signal available at every admission or projection
+/// site, and dispatch addresses cloud models by the same name, so no
+/// route to them bypasses the check. Fail-closed in the cloud
+/// direction: the token matches case-insensitively, and a name
+/// carrying it refuses the model; a name without it keeps the
+/// provider-level admission unchanged.
+pub fn is_ollama_cloud_model_name(model_name: &str) -> bool {
+    model_name
+        .rsplit([':', '-'])
+        .next()
+        .is_some_and(|last| last.eq_ignore_ascii_case("cloud"))
+}
+
+/// zed-kask: D100 — the default set of MCP servers disabled on
+/// privacy-marked threads (operator ruling 2026-11-05): the media server —
+/// its analysis passes (vision, STT, OCR) rely on cloud inference in ways
+/// that cannot run locally, so a private thread refuses the tool surface
+/// rather than leak content to cloud models. **The corpus server joins the
+/// set (operator ruling 2026-11-06, the tool-query-embed design §8.2's
+/// ruling — shape 2, the perimeter):** the corpus server's
+/// assisting-inference legs (`corpus_embed`, `corpus_tag_chunks`, the OCR
+/// vision leg) cannot run locally either, so the same posture applies —
+/// private threads refuse the corpus tool surface (the PI can still
+/// override the set via `private_thread_disabled_servers`). **The Nostr
+/// relay server joins the set (operator ruling 2026-11-12):** its sync tool
+/// contacts public relays, and a private thread shares nothing with a
+/// public network. **The Nostr client server joins the set (operator ruling
+/// 2026-11-11: "nostr is not enabled or is disabled on private threads -
+/// you shouldn't be sharing private threads on a public network"):** the
+/// whole server, so every tool it has or gains is refused there.
+pub const DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS: &[&str] = &[
+    "media",
+    "corpus",
+    "nostr-relay",
+    "nostr-client",
+    "nostr-blossom",
+    "wallet",
+];
+
+impl KaskPrivateInferenceSettingsContent {
+    /// zed-kask: D100 — resolve the MCP server set disabled on privacy-
+    /// marked threads (default:
+    /// [`DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`]). Trimmed, empties
+    /// and duplicates dropped; the one resolution home.
+    pub fn resolved_private_thread_disabled_servers(&self) -> Vec<String> {
+        let servers = self
+            .private_thread_disabled_servers
+            .clone()
+            .unwrap_or_else(|| {
+                DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect()
+            });
+        let mut out: Vec<String> = Vec::new();
+        for raw in servers {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() && !out.iter().any(|s| s == trimmed) {
+                out.push(trimmed.to_string());
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+mod private_inference_local_set_tests {
+    use super::*;
+
+    /// The admission decision table: Zed's built-in Ollama and llama.cpp
+    /// providers serve a private thread; every other provider is refused,
+    /// including the retired kask `private-local` provider and other
+    /// OpenAI-compatible entries; an Ollama cloud-proxied model is
+    /// refused while a local Ollama model is admitted. The cloud-name
+    /// convention is Ollama's, so it does not refuse a llama.cpp model.
+    #[test]
+    fn only_local_ollama_and_llama_cpp_models_serve_a_private_thread() {
+        assert!(is_private_thread_local_model("ollama", "qwen3.5:4b"));
+        assert!(is_private_thread_local_model("llama.cpp", "qwen36-35b-a3b"));
+        assert!(is_private_thread_local_model("llama.cpp", "notes-cloud"));
+
+        assert!(!is_private_thread_local_model("ollama", "glm-5.3:cloud"));
+        assert!(!is_private_thread_local_model(
+            "ollama",
+            "qwen3.5:397b-cloud"
+        ));
+
+        for provider in [
+            "private-local",
+            "openrouter",
+            "anthropic",
+            "openai",
+            "lmstudio",
+            "DeepInfra",
+            "Ollama",
+            "llama_cpp",
+            "",
+        ] {
+            assert!(
+                !is_private_thread_local_model(provider, "some-model"),
+                "{provider:?} is not a private-thread provider"
+            );
+        }
+    }
+
+    /// No setting widens the set: an older settings file's retired keys
+    /// (`provider_id`, `host`, `port`, `local_provider_ids`) still parse —
+    /// the file is not rejected — and are dropped, so a provider named
+    /// there gains nothing.
+    #[test]
+    fn retired_keys_parse_and_cannot_widen_the_set() {
+        let parsed: KaskPrivateInferenceSettingsContent = serde_json::from_str(
+            r#"{
+                "provider_id": "private-local",
+                "host": "127.0.0.1",
+                "port": 8010,
+                "local_provider_ids": ["openrouter"],
+                "embedding_model": "ollama/qwen3-embedding:0.6b"
+            }"#,
+        )
+        .expect("an older settings section still parses");
+        assert_eq!(
+            parsed,
+            KaskPrivateInferenceSettingsContent {
+                embedding_model: Some("ollama/qwen3-embedding:0.6b".to_string()),
+                ..Default::default()
+            },
+            "the retired keys are dropped; the surviving key is kept"
+        );
+        assert!(!is_private_thread_local_model("openrouter", "some-model"));
+        assert!(!is_private_thread_local_model("private-local", "flint"));
+    }
+
+    /// F1 (2026-11-08): the cloud-name classifier's decision table — the
+    /// live-observed ollama 0.40.12 cloud forms (colon and hyphen tags,
+    /// case-insensitive) classify as cloud; local model names classify as
+    /// local.
+    #[test]
+    fn is_ollama_cloud_model_name_classifies_the_live_forms() {
+        for name in [
+            "glm-5.3:cloud",
+            "qwen3.5:397b-cloud",
+            "gemma4:31b-cloud",
+            "GLM-5.3:CLOUD",
+        ] {
+            assert!(is_ollama_cloud_model_name(name), "{name} is a cloud entry");
+        }
+        for name in [
+            "qwen3.5:4b",
+            "ornith:9b",
+            "bonsai-27b:latest",
+            "qwen3-reranker-4b:latest",
+            "flint",
+            "qwen36-35b-a3b",
+            "qwen35-0.8b-edited",
+            "qwen3-8-flash-next",
+            "muse-glimmer-30b",
+            "",
+        ] {
+            assert!(!is_ollama_cloud_model_name(name), "{name} is a local entry");
+        }
+    }
+
+    #[test]
+    fn local_provider_api_url_admits_loopback_and_refuses_remote_or_userinfo() {
+        for local in [
+            "",
+            "http://localhost:11434",
+            "https://LOCALHOST:8080",
+            "http://127.0.0.1:11434",
+            "http://127.0.0.2:8080/",
+            "http://[::1]:11434",
+            "http://0.0.0.0:11434",
+            "http://ollama.localhost:11434",
+        ] {
+            assert!(is_local_provider_api_url(local), "{local:?} must be local");
+        }
+        for remote in [
+            "https://ollama.com",
+            "http://192.168.1.20:11434",
+            "http://evil.com@localhost:11434",
+            "http://localhost.example.com:11434",
+            "ftp://localhost:11434",
+            "not a url",
+        ] {
+            assert!(
+                !is_local_provider_api_url(remote),
+                "{remote:?} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn sub_3b_local_models_are_classified_as_unsupported_for_default_tools() {
+        assert!(is_unsupported_small_local_tool_model(
+            "qwen3:1.7b",
+            Some("1.7B")
+        ));
+        assert!(is_unsupported_small_local_tool_model("qwen3:1.7b", None));
+        assert!(is_unsupported_small_local_tool_model("qwen3:0.6b", None));
+        assert!(is_unsupported_small_local_tool_model(
+            "smollm2:latest",
+            Some("360M")
+        ));
+        assert!(is_unsupported_small_local_tool_model(
+            "qwen2.5-coder:1.5b",
+            None
+        ));
+
+        assert!(!is_unsupported_small_local_tool_model(
+            "qwen3.5:4b",
+            Some("4.3B")
+        ));
+        assert!(!is_unsupported_small_local_tool_model("qwen3.5:4b", None));
+        assert!(!is_unsupported_small_local_tool_model(
+            "qwen36-35b-a3b",
+            None
+        ));
+        assert!(!is_unsupported_small_local_tool_model(
+            "deepseek-moe-16b-a2.4b",
+            None
+        ));
+    }
+}
+
+#[cfg(test)]
+mod nostr_settings_tests {
+    use super::*;
+
+    /// What an operator might type. Deliberately not a key: this layer stores
+    /// the text as written and never decides whether it is a usable `npub`.
+    const PLACEHOLDER_NPUB: &str = "npub-as-typed-in-settings";
+
+    /// expect: the public Nostr identity an operator writes under
+    /// `"kask": { "nostr": … }` survives a parse and a write.
+    /// pre: `npub` and `seed_relays` beside the relay's `relay` section.
+    /// post: both values come back unchanged, and the relay section is kept.
+    #[test]
+    fn nostr_identity_settings_round_trip() {
+        let parsed: KaskSettingsContent = serde_json::from_value(serde_json::json!({
+            "nostr": {
+                "npub": PLACEHOLDER_NPUB,
+                "seed_relays": ["wss://relay.example.com", "wss://other.example.com"],
+                "relay": { "port": 7447 }
+            }
+        }))
+        .expect("kask.nostr parses");
+        let written = serde_json::to_value(&parsed).expect("kask.nostr serializes");
+        assert_eq!(written["nostr"]["npub"], PLACEHOLDER_NPUB);
+        assert_eq!(
+            written["nostr"]["seed_relays"],
+            serde_json::json!(["wss://relay.example.com", "wss://other.example.com"])
+        );
+        assert_eq!(written["nostr"]["relay"]["port"], 7447);
+    }
+
+    /// expect: `kask.nostr` holds public data only. A Nostr key cannot be
+    /// rotated, so no field of this section may ever hold one; a field added
+    /// here fails this test and needs a ruling first. `autopublish` was added
+    /// under the operator ruling of 2026-11-13, and `blossom_servers` under
+    /// the operator direction of 2026-11-17 (media upload + `imeta` post).
+    /// pre: the section's generated JSON schema.
+    /// post: its fields are `autopublish`, `blossom_servers`, `npub`, `relay`
+    /// and `seed_relays`.
+    #[test]
+    fn nostr_section_has_exactly_its_four_public_fields() {
+        let schema = serde_json::to_value(schemars::schema_for!(KaskNostrSettingsContent))
+            .expect("schema serializes");
+        let mut fields: Vec<&str> = schema["properties"]
+            .as_object()
+            .expect("the section is an object with properties")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "autopublish",
+                "blossom",
+                "blossom_servers",
+                "npub",
+                "relay",
+                "seed_relays"
+            ]
+        );
+    }
+
+    /// expect: a `kask.nostr` section that does not mention autopublish
+    /// leaves it unset, so the resolved default (off) applies; a section
+    /// that turns it on survives a parse and a write.
+    /// pre: one section without the key, one with `"autopublish": true`.
+    /// post: `None` for the first; `Some(true)` written back for the second.
+    #[test]
+    fn nostr_autopublish_is_absent_unless_written_and_round_trips() {
+        let absent: KaskNostrSettingsContent =
+            serde_json::from_value(serde_json::json!({ "npub": PLACEHOLDER_NPUB }))
+                .expect("kask.nostr parses without autopublish");
+        assert_eq!(absent.autopublish, None);
+
+        let on: KaskNostrSettingsContent =
+            serde_json::from_value(serde_json::json!({ "autopublish": true }))
+                .expect("kask.nostr parses with autopublish");
+        assert_eq!(on.autopublish, Some(true));
+        let written = serde_json::to_value(&on).expect("kask.nostr serializes");
+        assert_eq!(written["autopublish"], true);
+    }
+
+    #[test]
+    fn telemetry_settings_content_defaults_strictly_false() {
+        let defaults = TelemetrySettingsContent::default();
+        assert_eq!(
+            defaults.diagnostics,
+            Some(false),
+            "S164-F01 / P1: TelemetrySettingsContent::default().diagnostics must never default to true"
+        );
+        assert_eq!(
+            defaults.metrics,
+            Some(false),
+            "S164-F01 / P1: TelemetrySettingsContent::default().metrics must never default to true"
+        );
+        assert_eq!(defaults.anthropic_retention, Some(false));
+    }
+
+    #[test]
+    fn bundled_default_json_disables_edit_predictions_for_zed_kask_config_dir() {
+        let raw = include_str!("../../../assets/settings/default.json");
+        let parsed: SettingsContent =
+            serde_json_lenient::from_str_lenient(raw).expect("assets/settings/default.json parses");
+        let globs = parsed
+            .project
+            .all_languages
+            .edit_predictions
+            .as_ref()
+            .and_then(|ep| ep.disabled_globs.as_ref())
+            .expect("default.json defines edit_predictions.disabled_globs");
+        assert!(
+            globs.0.iter().any(|g| g == "~/.config/zed-kask/**"),
+            "S103-F01 / P1: edit_predictions.disabled_globs must cover ~/.config/zed-kask/**, got: {globs:?}"
+        );
+        assert!(
+            globs.0.iter().any(|g| g == "/**/zed-kask/settings.json"),
+            "edit_predictions.disabled_globs must cover /**/zed-kask/settings.json, got: {globs:?}"
+        );
+        assert_eq!(
+            globs.0.iter().any(|g| g == "/**/zed-kask/keymap.json"),
+            true,
+        );
+    }
+
+    #[test]
+    fn wallet_section_has_only_public_policy_fields_and_is_private_thread_disabled() {
+        let schema = serde_json::to_value(schemars::schema_for!(KaskWalletSettingsContent))
+            .expect("schema serializes");
+        let mut fields: Vec<&str> = schema["properties"]
+            .as_object()
+            .expect("the section is an object with properties")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "allowed_mints",
+                "daily_cap_sats",
+                "default_mint",
+                "mainnet_enabled",
+                "max_fee_sats",
+                "network",
+                "nwc_label",
+                "per_tx_cap_sats",
+            ]
+        );
+        assert!(
+            DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS.contains(&"wallet"),
+            "D100/D110: wallet must be disabled on private threads by default"
+        );
     }
 }

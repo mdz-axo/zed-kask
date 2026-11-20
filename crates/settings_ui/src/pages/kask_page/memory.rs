@@ -1,0 +1,473 @@
+//! Memory sub-page — consolidation cadence, confidence floor, recall limit,
+//! recall minimum confidence, auto-inject and federated curator sources.
+
+use super::*;
+use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition};
+
+fn federated_source_selection(source_id: Option<String>) -> (Option<bool>, Option<Vec<String>>) {
+    (
+        Some(source_id.is_some()),
+        Some(source_id.into_iter().collect()),
+    )
+}
+
+/// Both memory confidence knobs refuse values at or above the 0.5 insert
+/// floor. Memories are inserted at confidence 0.5: the deletion floor
+/// deletes at-or-below its value (0.5 would delete every new memory on the
+/// next consolidation pass), and the recall gate compares DECAYED confidence
+/// (0.5 hides every new memory once any decay elapses). The deliberate
+/// calibrated-only policy, if ever wanted, is set via settings.json.
+fn refuses_above_insert_floor(parsed: f64) -> bool {
+    parsed >= 0.5
+}
+
+pub(crate) fn render_memory_page(
+    _settings_window: &SettingsWindow,
+    scroll_handle: &ScrollHandle,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    // Resolve via `From` so the UI shows the same defaults the runtime uses.
+    let kask: kask_bridge::KaskSettings = raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+    let sources = kask.federated_sources();
+    let memory = kask.memory;
+    let cadence = memory.consolidation_cadence_secs.to_string();
+    let confidence_floor = memory.confidence_floor.to_string();
+    let recall_limit = memory.recall_limit.to_string();
+    let recall_min_confidence = memory.recall_min_confidence.to_string();
+    let auto_inject = memory.auto_inject;
+    let memory_life_days = memory.memory_life_days.to_string();
+    let forgetting_days = memory.forgetting_days.to_string();
+    let selected_ids = memory.federated_source_ids;
+    let selected_source = match &sources {
+        Ok(registered) if memory.federated_auto_inject && selected_ids.len() == 1 => registered
+            .iter()
+            .find(|(id, _)| selected_ids.first() == Some(id))
+            .cloned(),
+        _ => None,
+    };
+    let sources_error = sources.is_err()
+        || (memory.federated_auto_inject && !selected_ids.is_empty() && selected_source.is_none());
+    let sources_message = match &sources {
+        Err(error) => format!("Federated sources unavailable or invalid: {error}"),
+        Ok(registered) if registered.is_empty() => {
+            "No federated sources are registered in the curator manifest.".to_string()
+        }
+        Ok(_) if memory.federated_auto_inject && selected_source.is_none() => {
+            "Saved federated selection is invalid; choose one source.".to_string()
+        }
+        Ok(_) => "Choose one registered source, or Curator memory only.".to_string(),
+    };
+    let source_dropdown = sources.as_ref().ok().filter(|registered| !registered.is_empty()).map(|registered| {
+        let selected_id = selected_source.as_ref().map(|(id, _)| id.clone());
+        let menu = ContextMenu::build(window, cx, {
+            let registered = registered.clone();
+            move |mut menu, _, _| {
+                menu = menu.toggleable_entry(
+                    "Curator memory only",
+                    selected_id.is_none(),
+                    IconPosition::Start,
+                    None,
+                    move |_, cx| {
+                        SettingsStore::global(cx).update_settings_file(
+                            <dyn fs::Fs>::global(cx),
+                            |settings, _| {
+                                let memory = settings
+                                    .kask
+                                    .get_or_insert_default()
+                                    .memory
+                                    .get_or_insert_default();
+                                (memory.federated_auto_inject, memory.federated_source_ids) =
+                                    federated_source_selection(None);
+                            },
+                        );
+                    },
+                );
+                for (id, name) in registered {
+                    let is_selected = selected_id.as_ref() == Some(&id);
+                    let label = format!("{name} ({id})");
+                    menu = menu.toggleable_entry(label, is_selected, IconPosition::Start, None, move |_, cx| {
+                        let current: kask_bridge::KaskSettings =
+                            raw_kask_settings(cx).map(Into::into).unwrap_or_default();
+                        if !current.federated_sources().is_ok_and(|sources| sources.iter().any(|(key, _)| key == &id)) {
+                            log::warn!("Federated source {id} is no longer registered; selection not saved");
+                            return;
+                        }
+                        let id = id.clone();
+                        SettingsStore::global(cx).update_settings_file(
+                            <dyn fs::Fs>::global(cx),
+                            move |settings, _| {
+                                let memory = settings
+                                    .kask
+                                    .get_or_insert_default()
+                                    .memory
+                                    .get_or_insert_default();
+                                (memory.federated_auto_inject, memory.federated_source_ids) =
+                                    federated_source_selection(Some(id));
+                            },
+                        );
+                    });
+                }
+                menu
+            }
+        });
+        DropdownMenu::new(
+            "kask-federated-source-dropdown",
+            selected_source.map(|(id, name)| format!("{name} ({id})")).unwrap_or_else(|| "Curator memory only".to_string()),
+            menu,
+        )
+        .style(DropdownStyle::Outlined)
+        .full_width(true)
+        .into_any_element()
+    });
+
+    let cadence_input = kask_input_field(
+        "kask-memory-consolidation-cadence",
+        0,
+        cadence,
+        "300",
+        "Consolidation Cadence (seconds)",
+        |text| text.parse::<u64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .consolidation_cadence_secs = Some(parsed);
+        },
+    );
+
+    let confidence_input = kask_input_field(
+        "kask-memory-confidence-floor",
+        0,
+        confidence_floor,
+        "0.3",
+        "Consolidation Deletion Floor",
+        |text| {
+            text.parse::<f64>().ok().and_then(|parsed| {
+                // Memories are inserted at the 0.5 floor; consolidation
+                // deletes at-or-below this value. A floor at or above 0.5
+                // would delete every newly-inserted memory on the next
+                // pass — refuse it here. The deliberate policy, if ever
+                // wanted, is set via settings.json.
+                if refuses_above_insert_floor(parsed) {
+                    log::warn!(
+                        "Refusing confidence_floor {parsed}: consolidation deletes \
+                         at-or-below it, and memories insert at 0.5 — this value \
+                         would delete every new memory on the next pass. \
+                         Valid range: 0.0 (inclusive) to just under 0.5."
+                    );
+                    None
+                } else {
+                    Some(parsed)
+                }
+            })
+        },
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .confidence_floor = Some(parsed);
+        },
+    );
+
+    let memory_life_input = kask_input_field(
+        "kask-memory-life-days",
+        0,
+        memory_life_days,
+        "90",
+        "Memory Life (days)",
+        |text| text.parse::<f64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .memory_life_days = Some(parsed);
+        },
+    );
+
+    let forgetting_days_input = kask_input_field(
+        "kask-memory-forgetting-days",
+        0,
+        forgetting_days,
+        "7",
+        "Forgetting Horizon (days)",
+        |text| text.parse::<u64>().ok(),
+        move |parsed, settings| {
+            settings
+                .kask
+                .get_or_insert_default()
+                .memory
+                .get_or_insert_default()
+                .forgetting_days = Some(parsed);
+        },
+    );
+
+    v_flex()
+        .id("kask-memory-page")
+        .size_full()
+        .pt_2p5()
+        .px_8()
+        .pb_16()
+        .gap_4()
+        .overflow_y_scroll()
+        .track_scroll(scroll_handle)
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Memory"))
+                .child(
+                    Label::new(
+                        "Memory consolidation ingests completed threads into episodic \
+                         and semantic memory. Set the cadence to 0 to disable.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Consolidation Cadence (seconds)"))
+                .child(
+                    Label::new("Memory consolidation cadence in seconds (0 = disabled).")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(cadence_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Consolidation Deletion Floor"))
+                .child(
+                    Label::new(
+                        "Deletes memories at or below this STORED confidence on each \
+                         consolidation pass (0.0–1.0, default 0.3). Distinct from the recall \
+                         gate below, which compares DECAYED confidence and only filters \
+                         injection — this one permanently deletes. Values at or above 0.5 \
+                         (the insert floor) are refused: they would delete every new memory.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(confidence_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Memory Life (days)"))
+                .child(
+                    Label::new(
+                        "Memory life S in days (Wozniak-Gorzelanczyk forgetting curve \
+                         R(t) = exp(-t/S)). After S days without recall, confidence \
+                         decays to ≈36.8%; the half-life is S·ln(2). Recalling a \
+                         memory resets its decay clock. Overridden by the \
+                         HKASK_MEMORY_LIFE_DAYS env var.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(memory_life_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Forgetting Horizon (days)"))
+                .child(
+                    Label::new(
+                        "Hard-forgetting horizon: the curator's background pass deletes a \
+                         finished conversation's covered transcript turns once its \
+                         distillation watermark is older than this many days (0 = \
+                         disabled). Read via HKASK_MEMORY_FORGETTING_DAYS.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(forgetting_days_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Recall Limit"))
+                .child(
+                    Label::new(
+                        "Maximum number of memory snippets to retrieve for context injection.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(
+                    kask_input_field(
+                        "kask-memory-recall-limit",
+                        0,
+                        recall_limit,
+                        "5",
+                        "Recall Limit",
+                        |text| text.parse::<u32>().ok(),
+                        move |parsed, settings| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .memory
+                                .get_or_insert_default()
+                                .recall_limit = Some(parsed);
+                        },
+                    ),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Recall Injection Gate (Decayed Confidence)"))
+                .child(
+                    Label::new(
+                        "Minimum DECAYED confidence for a memory to be injected into \
+                         context (0.0–1.0, default 0.3). Memories are inserted at 0.5: a \
+                         gate above 0.5 hides every new memory until outcome calibration \
+                         lifts it above the gate — refused here; set that policy via \
+                         settings.json if deliberately wanted. With the defaults, a \
+                         memory fades from injection after ~92 days without use. This gate \
+                         filters injection only — it never deletes (the deletion floor \
+                         above does).",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(
+                    kask_input_field(
+                        "kask-memory-recall-min-confidence",
+                        0,
+                        recall_min_confidence,
+                        "0.3",
+                        "Recall Injection Gate (Decayed Confidence)",
+                        |text| {
+                            text.parse::<f64>().ok().and_then(|parsed| {
+                                // Memories insert at the 0.5 floor; the gate
+                                // compares decayed confidence. A gate at or
+                                // above 0.5 makes every newly-inserted
+                                // memory invisible until calibrated above it
+                                // — recall looks broken, silently. Refuse;
+                                // the deliberate calibrated-only policy is
+                                // set via settings.json.
+                                if refuses_above_insert_floor(parsed) {
+                                    log::warn!(
+                                        "Refusing recall_min_confidence {parsed}: memories \
+                                         insert at the 0.5 floor, so this gate would hide \
+                                         every new memory until outcome calibration lifts \
+                                         it above the gate. Valid range: 0.0 (inclusive) \
+                                         to just under 0.5."
+                                    );
+                                    None
+                                } else {
+                                    Some(parsed)
+                                }
+                            })
+                        },
+                        move |parsed, settings| {
+                            settings
+                                .kask
+                                .get_or_insert_default()
+                                .memory
+                                .get_or_insert_default()
+                                .recall_min_confidence = Some(parsed);
+                        },
+                    ),
+                ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            kask_toggle(
+                "kask-memory-auto-inject",
+                Some("Auto-Inject Memories"),
+                Some(
+                    "Automatically inject curator memories and any selected federated source into prompts.".into(),
+                ),
+                auto_inject,
+                0,
+                move |value, settings| {
+                    settings
+                        .kask
+                        .get_or_insert_default()
+                        .memory
+                        .get_or_insert_default()
+                        .auto_inject = Some(value);
+                },
+            ),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_2()
+                .child(SettingsSectionHeader::new(
+                    "Curator federated chat injection",
+                ))
+                .child(
+                    Label::new(
+                        "Changes to curator chat injection take effect after restarting Zed-Kask.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(
+                    Label::new(sources_message)
+                        .size(LabelSize::Small)
+                        .color(if sources_error {
+                            Color::Error
+                        } else {
+                            Color::Muted
+                        }),
+                )
+                .child(
+                    Label::new("Federated source (requires Auto-Inject Memories)")
+                        .size(LabelSize::Small),
+                )
+                .children(source_dropdown),
+        )
+        .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{federated_source_selection, refuses_above_insert_floor};
+
+    #[test]
+    fn dropdown_selection_sets_one_source_and_memory_only_disables_federation() {
+        assert_eq!(
+            federated_source_selection(Some("named-source".into())),
+            (Some(true), Some(vec!["named-source".into()]))
+        );
+        assert_eq!(
+            federated_source_selection(None),
+            (Some(false), Some(Vec::new()))
+        );
+    }
+
+    /// The 0.5 boundary is inclusive: memories insert AT 0.5, the deletion
+    /// floor deletes at-or-below, and the recall gate's decayed comparison
+    /// drops a 0.5-floor memory below a 0.5 gate as soon as any time
+    /// elapses — so 0.5 itself springs both traps and is refused.
+    #[test]
+    fn confidence_knobs_refuse_values_at_or_above_the_insert_floor() {
+        assert!(!refuses_above_insert_floor(0.0));
+        assert!(!refuses_above_insert_floor(0.3), "the default must pass");
+        assert!(!refuses_above_insert_floor(0.4999));
+        assert!(
+            refuses_above_insert_floor(0.5),
+            "0.5 is the insert floor — inclusive refusal"
+        );
+        assert!(refuses_above_insert_floor(0.7));
+        assert!(refuses_above_insert_floor(1.0));
+    }
+}

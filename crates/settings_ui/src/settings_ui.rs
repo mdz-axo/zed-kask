@@ -58,10 +58,7 @@ use crate::components::{
     SettingsSectionHeader, font_picker, icon_theme_picker, render_ollama_model_picker,
     text_field_a11y_state, theme_picker,
 };
-use crate::pages::{
-    CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
-    render_output_audio_device_dropdown,
-};
+use crate::pages::{CustomAgentForm, LlmProviderForm, McpServerForm};
 
 const NAVBAR_CONTAINER_TAB_INDEX: isize = 0;
 const NAVBAR_GROUP_TAB_INDEX: isize = 1;
@@ -458,10 +455,6 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &zed_actions::assistant::OpenSkillCreator, cx| {
         open_skill_creator(pages::SkillCreatorOpenMode::Form, None, cx);
     });
-    cx.on_action(|_: &zed_actions::assistant::CreateSkillFromUrl, cx| {
-        let initial_url = pages::skill_url_from_clipboard(cx);
-        open_skill_creator(pages::SkillCreatorOpenMode::Url { initial_url }, None, cx);
-    });
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace
@@ -505,17 +498,6 @@ pub fn init(cx: &mut App) {
                 |_, _: &zed_actions::assistant::OpenSkillCreator, window, cx| {
                     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                     open_skill_creator(pages::SkillCreatorOpenMode::Form, window_handle, cx);
-                },
-            )
-            .register_action(
-                |_, _: &zed_actions::assistant::CreateSkillFromUrl, window, cx| {
-                    let window_handle = window.window_handle().downcast::<MultiWorkspace>();
-                    let initial_url = pages::skill_url_from_clipboard(cx);
-                    open_skill_creator(
-                        pages::SkillCreatorOpenMode::Url { initial_url },
-                        window_handle,
-                        cx,
-                    );
                 },
             );
     })
@@ -677,8 +659,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentFoldingRanges>(render_dropdown)
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
-        .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
-        .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
         .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
@@ -964,6 +944,8 @@ pub struct SettingsWindow {
     opening_link: bool,
     search_bar: Entity<Editor>,
     search_task: Option<Task<()>>,
+    /// Stops listening to managed-server liveness when this settings window closes.
+    _kask_server_status_task: Task<()>,
     /// Cached settings file buffers to avoid repeated disk I/O on each settings change
     project_setting_file_buffers: HashMap<ProjectPath, Entity<Buffer>>,
     /// Index into navbar_entries
@@ -986,6 +968,7 @@ pub struct SettingsWindow {
     bottom_spacer_height: Pixels,
     shown_errors: HashSet<String>,
     pub(crate) hidden_deleted_skills: HashSet<crate::pages::DeletedSkill>,
+    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     pub(crate) sandbox_host_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
@@ -994,9 +977,6 @@ pub struct SettingsWindow {
         HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
     /// The provider whose configuration sub-page is currently open, if any.
     pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
-    /// Directory path of the skill whose share link was most recently copied,
-    /// used to show a transient "copied" checkmark on its share button.
-    pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
     /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
     pub(crate) llm_provider_form: Option<LlmProviderForm>,
     /// Stable focus handle for the LLM "Add Provider" button, so it can show a
@@ -1581,7 +1561,7 @@ fn render_settings_item_link(
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
                     this.on_click(cx.listener(move |this, _, _, cx| {
-                        let link = format!("zed://settings/{}", path);
+                        let link = format!("{}://settings/{}", client::ZED_URL_SCHEME, path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
                         this.last_copied_link_path = Some(path);
                         cx.notify();
@@ -1816,6 +1796,15 @@ impl SettingsWindow {
         })
         .detach();
 
+        let mut surface_changes = agent::subscribe_to_kask_tool_surface_changes();
+        let kask_server_status_task = cx.spawn(async move |this, cx| {
+            while surface_changes.changed().await.is_ok() {
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        });
+
         let mut ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
             this.fetch_files(window, cx);
@@ -2006,6 +1995,7 @@ impl SettingsWindow {
             navbar_scroll_handle: UniformListScrollHandle::default(),
             search_bar,
             search_task: None,
+            _kask_server_status_task: kask_server_status_task,
             filter_table: vec![],
             has_query: false,
             content_handles: vec![],
@@ -2030,6 +2020,7 @@ impl SettingsWindow {
             search_index: None,
             shown_errors: HashSet::default(),
             hidden_deleted_skills: HashSet::default(),
+            last_copied_skill_directory_path: None,
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             list_state,
@@ -2037,7 +2028,6 @@ impl SettingsWindow {
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
-            last_copied_skill_directory_path: None,
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -2661,10 +2651,6 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
-        // Navigating to another page dismisses the transient "copied share
-        // link" checkmark shown on a Skills page row.
-        self.last_copied_skill_directory_path = None;
-
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }
@@ -2789,8 +2775,6 @@ impl SettingsWindow {
         if let SettingsUiFile::Project((_, _)) = &self.current_file {
             telemetry::event!("Setting Project Clicked");
         }
-
-        self.last_copied_skill_directory_path = None;
 
         let sub_page_stack = std::mem::take(&mut self.sub_page_stack);
         self.build_ui(window, cx);
@@ -4453,14 +4437,11 @@ impl SettingsWindow {
 
         self.push_sub_page(sub_page_link, "Agent".into(), window, cx);
 
-        let creating_from_url = !matches!(open_mode, pages::SkillCreatorOpenMode::Url { .. });
         page.update(cx, |page, cx| {
             page.apply_open_mode(open_mode, window, cx);
         });
-        if creating_from_url {
-            let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
-            window.focus(&name_editor_focus_handle, cx);
-        }
+        let name_editor_focus_handle = page.read(cx).name_editor_focus_handle(cx);
+        window.focus(&name_editor_focus_handle, cx);
     }
 
     pub fn navigate_to_skill_creator(
@@ -4565,10 +4546,10 @@ impl SettingsWindow {
     pub(crate) fn pop_sub_page(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
         self.regex_validation_error = None;
         self.sandbox_host_validation_error = None;
-        if let Some(popped) = self.sub_page_stack.pop()
-            && popped.link.r#type == SubPageType::SkillCreator
-        {
-            self.skill_creator_page = None;
+        if let Some(popped) = self.sub_page_stack.pop() {
+            if popped.link.r#type == SubPageType::SkillCreator {
+                self.skill_creator_page = None;
+            }
         }
         self.retry_llm_provider_authentication(cx);
         self.content_focus_handle.focus_handle(cx).focus(window, cx);
@@ -5483,6 +5464,7 @@ pub mod test {
                 has_query: false,
                 content_handles: Vec::default(),
                 search_task: None,
+                _kask_server_status_task: Task::ready(()),
                 sub_page_stack: Vec::default(),
                 opening_link: false,
                 focus_handle: cx.focus_handle(),
@@ -5504,12 +5486,12 @@ pub mod test {
                 bottom_spacer_height: px(0.),
                 shown_errors: HashSet::default(),
                 hidden_deleted_skills: HashSet::default(),
+                last_copied_skill_directory_path: None,
                 regex_validation_error: None,
                 sandbox_host_validation_error: None,
                 last_copied_link_path: None,
                 provider_configuration_views: HashMap::default(),
                 configuring_provider: None,
-                last_copied_skill_directory_path: None,
                 llm_provider_form: None,
                 llm_provider_add_focus_handle: cx.focus_handle(),
                 mcp_server_form: None,
@@ -5625,6 +5607,7 @@ pub mod test {
             has_query: false,
             content_handles: vec![],
             search_task: None,
+            _kask_server_status_task: Task::ready(()),
             focus_handle: cx.focus_handle(),
             navbar_focus_handle: NonFocusableHandle::new(
                 NAVBAR_CONTAINER_TAB_INDEX,
@@ -5644,12 +5627,12 @@ pub mod test {
             bottom_spacer_height: px(0.),
             shown_errors: HashSet::default(),
             hidden_deleted_skills: HashSet::default(),
+            last_copied_skill_directory_path: None,
             regex_validation_error: None,
             sandbox_host_validation_error: None,
             last_copied_link_path: None,
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
-            last_copied_skill_directory_path: None,
             llm_provider_form: None,
             llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
@@ -7053,15 +7036,14 @@ pub mod test {
         assert_eq!(project_skills.len(), 1);
 
         cx.update(|cx| {
-            cx.set_global(SkillIndex {
+            cx.set_global(SkillIndex::from_agent(
                 global_skills,
-                remote_global_skills: Default::default(),
-                project_skills: vec![ProjectSkillGroup {
+                vec![ProjectSkillGroup {
                     worktree_id: SkillScopeId(worktree_id.to_usize()),
                     worktree_root_name: "project".into(),
                     skills: project_skills,
                 }],
-            });
+            ));
         });
 
         let (_multi_workspace, cx) = cx.add_window_view(|window, cx| {
@@ -7212,7 +7194,9 @@ pub mod test {
             directory_path,
             load_warnings: Vec::new(),
             disable_model_invocation: false,
-            embedded_body: None,
+            dependencies: Vec::new(),
+            core: false,
+            audience: None,
         }
     }
 
@@ -7231,13 +7215,11 @@ pub mod test {
             .read_with(cx, |settings_window, cx| settings_window.active_project(cx))
             .expect("settings should have the original window's project");
         cx.update(|_window, cx| {
-            cx.set_global(SkillIndex {
-                global_skills: vec![local_skill],
-                remote_global_skills: [(project.entity_id(), vec![remote_skill])]
-                    .into_iter()
-                    .collect(),
-                project_skills: Vec::new(),
-            });
+            let mut index = SkillIndex::from_agent(vec![local_skill], Vec::new());
+            index.remote_global_skills = [(project.entity_id(), vec![remote_skill])]
+                .into_iter()
+                .collect();
+            cx.set_global(index);
         });
 
         settings_window.read_with(cx, |settings_window, cx| {
@@ -7446,13 +7428,11 @@ pub mod test {
 
         // An index update can arrive before the remote finishes deleting the skill.
         cx.update(|_window, cx| {
-            cx.set_global(SkillIndex {
-                global_skills: vec![skill.clone()],
-                remote_global_skills: [(project.entity_id(), vec![skill.clone()])]
-                    .into_iter()
-                    .collect(),
-                project_skills: Vec::new(),
-            });
+            let mut index = SkillIndex::from_agent(vec![skill.clone()], Vec::new());
+            index.remote_global_skills = [(project.entity_id(), vec![skill.clone()])]
+                .into_iter()
+                .collect();
+            cx.set_global(index);
         });
         cx.run_until_parked();
         settings_window.read_with(cx, |settings_window, cx| {
@@ -7471,11 +7451,7 @@ pub mod test {
 
         // Once the remote no longer lists it, the local copy doesn't keep it hidden.
         cx.update(|_window, cx| {
-            cx.set_global(SkillIndex {
-                global_skills: vec![skill.clone()],
-                remote_global_skills: Default::default(),
-                project_skills: Vec::new(),
-            });
+            cx.set_global(SkillIndex::from_agent(vec![skill.clone()], Vec::new()));
         });
         cx.run_until_parked();
         settings_window.read_with(cx, |settings_window, _| {
