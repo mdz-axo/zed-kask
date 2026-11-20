@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8478239d499d41f2b7e0106415487d673c8e267e8a39cdb9495569b4c74e133c # shrinks to tool_calls = [Object {"tool": String("b"), "ok": Bool(true)}, Object {"tool": String("b"), "ok": Bool(false)}]

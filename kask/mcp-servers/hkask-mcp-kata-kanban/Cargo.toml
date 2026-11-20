@@ -1,0 +1,61 @@
+[package]
+name = "hkask-mcp-kata-kanban"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Kata-Kanban workflow coordination MCP server"
+
+[dependencies]
+hkask-kata-kanban.workspace = true
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-storage.workspace = true
+# Folded from hkask-services-kata-kanban
+hkask-inference.workspace = true
+# PKO execution-status mapping for task status transitions (the shared
+# vocabulary bridge — kanban_status_to_pko_execution).
+hkask-bridge-ontology.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+schemars.workspace = true
+
+[lib]
+name = "hkask_mcp_kata_kanban"
+path = "src/hkask_mcp_kata_kanban.rs"
+
+[[bin]]
+name = "hkask-mcp-kata-kanban"
+path = "src/main.rs"
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+# idempotent_creates.rs drives the real tool surface end-to-end (replay
+# protection through kanban_task_create/board_create/task_spawn).
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# The concurrent task-write race pin (service_impl/tests.rs) runs against a
+# file-backed WAL pool — real multi-connection semantics the max_size(1)
+# in-memory driver cannot produce.
+tempfile.workspace = true
+# The one-time obsolete-goal reset (tests/obsolete_goal_reset.rs) resolves the
+# production DB passphrase through the canonical env → keychain chain.
+hkask-keystore.workspace = true
+# Self dev-dependency: enables `test-fixture` for this crate's own test
+# targets (unit + integration). The `test_support` module is test-only code
+# and must not ship in production builds.
+hkask-mcp-kata-kanban = { path = ".", features = ["test-fixture"] }
+
+[features]
+# Test-only fixtures (test_support.rs) are gated to this feature so a
+# production build of the server crate does not ship them.
+test-fixture = []
+
+[lints]
+workspace = true
