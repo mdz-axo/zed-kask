@@ -2516,6 +2516,37 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         ],
         authority: "operator ruling 2026-11-20 (Nostr/Blossom/Wallet protocol audit); CSO 3.5 (cso:requirements_analysis, cso:conformance_testing); DPV 2.3 (dpv:Audit)",
     },
+    DerivedConcept {
+        term: "software_testing",
+        aliases: &[
+            "software test",
+            "automated testing",
+            "automated software testing",
+        ],
+        identity: "dynamic evaluation of software behavior by executing it against specified oracles to detect defects, verify conformance, and guard against regressions",
+        definition: "Dynamic software evaluation composed over CSO 3.5's published testing and verification topics (cso:testing_and_debugging, cso:regression_testing, cso:system_testing, cso:conformance_testing, cso:software_verification) and aligned with ISO/IEC/IEEE 29119-1 (cite-only): executing a system or component under controlled inputs and checking observed outputs against a test oracle to reveal failures and verify contract conformance. CSO 3.5 publishes no literal software_testing topic (grepped 2026-11-20), so this derived entry bridges the gap honestly over published CSO constituents. The nameable violation is claiming a passing test proves absence of defects or claiming validation without running the oracle.",
+        constituents: &[
+            "testing and debugging",
+            "regression testing",
+            "system testing",
+            "conformance testing",
+            "software verification",
+        ],
+        authority: "operator ruling 2026-11-20 (MCP research server troubleshooting session); CSO 3.5 (cso:testing_and_debugging, cso:regression_testing, cso:system_testing, cso:conformance_testing, cso:software_verification); ISO/IEC/IEEE 29119-1 (cite-only)",
+    },
+    DerivedConcept {
+        term: "unit_testing",
+        aliases: &["unit test", "unit tests"],
+        identity: "automated software testing scoped to an individual module, function, or component boundary with external collaborators isolated via deterministic test doubles",
+        definition: "Component-scoped dynamic testing composed over software_testing, CSO 3.5's cso:regression_testing and cso:conformance_testing, and test_harness (grounded in Meszaros, xUnit Test Patterns, 2007, and ISO/IEC/IEEE 29119-1 cite-only): verifies a single unit's contract deterministically without live network or ambient state. CSO 3.5 publishes no literal unit_testing topic (grepped 2026-11-20), so this derived entry records the composition explicitly. The nameable violation is mocking internal domain logic so the test only proves its own stub.",
+        constituents: &[
+            "software_testing",
+            "regression testing",
+            "conformance testing",
+            "test_harness",
+        ],
+        authority: "operator ruling 2026-11-20 (MCP research server troubleshooting session); CSO 3.5 (cso:regression_testing, cso:conformance_testing); Meszaros, xUnit Test Patterns (2007); ISO/IEC/IEEE 29119-1 (cite-only)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2566,6 +2597,22 @@ mod tests {
             ("protocol spec", "protocol_specification"),
             ("gap analysis", "gap_analysis"),
             ("conformance gap analysis", "gap_analysis"),
+        ] {
+            let concept = resolve_derived(query)
+                .unwrap_or_else(|| panic!("{query} must resolve in derived registry"));
+            assert_eq!(concept.term, expected_term);
+            assert!(concept.authority.contains("2026-11-20"));
+            assert!(!concept.constituents.is_empty());
+        }
+    }
+
+    #[test]
+    fn software_testing_derived_concepts_resolve_with_ruling_authority() {
+        for (query, expected_term) in [
+            ("software testing", "software_testing"),
+            ("automated testing", "software_testing"),
+            ("unit testing", "unit_testing"),
+            ("unit test", "unit_testing"),
         ] {
             let concept = resolve_derived(query)
                 .unwrap_or_else(|| panic!("{query} must resolve in derived registry"));
