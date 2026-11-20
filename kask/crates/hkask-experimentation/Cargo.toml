@@ -1,0 +1,27 @@
+[package]
+name = "hkask-experimentation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Experiment registry domain store and types for the sharded experimentation program (repair plan §P8)"
+
+[lib]
+name = "hkask_experimentation"
+path = "src/hkask_experimentation.rs"
+
+[dependencies]
+hkask-storage.workspace = true
+hkask-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
