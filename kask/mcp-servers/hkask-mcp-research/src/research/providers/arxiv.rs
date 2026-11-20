@@ -99,6 +99,12 @@ const ARXIV_MIN_REQUEST_INTERVAL_SECS: u64 = 3;
 /// fast as the pool-wide 20s (observed 2026-11-01: arXiv stalls dominated
 /// fusion latency, three of eight calls completing at exactly 20s).
 const ARXIV_COMPOUND_TIMEOUT_SECS: u64 = 10;
+
+/// Maximum time a queued arXiv request may wait in the outbound pacer before
+/// being refused as `RateLimited`. Reserved below `ARXIV_COMPOUND_TIMEOUT_SECS`
+/// so an accepted request still has at least 4s for the HTTP round-trip
+/// instead of burning its entire compound budget in the queue.
+const ARXIV_MAX_PACER_WAIT_SECS: u64 = 6;
 #[async_trait]
 impl WebSearchProvider for ArxivProvider {
     fn kind(&self) -> &str {
@@ -118,7 +124,7 @@ impl WebSearchProvider for ArxivProvider {
         // refused honestly (RateLimited, request not sent) instead of
         // surfacing as an opaque timeout after burning the whole budget.
         self.pacer
-            .wait_turn(Duration::from_secs(ARXIV_COMPOUND_TIMEOUT_SECS))
+            .wait_turn(Duration::from_secs(ARXIV_MAX_PACER_WAIT_SECS))
             .await?;
 
         let params: Vec<(&str, String)> = vec![
@@ -163,9 +169,12 @@ impl WebSearchProvider for ArxivProvider {
     }
 
     async fn health(&self) -> Result<(), WebError> {
+        self.pacer
+            .wait_turn(Duration::from_secs(ARXIV_MAX_PACER_WAIT_SECS))
+            .await?;
         let resp = self
             .client
-            .get(ARXIV_API_BASE)
+            .get(&self.endpoint)
             .query(&[("search_query", "all:test"), ("max_results", "1")])
             .send()
             .await
@@ -204,7 +213,7 @@ fn parse_arxiv_atom(xml: &str) -> Vec<SearchResult> {
         let published = extract_tag(entry, "published");
 
         // Extract authors from <author><name>...</name></author> blocks
-        let authors: Vec<String> = entry_str
+        let authors: Vec<String> = entry
             .split("<author>")
             .skip(1)
             .filter_map(|auth_block| {
@@ -235,11 +244,8 @@ fn parse_arxiv_atom(xml: &str) -> Vec<SearchResult> {
             Some(link_tag[start..start + end].to_string())
         });
 
-        let url = if !pdf_url.as_ref().is_none_or(|u| u.is_empty()) {
-            pdf_url.unwrap_or(arxiv_url)
-        } else {
-            arxiv_url
-        };
+        let oa_pdf_url = pdf_url.filter(|u| !u.is_empty());
+        let url = oa_pdf_url.clone().unwrap_or(arxiv_url);
 
         if title.is_empty() {
             continue;
@@ -280,23 +286,39 @@ fn parse_arxiv_atom(xml: &str) -> Vec<SearchResult> {
             } else {
                 Some(published.split('T').next().unwrap_or("").to_string())
             },
-            oa_pdf_url: None,
+            oa_pdf_url,
         });
     }
 
     results
 }
 
-/// Extract text content between XML tags like <title>...</title>.
-/// Strips leading/trailing whitespace, normalizes newlines, and decodes
-/// common XML entities (&amp;, &lt;, &gt;, &quot;, &apos;).
+/// Extract text content between XML tags like `<title>...</title>` or
+/// `<title type="html">...</title>`. Strips leading/trailing whitespace,
+/// normalizes newlines, and decodes common XML entities.
 fn extract_tag(xml: &str, tag: &str) -> String {
-    let open = format!("<{tag}>");
+    let prefix = format!("<{tag}");
     let close = format!("</{tag}>");
 
-    let start = match xml.find(&open) {
-        Some(pos) => pos + open.len(),
-        None => return String::new(),
+    let mut search_from = 0;
+    let start = loop {
+        let Some(rel) = xml[search_from..].find(&prefix) else {
+            return String::new();
+        };
+        let after_name = search_from + rel + prefix.len();
+        let Some(next_byte) = xml.as_bytes().get(after_name) else {
+            return String::new();
+        };
+        if *next_byte == b'>' {
+            break after_name + 1;
+        }
+        if next_byte.is_ascii_whitespace() {
+            let Some(gt_rel) = xml[after_name..].find('>') else {
+                return String::new();
+            };
+            break after_name + gt_rel + 1;
+        }
+        search_from = after_name;
     };
     let end = match xml[start..].find(&close) {
         Some(pos) => start + pos,
@@ -309,12 +331,14 @@ fn extract_tag(xml: &str, tag: &str) -> String {
 }
 
 /// Decode common XML character entities into their literal characters.
+/// `&amp;` MUST be decoded last so doubly-escaped sequences like `&amp;lt;`
+/// become `&lt;` rather than `<`.
 fn decode_xml_entities(s: &str) -> String {
-    s.replace("&amp;", "&")
-        .replace("&lt;", "<")
+    s.replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
@@ -406,6 +430,10 @@ mod tests {
             "MMMORRF: Multimodal Multilingual Modularized Reciprocal Rank Fusion"
         );
         assert_eq!(output.results[0].url, "http://arxiv.org/pdf/2501.00001v1");
+        assert_eq!(
+            output.results[0].oa_pdf_url.as_deref(),
+            Some("http://arxiv.org/pdf/2501.00001v1")
+        );
         assert_eq!(output.results[0].published.as_deref(), Some("2025-01-01"));
 
         let sent = requests.lock().expect("requests").clone();
@@ -424,5 +452,59 @@ mod tests {
                 ("sortBy".to_string(), "relevance".to_string()),
             ]
         );
+    }
+
+    /// expect: Atom tags carrying XML attributes (e.g. `type="html"`) still
+    /// extract cleanly, doubly-escaped entities like `&amp;lt;` are not
+    /// double-unescaped, and author parsing stays inside `</entry>`.
+    #[test]
+    fn parse_arxiv_atom_handles_tag_attributes_and_entity_order() {
+        let atom = r#"<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>https://arxiv.org/abs/2501.00002v1</id>
+    <published>2025-02-03T12:00:00Z</published>
+    <title type="html">Escaped &amp;lt;tag&amp;gt; &amp; &quot;Quotes&quot;</title>
+    <summary type="text">A &lt; B &amp;amp; C</summary>
+    <author><name>Jane Doe</name></author>
+    <link title="pdf" href="https://arxiv.org/pdf/2501.00002v1" rel="related"/>
+  </entry>
+  <author><name>Trailing Feed Author</name></author>
+</feed>"#;
+        let results = parse_arxiv_atom(atom);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, r#"Escaped &lt;tag&gt; & "Quotes""#);
+        assert_eq!(
+            results[0].oa_pdf_url.as_deref(),
+            Some("https://arxiv.org/pdf/2501.00002v1")
+        );
+        let desc = results[0].description.as_deref().unwrap_or("");
+        assert!(desc.contains("Jane Doe"), "{desc}");
+        assert!(!desc.contains("Trailing Feed Author"), "{desc}");
+        assert!(desc.contains("A < B &amp; C"), "{desc}");
+    }
+
+    /// expect: health() hits `self.endpoint` (not a hardcoded URL) and treats
+    /// 200 and 503 as healthy while failing on 500.
+    #[tokio::test]
+    async fn health_uses_configured_endpoint_and_maps_status() {
+        let ok_resp =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_vec();
+        let (base_ok, _) = crate::test_support::http_fixture_capturing_requests(ok_resp).await;
+        let mut provider = ArxivProvider::new().expect("provider");
+        provider.endpoint = format!("{base_ok}/api/query");
+        provider.health().await.expect("200 is healthy");
+
+        let err_resp =
+            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 3\r\nConnection: close\r\n\r\nerr"
+                .to_vec();
+        let (base_err, _) = crate::test_support::http_fixture_capturing_requests(err_resp).await;
+        let mut provider_err = ArxivProvider::new().expect("provider");
+        provider_err.endpoint = format!("{base_err}/api/query");
+        let err = provider_err
+            .health()
+            .await
+            .expect_err("500 must fail health");
+        assert!(matches!(err, WebError::ProviderUnavailable(_)));
     }
 }

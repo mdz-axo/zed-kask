@@ -198,48 +198,49 @@ pub(crate) fn url_looks_like_pdf(url: &str) -> bool {
 /// The pacer serializes request initiations at the provider's own floor.
 pub(crate) struct ProviderPacer {
     min_interval: Duration,
-    last: tokio::sync::Mutex<Option<std::time::Instant>>,
+    next_slot: tokio::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl ProviderPacer {
     pub(crate) fn new(min_interval: Duration) -> Self {
         Self {
             min_interval,
-            last: tokio::sync::Mutex::new(None),
+            next_slot: tokio::sync::Mutex::new(None),
         }
     }
 
-    /// Wait for this request's turn. Concurrent callers queue on the lock;
-    /// the wait is computed against the previous request's actual
-    /// initiation, so a burst spaces out at exactly one request per
-    /// `min_interval`. `max_wait` bounds the queue wait: when the required
-    /// wait exceeds it the request is refused with `RateLimited` naming the
-    /// backlog — an honest refusal to violate the provider's limit (the
-    /// request is NOT sent) rather than sleeping past the caller's whole
-    /// budget and surfacing as an opaque timeout.
+    /// Wait for this request's turn. Concurrent callers reserve future
+    /// initiation slots under a brief lock and sleep outside the lock, so a
+    /// burst sees the true cumulative queue depth rather than hiding behind
+    /// earlier callers' sleeps. `max_wait` bounds the queue wait: when the
+    /// required wait exceeds it the request is refused immediately with
+    /// `RateLimited` (without advancing the queue) rather than sleeping past
+    /// the caller's whole budget and surfacing as an opaque timeout.
     pub(crate) async fn wait_turn(&self, max_wait: Duration) -> Result<(), WebError> {
-        let mut last = self.last.lock().await;
-        let now = std::time::Instant::now();
-        if let Some(prev) = *last {
-            // checked_add: an Instant + Duration overflow would panic; the
-            // saturating fallback only skips the wait, which is safe.
-            let earliest = prev.checked_add(self.min_interval).unwrap_or(now);
-            if earliest > now {
-                let wait = earliest - now;
-                if wait > max_wait {
-                    return Err(WebError::RateLimited(format!(
-                        "outbound pacer: this request would wait {}s behind \
-                         queued requests honoring the provider's {}s minimum \
-                         interval — beyond the {}s budget; request not sent",
-                        wait.as_secs().max(1),
-                        self.min_interval.as_secs(),
-                        max_wait.as_secs(),
-                    )));
-                }
-                tokio::time::sleep(wait).await;
+        let wait = {
+            let mut next_slot = self.next_slot.lock().await;
+            let now = std::time::Instant::now();
+            let slot = match *next_slot {
+                Some(scheduled) if scheduled > now => scheduled,
+                _ => now,
+            };
+            let wait = slot.saturating_duration_since(now);
+            if wait > max_wait {
+                return Err(WebError::RateLimited(format!(
+                    "outbound pacer: this request would wait {}s behind \
+                     queued requests honoring the provider's {}s minimum \
+                     interval — beyond the {}s budget; request not sent",
+                    wait.as_secs().max(1),
+                    self.min_interval.as_secs(),
+                    max_wait.as_secs(),
+                )));
             }
+            *next_slot = Some(slot.checked_add(self.min_interval).unwrap_or(slot));
+            wait
+        };
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
         }
-        *last = Some(std::time::Instant::now());
         Ok(())
     }
 }
@@ -741,27 +742,23 @@ impl ProviderPool {
                     let kind = p.kind().to_string();
                     let timeout_secs = p.compound_timeout_secs();
                     let start = std::time::Instant::now();
-                    let result = match tokio::time::timeout(
+                    let (timed_out, result) = match tokio::time::timeout(
                         Duration::from_secs(timeout_secs),
                         p.search(query),
                     )
                     .await
                     {
-                        Ok(result) => result,
-                        Err(_) => {
-                            tracing::warn!(
-                                provider = %kind,
-                                timeout_secs,
-                                "Compound search provider timed out"
-                            );
+                        Ok(result) => (false, result),
+                        Err(_) => (
+                            true,
                             Err(WebError::ProviderUnavailable(format!(
                                 "Provider timed out after {timeout_secs}s"
-                            )))
-                        }
+                            ))),
+                        ),
                     };
                     let latency_ms = start.elapsed().as_millis() as u64;
                     record_provider_span(performance, breakers, &kind, latency_ms, &result);
-                    (kind, result)
+                    (kind, timeout_secs, timed_out, result)
                 }
             })
             .collect();
@@ -776,7 +773,7 @@ impl ProviderPool {
         let mut merged_content_previews: HashMap<String, String> = HashMap::new();
         let mut merged_semantic_scores: HashMap<String, f64> = HashMap::new();
 
-        for (kind, result) in results {
+        for (kind, timeout_secs, timed_out, result) in results {
             match result {
                 Ok(output) => {
                     for (rank, item) in output.results.into_iter().enumerate() {
@@ -791,7 +788,20 @@ impl ProviderPool {
                     succeeded.push(kind);
                 }
                 Err(e) => {
-                    tracing::warn!(provider = %kind, error = %e, "Compound search provider failed");
+                    if timed_out {
+                        tracing::warn!(
+                            provider = %kind,
+                            timeout_secs,
+                            error = %e,
+                            "Compound search provider timed out"
+                        );
+                    } else {
+                        tracing::warn!(
+                            provider = %kind,
+                            error = %e,
+                            "Compound search provider failed"
+                        );
+                    }
                     failed.push(ProviderFailureRecord {
                         kind: kind.clone(),
                         error: e.to_string(),
@@ -933,11 +943,19 @@ impl ProviderPool {
         // inner gate before any provider fetches the URL.
         validate_provider_url(url).await?;
         let mut failures: Vec<(String, WebError)> = Vec::new();
-        for provider in extract_chain_order(&self.extract_providers, url) {
+        let chain = extract_chain_order(&self.extract_providers, url);
+        let chain_len = chain.len();
+        for (idx, provider) in chain.into_iter().enumerate() {
             match provider.extract(url, opts).await {
                 Ok(extracted) => return Ok(extracted),
                 Err(error) => {
-                    tracing::warn!(provider = provider.kind(), error = %error);
+                    let remaining_fallbacks = chain_len.saturating_sub(idx + 1);
+                    tracing::warn!(
+                        provider = provider.kind(),
+                        remaining_fallbacks,
+                        error = %error,
+                        "Extract provider failed"
+                    );
                     failures.push((provider.kind().to_string(), error));
                 }
             }
@@ -1579,6 +1597,45 @@ mod tests {
             start.elapsed() < Duration::from_secs(2),
             "the refusal must be fast"
         );
+    }
+
+    /// expect: "Under a concurrent burst where min_interval <= max_wait (the
+    /// real arXiv 3s/6s and Semantic Scholar 1s/20s regime), callers whose
+    /// cumulative queue wait exceeds max_wait are refused immediately with
+    /// RateLimited instead of blocking on the lock and burning the timeout."
+    #[tokio::test]
+    async fn pacer_refuses_concurrent_burst_beyond_cumulative_budget() {
+        let pacer = std::sync::Arc::new(ProviderPacer::new(Duration::from_millis(60)));
+        let max_wait = Duration::from_millis(130); // allows 0ms, 60ms, 120ms; refuses 180ms
+
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let p = std::sync::Arc::clone(&pacer);
+            handles.push(tokio::spawn(async move {
+                let started = std::time::Instant::now();
+                let res = p.wait_turn(max_wait).await;
+                (res, started.elapsed())
+            }));
+        }
+
+        let mut ok_count = 0usize;
+        let mut rejected_fast = 0usize;
+        for h in handles {
+            let (res, elapsed) = h.await.expect("task");
+            match res {
+                Ok(()) => ok_count += 1,
+                Err(WebError::RateLimited(_)) => {
+                    assert!(
+                        elapsed < Duration::from_millis(40),
+                        "refused burst caller should not sleep first: {elapsed:?}"
+                    );
+                    rejected_fast += 1;
+                }
+                Err(other) => panic!("unexpected error: {other}"),
+            }
+        }
+        assert_eq!(ok_count, 3, "three callers fit within 130ms budget");
+        assert_eq!(rejected_fast, 1, "fourth caller must be refused fast");
     }
 
     /// expect: "arXiv fails faster than the pool-wide flat budget — its
@@ -2303,6 +2360,85 @@ mod tests {
         assert!(
             degraded.iter().all(|r| r.live_stats_degraded),
             "a poisoned channel must set live_stats_degraded on every recommendation"
+        );
+    }
+
+    /// expect: "A timed-out compound search provider emits exactly ONE WARN
+    /// event (carrying timeout_secs and error) rather than two duplicate WARN
+    /// lines for the same failure."
+    #[tokio::test]
+    async fn compound_search_timeout_emits_single_warn() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tracing::instrument::WithSubscriber;
+
+        struct WarnCounter(std::sync::Arc<AtomicUsize>);
+        impl tracing::Subscriber for WarnCounter {
+            fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+                *metadata.level() <= tracing::Level::WARN
+            }
+            fn new_span(&self, _span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _span: &tracing::span::Id, _values: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _span: &tracing::span::Id, _follows: &tracing::span::Id) {
+            }
+            fn event(&self, event: &tracing::Event<'_>) {
+                if *event.metadata().level() == tracing::Level::WARN {
+                    self.0.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+            fn enter(&self, _span: &tracing::span::Id) {}
+            fn exit(&self, _span: &tracing::span::Id) {}
+        }
+
+        struct SlowStub;
+        #[async_trait]
+        impl WebSearchProvider for SlowStub {
+            fn kind(&self) -> &str {
+                "slow_stub"
+            }
+            fn capabilities(&self) -> Vec<SearchCapability> {
+                vec![SearchCapability::Keyword]
+            }
+            fn compound_timeout_secs(&self) -> u64 {
+                1
+            }
+            async fn search(&self, _query: &SearchQuery) -> Result<ProviderSearchOutput, WebError> {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(ProviderSearchOutput::default())
+            }
+            async fn health(&self) -> Result<(), WebError> {
+                Ok(())
+            }
+        }
+
+        let warns = std::sync::Arc::new(AtomicUsize::new(0));
+        let pool = ProviderPool::new(vec![Box::new(SlowStub)], vec![], None, None, None);
+        let query = SearchQuery {
+            query: "test".to_string(),
+            num_results: 2,
+            include_domains: Vec::new(),
+            exclude_domains: Vec::new(),
+            freshness: None,
+            intent: None,
+        };
+        let resp = pool
+            .search_compound(&query, SearchStrategy::Web)
+            .with_subscriber(WarnCounter(std::sync::Arc::clone(&warns)))
+            .await;
+
+        assert_eq!(resp.providers_failed.len(), 1);
+        assert!(
+            resp.providers_failed[0]
+                .error
+                .contains("timed out after 1s"),
+            "{:?}",
+            resp.providers_failed
+        );
+        assert_eq!(
+            warns.load(Ordering::SeqCst),
+            1,
+            "a timed-out compound provider must emit exactly one WARN, not two"
         );
     }
 

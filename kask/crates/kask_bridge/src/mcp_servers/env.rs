@@ -67,6 +67,26 @@ static WARNED_MISSING_CREDENTIALS: std::sync::OnceLock<
 /// `inference_socket` and `inference_timeout_secs` are parameters, not global
 /// reads, so this function is unit-testable without touching
 /// `INFERENCE_SOCKET_PATH`. The timeout publishes the server's
+/// Deterministic P12 host identity for non-curator, non-kanban built-in MCP
+/// servers. `curator` receives its provisioned `HKASK_CURATOR_WEBID` via
+/// `mcp_env()`, and `kata-kanban` is intentionally excluded (D58: `GoalHost`
+/// shares `WebID::anonymous()` with managed kanban).
+pub(crate) fn default_server_webid(server_id: &str) -> Option<hkask_types::WebID> {
+    if server_id == "curator" || server_id == "kata-kanban" {
+        return None;
+    }
+    if super::catalog::BUILT_IN_MCP_SERVERS
+        .iter()
+        .any(|server| server.id == server_id)
+    {
+        Some(hkask_types::WebID::for_agent_name(&format!(
+            "mcp:{server_id}"
+        )))
+    } else {
+        None
+    }
+}
+
 /// `stream_completion` establishment deadline to child-process IPC clients so
 /// they can align their read deadline; see
 /// `hkask_types::inference_ipc::INFERENCE_TIMEOUT_ENV`.
@@ -82,6 +102,11 @@ pub async fn build_mcp_server_env_with_sweep(
     // 1. Config env: build, then filter per-server. `mcp_env()` is the full
     //    unfiltered map; the allowlist is what keeps unrelated config out.
     let mut env = filter_config_env_for_server(server_id, &settings.mcp_env());
+    if !env.contains_key("HKASK_WEBID")
+        && let Some(webid) = default_server_webid(server_id)
+    {
+        env.insert("HKASK_WEBID".to_string(), webid.to_string());
+    }
     let catalog = match crate::database_inventory_path() {
         Ok(path) => path.to_string_lossy().into_owned(),
         Err(error) => {

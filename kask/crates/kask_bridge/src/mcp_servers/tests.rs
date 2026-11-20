@@ -23,6 +23,56 @@ fn experimentation_registration_entry_is_pinned() {
     assert_eq!(server.config_env, expected_config);
 }
 
+/// P12 attribution: every built-in MCP server except `curator` (which uses
+/// `HKASK_CURATOR_WEBID` via `mcp_env()`) and `kata-kanban` (which shares
+/// `WebID::anonymous()` with `GoalHost`, pinned by D58) gets a distinct,
+/// deterministic, non-anonymous `WebID` that round-trips through `FromStr`.
+#[test]
+fn non_curator_non_kanban_servers_receive_distinct_deterministic_webids() {
+    use std::collections::HashSet;
+    use std::str::FromStr;
+
+    assert!(
+        default_server_webid("curator").is_none(),
+        "curator identity comes from HKASK_CURATOR_WEBID, not default_server_webid"
+    );
+    assert!(
+        default_server_webid("kata-kanban").is_none(),
+        "kata-kanban must stay excluded from HKASK_WEBID (D58)"
+    );
+    assert!(
+        default_server_webid("unknown-server").is_none(),
+        "unregistered server ids must not synthesize a WebID"
+    );
+
+    let mut seen = HashSet::new();
+    for server in BUILT_IN_MCP_SERVERS {
+        if server.id == "curator" || server.id == "kata-kanban" {
+            continue;
+        }
+        let webid = default_server_webid(server.id)
+            .unwrap_or_else(|| panic!("expected deterministic WebID for {}", server.id));
+        assert_ne!(
+            webid,
+            hkask_types::WebID::anonymous(),
+            "{} must not resolve to anonymous",
+            server.id
+        );
+        let parsed = hkask_types::WebID::from_str(&webid.to_string())
+            .expect("serialized WebID must parse back cleanly");
+        assert_eq!(parsed, webid);
+        assert!(
+            seen.insert(webid),
+            "server {} collided with another server's WebID",
+            server.id
+        );
+    }
+    assert!(
+        seen.len() >= 10,
+        "expected distinct WebIDs for all non-curator, non-kanban built-in servers"
+    );
+}
+
 /// The relay holds no secret: a credential added to its entry is a
 /// design change (the relay would then hold a key or a passphrase) and
 /// must fail here first. Its config allowlist is pinned to the three
