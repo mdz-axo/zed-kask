@@ -1,0 +1,499 @@
+//! SqliteDriver — rusqlite-backed DatabaseDriver implementation.
+//!
+//! Uses `r2d2` connection pooling with WAL mode for concurrent read access.
+//! SQLCipher encryption is handled at the connection level (PRAGMA key)
+//! via the pool's connection initializer.
+
+use super::driver::DatabaseDriver;
+use super::types::DbError;
+use super::value::{DbRow, DbValue};
+use crate::SqliteConnectionManager;
+use r2d2::Pool;
+use std::sync::Arc;
+
+/// Standard SQLite PRAGMAs for WAL-mode connections.
+///
+/// **Ordering invariant**: `busy_timeout` MUST be set before
+/// `journal_mode = WAL` because the WAL mode change acquires a brief
+/// exclusive lock. With `busy_timeout = 0` (SQLite default), any lock
+/// contention fails immediately with `SQLITE_BUSY` instead of retrying.
+/// This caused `r2d2: database is locked` errors on per-agent databases.
+///
+/// Call this on every raw `rusqlite::Connection` or in every r2d2
+/// `with_init` closure before schema operations.
+pub const WAL_PRAGMA_BATCH: &str =
+    "PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;";
+
+/// Apply the standard WAL PRAGMAs to a raw `rusqlite::Connection`.
+///
+/// This is the single source of truth for PRAGMA ordering. Crates that
+/// depend on `hkask-storage` should call this instead of inlining PRAGMA
+/// strings. Crates that don't depend on `hkask-storage` should replicate
+/// the ordering: `busy_timeout` before `journal_mode = WAL`.
+pub fn init_wal_pragmas(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(WAL_PRAGMA_BATCH)
+}
+
+/// SQLite implementation of DatabaseDriver.
+///
+/// Wraps an `r2d2::Pool<SqliteConnectionManager>` with WAL mode enabled.
+/// Each `execute`/`query` call acquires a connection from the pool and
+/// returns it on completion, enabling concurrent read access.
+pub struct SqliteDriver {
+    pool: Pool<SqliteConnectionManager>,
+    /// Human-readable label (typically the DB file path) prefixed to error
+    /// messages so a `SQLITE_BUSY`/lock failure names the offending pool.
+    /// `None` for unlabeled pools (in-memory tests); `Some` for file-backed
+    /// production pools where cross-process/cross-connection contention is
+    /// possible and the source file must be identifiable in logs.
+    label: Option<Arc<str>>,
+    /// Whether the underlying pool survives a process restart (file-backed)
+    /// or dies with it (in-memory). Constructors default to `true`; a
+    /// caller wrapping an in-memory pool must claim the honest stance via
+    /// `with_durability(false)` — durability reporters (the kata-kanban
+    /// replay-protection store) consult `is_durable()` and must never be
+    /// told an in-memory DB protects across a restart.
+    durable: bool,
+}
+
+impl SqliteDriver {
+    /// Create an unlabeled SQLite driver from a connection pool.
+    ///
+    /// Error messages carry no pool identity. Use `new_labeled` for
+    /// file-backed production pools where lock contention must be
+    /// attributable to a specific database file. The pool should be
+    /// configured with WAL mode and any encryption PRAGMAs before being
+    /// passed here.
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        Self {
+            pool,
+            label: None,
+            durable: true,
+        }
+    }
+
+    /// Create a labeled SQLite driver. The label (typically the DB file
+    /// path) is prefixed to error messages as `[<label>]`, so a
+    /// `database is locked` failure names the offending file instead of
+    /// leaving operators to guess which pool contended.
+    pub fn new_labeled(pool: Pool<SqliteConnectionManager>, label: impl Into<Arc<str>>) -> Self {
+        Self {
+            pool,
+            label: Some(label.into()),
+            durable: true,
+        }
+    }
+
+    /// Claim the driver's durability stance explicitly.
+    ///
+    /// `false` for pools that die with the process (in-memory fallbacks):
+    /// the driver carries a label naming a would-be DB path even when the
+    /// pool behind it is in-memory, so the label cannot be used to detect
+    /// the stance — the construction site knows, and must say so here.
+    /// `is_durable()` reports this to replay-protection callers, which must
+    /// not advertise cross-restart protection an in-memory pool cannot keep.
+    #[must_use]
+    pub fn with_durability(mut self, durable: bool) -> Self {
+        self.durable = durable;
+        self
+    }
+
+    /// Create a pool for an in-memory database (testing only).
+    ///
+    /// Uses `max_size(1)` because `SqliteConnectionManager::memory()`
+    /// create a separate in-memory database per connection. A pool size
+    /// greater than 1 would scatter writes across independent databases,
+    /// breaking read-your-writes semantics for tests.
+    ///
+    /// Runs `core/sql/schema.sql` on each connection so tests get the real
+    /// schema (the same one `Database::sqlite_pool` runs in production). This
+    /// eliminates the divergent `CREATE TABLE IF NOT EXISTS hmems` that test
+    /// helpers previously duplicated with different column sets.
+    /// Load sqlite-vec and initialize the canonical `hmems`/`embeddings` schema.
+    fn init_canonical_schema(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+        crate::core::connection::init_sqlite_vec_on(conn)?;
+        let schema = include_str!("../core/sql/schema.sql");
+        let dim = crate::core::connection::embedding_dim();
+        conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))
+    }
+
+    pub fn in_memory_pool() -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
+            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            Self::init_canonical_schema(conn)
+        });
+        Pool::builder().max_size(1).build(manager)
+    }
+
+    /// Create an in-memory driver for testing (one-liner convenience).
+    /// Claims the honest durability stance: in-memory pools die with the
+    /// process, so `is_durable()` reports `false`.
+    pub fn in_memory_driver() -> Arc<dyn super::driver::DatabaseDriver> {
+        Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")).with_durability(false))
+    }
+
+    /// Create a file-backed pool with WAL mode enabled. Used by MCP servers
+    /// that need an unencrypted SQLite DB (e.g. the media gallery metadata DB)
+    /// — does NOT use `HKASK_DB_PASSPHRASE` / SQLCipher.
+    pub fn file_pool(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            init_wal_pragmas(conn).ok();
+            Ok(())
+        });
+        Pool::builder().build(manager)
+    }
+
+    /// Create a file-backed pool with WAL mode and the canonical `hmems`
+    /// schema — the file-backed analog of `in_memory_pool`, for tests and
+    /// tools that need real multi-connection WAL semantics (concurrent
+    /// writers contending on one database) over the canonical schema.
+    /// Unencrypted: no `HKASK_DB_PASSPHRASE` / SQLCipher. `max_size(8)` so
+    /// concurrent-writer tests can actually contend — `in_memory_pool` is
+    /// `max_size(1)` and serializes everything on a single connection,
+    /// where no interleaving is possible.
+    pub fn file_pool_with_schema(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::file(path).with_init(Self::init_canonical_schema);
+        Pool::builder().max_size(8).build(manager)
+    }
+
+    /// Prefix the pool label (if any) to a connection-acquisition error.
+    fn map_conn_err(&self, e: impl std::fmt::Display) -> DbError {
+        DbError::Connection(self.enrich(&e))
+    }
+
+    /// Prefix the pool label (if any) to a database-operation error.
+    fn map_db_err(&self, e: impl std::fmt::Display) -> DbError {
+        DbError::Database(self.enrich(&e))
+    }
+
+    /// Render an error string with the pool label prefixed when set:
+    /// `[<path>] <error>`. Unlabeled (in-memory) pools pass the error through
+    /// unchanged so error-string assertions in tests are not disturbed.
+    fn enrich(&self, e: &impl std::fmt::Display) -> String {
+        match &self.label {
+            Some(label) => format!("[{label}] {e}"),
+            None => e.to_string(),
+        }
+    }
+
+    /// Raw query execution without Regulation span emission.
+    /// Called by `query` and `query_optional` which each emit their own spans.
+    fn query_raw(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
+        let conn = self.pool.get().map_err(|e| self.map_conn_err(e))?;
+        let rusqlite_params = Self::to_rusqlite_params(params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            rusqlite_params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(sql).map_err(|e| self.map_db_err(e))?;
+        let columns: Vec<String> = stmt
+            .column_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Self::row_to_dbrow(row, &columns)
+            })
+            .map_err(|e| self.map_db_err(e))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| self.map_db_err(e))?);
+        }
+        Ok(results)
+    }
+
+    fn to_rusqlite_params(params: &[DbValue]) -> Vec<Box<dyn rusqlite::types::ToSql>> {
+        params
+            .iter()
+            .map(|v| -> Box<dyn rusqlite::types::ToSql> {
+                match v {
+                    DbValue::Null => Box::new(rusqlite::types::Null),
+                    DbValue::Integer(i) => Box::new(*i),
+                    DbValue::Real(f) => Box::new(*f),
+                    DbValue::Text(s) => Box::new(s.clone()),
+                    DbValue::Blob(b) => Box::new(b.clone()),
+                    DbValue::Bool(b) => Box::new(*b as i64),
+                }
+            })
+            .collect()
+    }
+
+    fn row_to_dbrow(row: &rusqlite::Row, columns: &[String]) -> rusqlite::Result<DbRow> {
+        let mut values = Vec::with_capacity(columns.len());
+        for i in 0..columns.len() {
+            let val = match row.get_ref(i)? {
+                rusqlite::types::ValueRef::Null => DbValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => DbValue::Integer(i),
+                rusqlite::types::ValueRef::Real(f) => DbValue::Real(f),
+                rusqlite::types::ValueRef::Text(s) => {
+                    DbValue::Text(String::from_utf8_lossy(s).into_owned())
+                }
+                rusqlite::types::ValueRef::Blob(b) => DbValue::Blob(b.to_vec()),
+            };
+            values.push(val);
+        }
+        Ok(DbRow::new(columns.to_vec(), values))
+    }
+}
+
+/// A connection-scoped statement handle handed to `transaction` closures —
+/// every statement in the closure runs on the one pinned connection, so
+/// the BEGIN/COMMIT bracket actually brackets them. Without this view a
+/// closure calling `driver.execute` would check out a DIFFERENT pooled
+/// connection per statement and run outside the transaction entirely.
+/// Implements `TransactionOps` (not `DatabaseDriver`) because a pinned
+/// rusqlite connection is `Send` but not `Sync`.
+struct PinnedConnection<'a> {
+    connection: &'a rusqlite::Connection,
+}
+
+impl crate::database::driver::TransactionOps for PinnedConnection<'_> {
+    fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
+        let rusqlite_params = SqliteDriver::to_rusqlite_params(params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            rusqlite_params.iter().map(|p| p.as_ref()).collect();
+        self.connection
+            .execute(sql, param_refs.as_slice())
+            .map_err(|e| DbError::Database(e.to_string()))
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), DbError> {
+        self.connection
+            .execute_batch(sql)
+            .map_err(|e| DbError::Database(e.to_string()))
+    }
+
+    fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
+        let rusqlite_params = SqliteDriver::to_rusqlite_params(params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            rusqlite_params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self
+            .connection
+            .prepare(sql)
+            .map_err(|e| DbError::Database(e.to_string()))?;
+        let columns: Vec<String> = stmt
+            .column_names()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                SqliteDriver::row_to_dbrow(row, &columns)
+            })
+            .map_err(|e| DbError::Database(e.to_string()))?;
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.map_err(|e| DbError::Database(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
+    fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError> {
+        let mut rows = self.query(sql, params)?;
+        if rows.is_empty() {
+            Ok(None)
+        } else if rows.len() == 1 {
+            Ok(Some(rows.remove(0)))
+        } else {
+            Err(DbError::Database(format!(
+                "query_optional expected 0-1 rows, got {}",
+                rows.len()
+            )))
+        }
+    }
+}
+
+// ── Storage Regulation spans (inlined from database/regulation.rs) ──
+// Emit `reg.storage` tracing events so the Regulation regulator can observe
+// query latency, error rates, and throughput per table. `debug!` (not `info!`)
+// because the storage layer fires one event per SQL operation.
+
+/// Extract a table name from a SQL statement. Returns the first identifier
+/// after FROM/INSERT INTO/UPDATE/DELETE FROM/INTO, or "unknown".
+fn extract_table(sql: &str) -> &str {
+    let upper = sql.to_uppercase();
+    for keyword in &["FROM", "INSERT INTO", "UPDATE", "DELETE FROM", "INTO"] {
+        if let Some(pos) = upper.find(keyword) {
+            let rest = &sql[pos + keyword.len()..].trim();
+            return rest.split_whitespace().next().unwrap_or("unknown");
+        }
+    }
+    "unknown"
+}
+
+/// Emit a Regulation span for a completed storage operation.
+fn emit_storage_span(operation: &str, table: &str, duration_us: u64, rows: usize, error: bool) {
+    tracing::debug!(
+        target: "reg.storage",
+        operation = operation,
+        table = table,
+        duration_us = duration_us,
+        rows = rows,
+        error = error,
+        "Storage operation completed"
+    );
+}
+
+impl DatabaseDriver for SqliteDriver {
+    fn as_any(&self) -> &dyn std::any::Any {
+        &self.pool
+    }
+
+    fn sqlite_pool(&self) -> Option<&Pool<SqliteConnectionManager>> {
+        Some(&self.pool)
+    }
+
+    fn is_durable(&self) -> bool {
+        self.durable
+    }
+
+    fn transaction(
+        &self,
+        operations: &mut dyn FnMut(
+            &dyn crate::database::driver::TransactionOps,
+        ) -> Result<(), DbError>,
+    ) -> Result<(), DbError> {
+        let start = std::time::Instant::now();
+        let mut connection = self.pool.get().map_err(|e| self.map_conn_err(e))?;
+        // BEGIN IMMEDIATE, not the DEFERRED default: a deferred transaction
+        // that reads then writes upgrades a WAL snapshot to a write lock,
+        // and any sibling commit in that window returns SQLITE_BUSY_SNAPSHOT
+        // immediately — which busy_timeout cannot retry (a stale snapshot
+        // never becomes fresh). IMMEDIATE takes the write lock at BEGIN and
+        // waits under the pool's busy_timeout (the hmem.rs update
+        // discipline). The pinned connection below is equally load-bearing:
+        // a pool-backed `execute` inside the closure would hop connections
+        // and run outside the transaction entirely (autocommit on conn B,
+        // COMMIT failing on conn C — the documented prior defect).
+        let tx = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| self.map_db_err(e))?;
+        let result = {
+            let pinned = PinnedConnection { connection: &tx };
+            operations(&pinned)
+        };
+        let result = match result {
+            Ok(()) => tx.commit().map_err(|e| self.map_db_err(e)),
+            // Dropping the Transaction rolls back; the operation's error is
+            // the one that matters.
+            Err(error) => Err(error),
+        };
+        emit_storage_span(
+            "transaction",
+            "transaction",
+            start.elapsed().as_micros() as u64,
+            0,
+            result.is_err(),
+        );
+        result
+    }
+
+    fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError> {
+        let start = std::time::Instant::now();
+        let table = extract_table(sql);
+        let conn = self.pool.get().map_err(|e| self.map_conn_err(e))?;
+        let rusqlite_params = Self::to_rusqlite_params(params);
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            rusqlite_params.iter().map(|p| p.as_ref()).collect();
+        let result = conn
+            .execute(sql, param_refs.as_slice())
+            .map_err(|e| self.map_db_err(e));
+        let duration_us = start.elapsed().as_micros() as u64;
+        match &result {
+            Ok(rows) => emit_storage_span("execute", table, duration_us, *rows, false),
+            Err(_) => emit_storage_span("execute", table, duration_us, 0, true),
+        }
+        result
+    }
+
+    fn execute_batch(&self, sql: &str) -> Result<(), DbError> {
+        let conn = self.pool.get().map_err(|e| self.map_conn_err(e))?;
+        conn.execute_batch(sql).map_err(|e| self.map_db_err(e))
+    }
+
+    fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError> {
+        let start = std::time::Instant::now();
+        let table = extract_table(sql);
+        let result = self.query_raw(sql, params);
+        let duration_us = start.elapsed().as_micros() as u64;
+        match &result {
+            Ok(rows) => emit_storage_span("query", table, duration_us, rows.len(), false),
+            Err(_) => emit_storage_span("query", table, duration_us, 0, true),
+        }
+        result
+    }
+
+    fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError> {
+        let start = std::time::Instant::now();
+        let table = extract_table(sql);
+        let result = self.query_raw(sql, params);
+        let duration_us = start.elapsed().as_micros() as u64;
+        match result {
+            Ok(mut rows) => {
+                let row_count = rows.len();
+                emit_storage_span("query_optional", table, duration_us, row_count, false);
+                if rows.is_empty() {
+                    Ok(None)
+                } else if rows.len() == 1 {
+                    Ok(Some(rows.remove(0)))
+                } else {
+                    Err(DbError::Database(format!(
+                        "query_optional expected 0-1 rows, got {}",
+                        rows.len()
+                    )))
+                }
+            }
+            Err(e) => {
+                emit_storage_span("query_optional", table, duration_us, 0, true);
+                Err(e)
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    /// The atomicity primitive: `Ok` commits, `Err` rolls back every
+    /// statement the closure wrote — no partial writes survive a
+    /// mid-transaction failure (the §P8.9 follow-up fix for the
+    /// check-then-write race class).
+    #[test]
+    fn transaction_commits_on_ok_and_rolls_back_on_err() {
+        let driver = SqliteDriver::in_memory_driver();
+        driver
+            .execute_batch("CREATE TABLE IF NOT EXISTS tx_probe (id TEXT PRIMARY KEY)")
+            .expect("probe schema");
+
+        driver
+            .transaction(&mut |tx| {
+                tx.execute("INSERT INTO tx_probe (id) VALUES ('committed')", &[])?;
+                Ok(())
+            })
+            .expect("commit path");
+
+        let result = driver.transaction(&mut |tx| {
+            tx.execute("INSERT INTO tx_probe (id) VALUES ('rolled-back')", &[])?;
+            Err(DbError::Database(
+                "forced mid-transaction failure".to_string(),
+            ))
+        });
+        assert!(
+            result.is_err(),
+            "the forced failure propagates to the caller"
+        );
+
+        let rows = driver
+            .query("SELECT id FROM tx_probe ORDER BY id", &[])
+            .expect("read back");
+        let ids: Vec<String> = rows
+            .iter()
+            .filter_map(|row| row.get_str(0).ok().map(str::to_string))
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["committed".to_string()],
+            "the committed row survives; the rolled-back row does not"
+        );
+    }
+}

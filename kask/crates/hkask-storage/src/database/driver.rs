@@ -1,0 +1,143 @@
+//! DatabaseDriver trait — the port that stores code against.
+//!
+//! The trait is dyn-compatible so stores can hold `Arc<dyn DatabaseDriver>`.
+//! Ergonomic query helpers (`query_map`, `query_row`) are provided as free
+//! functions — they call the trait methods and add type mapping on top.
+
+use super::types::DbError;
+use super::value::{DbRow, DbValue};
+
+/// Connection-scoped statement handle for [`DatabaseDriver::transaction`]
+/// closures.
+///
+/// A dedicated trait (not `DatabaseDriver`) because a pinned rusqlite
+/// connection is `Send` but not `Sync` — the store contract (`Arc<dyn
+/// DatabaseDriver>` requires `Send + Sync`) cannot wrap it, and the closure's
+/// view never leaves the transaction's stack. Every statement the closure
+/// runs through this handle executes on the one pinned connection, so the
+/// BEGIN/COMMIT bracket actually brackets them.
+pub trait TransactionOps {
+    /// Execute a parameterized statement (INSERT, UPDATE, DELETE, DDL).
+    fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError>;
+
+    /// Execute a batch of SQL statements.
+    fn execute_batch(&self, sql: &str) -> Result<(), DbError>;
+
+    /// Query rows, returning all results as `DbRow` values.
+    fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError>;
+
+    /// Query a single optional row.
+    fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError>;
+}
+
+/// The database driver abstraction.
+///
+/// Stores use `&dyn DatabaseDriver` instead of raw `rusqlite::Connection`.
+/// This trait is dyn-compatible — all methods are object-safe.
+/// Ergonomic helpers like `query_map()` are free functions in this module.
+pub trait DatabaseDriver: Send + Sync {
+    /// Execute a parameterized statement (INSERT, UPDATE, DELETE, DDL).
+    fn execute(&self, sql: &str, params: &[DbValue]) -> Result<usize, DbError>;
+
+    /// Execute a batch of SQL statements (schema creation).
+    fn execute_batch(&self, sql: &str) -> Result<(), DbError>;
+
+    /// Query rows, returning all results as `DbRow` values.
+    fn query(&self, sql: &str, params: &[DbValue]) -> Result<Vec<DbRow>, DbError>;
+
+    /// Query a single optional row.
+    fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError>;
+
+    /// Access the driver as `Any` for provider-specific downcasting.
+    /// Used by stores that need provider-specific operations (e.g.,
+    /// sqlite-vec vector search which requires raw rusqlite connection).
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Access the SQLite connection pool, if this is a SqliteDriver.
+    fn sqlite_pool(&self) -> Option<&r2d2::Pool<crate::SqliteConnectionManager>> {
+        None
+    }
+
+    /// Run a multi-statement transaction atomically over one pinned
+    /// connection.
+    ///
+    /// The closure receives a connection-scoped [`TransactionOps`] view; `Ok`
+    /// commits, `Err` rolls back — a mid-transaction failure leaves no
+    /// partial writes. Required (not defaulted): an implementation that
+    /// cannot pin a connection must surface that with a typed error, never
+    /// silently run the statements outside a transaction (the `.rules`
+    /// silent-fallback trap).
+    ///
+    /// This closes the check-then-write race class: a status read followed
+    /// by an insert can both pass under concurrent dispatch (observed live
+    /// 2026-10-01 in the evolution registry — two fitness records landed
+    /// 57µs apart against a ceiling of 1). Inside a transaction the read and
+    /// the write serialize against other writers. In-crate call sites with
+    /// direct pool access may keep using rusqlite's `Transaction` directly;
+    /// this method is the port for stores coding against the trait.
+    fn transaction(
+        &self,
+        operations: &mut dyn FnMut(&dyn TransactionOps) -> Result<(), DbError>,
+    ) -> Result<(), DbError>;
+
+    /// Whether the underlying storage survives a process restart.
+    ///
+    /// File-backed drivers keep the default `true`; drivers wrapping an
+    /// in-memory pool must override to `false` — durability reporters
+    /// (e.g. replay-protection stores) must not claim cross-restart
+    /// guarantees an in-memory pool cannot keep.
+    fn is_durable(&self) -> bool {
+        true
+    }
+}
+
+// ── Ergonomic query helpers (free functions, work with `&dyn DatabaseDriver`) ──
+
+/// Query rows and map each to a domain type via a closure.
+///
+/// expect: "The system provides ergonomic query helpers over the DatabaseDriver trait"
+/// pre:  driver is connected; sql is valid for the provider; params match placeholders
+/// post: returns Ok(`Vec<T>`) with one element per query result row, Err(DbError) on failure
+///
+/// Replaces the `stmt.query_map(params, |row| { ... })` pattern from raw rusqlite.
+///
+/// # Example
+/// ```ignore
+/// let users: Vec<User> = query_map(&*self.driver,
+///     "SELECT id, name FROM users WHERE active = ?1",
+///     &[DbValue::Bool(true)],
+///     |row| Ok(User { id: row.get_str(0)?, name: row.get_str(1)? })
+/// )?;
+/// ```
+pub fn query_map<T, F>(
+    driver: &dyn DatabaseDriver,
+    sql: &str,
+    params: &[DbValue],
+    f: F,
+) -> Result<Vec<T>, DbError>
+where
+    F: Fn(&DbRow) -> Result<T, DbError>,
+{
+    let rows = driver.query(sql, params)?;
+    rows.iter().map(f).collect()
+}
+
+/// Query one row and map it, returning `None` if no rows found.
+///
+/// expect: "The system provides ergonomic query helpers over the DatabaseDriver trait"
+/// pre:  driver is connected; sql is valid for the provider; params match placeholders
+/// post: returns Ok(Some(T)) if a row was found, Ok(None) if empty, Err(DbError) on failure
+pub fn query_row<T, F>(
+    driver: &dyn DatabaseDriver,
+    sql: &str,
+    params: &[DbValue],
+    f: F,
+) -> Result<Option<T>, DbError>
+where
+    F: Fn(&DbRow) -> Result<T, DbError>,
+{
+    driver
+        .query_optional(sql, params)?
+        .map(|r| f(&r))
+        .transpose()
+}

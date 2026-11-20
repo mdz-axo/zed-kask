@@ -1,0 +1,37 @@
+[package]
+name = "hkask-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "SQLite + SQLCipher storage for hKask"
+
+
+[lib]
+path = "src/hkask_storage.rs"
+
+[[bin]]
+name = "purge-orphaned-vectors"
+path = "src/bin/purge_orphaned_vectors.rs"
+
+[dependencies]
+
+hkask-types = { workspace = true, features = ["sql"] }
+
+rusqlite.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+sqlite-vec.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
