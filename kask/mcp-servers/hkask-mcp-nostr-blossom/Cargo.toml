@@ -1,0 +1,49 @@
+[package]
+name = "hkask-mcp-nostr-blossom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local Blossom media sidecar (BUD-01/BUD-02/BUD-06) alongside hkask-mcp-nostr-relay — streaming content-addressed blob storage with SQLite reference-counted ownership, HTTP Range playback, CORS for media widgets, and read-only MCP inspection tools"
+
+[lib]
+name = "hkask_mcp_nostr_blossom"
+path = "src/hkask_mcp_nostr_blossom.rs"
+
+[[bin]]
+name = "hkask-mcp-nostr-blossom"
+path = "src/main.rs"
+
+[dependencies]
+hkask-bridge-ontology.workspace = true
+hkask-mcp-server.workspace = true
+hkask-nostr-core.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "fs", "io-util", "time", "sync"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+base64.workspace = true
+bytes.workspace = true
+hex.workspace = true
+http-body.workspace = true
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+hkask-mcp-test-support.workspace = true
+k256.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+
+[lints]
+workspace = true
