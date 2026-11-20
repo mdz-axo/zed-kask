@@ -1,0 +1,106 @@
+---
+title: "zed-kask Diataxis Documentation Index"
+audience: [developers, architects, agents, operators]
+last_updated: 2026-11-18
+version: "1.8.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, composition, trust, lifecycle, curation]
+---
+
+# zed-kask Diataxis Documentation Index
+
+This index lists 16 retained artifacts across 8 cross-cutting documentation
+sets. Eight tutorials were folded on 2026-09-16; on 2026-09-28 the eight
+per-crate how-to documents were folded into their set references (each reference
+gained a Procedures section) and the hkask-tool-port explanation was folded into
+its reference (that set was deleted with its crate on 2026-11-07, commit
+`9b6b648a20` — the `ToolPort` types folded into `hkask-mcp`, and the
+`hkask-tool-port` set row and its retired diagram rows were removed).
+`hkask-mcp-server/tutorial.md` is the one retained
+tutorial. The count is the current filesystem result under
+`kask/docs/diataxis/*/*.md` on 2026-11-18, excluding this index.
+
+Artifacts are expected to carry repo-relative implementation evidence. This
+index does not claim that every citation in every retained artifact has been
+re-verified in this pass; the files edited on 2026-09-15 carry their own current
+verification dates.
+
+## Diataxis quadrant map
+
+| Quadrant | Purpose | MDS category | Typical diagram |
+| --- | --- | --- | --- |
+| Tutorial | Learn a concept | lifecycle | step flow |
+| How-to | Accomplish a task | composition | procedure flow |
+| Reference | Look up a fact | domain | class or data model |
+| Explanation | Understand why | trust and curation | state or sequence |
+
+Since the 2026-09-28 fold, the per-crate task procedures live in each set's
+reference document under a `Procedures` section; no per-crate file carries the
+How-to quadrant alone.
+
+## Retained sets — 16 artifacts
+
+| Set | Tutorial | How-to | Reference | Explanation |
+| --- | --- | --- | --- | --- |
+| `hkask-types` | folded | folded | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
+| `hkask-storage` | folded | folded | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
+| `hkask-regulation` | folded | folded | [Reference](./hkask-regulation/reference.md) | [Explanation](./hkask-regulation/explanation.md) |
+| `hkask-inference` | folded | folded | [Reference](./hkask-inference/reference.md) | [Explanation](./hkask-inference/explanation.md) |
+| `hkask-condenser` | folded | folded | [Reference](./hkask-condenser/reference.md) | [Explanation](./hkask-condenser/explanation.md) |
+| `hkask-mcp-server` | [Tutorial](./hkask-mcp-server/tutorial.md) | folded | [Reference](./hkask-mcp-server/reference.md) | [Explanation](./hkask-mcp-server/explanation.md) |
+| `kask_bridge` | folded | folded | [Reference](./kask_bridge/reference.md) | [Explanation](./kask_bridge/explanation.md) |
+| `media_panel` | — | — | [Reference](./media_panel/reference.md) | — |
+
+## Out of scope for additional per-crate sets
+
+### MCP server crates — complete 11-server inventory
+
+The managed server crates are documented cross-cuttingly under
+[`kask/docs/reference/mcp-servers/`](../reference/mcp-servers/README.md) rather
+than receiving another per-crate set:
+
+`hkask-mcp-corpus`, `hkask-mcp-curator`,
+`hkask-mcp-experimentation`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`,
+`hkask-mcp-nostr-blossom`, `hkask-mcp-nostr-client`, `hkask-mcp-nostr-relay`,
+`hkask-mcp-prediction-markets`, `hkask-mcp-research`, and
+`hkask-mcp-scenarios`.
+
+The authoritative managed registry contains the same 11 IDs at
+`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` (the companies server was removed
+2026-10-18, commit `3439db5e00`).
+
+### hKask library and composition crates — complete 21-crate inventory
+
+The composition-root inventory under `kask/crates/` is:
+
+`dme-harness`, `hkask-bridge-ontology`, `hkask-condenser`,
+`hkask-experimentation`, `hkask-forecast`, `hkask-inference`,
+`hkask-kata-kanban`, `hkask-keystore`, `hkask-lisp`, `hkask-mcp`,
+`hkask-mcp-server`, `hkask-mcp-test-support`, `hkask-media`,
+`hkask-memory`, `hkask-nostr-core`, `hkask-nostr-signer`,
+`hkask-regulation`, `hkask-steer-core`, `hkask-storage`, `hkask-types`,
+and `kask_bridge`.
+
+Seven have retained crate-named sets above; `hkask-bridge-ontology` is covered
+by [`ontology-bridge.md`](../reference/ontology-bridge.md). The remaining small
+support crates are covered by cross-cutting architecture/reference documents
+and crate-local implementation context rather than additional Diataxis sets.
+The workspace membership evidence is the repository-root `Cargo.toml:275-320`.
+
+Zed-side crates such as `crates/agent`, `crates/agent_ui`, `crates/zed`, and
+`crates/media_panel` are documented here only where a zed-kask capability or
+D-seam requires it. The authoritative numbered and retired divergence seams are maintained in
+`DIVERGENCE.md`; retired numbers are never reused.
+
+## Governing specifications
+
+- [Documentation Standards](../architecture/DOCUMENTATION_STANDARDS.md)
+- [Minimal Domain Specification](../architecture/core/MDS.md)
+- [Canonical host architecture](../architecture/zed-host-architecture-plan.md)
+- [Divergence manifest](../../../DIVERGENCE.md)
+
+## See also
+
+- [Documentation portal](../README.md)
+- [Diagram registry](../DIAGRAMS_INDEX.md)

@@ -5247,16 +5247,6 @@ Examples:
 - Searching for "function" would match "function", "Function", "FUNCTION", etc.
 - Searching for "Function" would only match "Function", not "function" or "FUNCTION"
 
-## Show Call Status Icon
-
-- Description: Whether or not to show the call status icon in the status bar.
-- Setting: `show_call_status_icon`
-- Default: `true`
-
-**Options**
-
-`boolean` values
-
 ## Completions
 
 - Description: Controls how completions are processed for this language.
@@ -7187,26 +7177,6 @@ Both types also accept:
 - `default_config_options`: Default values for the agent's session options, keyed by option ID.
 - `favorite_config_option_values`: Favorited values for the agent's session options, keyed by option ID.
 
-## Collaboration Panel
-
-- Description: Customizations for the collaboration panel.
-- Setting: `collaboration_panel`
-- Default:
-
-```json [settings]
-{
-  "collaboration_panel": {
-    "button": true,
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: Whether to show the collaboration panel button in the status bar
-- `dock`: Where to dock the collaboration panel. Can be `left` or `right`
 - `default_width`: Default width of the collaboration panel
 
 ## Debuggers {#debuggers}
@@ -7409,23 +7379,6 @@ You can define these in user or project settings; project settings are merged on
 **Options**
 
 - `expand_outlines_with_depth`: Collapse outline items with children at this depth or deeper; `0` collapses all of them.
-
-## Calls
-
-- Description: Customize behavior when participating in a call
-- Setting: `calls`
-- Default:
-
-```json [settings]
-{
-  "calls": {
-    // Join calls with the microphone live by default
-    "mute_on_join": false,
-    // Share your project when you are the first to join a channel
-    "share_on_join": false
-  }
-}
-```
 
 ## Colorize Brackets
 

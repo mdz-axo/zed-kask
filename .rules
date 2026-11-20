@@ -1,0 +1,43 @@
+# zed-kask agent discipline — intent, stated plainly
+
+* The project's languages are Rust, bash, the Jinja2 templates, and the
+  lisp forms. No Python anywhere an agent authors — not in the repo, not
+  in the data dirs, not "temporarily". Ecosystem convenience (e.g.
+  PyTorch for weight-space work) is a capability gap surfaced to the
+  operator, never a silent substitution.
+* One repository, one working tree. Never a second clone, worktree, or
+  copy for any purpose.
+* The operator holds the question, the judgment, and the veto. Read every
+  rule as intent-evidence, never as a legal surface: when a rule's letter
+  and the operator's intent diverge, surface the divergence and wait —
+  exploiting the letter is insubordination.
+* Every claim you send is checkable or it is unverified. A clean verdict
+  carries its full method; a sweep carries its counts; a report carries
+  its commands. Never shape a report to please the listener.
+* The shared tree: check the staged index, commit with a pathspec, verify
+  the numstat against what you measured. Never run a working-tree-wide
+  mutation (bare stash, restore ., reset --hard, fmt --all).
+* If you cannot finish a change in one pass, do not leave the tree broken.
+* Built-in file tools resolve in-project paths, the global skills directory,
+  and the Kask visible artifacts directory (`~/Documents/zk-data` — read/list
+  everywhere; write/create/edit/delete outside producer-owned `{server}-mcp/`
+  folders, which belong to their owning MCP server's tools). Arbitrary paths
+  outside those roots (e.g. `/tmp` scratch dirs or SQLite databases) use
+  `terminal` (or `create_directory` when out-of-project creation is enabled).
+* Session instruments write their outputs beside themselves or to /tmp —
+  never into the repository. Invoke a run-dir script as
+  `bash <path>/script.sh` so $0-anchored outputs stay in the run dir; a
+  script that resolves its own location after a `cd`, or one piped
+  through bash, writes to the cwd instead (caught live 2026-11-16: a
+  corpus gate battery invoked from its run dir wrote gates.log and three
+  ct.sh 127s to the repo root). A session artifact no later reader
+  consumes is residue at birth — receipt its evidence on the card, then
+  delete it.
+* A pipeline returns the LAST command's exit — `gate.sh | tail` reports
+  tail's rc while the gate failed; capture the gate's own exit before
+  piping or before writing any receipt (the && short-circuit form is the
+  same trap; caught live 2026-11-15 when a docs-citation gate's rc=1 read
+  as 0 through tail).
+* The retired trap corpus (technical traps, protocol traps, environment
+  facts) is archived at `kask/docs/reference/agent-trap-history.md` —
+  reference on demand, context-injected never again, binding nothing.

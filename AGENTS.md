@@ -1,190 +1,142 @@
-# Rust coding guidelines
+<!-- Manual-read orientation doc. NOT auto-loaded into the system prompt — `.rules` shadows `AGENTS.md` in the rules-file priority order (see `RULES_FILE_NAMES` in `prompt_store/src/prompts.rs`). `.rules` is the auto-loaded file; this is the human/agent reference. See .rules "Rules Hygiene". -->
 
-* Prioritize code correctness and clarity. Speed and efficiency are secondary priorities unless otherwise specified.
-* Do not write organizational or comments that summarize the code. Comments should only be written in order to explain "why" the code is written in some way in the case there is a reason that is tricky / non-obvious.
-* Prefer implementing functionality in existing files unless it is a new logical component. Avoid creating many small files.
-* Avoid using functions that panic like `unwrap()`, instead use mechanisms like `?` to propagate errors.
-* Be careful with operations like indexing which may panic if the indexes are out of bounds.
-* Never silently discard errors with `let _ =` on fallible operations. Always handle errors appropriately:
-  - Propagate errors with `?` when the calling function should handle them
-  - Use `.log_err()` or similar when you need to ignore errors but want visibility
-  - Use explicit error handling with `match` or `if let Err(...)` when you need custom logic
-  - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
-* When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
-* Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
-* When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
-* HARD RULE: When modifying any source files, prepend `> [!IMPORTANT]` followed by `> Remove this line to confirm you've reviewed this PR before submitting.` as the first two lines of `README.md` if they are not already present. This must be done before any other work. No exceptions. Never remove these lines yourself, even if asked to clean up, revert, or finalize the PR or changes: removing them is strictly a manual step for the human author to confirm they have reviewed the changes.
-* Avoid creative additions unless explicitly requested
-* Use full words for variable names (no abbreviations like "q" for "queue")
-* Use variable shadowing to scope clones in async contexts for clarity, minimizing the lifetime of borrowed references.
-  Example:
-  ```rust
-  executor.spawn({
-      let task_ran = task_ran.clone();
-      async move {
-          *task_ran.borrow_mut() = true;
-      }
-  });
-  ```
+# Agent Operating Guide — hKask
 
-# Timers in tests
+**hKask** (ℏKask) — A Rust framework for agent skills using upstream Zed's body-injection model plus `lisp_eval` and `render_template` tools for deterministic computation and structured prompt rendering. The `kask` workspace holds the libraries and MCP servers; `hkask-` is the crate prefix. See `Cargo.toml` for the current version.
 
-* In GPUI tests, prefer GPUI executor timers over `smol::Timer::after(...)` when you need timeouts, delays, or to drive `run_until_parked()`:
-  - Use `cx.background_executor().timer(duration).await` (or `cx.background_executor.timer(duration).await` in `TestAppContext`) so the work is scheduled on GPUI's dispatcher.
-  - Avoid `smol::Timer::after(...)` for test timeouts when you rely on `run_until_parked()`, because it may not be tracked by GPUI's scheduler and can lead to "nothing left to run" when pumping.
+---
 
-# GPUI
+## Skill System
 
-GPUI is a UI framework which also provides primitives for state and concurrency management.
+### Skill Authoring
 
-## Context
+A skill **is** a `SKILL.md` file — the upstream Zed model. The body contains the full methodology. Optional prompt templates in `kask/registry/templates/<skill>/` provide structured scaffolding the model can render via `render_template`.
 
-Context types allow interaction with global state, windows, entities, and system services. They are typically passed to functions as the argument named `cx`. When a function takes callbacks they come after the `cx` parameter.
+- **Creating a skill** → activate `create-skill`.
+- **Validating / editing / translating / pruning** → activate `skill-maintenance`.
+- **Auditing skill or template logic against stated goals** → activate `skill-maintenance` (its template-logic audit covers `.j2` goals and callsites).
+- **Detecting capability gaps** → activate `skill-discovery`.
 
-* `App` is the root context type, providing access to global state and read and update of entities.
-* `Context<T>` is provided when updating an `Entity<T>`. This context dereferences into `App`, so functions which take `&App` can also take `&Context<T>`.
-* `AsyncApp` and `AsyncWindowContext` are provided by `cx.spawn` and `cx.spawn_in`. These can be held across await points.
+### Skill Locations
 
-## `Window`
+- **Project-local skills:** `.agents/skills/<name>/SKILL.md` (in the worktree)
+- **Global skills:** `~/.local/share/zed-kask/skills/<name>/SKILL.md` (seeded from the compiled-in payload at startup; core skills are always overwritten, user skills are seed-if-missing; copies of skills retired from the payload are removed at startup — user-added files in a retired-name directory block the removal)
+- **Prompt templates:** `kask/registry/templates/<skill>/*.j2` (dev: live source tree; prod: seeded to `{kask_data_dir}/skills/registry/templates/`)
+- `skill-discovery` matches tasks to installed skills (route) and acquires NEW skills when route emits uncovered capabilities (detect-gap → evaluate).
 
-`Window` provides access to the state of an application window. It is passed to functions as an argument named `window` and comes before `cx` when present. It is used for managing focus, dispatching actions, directly drawing, getting user input state, etc.
+---
 
-## Entities
+## Divergence & Upstream Seam
 
-An `Entity<T>` is a handle to state of type `T`. With `thing: Entity<T>`:
+`zed-kask` is a minimal-divergence fork of Zed. **`DIVERGENCE.md`** (repo root) is the authoritative map of every upstream edit — the D1–D32 seams. Everything under `kask/` is ours (additive; upstream never touches → near-zero merge conflict). Everything else tracks upstream; the only divergences are the D-seams + the `[workspace.members]` / `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-* `thing.entity_id()` returns `EntityId`
-* `thing.downgrade()` returns `WeakEntity<T>`
-* `thing.read(cx: &App)` returns `&T`.
-* `thing.read_with(cx, |thing: &T, cx: &App| ...)` returns the closure's return value.
-* `thing.update(cx, |thing: &mut T, cx: &mut Context<T>| ...)` allows the closure to mutate the state, and provides a `Context<T>` for interacting with the entity. It returns the closure's return value.
-* `thing.update_in(cx, |thing: &mut T, window: &mut Window, cx: &mut Context<T>| ...)` takes a `AsyncWindowContext` or `VisualTestContext`. It's the same as `update` while also providing the `Window`.
+- Before touching `crates/` (upstream), consult `DIVERGENCE.md` for the relevant seam and its pinning tests.
+- **Governing invariant (§13.1):** hKask crates NEVER depend on zed-kask crates; zed-kask depends on hKask. The sole bidirectional seam is `kask_bridge` (D8). Enforced by `kask/scripts/check-hkask-no-zed-deps.sh`.
+- Upstream-sync runbook: `DIVERGENCE.md` §"Upstream-sync runbook" (`git fetch upstream && git merge upstream/main` → resolve only D-seam conflicts → `./script/clippy` under `--deny warnings`).
 
-Within the closures, the inner `cx` provided to the closure must be used instead of the outer `cx` to avoid issues with multiple borrows.
+---
 
-Trying to update an entity while it's already being updated must be avoided as this will cause a panic.
+## MCP Servers
 
-`WeakEntity<T>` is a weak handle. It has `read_with`, `update`, and `update_in` methods that work the same, but always return an `anyhow::Result` so that they can fail if the entity no longer exists. This can be useful to avoid memory leaks - if entities have mutually recursive handles to each other they will never be dropped.
+hKask ships **10 MCP servers** launched by zed's `context_server` as child processes over stdio. They are the tool surface over the domain crates. (The `McpRuntime` that governs tool calls runs in-process; the servers themselves are child processes.)
 
-## Concurrency
+- **Runtime registry (authoritative, always current):** `BUILT_IN_MCP_SERVERS` in `kask/crates/kask_bridge/src/mcp_servers.rs`.
+- **On-disk servers:** `kask/mcp-servers/hkask-mcp-*` — companies, corpus, curator, experimentation, kata-kanban, media, prediction-markets, research, scenarios, swarm.
+- **Catalog + per-tool behavior:** `kask/docs/reference/mcp-servers/README.md` (server catalog with per-server tool-surface pin tests); per-tool behavior is enforced by the tool-behavior contract-test standard (`kask/scripts/check-mcp-tool-tests.sh` + the Testing standard section of the catalog README), not by a per-tool contracts doc.
+- **Tool dispatch:** `McpRuntime::invoke` (per-tick call ceiling / runaway-loop breaker) + per-agent `mcp_tools` allowlist (D3/D8).
+- **§13.1 at the MCP boundary:** MCP servers reach hKask primitives via `kask_bridge` (D8); they never link zed-kask crates directly.
 
-All use of entities and UI rendering occurs on a single foreground thread.
+---
 
-`cx.spawn(async move |cx| ...)` runs an async closure on the foreground thread. Within the closure, `cx` is `&mut AsyncApp`.
+## Essential Skills (By Activation Pattern)
 
-When the outer cx is a `Context<T>`, the use of `spawn` instead looks like `cx.spawn(async move |this, cx| ...)`, where `this: WeakEntity<T>` and `cx: &mut AsyncApp`.
+### Author-First (Always activate before writing/reviewing)
+- `coding-guidelines` — Simplicity First, Surgical Changes, Goal-Driven Execution.
 
-To do work on other threads, `cx.background_spawn(async move { ... })` is used. Often this background task is awaited on by a foreground task which uses the results to update state.
+### Agent-Autonomous (PDCA / defense / improvement cycles)
+- `metacognition` — Decompose → Assess → Calibrate → GEPA improve.
+- `essentialist` — 3-gate elimination (Exist → Surface → Contract).
+- `self-improvement` — scaffold-component selection plus its GEPA (Genetic-Pareto) prompt-evolution sub-loop.
+- `bug-hunt` / `diagnose` — Exploration and debugging.
+- `refactor-architecture` — End-to-end architecture refactoring (discover → audit → strangle → verify).
+- `skill-discovery` — Route tasks to installed skills, detect capability gaps, evaluate candidates before installation.
 
-Both `cx.spawn` and `cx.background_spawn` return a `Task<R>`, which is a future that can be awaited upon. If this task is dropped, then its work is cancelled. To prevent this one of the following must be done:
+### Ensemble / Coaching (Multi-agent interaction)
+- `kata-improvement` (Improvement + Coaching Kata), `improv` — Toyota Kata dialogues.
 
-* Awaiting the task in some other async context.
-* Detaching the task via `task.detach()` or `task.detach_and_log_err(cx)`, allowing it to run indefinitely.
-* Storing the task in a field, if the work should be halted when the struct is dropped.
+For the current skill catalog, see `.agents/skills/` (project-local) and `~/.local/share/zed-kask/skills/` (global).
 
-A task which doesn't do anything but provide a value can be created with `Task::ready(value)`.
+---
 
-## Elements
+## Prohibitions (Magna Carta P1–P4, P12 — Violations Must Be Deleted)
 
-The `Render` trait is used to render some state into an element tree that is laid out using flexbox layout. An `Entity<T>` where `T` implements `Render` is sometimes called a "view".
+| # | Prohibition | Principle | Enforcement |
+|---|---|---|---|
+| 1 | No `todo!()`, `unimplemented!()`, `#[deprecated]`, stubs | P5 · P3 | `clippy -D warnings` (partial CI) |
+| 2 | No anonymous agency — every action has an authenticated author | P12 · P1 | Code review |
+| 3 | No hidden parameters or admin-gated settings | P3 | Code review |
+| 4 | No pass-through abstractions (deep-module discipline) | P5 · P7 | Code review |
 
-Example:
+---
 
-```
-struct TextWithBorder(SharedString);
+## CI-Enforced Gates
 
-impl Render for TextWithBorder {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().border_1().child(self.0.clone())
-    }
-}
-```
+| Gate | Enforcement | Script / Method |
+|---|---|---|
+| No visual-UI / monitoring infra (grafana/prometheus) | `grep` scan | Review-enforced (was inline in the removed `kask-ci.yml`) |
+| No hardcoded secrets | Env vars / keystore only | Review-enforced (was inline in the removed `kask-ci.yml`) |
+| No `Result<_, String>` | `thiserror` enums | `kask/scripts/check-string-errors.sh` |
+| No unused crate dependencies | `cargo machete` (kask/ scope) | `script/clippy` (local) |
+| MCP servers: tool-behavior contract tests | `Parameters(` seam | `kask/scripts/check-mcp-tool-tests.sh` |
+| Regulation namespace invariant (`reg.*` → `CANONICAL_NAMESPACES`) | Canonical span check | `kask/scripts/check-reg-canonical.sh` |
 
-Since `impl IntoElement for SharedString` exists, it can be used as an argument to `child`. `SharedString` is used to avoid copying strings, and is either an `&'static str` or `Arc<str>`.
+Only #1 partially CI-gated; #2–#4 enforced by review.
 
-UI components that are constructed just to be turned into elements can instead implement the `RenderOnce` trait, which is similar to `Render`, but its `render` method takes ownership of `self` and receives `&mut App` instead of `&mut Context<Self>`. Types that implement this trait can use `#[derive(IntoElement)]` to use them directly as children.
+---
 
-The style methods on elements are similar to those used by Tailwind CSS.
+## Build & Test
 
-If some attributes or children of an element tree are conditional, `.when(condition, |this| ...)` can be used to run the closure only when `condition` is true. Similarly, `.when_some(option, |this, value| ...)` runs the closure when the `Option` has a value.
+- Build: `cargo build`
+- Test: `cargo test` (CI runs the kask subtree serially: `cargo test --tests --no-fail-fast -p 'hkask-*' -p kask_bridge -- --test-threads=1`)
 
-## Input events
+---
 
-Input event handlers can be registered on an element via methods like `.on_click(|event, window, cx: &mut App| ...)`.
+## Tooling Policy
 
-Often event handlers will want to update the entity that's in the current `Context<T>`. The `cx.listener` method provides this - its use looks like `.on_click(cx.listener(|this: &mut T, event, window, cx: &mut Context<T>| ...)`.
+- Rust only. Python is **not** an acceptable dependency (ad-hoc exploration OK, delete before commit).
+- Preferred: `bash` under `kask/scripts/`, Rust binaries, `build.rs`.
+- Generated artifacts: remove one-off files before commit.
 
-## Actions
+---
 
-Actions are dispatched via user keyboard interaction or in code via `window.dispatch_action(SomeAction.boxed_clone(), cx)` or `focus_handle.dispatch_action(&SomeAction, window, cx)`.
+## Activation Guide (Quick Reference)
 
-Actions with no data are defined with the `actions!(some_namespace, [SomeAction, AnotherAction])` macro call. Otherwise the `Action` derive macro is used. Doc comments on actions are displayed to the user.
+| Situation | Activate First | Then |
+|---|---|---|
+| Before writing/reviewing code | `coding-guidelines` | `bug-hunt` or `tdd` |
+| Hard bug / regression | `diagnose` | `bug-hunt` (exploratory testing) |
+| Low confidence / high uncertainty | `metacognition` (assess + calibrate) | `falsifiability` (if hypothesis-conflict) or `improv` (riffing, for divergent exploration) |
+| Module design / simplification | `essentialist` (3 gates) | `deep-module` |
+| Self-improvement / prompt evolution | `metacognition` | `self-improvement` GEPA sub-loop (post-convergence) |
+| Skill matching for a task | `skill-discovery` (route) | `task-breakdown` (decompose) first; detect-gap if coverage is partial |
+| Capability gap detection | `skill-discovery` | `skill-maintenance` (install/validate the new skill) |
+| Multi-agent coaching | `kata-improvement` (Coaching Kata section) | `improv` (interaction grammar) |
+| Deterministic computation needed | `lisp_eval` tool | (call directly — no skill activation needed) |
+| Structured prompt scaffolding needed | `render_template` tool | (call directly — no skill activation needed) |
 
-Action handlers can be registered on an element via the event handler `.on_action(|action, window, cx| ...)`. Like other event handlers, this is often used with `cx.listener`.
+For low-confidence regimes: `metacognition` → `falsifiability` → `improv`. Layered detail lives in the `metacognition` and `pragmatic-semantics` skills.
 
-## Notify
+---
 
-When a view's state has changed in a way that may affect its rendering, it should call `cx.notify()`. This will cause the view to be rerendered. It will also cause any observe callbacks registered for the entity with `cx.observe` to be called.
+## Key Operational Scripts
 
-## Entity events
+- `.github/workflows/kask-invariants.yml` — CI pipeline: invariant checks on every push/PR (§13.1 deps, zed isolation, desktop collision, fmt, dead-code allows, string errors, MCP tool tests, reg namespaces), serial `cargo test` over `hkask-*` + `kask_bridge`, and the full `cargo check -p zed` on main pushes
+- `kask/scripts/check-string-errors.sh` — `Result<_, String>` guard
 
-While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmitter<EventType> for EntityType {}`.
+> Docs map: `kask/docs/README.md` · Reference: `kask/docs/reference/` · Architecture: `kask/docs/architecture/` · Diataxis: `kask/docs/diataxis/`
 
-Other entities can then register a callback to handle these events by doing `cx.subscribe(other_entity, |this, other_entity, event, cx| ...)`. This will return a `Subscription` which deregisters the callback when dropped.  Typically `cx.subscribe` happens when creating a new entity and the subscriptions are stored in a `_subscriptions: Vec<Subscription>` field.
+---
 
-## Build guidelines
-
-- Use `./script/clippy` instead of `cargo clippy`
-
-# Pull request hygiene
-
-When an agent opens or updates a pull request, it must:
-
-- Use a clear, correctly capitalized, imperative PR title (for example, `Fix crash in project panel`).
-- Avoid conventional commit prefixes in PR titles (`fix:`, `feat:`, `docs:`, etc.).
-- Avoid trailing punctuation in PR titles.
-- Optionally prefix the title with a crate name when one crate is the clear scope (for example, `git_ui: Add history view`).
-- Include a `Release Notes:` section as the final section in the PR body.
-- Use one bullet under `Release Notes:`:
-  - `- Added ...`, `- Fixed ...`, or `- Improved ...` for user-facing changes, or
-  - `- N/A` for docs-only and other non-user-facing changes.
-- Changes to `gpui` (including its benchmark and test harnesses) must have a bullet prefixed with `[GPUI]` describing the improvement even when nothing is user-facing in Zed itself, since GPUI is consumed as a library (CI enforces this), for example `- [GPUI] Improved benchmarks to report retired CPU instructions alongside wall time on Linux`.
-- Format release notes exactly with a blank line after the heading, for example:
-
-```
-Release Notes:
-
-- N/A
-```
-
-# Crash Investigation
-
-## Sentry Integration
-- Crash investigation prompts: `.factory/prompts/crash/investigate.md`
-- Crash fix prompts: `.factory/prompts/crash/fix.md`
-- Fetch crash reports: `script/sentry-fetch <issue-id>`
-- Generate investigation prompt from crash: `script/crash-to-prompt <issue-id>`
-
-# Rules Hygiene
-
-These `AGENTS.md` files are read by every agent session. Keep them high-signal.
-
-## After any agentic session
-If you discover a non-obvious pattern that would help future sessions, include a **"Suggested AGENTS.md additions"** heading in your PR description with the proposed text. Do **not** edit `AGENTS.md` inline during normal feature/fix work. Reviewers decide what gets merged.
-
-## High bar for new rules
-Editing or clarifying existing rules is always welcome. New rules must meet **all three** criteria:
-1. **Non-obvious** — someone familiar with the codebase would still get it wrong without the rule.
-2. **Repeatedly encountered** — it came up more than once (multiple hits in one session counts).
-3. **Specific enough to act on** — a concrete instruction, not a vague principle.
-
-Rules that apply to a single crate belong in that crate's own `AGENTS.md` file, not the repo root.
-
-## What NOT to put in `AGENTS.md`
-Avoid architectural descriptions of a crate (module layout, data flow, key types). These go stale fast and the agent can gather them by reading the code. Rules should be **traps to avoid**, not **maps to follow**.
-
-## No drive-by additions
-Rules emerge from validated patterns, not one-off observations. The workflow is:
-1. Agent notes a pattern during a session.
-2. Team validates the pattern in code review.
-3. A dedicated commit adds the rule with context on *why* it exists.
+> **Quality reminder (Weinberg):** Value = "value to some person who matters." This guide optimizes for user orientation — not exhaustiveness. If you need full skill details, consult `.agents/skills/` directly.
+>
+> **Feedback:** If an agent failure reveals a missing trap or routing gap, propose an addition under "Suggested AGENTS.md additions" in your PR description. Mirror the `.rules` hygiene pattern: validate the pattern in review before merging.

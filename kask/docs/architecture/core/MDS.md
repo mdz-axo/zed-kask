@@ -1,0 +1,546 @@
+---
+title: "MDS — Minimal Domain Specification"
+audience: [architects, developers, agents]
+last_updated: 2026-11-18
+version: "0.43.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, composition, trust, lifecycle, curation]
+---
+
+
+
+# MDS — Minimal Domain Specification
+
+**Purpose:** A minimal, capability-driven specification framework for hKask. Specs are grants ("CAN verb on resource via interface"), not fences ("MUST NOT"). Five categories, five tools, one completeness predicate.
+
+
+
+**Architecture anchor:** [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2 (essentialist split). hKask is compiled in-process inside zed-kask. The standalone `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-identity`, `hkask-communication`, `hkask-acp`, and the `hkask-services-*` subcrates (`chat`, `onboarding`, `skill`, `wallet`) are **removed**. Their jobs move to zed-kask surfaces: zed's agent panel (chat), zed's first-launch (onboarding), upstream-Zed body injection via the project-aware `SkillTool` resolver → `render_skill_envelope` (skill execution — see `crates/agent/src/tools/skill_tool.rs:150,194-240`; resolver at `crates/agent/src/agent.rs:5404-5455@skill_body_resolver_for_project`, registered at `crates/agent/src/agent.rs:1211@NativeAgent::register_session`), and the wallet subsystem was deleted outright (2026-08-30) — governed tool-call bounding lives in `hkask-regulation::CallCapManager` (see §1.4). The 21 surviving kask crates (`19 hkask-*` + `dme-harness` + `kask_bridge`) and 11 MCP servers (243 tools) are listed in the architecture plan §2.2/§2.3.
+
+**Related:** [`PRINCIPLES.md`](PRINCIPLES.md), [`magna-carta.md`](magna-carta.md), [`magnifica-humanitas.md`](magnifica-humanitas.md)
+
+---
+
+## 1. Domain Ontology
+
+The domain ontology is grounded in **Ontology Design Pattern (ODP) methodology** as described by Norouzi et al. (2025, arXiv:2509.23776): compact, requirement-driven extraction patterns rather than navigating entire complex ontologies.[^norouzi-odp]
+
+The ontology is re-anchored to the **21 surviving kask crates** (`19 hkask-*` + `dme-harness` + `kask_bridge`) compiled in-process inside zed-kask (see [`zed-host-architecture-plan.md`](../zed-host-architecture-plan.md) §2.2). Deleted crates are not referenced as current; where a deleted crate's job moved to a zed-kask surface, the entity is mapped to that surface.
+
+### 1.1 Core Entities
+
+| Entity | Crate / Surface | Description | Goal Principle |
+|--------|-------|-------------|---------------|
+| `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
+| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a user's agent identity (persona, voice). The `UserPod` type does not exist in `hkask-types` — the per-user data directory *is* the agent identity container post-pivot. Pod abstraction deleted in 2026-07-25 cleanup. | P6, P1 |
+| `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
+| `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, per-agent call caps | P9 |
+| `CallCap` | `hkask-regulation` | Per-agent hard ceiling on governed tool calls per regulation tick; one call charged per `McpRuntime::invoke`; resets to the ceiling each tick (replaces the former gas hold-settle `GasBudget`, deleted 2026-08-03) | P9 |
+
+
+### 1.2 Kata-Kanban Domain
+
+**Crates:** `hkask-kata-kanban` (domain & persistence engine) + `hkask-mcp-kata-kanban` (MCP server) | **Goal Principle:** P3 (Generative Space) — Toyota Kata scientific thinking applied through headless kanban task boards. PDCA phases map to task statuses: Plan→Backlog, Do→InProgress, Check→Review, Act→Done.
+
+| Entity | Description | Key Attributes |
+|--------|-------------|---------------|
+| `Board` | Named task board scoped to owner WebID | `board_id: BoardId`, `name`, `owner: WebID`, `columns: Vec<ColumnDef>` |
+| `ColumnDef` | Ordered column on a board representing a workflow phase | `column_id: ColumnId`, `name`, `status: TaskStatus`, `wip_limit: Option<u32>` |
+| `Task` | Unit of work with status lifecycle, priority, verification criteria | `task_id: TaskId`, `title`, `status: TaskStatus`, `priority: Priority`, `owner: WebID`, `board_id: BoardId` |
+| `Priority` | Task urgency level | `Low \| Medium \| High \| Critical` |
+| `TaskStatus` | Strict column-ordered lifecycle state (defined in `hkask-types`, not the server) | `Backlog → Ready → InProgress → Review → Done` (`kask/crates/hkask-types/src/kanban_status.rs:24`) |
+| `VerificationCriterion` | Acceptance spec: what "done" means for a task or a goal | `description: String` |
+| `Goal` | Retained canonical functional target; immutable specification/source, worker progress, human closure and independent findings remain separate | `id`, `goal_text`, `criteria`, `criterion_ids`, `spec_digest`, `source`, optional typed `forecast`, closure/assessments, `revision`, `indexed_revision`; canonical pact: `kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md` |
+| `GoalVerdict` | Worker progress verdict with complete criterion coverage, never human acceptance | `kask/crates/hkask-kata-kanban/src/kanban/types/goal.rs` |
+| `NativeGoalClosure` / `NativeGoalOutcomeCorrection` | Host-authenticated human ActionChoice and separate append-only correction; no automatic success | Canonical pact; native ingress `crates/agent/src/tools/goal_tools.rs` |
+| `GoalForecast` / current recall | Optional prospective `HumanAcceptance` resolver and retained scores; one current row/vector indexed by revision, canonical history retained | Canonical pact; scheduled host drainer `kask/crates/kask_bridge/src/goals.rs` |
+
+**5 coaching kata questions:** (1) Target condition? (2) Actual condition now? (3) What obstacles? Which ONE? (4) Next step? What do you expect? (5) How quickly can we go and see? — carried by the `kata-improvement` skill (`.agents/skills/kata-improvement/`; the Coaching Kata was folded into it from `kata-coaching`, 2026-09-28, commit `ebcd901c80`); server-side `KataEngine`/`KataState`/`KataManifest`/`KataStep` entities are removed (zero hits in `hkask-kata-kanban` and `hkask-mcp-kata-kanban`).
+
+**Regulation spans:** `reg.kata` — coaching-prompt generation (`kask/crates/hkask-kata-kanban/src/kanban/service_impl/kata.rs:61@KanbanService::task_coaching_prompt`). No `reg.kanban` namespace exists in code (zero hits in `kask/**/*.rs`).
+
+### 1.3 Service and runtime subsystems
+
+**Crate:** the last `hkask-services-*` crate (`hkask-services-core`) was folded into `hkask-mcp-corpus` (2026-10-13) — it had exactly one consumer and failed the deletion test. Corpus retains the live settings reader in `src/settings.rs`; style operations return the shared MCP tool-error type directly. The editor process owns one `McpRuntime`; it spawns the 11 MCP binaries as child processes over stdio, discovers their tools, and governs dispatch (`kask/crates/hkask-mcp/src/runtime.rs`; registry at `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`). There is no daemon or `KaskCore` singleton.
+
+The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkask-services-skill`, `hkask-services-wallet`) are **removed**. Their jobs moved to zed-kask surfaces:
+
+| Deleted subcrate | Job moved to |
+|------------------|--------------|
+| `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
+| `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
+| `hkask-services-skill` | Project-aware body injection via `SkillTool::with_body_resolver` → `render_skill_envelope` (`crates/agent/src/tools/skill_tool.rs:150,194-240`; resolver at `crates/agent/src/agent.rs:5404-5455@skill_body_resolver_for_project`, registered at `crates/agent/src/agent.rs:1211@NativeAgent::register_session`) — skill execution is native, no service layer. |
+| `hkask-services-wallet` | Removed. Governed tool-call bounding now lives in `hkask-regulation::CallCapManager`. |
+
+Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
+
+| Subcrate | Domain | Contract Prefix | Count | Status |
+|----------|--------|----------------|-------|--------|
+| ~~`hkask-services-core`~~ (removed) | Corpus settings reader: `hkask-mcp-corpus/src/settings.rs` | — | — | ✅ Removed |
+| ~~`hkask-services-compose`~~ (folded) | Template composition — folded into `hkask-mcp-corpus` (internal `compose` module) | — | — | ✅ Folded |
+| ~~`hkask-services-context`~~ (folded) | Service context and contract monitoring — `governance.rs` moved to `hkask-mcp-curator`; `mcp_server_guard.rs` + `storage_guard.rs` were dead code | `P{N}-svc-context-*` | 31 | ✅ Folded |
+| ~~`hkask-services-corpus`~~ (folded) | Content corpus: discovery + embed — folded into `hkask-mcp-corpus` (internal `corpus` module) | `P{N}-svc-corpus-*` | 30 | ✅ Folded |
+| ~~`hkask-services-kata-kanban`~~ (folded) | Toyota Kata + Kanban board coordination — folded into `hkask-mcp-kata-kanban` | `P{N}-svc-kata-*` / `KAN-SVC-*` | 61 | ✅ Folded |
+| ~~`hkask-services-runtime`~~ (folded) | Runtime services: classify + guard + provider_intel — folded into `hkask-mcp-corpus` (internal `runtime` module) | `P{N}-svc-runtime-*` | 13 | ✅ Folded |
+| ~~`hkask-services-self-heal`~~ (deleted) | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup | — | — | ✅ Deleted |
+| ~~`hkask-services-inference`~~ (deleted) | Scaffolding removed; corpus composition requires an injected `Arc<dyn InferencePort>` and explicit `generation_model` (`kask/mcp-servers/hkask-mcp-corpus/src/compose.rs`, `ComposeRequest`) | — | — | ✅ Deleted |
+| `hkask-inference` | Inference routing primitives (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). `InferenceConfig::from_env` reads provider configuration from the child process environment only (`kask/crates/hkask-inference/src/config.rs:122-137,160-169,235-246`). Chat, vision, embedding, and model listing can use IPC; media generation is child-local (`hkask_inference.rs:157-395`). | `P{N}-svc-inference-*` | 7 | ✅ Current |
+
+---
+
+## 2. Five Categories
+
+| # | Category | Completeness Predicate | Min Artifacts | Cross-References |
+|---|----------|----------------------|---------------|-----------------|
+| 1 | **Domain** | Every entity has a named term and a bounded-context map | Domain ontology sketch | → Composition (verbs), → Lifecycle (persistence) |
+| 2 | **Composition** | Every domain verb has a granted composition, registered interface, and composable path | Capability grant table, interface equivalence matrix, registry schema | → Domain (ontology), → Trust (tokens) |
+| 3 | **Trust** | Every capability operation has a threat-model entry and a mitigation naming its actual enforcement point | Threat model, keystore config, capability separation boundaries | → Composition (capabilities), → Lifecycle (audit) |
+| 4 | **Lifecycle** | Bootstrap, evolution, deprecation, lifecycle, and persistence are expressible as spec transitions | Bootstrap manifest, evolution rules, deprecation policy, Regulation span registry | → Domain (entities), → Trust (audit) |
+| 5 | **Curation** | Every spec artifact has been evaluated for coherence by a curator with documented rationale | Curation decision log, coherence score | → Domain (grounding), → Lifecycle (health) |
+
+[^evans-ddd]: Evans, Eric. *Domain-Driven Design: Tackling Complexity in the Heart of Software.* Addison-Wesley, 2003. — Bounded contexts, ubiquitous language, and the domain model that MDS categories extend.
+
+---
+
+## 3. Completeness Predicate
+
+```
+complete?(G, category) :=
+  ∀ goal ∈ G[category]:
+    ∃ criterion ∈ goal.criteria:
+      criterion.satisfied = true
+  ∧ ∀ cross_ref ∈ G[category].cross_references:
+    complete?(G, cross_ref.target_category)
+
+curated?(G) :=
+  coherence_score(G.artifacts) ≥ threshold
+  ∧ ∀ artifact ∈ G.artifacts:
+    curation_decision ∈ {Accept, Revise, Reject}
+    ∧ decision.rationale documented
+```
+
+A goal-set G is **MDS-complete** iff `complete?(G, c)` holds for all 5 categories **and** `curated?(G)` holds.
+
+Curation decisions (Accept/Revise/Reject) are made by the Curator or human — not by any automated tool. The QA system validates coherence; the Curator makes decisions.
+
+[^hoare-triple]: Hoare, C.A.R. "An Axiomatic Basis for Computer Programming." *Communications of the ACM*, 1969. — The {P} C {Q} Hoare triple that inspires MDS's completeness predicate: precondition → command → postcondition.
+
+---
+
+## 4. Spec Operations & QA Integration
+
+> **Not yet implemented.** `SpecStore`, `SqliteSpecStore`, `DefaultSpecCurator`, and the `spec_types` module are not yet built in `hkask-storage`. The `kask spec` CLI subcommands and `kask qa spec-check` are likewise not yet built. Per `DOCUMENTATION_STANDARDS.md` §10 ("No aspirational content in `architecture/`"), the design specification for this surface has been removed. The MDS category framework (§1–§3, §5–§10) is independent of this surface and remains authoritative. The corpus tools below ARE implemented.
+
+### 4.1 Style Composition Integration (`corpus_rewrite`)
+
+The Gentle-Lovelace prose rewriting capability lives in `hkask-mcp-corpus` as the `corpus_rewrite` tool. It takes a passage/code snippet + quality dimension (gentle/schriver/hopper/lovelace/composite) and delegates to `ComposeService::compose()` with dimension-specific prompts.
+
+| Tool | Server | Description |
+|------|--------|-------------|
+| `corpus_rewrite` | `hkask-mcp-corpus` | Rewrite prose optimized for a Gentle Lovelace quality dimension |
+| `corpus_compose` | `hkask-mcp-corpus` | Generate prose in any author's style (underlying engine) |
+
+
+---
+
+### 4.2 Corpus Server Tools
+
+The corpus server provides tools for style corpus management, prose generation, and QA generation:
+
+| Server | Tools | Domain | Status |
+|--------|-------|--------|--------|
+| `hkask-mcp-corpus` | Gather: `corpus_cache_work`; process: `corpus_convert`, `corpus_ocr`, `corpus_is_complex`, `corpus_chunk`, `corpus_build_chunk_representations`, `corpus_embedding_inventory`, `corpus_export_bundle`, `corpus_tag_chunks`, `corpus_embed`, `corpus_extract_assertions`, `corpus_dedup_chunks`, `corpus_consolidate_chunks`; QA: `corpus_build_prompts`, `corpus_generate_qa_batch`, `corpus_ground_generated_qa`, `corpus_ingest_qa`, `corpus_purge_qa`; compose: `corpus_compose`, `corpus_rewrite`, `corpus_centroid`; manage: `corpus_cache`, `corpus_query`, `corpus_clear_index` | Corpus caching + processing + QA generation + style exemplar composition | ✅ Implemented: 24 tools, pinned by `tool_surface_is_exactly_24_registered_tools` at `kask/mcp-servers/hkask-mcp-corpus/src/hkask_mcp_corpus.rs:334-339@tool_surface_tests` |
+
+### 4.3 Style Exemplar Architecture
+
+The style exemplar system models a **human exemplar** — a named individual whose body of work constitutes a representational corpus. The logical validity of the exemplar derives from the relationship between the human and their work: the corpus *is* the evidence of their voice, style, and intellectual framework. Each passage is a sample of that relationship.
+
+**Corpus sources by exemplar type:**
+
+| Exemplar type | Intake | Source examples | Status |
+|--------------|--------|----------------|--------|
+| Public domain author | Static YAML (`works:` list pointing to Gutenberg URLs) | Named public-domain works | ✅ Implemented |
+| Mashup exemplar | Two-author centroid interpolation over source corpora | Registry-defined mashups | ✅ Implemented |
+| Academic / research author | Agent-gathered works cached via `corpus_cache_work` (`{slug}.origin.json` provenance sidecar) | OpenAlex, arXiv, Semantic Scholar, and extracted local works | ✅ Implemented (`kask/mcp-servers/hkask-mcp-corpus/src/tools/gather.rs:51-90`) |
+
+
+---
+
+## 5. Capability-Driven Model
+
+MDS is capability-driven, not constraint-driven:
+
+| Aspect | Constraint-Driven | MDS (Capability-Driven) |
+|--------|-------------------|-------------------------|
+| Spec as | Fence ("MUST NOT") | Grant ("CAN verb on resource via interface") |
+| Validation | Static checks, lints | Composability test, POLA audit |
+| Growth | Add constraints | Compose capabilities |
+| Lifecycle | Governed (gates) | Curated (invitations) |
+| Failure mode | Over-constrained | Under-governed |
+| hKask alignment | — | capability separation via caller-external tool allowlists |
+
+[^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model. hKask adopts the separation principle (authority only attenuates; a caller reaches only what a list it did not write allows) — see the [Capability Separation Boundaries](#capability-separation-boundaries) table.
+
+---
+
+## 6. MDS Cycle
+
+> **Not yet implemented.** The `SpecStore`, `DefaultSpecCurator`, and `kask spec` / `kask qa spec-check` CLI surfaces are not yet built (see §4 note). The cycle below is the intended design.
+
+```
+MDS_cycle(S, D) :=
+  let spec = capture(D)            // Build Spec from domain description
+  store.save(spec)                 // Persist via SpecStore (not yet built)
+  curate(spec)                     // Validate via DefaultSpecCurator (not yet built)
+  qa spec-check                    // Category coverage + quality gate (not yet built)
+  human_or_curator decides:        // External governance
+    Accept | Revise | Reject
+```
+
+The MDS category framework (§1–§3, §5, §7–§10) is independent of this cycle and remains authoritative. Curation decisions remain external.
+
+[^beck-tdd]: Beck, Kent. *Test-Driven Development: By Example.* Addison-Wesley, 2003. — The red-green-refactor cycle that MDS's capture→decompose→validate→curate cycle parallels.
+
+---
+
+## 7. Template Manifests
+
+Each category has a minimal YAML template. All use `schema_version: "0.30.0"`.
+
+### 7.1 Domain Spec Template
+
+```yaml
+schema_version: "0.30.0"
+category: domain
+domain_anchor: hkask
+bounded_context: "..."
+
+ontology:
+  entities:
+    - name: Agent
+      attributes: [webid, capabilities, persona]
+
+focusing_assumptions:
+  - id: FA-D1
+    statement: "..."
+    rationale: "..."
+
+completeness_checklist:
+  - "Every entity has a named term"
+  - "Bounded-context map exists"
+
+cross_references:
+  - category: composition
+    relation: "Entities expose composable verbs"
+  - category: lifecycle
+    relation: "Entity state persisted across lifecycle"
+```
+
+### 7.2 Composition Spec Template
+
+```yaml
+schema_version: "0.30.0"
+category: composition
+domain_anchor: hkask
+
+verb_inventory:
+  - verb: invoke_tool
+    resource: McpServer
+    interface: [mcp, cli, in_process]
+  - verb: render_template
+    resource: Template
+    interface: [mcp, cli, in_process]
+
+interface_equivalence:
+  mcp: true
+  cli: true
+  in_process: true
+  equivalent: true  # All three exercise same functional core
+
+registry:
+  type: unified
+  discriminator: template_type
+  cascade_depth_max: 7
+
+```
+
+> **Note:** The `api` interface column from the pre-fork template is **removed** (the standalone `hkask-api` HTTP server is deleted). It is replaced by `in_process`, reflecting zed-kask's in-process composition root. MCP and CLI remain as equivalent surfaces to the same functional core.
+
+### 7.3 Trust Spec Template
+
+```yaml
+schema_version: "0.30.0"
+category: trust
+domain_anchor: hkask
+
+threat_model:
+  adversaries:
+    - name: malicious_template_author
+      vector: template_injection
+      mitigation: `minijinja` Rust sandbox (no filesystem/Python access, unlike Python Jinja2) + tool_allowlist_separation[^minijinja]  # NOT information flow control (taint check removed: its inputs were constants)
+    - name: compromised_dependency
+      vector: supply_chain
+      mitigation: cargo_deny + pinned_versions
+
+capability_separation:
+  - "Tool authority is a list the calling party does not write: the parent-held delegation grant (minted from `kask.mcp.delegated_tools` at `kask_bridge/src/delegation_grants.rs:16`, revocable before unload) intersected with the request's tool narrowing at the inference IPC `create_worktree_thread` dispatch (fail-closed on a missing narrowing, `kask_bridge/src/inference_ipc_server.rs:954-961`), and the per-server MCP env/credential allowlists"
+  - "`McpRuntime::invoke` performs NO per-call authorization — it meters the call against the agent's per-tick runaway ceiling, dispatches, and emits the span. Its `agent: WebID` is an accounting identity, not a credential"
+  - "Information flow is NOT gated. Defense Layer 5 is absent by decision, as Layer 3 is — treat every tool path as taint-unaware"
+  - "Removed 2026-08-12: the per-call DelegationToken capability match (it compared a caller-supplied value against itself). Do not re-add a per-call authorization argument to `ToolPort::invoke`"
+  - "Removed 2026-08-12: the FIDES Source→Sink taint check on `ToolInfo.taint` (both inputs were constants, so it could not deny). This is now an absence check; do not re-add the machinery without live inputs and a test proving a real block"
+
+keystore:
+  encryption: AES-256-GCM
+  key_derivation: Argon2id + HKDF-SHA256
+  storage: OS_keychain + SQLCipher
+  sovereignty_backend: oo7 (direct Secret Service access; not zed CredentialsProvider)
+```
+
+### 7.4 Lifecycle Spec Template
+
+```yaml
+schema_version: "0.30.0"
+category: lifecycle
+domain_anchor: hkask
+
+bootstrap:
+  sequence: [resolve_secrets, open_databases, wire_composition_root, start_loops]
+
+evolution:
+  versioning: git_sha_only
+  migration: "Schema migrations run on version bump"
+
+deprecation:
+  policy: "Prefer deletion over deprecation (P5)"
+
+observability:
+  reg_spans:
+    - namespace: reg.tool
+      covers: "Child-process tool outcome tracing; observability only"
+    - namespace: reg.mcp
+      covers: "Managed-runtime persistence diagnostics; completed calls are typed ToolCompleted Regulation records"
+    - namespace: reg.inference
+      covers: "Inference circuit transitions, permanent failures, and observed recovery"
+  variety_counters:
+    - counter: tool_diversity
+      threshold: 50
+    - counter: template_diversity
+      threshold: 30
+  algedonic:
+    trigger: "variety_deficit > threshold"
+    escalation: "Curator → Human"
+
+persistence:
+  engine: SQLite + SQLCipher
+  schema: bitemporal_triples
+  vector_store: sqlite-vec
+  memory_pipelines:
+    - name: unified   # the episodic/semantic type distinction was removed (D6) — one store, per-h_mem Visibility
+      visibility: per_h_mem_private_shared_public
+```
+
+> **Note:** The bootstrap sequence no longer uses a `build_service_context` or `build_kask_core` step — `KaskCore` was never implemented. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters (see Composition Root section below). No daemon, no Matrix transport, no HTTP server in the bootstrap path.
+
+### 7.5 Curation Spec Template
+
+```yaml
+schema_version: "0.30.0"
+category: curation
+domain_anchor: hkask
+
+curation_model:
+  decisions: [Accept, Revise, Reject]
+  curator:
+    type: NativeInProcessAgent   # daemon deleted 2026-07-25; the Curator is a native in-process agent (D2)
+    authority: "Human-augmented — curator proposes, human decides"
+  guidance: |
+    Accept — spec is coherent and complete, publish it.
+    Revise — spec needs work, return with rationale.
+    Reject — spec is not useful, remove it.
+
+coherence_metric:
+  method: "Jaccard similarity of declared vs. registered verbs"
+  threshold: 0.7
+```
+
+[^fowler-poeaa]: Fowler, M. (2002). *Patterns of Enterprise Application Architecture.* Addison-Wesley. — Template pattern: a standard structure that captures domain knowledge in a reusable form.
+
+---
+
+## 8. Testing Protocol
+
+### Principles
+
+1. **Expectation-anchored:** Tests verify a stated behavioral expectation at a public seam, with a falsifier and an oracle independent of the implementation (see `kask/docs/reference/testing-protocol.md`).
+2. **Public seam only:** Tests verify behavior through public interfaces, not implementation.
+3. **Tracer bullet:** One RED→GREEN cycle per behavior. No horizontal slicing.
+4. **Category coverage:** Each MDS category has at least one integration test.
+
+### Category → Test Strategy
+
+| Category | Test Strategy |
+|----------|--------------|
+| Domain | Entity definition + term validation |
+| Composition | Capability composition + interface equivalence verification |
+| Trust | capability separation boundary enforcement + threat model audit |
+| Lifecycle | Bootstrap + evolution + deprecation + Regulation span emission |
+| Curation | Coherence scoring + decision rationale documentation |
+
+[^principles-p8]: hKask Team. (2026). *Architecture Principles — P8.* `docs/architecture/core/PRINCIPLES.md` (P8) — Every `#[test]` verifies a stated behavioral property of a public seam.
+
+---
+
+## 9. Documentation Structure
+
+### 9.1 Category → Directory Mapping
+
+Where each MDS category's authoritative documents live:
+
+| # | MDS Category | Primary Directory | Key Documents |
+|---|--------------|-------------------|---------------|
+| 1 | **Domain** | `architecture/` | MDS.md, zed-host-architecture-plan.md |
+| 2 | **Composition** | `architecture/` | MDS.md, zed-host-architecture-plan.md §13 (Composition & Connection Surfaces) |
+| 3 | **Trust** | `architecture/core/` | magna-carta.md, PRINCIPLES.md, magnifica-humanitas.md |
+| 4 | **Lifecycle** | `architecture/` | MDS.md, zed-host-architecture-plan.md |
+| 5 | **Curation** | `architecture/` | DOCUMENTATION_STANDARDS.md (includes Writing Excellence protocol in Appendix A) |
+
+**Rule:** New documents go in the directory of their primary MDS category. Cross-cutting documents go in the directory of their dominant category.
+
+### 9.2 Document Lifecycle
+
+```
+Draft → Active → Deprecated → Superseded → Removed
+```
+
+| State | Rule |
+|-------|------|
+| **Active** | Must map to ≥1 MDS category via `mds_categories` frontmatter |
+| **Deprecated** | `git rm` from active tree at next review; git history is the archive of record |
+| **Superseded** | `git rm`; successor carries the content forward |
+| **Removed** | `git rm` from working tree; recoverable via `git log --diff-filter=D` |
+
+### 9.3 Verification
+
+Cross-references are verified by the link checker in CI (relative links within the repository). Broken links fail the verification gate.
+
+---
+
+## 10. References
+
+[^w3c-rdf]: W3C. (2014). *RDF 1.1 Concepts and Abstract Syntax*. <https://www.w3.org/TR/rdf11-concepts/>.
+[^miller-robust]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control*. Johns Hopkins University.
+[^cockburn-hexagonal]: Cockburn, A. (2005). *Hexagonal Architecture*. <https://alistair.cockburn.us/hexagonal-architecture/>.
+[^shostack-threat]: Shostack, A. (2014). *Threat Modeling: Designing for Security*. Wiley.
+[^ronacher-jinja2]: Ronacher, A. (2026). *Jinja2 Template Designer Reference*. <https://jinja.palletsprojects.com/>.
+[^norouzi-odp]: Norouzi, M. et al. (2025). "STAR: Seed Terms And Relationships — Ontology Design Pattern Extraction." arXiv:2509.23776.
+[^minijinja]: minijinja crate. <https://crates.io/crates/minijinja>. Rust-native Jinja2-compatible template engine with sandbox by default — no Python runtime, no filesystem access, no network access.
+[^fowler-strangler]: Fowler, M. (2004). "StranglerFigApplication." martinfowler.com. <https://martinfowler.com/bliki/StranglerFigApplication.html>.
+[^conway]: Conway, M. E. (1968). "How Do Committees Invent?" Datamation, 14(4), 28-31.
+[^ousterhout]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yaknyam Press.
+
+---
+
+*MDS v0.43.0 — five categories. Re-anchored to the 21 surviving kask crates (`19 hkask-*` + `dme-harness` + `kask_bridge`) loaded into the editor process and 11 governed MCP child binaries (243 tools). Goal entities live in `hkask-kata-kanban` and remain canonical after current-state memory indexing. The SpecStore surface in §4 is not implemented.*
+
+---
+
+## Composition Root
+
+> The pre-fork `AgentService` orchestration layer, `hkask-cli` `ReplState` wrapper, and `hkask-api` `ApiState` wrapper are not present. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
+
+**Boundary:** The Regulation ledger, bridge adapters, and managed `McpRuntime` are process-global in the editor process (`crates/zed/src/main.rs`). The 11 MCP servers are separate child processes over stdio (`kask/crates/hkask-mcp/src/runtime.rs`). They link hKask libraries but never Zed crates; Zed-facing access crosses `kask_bridge`. There is no daemon, HTTP server, Matrix transport, or REPL state wrapper.
+
+### Crate-to-Domain Mappings
+
+| Crate | MDS Category | Key Entities |
+|-------|-------------|-------------|
+| `hkask-types` | Domain | IDs, `InferencePort` / `MemoryPort` traits, `RegulationSpan`, `InferenceMethod` IPC wire, closed vocabularies, `nostr_wire`, `media_wire` |
+| `hkask-storage` | Domain, Lifecycle | `hMem`, SQLCipher `Database`, `vec0` int8 vector index, shared SQLite helpers (`database::helpers`). (`SpecStore` is planned, not yet implemented — see §4 note.) |
+| `hkask-memory` | Domain, Curation | Unified memory (`curator.db` + `curator-private.db` via `SelfHealingStore`), consolidation, `hMem` coherence |
+| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling), `CyberneticsLoop`, variety/algedonic |
+| `hkask-keystore` | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses `oo7` (async Secret Service API) directly for all keychain access (D5 — NOT zed's `CredentialsProvider`; `kask/crates/hkask-keystore/Cargo.toml:14`, `kask/crates/hkask-keystore/src/keychain.rs:33-34`) |
+| `hkask-steer-core` | Composition | The zed-free half of the Steer prompt surface: rendering and verification of the tool-advertisement contract against the server's `build.rs`-generated `TOOL_NAMES` (`advertised_tool_names`, `render_tool_names`). `crates/hkask-steer` (zed-side) keeps the `ConversationView` lifecycle and re-exports everything here. |
+| `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId`, `decisions` — reads API keys from env vars injected into MCP children (`kask/crates/hkask-inference/src/config.rs:122-137,160-169,235-246`); media generation is child-local while chat/vision/embed/list/rerank/decide/sign may cross the IPC bridge (`kask/crates/hkask-inference/src/hkask_inference.rs:157-452`). |
+| `hkask-mcp-server` | Composition | Shared MCP response boundary: `execute_tool` isolates per-call inference usage, applies optional ontology annotation, scopes `_meta.inference_provenance`, preserves typed errors, and returns `content` + `duration_ms` + `usage` (`kask/crates/hkask-mcp-server/src/server/tool_execution.rs:71-89`). Outcome recording belongs to host dispatch, not child stderr. |
+| `hkask-mcp-test-support` | Composition | Shared dev-only `Parameters<T>` test harness and envelope assertions for MCP server integration suites. |
+| `hkask-forecast` | Domain | Forecast domain logic, `market_contract` (`MarketRecord`, `reliability_tier`), and DR-AS structural volatility. The remaining in-tree `cfg(kani)` harness set is `kask/crates/hkask-types/src/json_extract.rs:231-269`. |
+| `hkask-kata-kanban` | Domain, Lifecycle | Board, column, task, kata, and canonical goal state machine (`KanbanService`), Mermaid import/export, and idempotency store shared by `hkask-mcp-kata-kanban` and `kask_bridge`. |
+| `hkask-experimentation` | Domain, Lifecycle | SQLCipher experiment registry (`ExperimentationStore`), rubrics, prospective predictions, seals, and stuck-experiment health snapshot shared by `hkask-mcp-experimentation` and `kask_bridge`. |
+| `hkask-media` | Domain | Transcript bundle, educt/media layer algebra, EDL composition, MovieLabs OMC tool mapping (`omc::tool_to_omc`), `media_limits`, `ytdlp`, and `jobs_contract`. |
+| `hkask-nostr-core` | Domain | Key-free Nostr event ID computation, Schnorr verification, and NIP-19 encoding/decoding shared by Nostr MCP servers. |
+| `hkask-nostr-signer` | Trust | Editor-only NIP-49 secret key encryption/decryption and kind 1 / Blossom `BUD-11` signing; linked only by `settings_ui` and `kask_bridge`, never by MCP servers. |
+| `dme-harness` | Domain, Lifecycle | Rust GGUF direct-model-edit localization and intervention harness. |
+| `hkask-condenser` | Curation | Context condensation — pure domain crate (compression algorithms, ontology-aware saliency, `CondenserEngine`). Consumed by `kask_bridge::BridgeThreadCondenser` for in-process thread condensation. |
+| `hkask-bridge-ontology` | Curation | Ontology bridge — Dublin Core + BIBO + CiTO + PKO core vocabulary and domain supplements (SEPIO, GOLEM, ML-Schema, RDF Data Cube, OMC, SUMO, Schema.org). Single source of truth for ontology URIs and the dual-axis domain-selection logic. |
+| `hkask-lisp` | Composition | Sandboxed Lisp interpreter (`hkask_lisp::eval_sandboxed_with_cancellation`) for deterministic compute steps invoked by skills via `lisp_eval` — bounded recursion, JSON-native, no I/O, no `eval`, no network. |
+| `hkask-mcp` | Composition | Child-process lifecycle, tool discovery, `ToolPort` trait, metering, and dispatch. Governed completion writes a `SpanKind::ToolCompleted` record to the injected sink and warns at tracing target `reg.mcp` if persistence fails (`kask/crates/hkask-mcp/src/runtime.rs`). |
+| `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (`InferencePort`, `ToolPort`, `MemoryPort`, etc.) to MCP servers and zed-kask surfaces (composition root wires components directly). |
+| 11 MCP servers | Composition | The tools — child processes over stdio (D3), governed by the in-process `McpRuntime`: `corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-blossom`, `nostr-client`, `nostr-relay`, `prediction-markets`, `research`, `scenarios` (243 registered tools). |
+
+> **Deleted crates:** see git history.
+
+### Dependency Direction
+
+```mermaid
+graph TD
+    subgraph EDITOR["zed-kask editor process"]
+        AGENT[Agent panel and Curator]
+        STEER[Kanban, Media, and Nostr Steer panels]
+        BRIDGE[kask_bridge adapters and inference IPC]
+        RUNTIME[Managed McpRuntime]
+        REG[Process-global Regulation ledger]
+        KEYSTORE[hkask-keystore via oo7]
+    end
+    subgraph CHILDREN["11 MCP child processes over stdio"]
+        MCP[MCP server binaries]
+        LOCALINF[Child-local hkask-inference]
+    end
+    HOSTLM[Zed LanguageModelRegistry]
+    SECRET[OS Secret Service]
+
+    AGENT --> BRIDGE
+    STEER --> RUNTIME
+    RUNTIME -->|spawn, discover, invoke| MCP
+    RUNTIME --> REG
+    MCP -->|chat, vision, embed, rerank, sign IPC| BRIDGE
+    MCP --> LOCALINF
+    BRIDGE --> HOSTLM
+    KEYSTORE --> SECRET
+```
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-MDS-001
+verified_date: 2026-11-18
+verified_against: crates/zed/src/main.rs; kask/crates/hkask-mcp/src/runtime.rs; kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424; kask/crates/hkask-inference/src/hkask_inference.rs; kask/crates/hkask-keystore/Cargo.toml; crates/kanban_panel/src/kanban_panel.rs; crates/media_panel/src/media_panel.rs; crates/nostr_panel/src/nostr_panel.rs
+status: VERIFIED
+-->
+
+Domain and MCP crates never depend on Zed crates. The editor-side `kask_bridge` is the only adapter allowed to cross that dependency boundary; `McpRuntime` crosses the process boundary over stdio and the inference IPC client crosses it over the configured socket (`kask/crates/hkask-mcp/src/runtime.rs`; `kask/crates/hkask-inference/src/hkask_inference.rs:62-84`).
+
+### Capability Separation Boundaries
+
+**`McpRuntime::invoke` is not on this list.** It meters the call and dispatches;
+it performs no per-call authorization. The capability-match gate that this table
+previously named was removed on 2026-08-12 because every production mint site
+derived the token's `resource_id` from the same tool name it passed to `invoke`
+— the check compared a caller-supplied value against itself. A
+capability check is a boundary only when the authority list is written by someone
+other than the caller being checked; the rows below satisfy that.
+
+| Boundary | Enforcement | Principle |
+|----------|-------------|-----------|
+| Delegated tool dispatch | The parent-held grant (`kask/crates/kask_bridge/src/delegation_grants.rs:16`) intersected with the request's tool narrowing at the inference IPC `create_worktree_thread` dispatch (`kask/crates/kask_bridge/src/inference_ipc_server.rs:954-961`), fail-closed on a missing narrowing, enforced before the sibling thread is created | P4 |
+| Per-agent tool reach | The granted ceiling derived from the parent grant and the requested narrowing (`kask/crates/kask_bridge/src/delegation_grants.rs:67` `worktree_tools`) — an empty list deliberately creates an inference-only child, never grant-all | P4 |
+| Per-server credentials | Per-server MCP env / credential allowlists (`kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS` and `kask/crates/kask_bridge/src/mcp_servers/env.rs:259@build_mcp_server_env`) | P1 |
+| Information flow | **None — absent by decision.** Defense Layer 5 (information-flow control) is not implemented; treat every tool path as taint-unaware | P4 |
+| MCP server isolation | Child processes over stdio, owned by `McpRuntime`; server crates do not link Zed crates (`kask/crates/hkask-mcp/src/runtime.rs`) | P1 |
+| Runaway-loop bounds | Per-tick call ceiling charged in `McpRuntime::invoke` (`EnergyBudgetExceeded`, fail-open on an unseeded agent). Breakers and meters, **not** authorization. | P4 |
+| Sovereignty keys | `hkask-keystore` uses `oo7::Keyring` directly for its `kask://credentials/` entries (`kask/crates/hkask-keystore/Cargo.toml:12-16`; `kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`) | P1 |
+
+### Bootstrap Sequence
+
+The composition root constructs one shared `RegulationLedger`, one governed `McpRuntime`, and the bridge adapters in the editor process (`crates/zed/src/main.rs:760-1243@main`). Deferred provisioning does not wait for Zed account resolution: it uses the current username when available and otherwise proceeds with fallback identity `kask` (`crates/zed/src/main.rs:1486-1514@main`). MCP children independently resolve `HKASK_WEBID` and warn before falling back to anonymous (`kask/crates/hkask-mcp-server/src/server/transport.rs:95-107`). Sovereignty-key access uses `oo7`, not the `keyring` crate (`kask/crates/hkask-keystore/src/keychain.rs:33-34,133-161`).
+
+### Interface Equivalence
+
+The agent panel, three Steer panels (`kanban_panel`, `media_panel`, `nostr_panel`), and the managed MCP children reach hKask through distinct adapters and transports. Inline D18 widgets provide visualization, while panel conversations dispatch through the process-global managed runtime. Regulation is intentionally shared process-wide through the single ledger and loop graph wired in `crates/zed/src/main.rs:760-1243@main`.

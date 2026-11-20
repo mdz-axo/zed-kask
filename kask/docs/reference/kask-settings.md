@@ -1,0 +1,753 @@
+---
+title: "Kask Settings Reference"
+audience: [developers, operators, agents]
+last_updated: 2026-11-18
+version: "0.42.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition, domain]
+---
+
+# Kask Settings Reference
+
+The **Settings → Kask** section configures hKask features in zed-kask. It has
+sub-pages for data services, inference providers, MCP servers, and per-server
+configuration. The canonical source of truth for every default is the `Default`
+impl in `kask/crates/kask_bridge/src/settings.rs` — `From<Content>` and
+`mcp_env()` both read from `Default`, never from inlined magic numbers or
+`#[serde(default = "...")]` attributes (which never fire because the settings
+system deserializes `SettingsContent`, not `KaskSettings`).
+
+## Top-level struct (`KaskSettings`)
+
+`KaskSettings` has 13 subsections plus two top-level storage-root fields (`kask/crates/kask_bridge/src/settings.rs:36-94@KaskSettings`; `affordance` is additionally serialized on `KaskSettingsContent` at `crates/settings_content/src/settings_content.rs:1697` and read directly per turn):
+
+| Field | Type | Default source |
+|-------|------|---------------|
+| `data_dir` | `String` | `""` → runtime resolves `~/.local/share/zed-kask/` (hidden infrastructure tree: databases, agents/, mcp/, skills/, threads/); emitted as `HKASK_DATA_DIR` |
+| `artifacts_dir` | `String` | `""` → runtime resolves `~/Documents/zk-data/` (visible artifacts tree: ALL artifact files and outputs at `{server}-mcp/{artifact-type}/`); emitted as `HKASK_ARTIFACTS_DIR` |
+| `general` | `KaskGeneralSettings` | `Default` |
+| `mcp` | `KaskMcpSettings` | `Default` |
+| `curator` | `KaskCuratorSettings` | `Default` |
+| `memory` | `KaskMemorySettings` | `Default` |
+| `condenser` | `KaskCondenserSettings` | `Default` |
+| `research` | `KaskResearchSettings` | derived `Default` |
+| `corpus` | `KaskCorpusSettings` | `Default` |
+| `scenarios` | `KaskScenariosSettings` | derived `Default` |
+| `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
+| `media` | `KaskMediaSettings` | `Default` |
+| `models` | `KaskModelsSettings` | `Default` |
+| `private_inference` | `KaskPrivateInferenceSettings` | `Default` |
+| `nostr` | `KaskNostrSettings` | derived `Default` |
+
+## Inference admission and resilience (`KaskGeneralSettings`)
+
+The operator-ratified core-review D3 contract (2026-09-04) is a total
+**admission-to-completion** deadline: queue wait, model resolution, stream
+establishment, and drain all share `general.inference_timeout_secs` (default
+300 seconds). This supersedes establishment-only descriptions; AIMD is unchanged.
+Zero disables this server timer, not cancellation or admission limits. IPC
+clients retain their 600-second transport fallback when the timer is disabled;
+otherwise they allow the published server timeout plus 30 seconds of grace.
+
+Accepted bridge requests are bounded at twice `general.max_concurrency`;
+active calls remain bounded at that configured concurrency. Exhausting admission
+capacity returns `Overloaded` before provider dispatch; full active utilization
+alone is healthy. Expiry returns `Timeout`. Caller/channel closure cancels local
+queued or running work and releases capacity.
+
+`general.inference_circuit_failure_threshold` (default 3) consecutive transient failures opens the local inference circuit. While open, requests return `CircuitOpen` before dispatch. After `general.inference_circuit_open_secs` (default 30), one half-open probe is admitted; success closes and transient failure reopens the circuit. Permanent authorization, configuration, model, and provider failures do not open the transient circuit; Regulation escalates them with typed evidence. Unknown-effect requests are not automatically replayed. The settings/default contract is at `kask/crates/kask_bridge/src/settings.rs:110-139@KaskGeneralSettings`; the state machine and receipt path are at `kask/crates/kask_bridge/src/inference_resilience.rs:44-160`.
+
+## MCP Servers (`KaskMcpSettings`)
+
+Toggle which of the built-in kask MCP servers are loaded.[^mcp-spec-settings]
+The 11 servers (`BUILT_IN_MCP_SERVERS` registry in `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:26-424@BUILT_IN_MCP_SERVERS`,
+IDs via `builtin_mcp_server_ids()` at `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:450@builtin_mcp_server_ids`):
+`corpus`, `curator`, `experimentation`, `kata-kanban`, `media`, `nostr-blossom`, `nostr-client`,
+`nostr-relay`, `prediction-markets`, `research`, `scenarios`. The crates live under
+`kask/mcp-servers/` (11 `hkask-mcp-*` crates).
+
+| Field | Type | Default |
+|-------|------|--------|
+| `load_default` | `bool` | `true` — load all built-in servers |
+| `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. "curator": false) |
+| `delegated_tools` | `HashMap<String, Vec<String>>` | empty — deny delegated IPC tools unless explicitly granted |
+
+The master `load_default` toggle controls all servers; individual `overrides`
+take precedence. Set `load_default: false` to disable all kask MCP servers.
+Load/unload toggles take effect at runtime: the `SettingsStore` observer
+(`sync_kask_mcp_runtime_servers`, D45) stops/starts the governed server
+through the `McpRuntime`'s own primitives. The servers also appear in
+Settings → AI → MCP Servers as managed rows (D45). A loaded server with no discovered tools, no live connection, or an unreadable
+connection snapshot is shown as neutral `Unknown`, not as actively `Starting` or
+failed. `Running` requires both discovered tools and a live transport; an
+explicitly unloaded server remains `Stopped`. The settings window re-renders
+on the runtime's tool or connection change signal. A live transport reading
+is not a successful-tool-call probe: a later call can still fail.
+
+### Delegated tools: parent authority (D1, 2026-09-04)
+
+`kask.mcp.delegated_tools` maps a **child server ID** to exact runtime
+`server/tool` names. For example (illustrative; not installed automatically):
+
+```json
+{"kask":{"mcp":{"delegated_tools":{"kata-kanban":["research/web_search"]}}}}
+```
+
+The parent injects only that child's opaque `HKASK_TOOL_GRANT` token. The IPC
+server requires both membership in the parent-held grant and the request's
+allowlist. Existing agent-card allowlists alone no longer authorize IPC calls.
+Missing, empty, malformed, revoked, or insufficient grants deny; wildcards are
+not supported. Unchanged grants retain stable tokens; permission changes and
+unload invalidate old tokens, and reload issues a new token. Disabled children
+cannot regain grants during environment-diff passes. These are per-server
+capabilities, not PID-bound credentials or OS isolation against arbitrary same-UID
+processes. Grant values and raw request parse failures are not logged.
+
+Worktree creation is a separate host effect selected explicitly in this map:
+`"kata-kanban": ["host/create_worktree_thread", "research/web_search"]`.
+The child must also send its agent-card tool narrowing. The host intersects it
+with the grant, bounds the spawn queue to 32 requests, and rechecks revocation
+and disconnect before dequeue admission (`kask_bridge/src/inference_ipc_server.rs`,
+`WorktreeSpawnRequest::execute`). Empty narrowing grants no child tools.
+
+Signing a Nostr note is a second host effect in the same map (D106):
+`"nostr-client": ["host/sign_nostr_note"]`. The operator does not write it
+by hand: saving the key on Settings > Kask > Nostr writes it and Reset Key
+removes it (`saving_the_key_grants_signing_to_the_nostr_server_and_reset_withdraws_it`),
+so saving the key is what allows the Curator to publish. Default settings
+grant it to no server. The host
+admits the request by the grant and the note's shape, then on the GPUI side
+reads `kask.nostr.autopublish` and, when it is off, shows the note in a
+window prompt before any keychain read (`kask_bridge/src/nostr_signing.rs`).
+The key never reaches the child.
+MCP grants never enable native builtins such as terminal. No fallback executor
+starts on refusal or a lost reply. A queued UI thread is reported as pending,
+not proof of execution. Grants remain server-scoped: native agents use their
+host-bound `create_thread`/`spawn_agent` path; native `kanban_task_spawn` is denied
+until per-invocation attribution/authority is implemented (repair plan P2).
+
+## Data Services
+
+API keys for data services (Exa, Tavily, Brave, SerpAPI, Firecrawl, FRED, etc.) are stored in the system
+keychain under `kask://credentials/<key>`. Inference-provider keys
+(OpenRouter, DeepInfra, RunPod) are the exception — each lives at its
+provider's `api_url` keychain slot (one key, one location), the same slot
+zed's `ApiKeyState` reads; see [Inference Providers](#inference-providers).
+There are no settings.json
+toggles — a service is enabled when its key is present in the keychain.
+When MCP servers start, the composition root reads keys from the keychain
+and injects them as environment variables into the MCP server child process.
+
+| Keychain key | Env var injected |
+|--------------|-------------------|
+| `kask://credentials/exa` | `HKASK_EXA_API_KEY` |
+| `kask://credentials/tavily` | `HKASK_TAVILY_API_KEY` |
+| `kask://credentials/brave` | `HKASK_BRAVE_API_KEY` |
+| `kask://credentials/serpapi` | `HKASK_SERPAPI_API_KEY` |
+| `kask://credentials/firecrawl` | `HKASK_FIRECRAWL_API_KEY` |
+| `https://api.runpod.io` (provider slot) | `RUNPOD_API_KEY` |
+| `kask://credentials/fred` | `HKASK_FRED_API_KEY` |
+
+**To configure**: Enter the API key via Settings → Kask → Data Services.
+The key is written to the keychain immediately and the MCP server restarts
+with the new key.
+
+## Inference Providers
+
+Inference providers (OpenRouter, DeepInfra, RunPod, Ollama) are NOT
+configured through the kask settings section — there is no
+`KaskInferenceProvidersSettings` struct. Providers are registered via zed's
+native **Settings → AI → LLM Providers**, and each provider's API key
+lives at exactly ONE keychain location: the provider's `api_url`
+(`https://openrouter.ai/api/v1`, `https://api.deepinfra.com/v1/openai`,
+`https://api.runpod.io`) — the same slot zed's
+`ApiKeyState` reads.
+Every consumer — `ApiKeyState`, MCP server env injection
+(`credential_urls_for_mcp` via `credential_url_for_key`), the embedding
+port (`resolve_embedding_credentials`), and the IPC batch/rerank paths —
+resolves that one slot. The former `kask://credentials/<key>` duplicates
+are dead data nothing reads: they were the 2026-08-31 split-brain in which
+a stale copy fed MCP servers a dead key while the user's fresh key sat
+unread at `api_url` (the DeepInfra 401).
+
+The Data Services RunPod row writes the same `https://api.runpod.io` slot
+and additionally drives the key into the RunPod endpoint provider live
+(via its `set_api_key` path), so `RunPod/*` models refresh without a
+restart.
+
+fal.ai and Cline are retired from the kask provider and MCP credential sets (`FALAI_API_KEY` is excluded from corpus and media server allowlists, pinned at `kask/crates/kask_bridge/src/mcp_servers/tests.rs:506-515,791-795`).
+
+**To add models**: go to Settings → AI → LLM
+Providers, find the provider, and add models via its configuration sub-page.
+
+## Curator (`KaskCuratorSettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `always_on` | `bool` | `true` | Curator agent runs regulation loops in background |
+| `algedonic_threshold` | `f64` | `0.8` | Algedonic signal threshold (0.0–1.0) |
+| `interaction_mode` | `CuratorInteractionMode` | `collaboration` | User–Curator dyad level, set only by the user: `control` (Level 1), `collaboration` (Level 2), `learning_collaboration` (Level 3). Read per new Curator thread; see `architecture/functional-interaction-spec.md` §9 |
+
+Interaction mode adds level-specific guidance to the **system prompt's
+Session Context** for each new Curator thread; it does not replace the shared
+agent prompt, change an existing thread, grant tool rights, or enforce a
+permission boundary. Level 1 asks Curator to wait for explicit decisions on
+proposals; Level 2 (default) asks it to work toward and record shared decisions;
+Level 3 also asks both sides to challenge and learn from each other with
+evidence. Level 4 (trust and delegation) is a future design, not a setting.
+The behavior contract and its limits are specified in
+[Functional Interaction Specification §9](../architecture/functional-interaction-spec.md#9-the-usercurator-dyad-and-its-levels).
+
+## Affordance (`KaskAffordanceSettingsContent`)
+
+Per-turn instrument-affordance injection (D94, spec B, `crates/settings_content/src/settings_content.rs:1823-1830` — read directly off `SettingsContent` per turn in `crates/agent/src/thread.rs:4072` rather than projected onto `KaskSettings`): for substantive
+prompts (≥ 20 words), the skill catalog is matched to the request by embedding
+similarity and the top-3 candidates are surfaced with their exact invocation
+handles in a bounded block at the request tail — converting skill discovery
+from recall into perception (the measured failure: 100% activation when a
+skill is named, 0/3 primary-contract discovery otherwise — recorded in the
+affordance module doc, `kask/crates/kask_bridge/src/affordance.rs:1-10`; the
+study record `research/native-first-denominator-sample.md` was removed
+2026-10-30 and is retained in git history).
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | `bool` | `false` | Read per turn — a flip applies to the next turn without a restart. Default off so the operator controls the pre/post boundary against the native-first-rate baseline; the mechanism and sensor live in `kask/crates/kask_bridge/src/affordance.rs` (the affordance study record — including the n ≥ 30 compliance experiment it specified — was removed 2026-10-30 and is retained in git history). |
+
+## Guard
+
+There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded.[^owasp-llm-guard-settings]
+
+## Memory (`KaskMemorySettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `consolidation_cadence_secs` | `u64` | `300` | 0 = disabled; otherwise at least 60s. First pass waits one interval; cadences above one hour are preserved. Since 2026-11-06 (D100 item 4) the one timer carries BOTH stores' consolidation passes and the private forgetting leg — 0 is the single "no automated passes" switch |
+| `confidence_floor` | `f64` | `0.3` | Memory retention floor (0.0–1.0). The consolidation pass deletes rows at or below it; emitted as `HKASK_MEMORY_CONFIDENCE_FLOOR` for the curator MCP server (on difference from the default), whose write responses warn (`deferred_delete`) when a write lands at or below it (CU-31 b) |
+| `recall_limit` | `u32` | `5` | Max snippets retrieved for context injection |
+| `recall_min_confidence` | `f64` | `0.3` | Min confidence for injection (0.0–1.0) |
+| `auto_inject` | `bool` | `true` | Auto-inject recalled memories into prompts |
+| `federated_auto_inject` | `bool` | `false` | Opt in to injecting selected federated sources into curator chat |
+| `federated_source_ids` | `Vec<String>` | `[]` | Source IDs selected from the curator federated sources manifest |
+| `memory_life_days` | `f64` | `90` | Memory life S in days (Wozniak-Gorzelanczyk forgetting curve `R(t) = exp(-t/S)`). Half-life is `S·ln(2)`. Applied when the bridge curator store is constructed/reopened; emitted as `HKASK_MEMORY_LIFE_DAYS` for the curator MCP server, which applies it on both embedding-capable and degraded store paths |
+| `distillation_cadence_secs` | `u64` | `600` | ALWAYS-mode distillation cadence in seconds (0 = disabled); the curator server's background pass distills finished threads into additive candidate lesson h_mems at the 0.5 confidence floor |
+| `distillation_idle_secs` | `u64` | `300` | A thread counts as finished when its newest turn is at least this many seconds old |
+| `forgetting_days` | `u64` | `7` | Distillation-gated forgetting age in days (0 = disabled). Default matches the curator server's `DEFAULT_FORGETTING_DAYS`. Since 2026-11-06 (D100 item 4) the same knob also drives the BRIDGE-SIDE private-store forgetting leg: an age-gated sweep over the private store's turn storage (`curator:thread:` rows only), sparing rows recalled within the window — the private store has no child-side forgetting, so this and the consolidation twin are its only forgetting surfaces |
+
+These are the only `KaskMemorySettings` fields (`kask/crates/kask_bridge/src/settings.rs:203-269@KaskMemorySettings`).
+
+**Settings-flow closure (2026-09-08):** the content schema and `KaskMemorySettings` conversion feed the bridge's `RealMemoryPort::new` → `CuratorStore` → `MemoryStore::with_memory_life_days`. `emit_curator_distillation_env` emits a non-default value; the curator server's config allowlist admits it; `memory_life_days_from_env` validates it (malformed/non-positive/non-finite values warn and use the canonical default). The bridge regulation sensor reads the applied store, using a default estimate if the store is unavailable. These are constructor/reopen settings, not a new live bridge-reconfiguration mechanism.
+
+Step 6 of the settings-flow checklist is **already implemented**, not skipped: Settings → Kask → Memory renders the Memory Life field in `crates/settings_ui/src/pages/kask_page/memory.rs:177-192` and writes `settings.kask.memory.memory_life_days` (2026-10-13: the page also renders the Forgetting Horizon field for `kask.memory.forgetting_days` at `:194-209`). No new UI was added. Bridge store/emission/allowlist tests, the full Zed check, and scoped lint pass (evidence: `tasks/plan.md` in git history, last at `b1375ff3be`).
+
+## Condenser (`KaskCondenserSettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `profile` | `String` | `"normal"` | `"heavy"` (10% retention, 30 max lines), `"normal"` (20%, 80), `"soft"` (60%, 200), `"light"` (95%, no max) |
+| `auto_compress_tool_results` | `bool` | `false` | Compress tool results before message history |
+
+## Research (`KaskResearchSettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `research_db` | `String` | `""` | Empty resolves under the Kask data directory; feeds and research-run ledger share this server-owned database path (`kask/crates/kask_bridge/src/settings.rs:300-305@KaskResearchSettings`) |
+
+## Corpus (`KaskCorpusSettings`)
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `embedding_dim` | `u32` | `1024` | The width every embed request asks MRL-capable models for via the OpenAI-compatible `dimensions` parameter (the default model, Qwen3-Embedding-8B, truncates its native 4096 to this); must equal the vec0 table width |
+| `embedding_model` | `String` | `"OpenRouter/qwen/qwen3-embedding-8b"` | Corpus-layer default (moved from `ollama/qwen3-embedding:0.6b` on 2026-09-28); `models.embedding_model` overrides it; the OpenRouter route needs `OPENROUTER_API_KEY` |
+| `template_root` | `String` | `"kask/registry"` | Jinja2 registry root; `mcp_env()` publishes the effective root to MCP servers and `KaskSettings::resolved_template_root()` resolves the same rule in-process (curator memory chunk tagging) |
+
+These are the only `KaskCorpusSettings` fields (`kask/crates/kask_bridge/src/settings.rs:309-330@KaskCorpusSettings`). OCR model selection lives under `KaskModelsSettings`; OCR pipeline thresholds are not Kask settings fields.
+
+### Embedding model lifecycle (2026-09-28 migration)
+
+The embedding model migrated from `Qwen/Qwen3-Embedding-0.6B` to
+`OpenRouter/qwen/qwen3-embedding-8B` (operator decision 2026-09-28). The
+width did NOT change: 1024 is the MRL truncation width requested via the
+OpenAI-compatible `dimensions` parameter, so width-bound vec0 tables keep
+their schema — only the embedding space changed, and vectors from the two
+models are not comparable (stale rows poison KNN rather than erroring, so
+they were purged, not kept).
+
+Resolution is one chain everywhere — `KaskSettings::effective_embedding_model()`
+(`models.embedding_model` → `corpus.embedding_model` → code default). The
+zed-side embedding port binds the provider named by that same chain once at
+startup (`crates/zed/src/main.rs`); MCP children receive the same value as
+`HKASK_EMBEDDING_MODEL`. A mid-session change to the embedding model (or its
+provider) therefore needs a Zed restart to re-bind the port — until then,
+embeds fail with `cannot use the embedding port bound to …`, surfaced on
+every semantic-recall path. This was the 2026-09-28 incomplete-migration
+failure: the port had been bound from a second, divergent chain
+(`corpus.embedding_model` only, or the zed process's own env), so after the
+model change the children requested the new model against a port still
+bound to the old provider.
+
+Artifacts built for the 0.6B model were deleted 2026-09-28: the sealed
+calibration corpus under `zk-data/corpus-mcp/calibration/`, the
+`gentle-lovelace` style DB (rebuilt from
+`zk-data/corpus-mcp/styles/gentle-rebuild/chunks.jsonl` with the new model),
+and every stale embedding row in the curator memory DB
+(≈11,923 + 58; the h_mems were kept — `curator_memory_backfill_embeddings`
+re-embeds them with the new model after the restart).
+
+## Scenarios (`KaskScenariosSettings`)
+
+No fields — the scenarios data dir is derived from the global `data_dir` as `mcp/scenarios/` by `mcp_env()`. The server reads it via `HKASK_SCENARIOS_DATA`.
+
+## Prediction Markets (`KaskPredictionMarketsSettings`)
+
+Prediction-markets data-service configuration (`kask/crates/kask_bridge/src/settings.rs:348-351@KaskPredictionMarketsSettings`). Its data directory is derived from the top-level `data_dir`; there is no subsection `data_dir` field.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
+
+## Nostr (`KaskNostrSettings`)
+
+Public data only; no key is stored in settings, and no field of this section
+may hold one (`nostr_section_has_exactly_its_four_public_fields` in `crates/settings_content/src/settings_content.rs:2464`; `kask/crates/kask_bridge/src/settings.rs:355-379@KaskNostrSettings`).
+
+Three top-level fields configure the public account and Blossom upload targets (`npub`, `seed_relays`, `blossom_servers`), one is the `autopublish` switch, and two nested subsections configure the local loopback sidecars (`relay` and `blossom`). They have rows on Settings > Kask > Nostr and are editable in `settings.json`. No agent tool
+changes them: an agent file edit to the user `settings.json` always prompts
+(`SensitiveSettingsKind::Global`), though a terminal command under a
+`allow_fs_write_all` or `allow_unsandboxed` sandbox grant could rewrite the
+file without that prompt.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `npub` | `String` | `""` | `HKASK_NOSTR_CLIENT_NPUB` | The identity's public `npub`. Never an `nsec`: a secret key written here is reported by `nostr_account` as invalid and is not repeated |
+| `seed_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_SEED_RELAYS` | Relays the client server reads from and publishes to, comma-joined: the first 8. `nostr_account` tries one connection to each and reports which answer; the read tools ask each one and report how its read ended; `nostr_publish_note` (2026-11-14) requires at least one connected target before requesting a signature, sends the signed note to each usable one, and reports each relay's own answer |
+| `blossom_servers` | `Vec<String>` | `[]` | `HKASK_NOSTR_CLIENT_BLOSSOM_SERVERS` | Public `https://` Blossom media servers (`BUD-02`), comma-joined: the first 4. Used when `nostr_publish_note` is called with `media_paths`: the editor signs a server- and SHA-256-scoped `BUD-11` `kind: 24242` upload token (prompting first when `autopublish` is off), the client uploads each file via `PUT /upload`, verifies the returned `sha256` and URL, appends the primary URL, and attaches matching `NIP-92` `imeta` tags |
+| `autopublish` | `bool` | `false` | none | Operator ruling 2026-11-13: off, the editor shows each publication the Curator initiates (text, signing `npub`, target relays) in a window prompt and signs only when the operator chooses `Publish`; on, that step is removed. Read in the editor where the signature is made (`kask_bridge/src/nostr_signing.rs`), before any keychain read, and delivered to no MCP server (`nostr_autopublish_reaches_no_mcp_server`, `nostr_autopublish_resolves_off_unless_written_on`). The sign path and the client's publish tool are built (2026-11-14): `nostr_publish_note` sends the signed note to the local relay and the usable seed relays — the local relay only when none is set — reports each relay's answer, and reads the event back by id |
+| `relay` | `KaskNostrRelaySettings` | `{ port: 0, allowed_authors: [], sync_relays: [] }` | `HKASK_NOSTR_RELAY_*` | Local relay policy (see below). `allowed_authors` is also delivered to `nostr-blossom` as `HKASK_NOSTR_BLOSSOM_AUTHORS` |
+| `blossom` | `KaskNostrBlossomSettings` | `{ port: 0, max_bytes: 10737418240, public_base_url: "" }` | `HKASK_NOSTR_BLOSSOM_*` | Local Blossom media sidecar policy (`port`, `max_bytes` 10 GiB default / `0` unlimited, optional `https://` `public_base_url` fronting the sidecar) |
+
+**The key (not a setting).** The same page's Key block takes the `nsec` and
+an encryption password. The editor encrypts the key under the password
+(NIP-49) and stores the `ncryptsec` and the password in two keychain slots,
+`kask://credentials/nostr_ncryptsec` and `kask://credentials/nostr_password`
+(`kask_bridge::NOSTR_NCRYPTSEC_CREDENTIAL_URL`,
+`NOSTR_PASSWORD_CREDENTIAL_URL`), then writes the derived `npub` to
+`kask.nostr.npub`. Neither slot is delivered to any MCP server
+(`nostr_key_slots_reach_no_mcp_child`); a key whose `npub` differs from a
+set Identity row is refused, so changing accounts means clearing the row
+first. Saving also writes the Curator's sign grant
+(`kask.mcp.delegated_tools["nostr-client"]`, above); Reset removes both
+slots, clears the `npub` and withdraws the grant. Autopublish is a separate
+switch: it decides whether each publish is previewed, not whether the
+Curator may publish.
+
+The two identity variables are emitted for every settings state, so the
+editor's own environment never supplies them. The `npub` is trimmed and the relays are
+trimmed and de-duplicated here; nothing is validated here. The client server
+decides whether the `npub` is usable and reports `configured`,
+`not_configured` or `invalid` in `nostr_account`.
+
+The client server also decides which seed relays it will contact. An
+installed server connects only to `wss://` addresses whose host is neither
+`localhost` nor an IP literal in a loopback, private, link-local, unspecified
+or broadcast range, and to no address that carries a user name or password.
+The check is on the host as written: a public name that resolves to a private
+address is not caught. `nostr_account` reports each usable relay as
+`connected`, `unreachable`, `handshake_failed`, `timed_out` or `failed`, and
+each entry it will not contact as `refused`, by its position in the list and
+the reason, without repeating the entry.
+
+The client server also reads the local relay, and no setting names it. The
+relay server picks its port at each start unless `kask.nostr.relay.port` fixes
+one, so it writes the address it bound to `mcp/nostr-relay/listener.json`
+under the data directory, and the client server reads that file at each call.
+The file is the one way a loopback address reaches an installed client: it is
+accepted only as `ws://127.0.0.1:<port>`, and a loopback address written in
+`seed_relays` is still refused. With the relay server disabled or its listener
+down there is no file, and `nostr_account` reports the local relay as
+`not_announced`. Relays named inside events (an author's relay list, the hints
+in an identifier) are reported and never contacted.
+
+Two subsections, `relay` (`KaskNostrRelaySettings`, `kask/crates/kask_bridge/src/settings.rs:414-421@KaskNostrRelaySettings`) and `blossom` (`KaskNostrBlossomSettings`, `kask/crates/kask_bridge/src/settings.rs:386-403@KaskNostrBlossomSettings`), configure the local relay and Blossom media sidecar policies. The operator sets them here or on Settings > Kask > Nostr; no agent tool can change them, and a change restarts the affected server.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `relay.port` | `u16` | `0` | `HKASK_NOSTR_RELAY_PORT` | Loopback port; 0 picks a free port at each start |
+| `relay.allowed_authors` | `Vec<String>` | `[]` | `HKASK_NOSTR_RELAY_AUTHORS`, `HKASK_NOSTR_BLOSSOM_AUTHORS` | npubs or 64-character hex keys whose public events the relay archives and whose signed Blossom uploads/deletes the sidecar admits; empty admits nothing (Blossom also includes `nostr.npub` when valid) |
+| `relay.sync_relays` | `Vec<String>` | `[]` | `HKASK_NOSTR_RELAY_SYNC_RELAYS` | Public `wss://` relays that `nostr_relay_sync` reads from |
+| `blossom.port` | `u16` | `0` | `HKASK_NOSTR_BLOSSOM_PORT` | Loopback HTTP port; 0 picks a free port at each start (announced at `mcp/nostr-blossom/listener.json`) |
+| `blossom.max_bytes` | `u64` | `10737418240` (10 GiB) | `HKASK_NOSTR_BLOSSOM_MAX_BYTES` | Local blob storage quota (`DEFAULT_NOSTR_BLOSSOM_MAX_BYTES`); `0` disables the quota |
+| `blossom.public_base_url` | `String` | `""` | `HKASK_NOSTR_BLOSSOM_PUBLIC_URL` | Optional public `https://` base URL fronting the sidecar (delivered to both `nostr-blossom` and `nostr-client`) |
+
+All variables are emitted for every settings state, so the editor's own
+environment never supplies them. Entries are trimmed and de-duplicated here and
+validated by the relay and Blossom servers, which leave out anything they cannot use and
+report it in `nostr_relay_status` (`configuration_warnings`) and `nostr_blossom_status` (`refused`).
+
+## Wallet (`KaskWalletSettings`, D110)
+
+Public spending policy for `hkask-mcp-wallet` (`kask.wallet.*` in `settings.json`; configured on Settings → Kask → Wallet). **Zero secrets live in settings.json**: the BIP-39 seed mnemonic (`kask://credentials/wallet_seed_mnemonic`), SQLCipher DB passphrase (`kask://credentials/wallet_db_passphrase`), NIP-47 NWC connection URI (`kask://credentials/wallet_nwc_uri`), and mainnet consent belt (`kask://credentials/wallet_mainnet_consent`) live exclusively in dedicated OS keychain slots in `kask_bridge::credentials` and never enter `credential_urls_for_mcp()`.
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `network` | `"regtest" \| "signet" \| "mainnet"` | `"regtest"` | `HKASK_WALLET_NETWORK` | Active Bitcoin/Lightning network |
+| `mainnet_enabled` | `bool` | `false` | `HKASK_WALLET_MAINNET_ENABLED` | Must be `true` **and** paired with the keychain mainnet consent flag (T10) before mainnet spends are admitted |
+| `per_tx_cap_sats` | `u64` | `10000` | `HKASK_WALLET_PER_TX_CAP_SATS` | Hard per-transaction cap enforced editor-side |
+| `daily_cap_sats` | `u64` | `50000` | `HKASK_WALLET_DAILY_CAP_SATS` | Hard rolling 24-hour spend cap enforced editor-side |
+| `max_fee_sats` | `u64` | `100` | `HKASK_WALLET_MAX_FEE_SATS` | Hard maximum fee cap per payment enforced editor-side |
+| `allowed_mints` | `Vec<String>` | `[]` | `HKASK_WALLET_ALLOWED_MINTS` | Operator-allowlisted Cashu mint URLs (`https://` only on signet/mainnet) |
+| `default_mint` | `String` | `""` | `HKASK_WALLET_DEFAULT_MINT` | Default Cashu mint URL (must be in `allowed_mints`) |
+| `nwc_label` | `String` | `""` | `HKASK_WALLET_NWC_LABEL` | Public display label (e.g. relay URL) — never the NWC secret URI |
+
+Saving a seed in Settings → Kask → Wallet grants `host/wallet_db_unlock` and `host/wallet_spend_approve` to `"wallet"` in `kask.mcp.delegated_tools`; Reset withdraws both. NIP-57/NIP-61 Nostr zaps use the separate `host/sign_nostr_zap` grant, which is never bypassed by `kask.nostr.autopublish`. `"wallet"` is in `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS` (D100).
+
+## Media (`KaskMediaSettings`)
+
+Research media model configuration — the media MCP server's model roles
+(`kask/crates/kask_bridge/src/settings.rs`; the role models render on
+Settings → Kask → Models per the operator's 2026-10-30 ruling). Defaults live
+in `Default` impls only, sourced from shared inference constants
+(`kask/crates/hkask-inference/src/model_constants.rs`).
+
+| Field | Type | Default | Env var |
+|-------|------|---------|---------|
+| `stt_model` | `String` | `"OpenRouter/openai/whisper-large-v3-turbo"` | `HKASK_MEDIA_STT_MODEL` |
+| `cross_check_stt_models` | `Vec<String>` | `["DeepInfra/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B", "DeepInfra/Qwen/Qwen3-ASR-1.7B"]` | `HKASK_MEDIA_CROSS_CHECK_STT_MODELS` (comma-joined) |
+| `vision_model` | `String` | `"OpenRouter/openai/gpt-4o-mini"` | `HKASK_MEDIA_VISION_MODEL` |
+| `sound_annotation_model` | `String` | `"OpenRouter/qwen/qwen3.8-omni-flash"` | `HKASK_MEDIA_SOUND_ANNOTATION_MODEL` |
+| `tagging_model` | `String` | `"openrouter/Qwen3 VL 8B Instruct"` | `HKASK_MEDIA_TAGGING_MODEL` |
+
+An explicitly empty value clears a default (the env var is not injected and
+the pipeline fails visibly). The former creative model settings (`tts_model`,
+`image_gen_model`, `video_model`) were removed with the creative ops — there
+are no settings fields and no hidden fallbacks for them. The sound-annotation
+model serves the audio passes only (per-call override → the setting →
+NotConfigured — audio-only models never route via the shared
+`HKASK_MEDIA_PASS_MODEL`); the tagging model serves the grounded tagging pass
+(per-call override → the setting → the vision default). The
+`cross_check_stt_models` fleet (the bounded transcription cross-check's
+second-model leg, transcript-reel Phase 1b) is addressed per call via the
+`transcribe_bundle`/`transcribe_and_store` `model` override; the `stt_model`
+remains the default primary.
+
+## Models (`KaskModelsSettings`)
+
+Kask-wide model configuration (`settings.rs`). Every model field carries a
+**code default** (operator ruling 2026-09-04, superseding the former
+no-hidden-models spec): the system works out of the box, and the settings
+UI / settings.json overrides the defaults. The default values are the
+operator's configured models, verbatim.[^ousterhout-models-settings]
+
+| Field | Type | Default | Resolution |
+|-------|------|---------|------------|
+| `default_model` | `String` | `"OpenRouter/z-ai/glm-5.3"` | Injected as `HKASK_DEFAULT_MODEL` (`mcp_env.rs`); the zed-side inference stack resolves it from the registry, falling back to the zed default when the provider is not configured |
+| `embedding_model` | `String` | `""` (see note) | `effective_embedding_model()` resolves `models.embedding_model` → `corpus.embedding_model` → empty; the **embedding default lives in `KaskCorpusSettings::default()`** (`"OpenRouter/qwen/qwen3-embedding-8b"` — MRL: every embed request carries `dimensions = embedding_dim`, default 1024, so width-bound vec0 stores keep receiving fitting vectors) so a models-layer default cannot shadow corpus overrides; injected as `HKASK_EMBEDDING_MODEL` |
+| `classifier_model` | `String` | `"OpenRouter/z-ai/glm-5.2"` | Injected as `HKASK_CLASSIFIER_MODEL` (`mcp_env.rs`); consumed by corpus tagging, assertion extraction, and the memory write path's chunk tagging. glm-5.2 because the classifier must be non-thinking (or thinking-disable-able) — glm-5.3-flash cannot disable thinking |
+| `qa_generation_model` | `String` | `""` | Explicit QA tool `model` > this setting (`HKASK_QA_GENERATION_MODEL`, corpus allowlist). Unset/invalid fails visibly; never the chat or classifier model |
+| `ocr_model` | `String` | `"RunPod/kask-ocr"` (`DEFAULT_OCR_MODEL`) | Shared constant in `hkask_inference::model_constants` — the corpus server's own settings layer references the same literal; injected as `HKASK_OCR_MODEL` |
+| `rerank_model` | `String` | `"OpenRouter/qwen/qwen3-reranker-8b"` | Shared `DEFAULT_RERANK_MODEL` (repaired 2026-11-06 — the previous `deepinfra/…` literal was unroutable by the native rerank path, so every default-configured deep search silently degraded to heuristic rerank; the default keeps the ruled Qwen3-Reranker-8B on the servable OpenRouter path, pinned by `default_rerank_model_is_routable_by_the_native_path`); injected as `HKASK_RERANK_MODEL`; an `ollama/`-prefixed value serves through the local judge-protocol arm |
+| `decision_model` | `String` | `"OpenRouter/typesafe/jev-1.14"` | Shared `DEFAULT_DECISION_MODEL` (`kask/crates/hkask-inference/src/model_constants.rs:432@DEFAULT_DECISION_MODEL`); served over the provider's Decisions API — never a chat endpoint (`mcda_weight_score`). Injected as `HKASK_DECISION_MODEL`; empty refuses visibly |
+
+QA generation is configured under **Settings → Kask → Models → QA Generation Model**.
+The input writes `kask.models.qa_generation_model`; the host settings writer reloads it,
+`From<Content>` preserves it, and `mcp_env` emits it for corpus. The existing settings
+observer restarts the server when that filtered environment changes. Clearing the input
+leaves QA unconfigured; it does not select the active model. Explicit blank/malformed
+tool overrides are errors, not requests to fall back.
+
+`resolve_qa_generation_model` in `hkask_inference::model_constants` enforces that
+precedence and provider qualification; the registry/provider remains authoritative for
+availability. Both corpus single and prepared-batch QA pass the selected model explicitly.
+The old `HKASK_QA_MODEL` is retired: no tool reads it (consolidation reads `HKASK_DEFAULT_MODEL`), and it was never a QA-generation alias.
+
+There is no dedicated QA verification model setting (deleted 2026-09-18): an LLM
+verifying another LLM is circular self-authorization. Generation emits unverified
+candidates only (`prepared-qa-grounding-candidate-v1`, `grounding_status:
+pending_external_verification`), and acceptance is decided by the corpus server's
+identity-bound external grounding gate at ingestion — never by a second model call.
+Reviewed passage/level decisions reach generation as a required
+`prepared-qa-adjudication-v2` manifest; there is no unadjudicated generation path.
+
+All QA transports request non-thinking generation. Synchronous OpenRouter serialization
+and provider-batch JSONL send `reasoning.effort: "none"`; `exclude` alone only hides
+reasoning text ([OpenRouter reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)).
+The operator supplied alias [`~openai/gpt-sol-latest`](https://openrouter.ai/~openai/gpt-sol-latest)
+(displayed as GPT-5.6 Sol on 2026-09-11) would be written as
+`OpenRouter/~openai/gpt-sol-latest` in this setting. This is **not a default or a claim
+of catalog/provider verification**; the coordinator owns those checks. No settings are
+installed automatically.
+
+`hkask_inference::model_constants` also defines **env-var accessors** —
+`classifier_model()`, `embedding_model()`, `ocr_model()`, `rerank_model()` —
+each returning `Option<String>` (`None` = env var not injected; the settings
+layers carry the code defaults and inject these env vars for MCP server
+children). The general/chat, embedding, classifier, QA-generation, OCR, rerank, and decision defaults live in the settings `Default` implementations (`kask/crates/kask_bridge/src/settings.rs:527-614@KaskModelsSettings`; `kask/mcp-servers/hkask-mcp-corpus/src/settings.rs`). Shared constants remain where multiple settings layers consume one ratified value (`kask/crates/hkask-inference/src/model_constants.rs:350-458`).
+
+## Private Inference (`KaskPrivateInferenceSettings`)
+
+The private-thread policy (D9, D100)
+(`kask/crates/kask_bridge/src/settings.rs:653-705@KaskPrivateInferenceSettings`). Private inference is
+served by the local Ollama or llama.cpp install through the editor's
+built-in providers: kask launches no model server, registers no provider and
+fetches no weights. Install and serve models with Ollama or llama.cpp, and
+set their server addresses under **Settings → AI → LLM Providers**.
+
+A privacy-marked thread (the lock in the thread header) runs only models
+from the providers `ollama` and `llama.cpp`
+(`settings_content::PRIVATE_THREAD_LOCAL_PROVIDERS`; the admission decision
+is `settings_content::is_private_thread_local_model`). The set is fixed —
+no setting adds a provider to it — and Ollama's cloud-proxied models (names
+ending in a `cloud` token) are refused. An `openai_compatible` or
+`anthropic_compatible` entry named `ollama` or `llama.cpp` is ignored, so it
+cannot replace the built-in provider. Both providers' server URLs are
+user-editable; the models are local only while those URLs point at this
+machine.
+
+Two behaviours follow the local model itself, on marked and unmarked threads
+alike, and have no key in this section (D107):
+
+- **Context cap.** When the provider's server is on this machine, a
+  discovered model's context window is capped by total system memory: 4,096
+  tokens under 23 GiB, 32,768 from 23 GiB, 262,144 from 47 GiB. The provider
+  settings `language_models.ollama.context_window` and
+  `language_models."llama.cpp".context_window`, and a per-model `max_tokens`,
+  are never capped; neither is an Ollama cloud-proxied model.
+- **Compact profile.** A local model with a context window below 16,384
+  tokens gets a short system prompt and only the six file and search tools:
+  no MCP server tools, project rules, skills or memory recall. Setting the
+  context window to 16,384 or more restores the full agent.
+
+The user-facing description is `docs/src/ai/use-a-local-model.md`.
+
+| Field | Type | Default | Resolution |
+|-------|------|---------|------------|
+| `private_thread_disabled_servers` | `Vec<String>` | `["media", "corpus", "nostr-relay", "nostr-client", "nostr-blossom"]` (const home: `settings_content::DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS`, `crates/settings_content/src/settings_content.rs:2230-2236`) | D100: MCP servers whose tool surface is disabled on privacy-marked threads — media and corpus assisting inference cannot run locally (vision/STT/OCR passes; embed/tag/OCR legs), while the three Nostr servers (`nostr-relay`, `nostr-client`, `nostr-blossom`) operate over public Nostr events/blobs and a private thread shares nothing with a public network (`nostr_blossom_is_disabled_on_private_threads_by_default`, `kask/crates/kask_bridge/src/mcp_servers/tests.rs:118`) |
+| `embedding_model` | `String` | `"ollama/qwen3-embedding:0.6b"` (const home: `DEFAULT_PRIVATE_EMBEDDING_MODEL`) | D100: the LOCAL embedding model for private memory — private-store chunks and private-context recall queries embed through it only; an explicitly empty string is the opt-out (the surfaced keyword-only degrade) |
+| `classifier_model` | `String` | `"ollama/qwen3.5:4b"` (const home: `DEFAULT_PRIVATE_CLASSIFIER_MODEL`) | D100: the LOCAL classifier model — private-turn chunk tagging runs through it only; an explicitly empty string is the opt-out (the surfaced structural-only degrade). Since 2026-11-14 (CU-19 b) it is also emitted unconditionally as `HKASK_PRIVATE_CLASSIFIER_MODEL` (curator allowlist): the curator server's distillation pass routes a batch holding private-marked turns through it only, and unset/empty skips such batches surfaced — never the configured cloud classifier |
+| `rerank_model` | `String` | `"ollama/qwen3-reranker-4b:latest"` (const home: `DEFAULT_PRIVATE_RERANK_MODEL`) | D100: private-provenance deep-search rerank runs through this local model only (the ollama judge protocol — ollama has no rerank endpoint, so one deterministic chat call per document, the first sampled token the binary verdict); the configured cloud reranker never sees private content; an explicitly empty string is the opt-out (the surfaced heuristic skip); emitted unconditionally as `HKASK_PRIVATE_RERANK_MODEL` (research allowlist) |
+
+The three private-memory models are served by Ollama: the bridge wires them
+to its `ollama` descriptor only, and **Settings → Kask → Private Inference**
+accepts `ollama/<model>` or an empty value for each. The page also lists the
+local models a private thread can run right now, read from the registered
+providers.
+
+Retired keys (2026-11-11): `provider_id`, `host`, `port` and
+`local_provider_ids` configured a llama.cpp server that kask launched and a
+`private-local` provider entry it wrote into
+`language_models.openai_compatible`. That stack was removed. The keys are
+ignored if a settings file still carries them, and a leftover
+`private-local` provider entry is an ordinary OpenAI-compatible provider
+that a private thread refuses.
+
+## Keychain Architecture
+
+There is ONE keychain namespace: zed's `CredentialsProvider` — keys stored
+under `kask://credentials/<key>` (data services) or the provider's `api_url`
+slot (inference providers — one key, one location,
+D5).[^owasp-keychain-settings] The single
+internal key is `hkask_db_passphrase` in the `kask://credentials/` namespace.
+
+The composition root bridges the keychain to child processes: at MCP server
+startup, `build_mcp_server_env` reads keys from the keychain and injects them
+as env vars. MCP servers read API keys from env vars only — there is no
+keychain fallback for API keys, and a missing credential surfaces as
+`permission_denied` naming the env var.
+
+### Restart-on-keychain-write
+
+A keychain write or deletion through the settings UI (`write_credential` /
+`delete_credential` in `crates/settings_ui/src/pages/kask_page.rs`) does **not**
+by itself restart running MCP servers — their env was captured at spawn time.
+After a successful keychain change, `credential_url_feeds_mcp_servers` checks
+whether the URL occurs in `credential_urls_for_mcp`. Only then does
+`nudge_mcp_servers(cx)` call `SettingsStore::notify_observers` directly (no
+settings-file rewrite). The observer runs `sync_kask_mcp_runtime_servers`:
+`build_mcp_server_env` re-reads the keychain, and affected servers restart when
+their env differs. This covers data-service `kask://credentials/...` slots and
+inference-provider `api_url` slots used by MCP children (for example,
+OpenRouter/DeepInfra media keys). A failed
+keychain write/delete does not trigger a restart.
+
+### `HKASK_DB_PASSPHRASE` resolution
+
+The SQLCipher passphrase is resolved through a canonical 2-tier helper,
+`hkask_mcp_server::server::resolve_db_passphrase(&ctx.credentials)`:
+`ctx.credentials.get("HKASK_DB_PASSPHRASE")` → `resolve_credential("HKASK_DB_PASSPHRASE")`
+(env → hKask keychain). All five DB-passphrase-consuming servers (kata-kanban,
+research, curator, corpus, experimentation) use this helper, not inline
+re-implementations. A miss
+returns `McpToolError::permission_denied` naming the env var.
+
+Corpus cannot read `ctx.credentials` from serde-default call sites, so it captures
+the resolved passphrase at server construction into `static CORPUS_DB_PASSPHRASE:
+OnceLock<Option<String>>` (`semantic/mod.rs`) via `set_corpus_db_passphrase`;
+`default_corpus_passphrase()` reads the `OnceLock` first, falls back to
+`resolve_credential`, giving the full 2-tier chain (creds → env → `hkask-keystore`
+keychain) without changing serde-default signatures.
+
+### First-run provisioning
+
+`kask_bridge::identity::provision_db_passphrase` delegates to the one canonical `hkask_keystore::provision_db_passphrase_string` chain: environment override → existing `kask://credentials/hkask_db_passphrase` entry → first-run default (`kask/crates/kask_bridge/src/identity.rs:121-141`; `kask/crates/hkask-keystore/src/keychain.rs:367-429`). Governed MCP server launch calls that wrapper before building the server environment (`kask/crates/kask_bridge/src/mcp_servers/env.rs:73@build_mcp_server_env_with_sweep`). 
+
+On first run, the DB passphrase defaults to `"allostery"`. There is ONE
+passphrase for every SQLCipher database (curator, corpus,
+kata-kanban, research — `kask/crates/kask_bridge/src/identity.rs:139-141`)
+— no per-DB passphrases. The user can change it later
+via the settings UI (Security page); the change is scheduled there and
+applied by the next editor startup, before any database opens.
+
+### Passphrase rotation
+
+Changing a SQLCipher passphrase requires re-encrypting the entire database —
+there is no in-place `PRAGMA rekey` that survives a crash. The rotation is handled by `hkask_storage::rotate_passphrase` (`kask/crates/hkask-storage/src/rotation.rs:115-302`), which:
+
+1. Opens the source DB with the old passphrase (verifies it).
+2. Creates `<db>.new` encrypted with the new passphrase.
+3. Copies all user tables + `sqlite_sequence` in a single transaction.
+4. Atomically renames: `<db>` → `<db>.old`, `<db>.new` → `<db>`.
+   Deletes `.old` on success.
+
+If any step fails, the original DB is untouched — the old passphrase remains
+in effect. The caller writes the new passphrase to the keychain ONLY after
+rotation returns `Ok(())`.
+
+The bridge layer wraps this for the whole fleet (`kask/crates/kask_bridge/src/passphrase_rotation.rs`):
+
+- `schedule_db_passphrase_rotation(new_passphrase, confirmed_inventory)` —
+  the Security page's action: stores the new passphrase in the keychain
+  pending slot (`hkask_db_passphrase_pending`) and the confirmed inventory's
+  rotate paths in `maintenance/pending-db-rotation.json` (paths and the
+  last error only — the passphrase never touches disk). Nothing is rotated
+  at scheduling time.
+- `run_pending_db_passphrase_rotation()` — called once at editor startup,
+  before any database opens: each confirmed database is classified with
+  `hkask_storage::verify_database_key` (old key → rotate; new key → already
+  done, e.g. after a crash between rotation and the keychain write; neither
+  → a surfaced manual-recovery error), the old-key set is rotated with
+  rollback, and only after every database is consistent is the new
+  passphrase written to the main keychain slot and the pending intent
+  deleted. A failure records its error in the pending record, keeps the
+  old passphrase everywhere, and retries at the next startup.
+
+**From the settings UI:** the Security page schedules the change after a
+confirmed inventory review and shows the scheduled state (with a cancel
+action) until the next startup applies it
+(`crates/settings_ui/src/pages/kask_page/security.rs`).
+
+
+## Environment Variable Reference
+
+All env vars can be set either via the settings UI (keychain) or via shell
+environment. Shell env vars take precedence over keychain values. `KaskSettings::mcp_env` delegates to the environment builder at `kask/crates/kask_bridge/src/settings.rs:799-862@KaskSettings::mcp_env` and `kask/crates/kask_bridge/src/mcp_env.rs`; settings defaults determine which optional values are emitted.
+`HKASK_CURATOR_WEBID` → `HKASK_WEBID` when set in the parent environment.
+
+### Storage
+
+| Env Var | Service | Notes |
+|---------|--------|-------|
+
+| `HKASK_DB_PATH` | SQLite path | |
+| `HKASK_DB_PASSPHRASE` | SQLite passphrase | SQLCipher encryption |
+| `HKASK_EMBEDDING_DIM` | Embedding dimension | Default 1024 (from `KaskCorpusSettings::default()`) |
+| `HKASK_DATA_DIR` | hKask data directory | Passed to all MCP servers for path resolution (hidden infrastructure root) |
+| `HKASK_ARTIFACTS_DIR` | hKask artifacts directory | Passed to MCP servers that resolve artifact routes (visible root, default `~/Documents/zk-data/`; from `kask.artifacts_dir` setting → env → platform default) |
+
+### Data Services
+
+| Env Var | Service |
+|---------|--------|
+| `HKASK_EXA_API_KEY` | Exa |
+| `HKASK_TAVILY_API_KEY` | Tavily |
+| `HKASK_BRAVE_API_KEY` | Brave Search |
+| `HKASK_SERPAPI_API_KEY` | SerpAPI |
+| `HKASK_FIRECRAWL_API_KEY` | Firecrawl |
+| `RUNPOD_API_KEY` | RunPod native provider (serverless OCR endpoint discovery) |
+| `HKASK_FRED_API_KEY` | FRED economic data (`prediction-markets`) |
+
+### Inference Providers
+
+| Env Var | Service |
+|---------|--------|
+| `OPENROUTER_API_KEY` | OpenRouter |
+| `DEEPINFRA_API_KEY` | DeepInfra |
+
+### Per-Server Config
+
+| Env Var | Server | Source setting |
+|---------|--------|----------------|
+
+| `HKASK_TEMPLATE_ROOT` | corpus | `corpus.template_root` |
+| `HKASK_SCENARIOS_DATA` | scenarios | derived from `data_dir` as `mcp/scenarios/` |
+| `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | derived from `data_dir` as `mcp/prediction-markets/` |
+| `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
+| `HKASK_NOSTR_RELAY_PORT` | nostr-relay | `nostr.relay.port` (always emitted; 0 = a free port at each start) |
+| `HKASK_NOSTR_RELAY_AUTHORS` | nostr-relay | `nostr.relay.allowed_authors`, comma-joined (always emitted; empty admits nothing) |
+| `HKASK_NOSTR_RELAY_SYNC_RELAYS` | nostr-relay | `nostr.relay.sync_relays`, comma-joined (always emitted) |
+| `HKASK_NOSTR_CLIENT_NPUB` | nostr-client | `nostr.npub`, trimmed (always emitted; empty = no identity set) |
+| `HKASK_NOSTR_CLIENT_SEED_RELAYS` | nostr-client | `nostr.seed_relays`, comma-joined (always emitted) |
+| `HKASK_NOSTR_CLIENT_BLOSSOM_SERVERS` | nostr-client | `nostr.blossom_servers`, comma-joined (always emitted) |
+| `HKASK_NOSTR_BLOSSOM_PORT` | nostr-blossom | `nostr.blossom.port` (always emitted; 0 = a free port at each start) |
+| `HKASK_NOSTR_BLOSSOM_MAX_BYTES` | nostr-blossom | `nostr.blossom.max_bytes` (always emitted; default 10 GiB; 0 = unlimited) |
+| `HKASK_NOSTR_BLOSSOM_PUBLIC_URL` | nostr-blossom, nostr-client | `nostr.blossom.public_base_url` (always emitted) |
+| `HKASK_NOSTR_BLOSSOM_AUTHORS` | nostr-blossom | `nostr.relay.allowed_authors` (+ `nostr.npub` when valid), comma-joined (always emitted) |
+| `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
+| `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
+| `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
+| `HKASK_DECISION_MODEL` | prediction-markets | `models.decision_model` |
+| `HKASK_PRIVATE_EMBEDDING_MODEL` | curator | `private_inference.embedding_model` (always emitted; empty = explicit opt-out) |
+| `HKASK_PRIVATE_CLASSIFIER_MODEL` | curator | `private_inference.classifier_model` (the distillation pass's private-batch routing, CU-19 b) |
+| `HKASK_PRIVATE_RERANK_MODEL` | research | `private_inference.rerank_model` (always emitted; empty = explicit opt-out) |
+| `HKASK_QA_GENERATION_MODEL` | corpus | `models.qa_generation_model` (no default) |
+| `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
+| `HKASK_CURATOR_DB` | curator | injected by deferred task |
+| `HKASK_KANBAN_DB` | kata-kanban | Operator override for kanban DB path (default `mcp/kata-kanban/kanban.db`) |
+| `HKASK_RESEARCH_DB` | research | Operator override for research DB path (default `mcp/research/research.db`) |
+
+The collab server is launched directly by zed-kask (not via `mcp_env()`), so
+there are no `collab.*`-derived env vars.
+
+### Runtime Tuning
+
+These env vars tune internal runtime behavior — connection healing, health
+checks, and resource caps. They are read once at startup and cached for the
+process lifetime. Unset or unparsable values fall back to documented defaults
+(with a `warn!` on parse failure).
+
+| Env Var | Default | Notes |
+|---------|---------|-------|
+| `HKASK_MCP_RECONNECT_COOLDOWN_SECS` | `5` | Min interval between reconnect attempts for the same MCP server. Bounds crash-loop damage. |
+| `HKASK_MCP_STARTUP_MAX_RETRIES` | `3` | Max retry attempts when an MCP server fails to start (spawn or handshake). |
+| `HKASK_MCP_STARTUP_INITIAL_BACKOFF_MS` | `500` | Initial backoff (ms) for startup retries. Doubles each attempt. |
+| `HKASK_MCP_STARTUP_MAX_BACKOFF_SECS` | `10` | Cap on startup retry backoff (seconds). |
+| `HKASK_MCP_STARTUP_TIMEOUT_SECS` | `60` | Deadline for a spawned server's handshake and tool discovery. Deliberately independent of the health-check interval (F6). |
+| `HKASK_MCP_CALL_TIMEOUT_SECS` | `300` | Deadline for one already-dispatched tool call (F2/P1b). Firing reports `DispatchError::Interrupted` — a timeout proves no non-delivery, never a proven failure. |
+| `HKASK_MCP_HEALTH_CHECK_INTERVAL_SECS` | `60` | Interval between proactive MCP server health checks. |
+| `HKASK_MCP_MAX_HEALTH_FAILURES` | `3` | Max consecutive health-check failures before the supervisor stops auto-healing. |
+| `HKASK_MCP_MAX_READ_BYTES` | `33554432` (32 MiB) | Read size cap for `read_capped` (CWE-400). 0 is rejected (would block all reads). |
+| `HKASK_MEMORY_LIFE_DAYS` | `90` | Memory retention in days (≈ a quarter). Controls decay constant in the Bayesian forgetting model. |
+| `HKASK_MEMORY_FORGETTING_DAYS` | `7` | Distillation-gated hard-forgetting horizon in days (0 = disabled) — surfaced as the Forgetting Horizon field on Settings → Kask → Memory |
+| `HKASK_CHUNK_MAX_TOKENS` | `256` | Max tokens per chunk for document chunking (≈192 words, paragraph-level). |
+
+The skill-span history cap (`max_skill_span_history`) is configurable via the
+`HKASK_REG_CONFIG` YAML file, not env vars. See `SetPointsConfig` in
+`hkask-regulation/src/set_points.rs`.
+
+## Footnotes
+
+[^mcp-spec-settings]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP server model the `load_default`/`overrides` toggle controls.
+
+[^owasp-secrets-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the secrets-in-keychain-not-in-config principle the data services settings follow.
+
+[^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+    Cited for the LLM-specific security model the former guard layer (D4, removed 2026-08-10) was built to wrap the skill process with; provider-side safety and refusal fallbacks remain the active defense.
+
+
+[^ousterhout-models-settings]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the two-layer default design (empty-string fields with effective_* fallback to constants) that avoids magic-number defaults.
+
+[^owasp-keychain-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the dual-namespace keychain design that separates settings-UI credentials from MCP-server credentials.
