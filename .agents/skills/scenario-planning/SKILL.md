@@ -1,0 +1,287 @@
+---
+name: scenario-planning
+description: "Run a complete scenario-planning project: Schwartz framing, forces and divergent 2x2 narratives with an independent quality gate and early-warning indicators, then Tetlock quantification and Bayesian propagation, Brier-scored resolution, calibration tracking, and Chermack assessment, over the scenarios MCP server."
+audience: user
+---
+
+# Scenario Planning
+
+A complete scenario-planning project: frame the focal question
+conversationally (Schwartz), quantify the event tree (Tetlock), update
+on evidence, score resolutions, and assess the project itself (Chermack).
+The scenarios server implements all three methodologies as one pipeline;
+this skill is the operating procedure for that pipeline.
+
+## Goal responsibilities
+
+Follow [GOAL_INTERFACE.md](../../../kask/mcp-servers/hkask-mcp-kata-kanban/GOAL_INTERFACE.md).
+Keep project-goal acceptance separate from scenario event resolution and project-effectiveness assessment. A quantified tree does not close the human goal.
+
+## Reference models
+
+- Schwartz, *The Art of the Long View* (1991) — focal question, driving forces, 2x2 narratives, indicators.
+- Tetlock & Gardner, *Superforecasting* (2015) — `onto_anchor` → derived `superforecasting`; Brier (1950) → derived `brier_score`.
+- Chermack, *Scenario Planning in Organizations* (2011) — project assessment.
+- MAIA, "Time Horizons, Expected Events and the Scenario Process" (operator corpus, `zk-reference/maia-corpus/`) — the event-based template the server's data model reifies: event composition, four scenario types, three time horizons, the certainty tiers.
+- `onto_anchor` → derived `scenario_planning` (Schwartz 1991; Chermack 2011; operator ruling 2026-09-25) and derived `maia_event_based_scenario_template` (operator ruling 2026-10-06).
+
+## Initial and target condition
+
+- **Initial condition (T1):** the `scenario_triage` classification, the FramingDocument (`focal_question`, `time_horizon`, `in_scope`, `out_of_scope`), and — when prior projects exist — `scenario_calibration` (resolved count, Brier, bias) read as descriptive history only; no automatic bias correction from a small resolved sample. On a first run it is null.
+- **Target condition (T2):** the Convergence gate below passes and the Chermack assessment is reported.
+
+**D/P labelling.** Every `scenario_*` tool call is D (the server is the oracle: it rejects bad probabilities, conditional lengths and cycles, and computes marginals, Bayes, synthesis and Brier). The quadrant bucketing `SP-1`, the quality-gate pass predicate `SP-2`, and the Convergence gate (step 21) are D — `lisp_eval` forms over the scored counts and ratings. Framing answers are the operator's (human decision). Brainstorm events, conditionals, forces and narratives are P — including the `driving-forces` micro/STEEP enumeration and the `implications-indicators` render's strategies, indicators and monitoring plan — critiqued by the separate `scenario-quality-gate` render (scenarios) + `SP-2`, `scenario_cross_validate` (divergence > 0.15 → `grill-me`, probability estimates), and, at resolution, Brier (events). Force selection is critiqued by `driving-forces.j2`'s internal independence rule, `SP-1`'s quadrant check, and the gate's axis-span criterion.
+
+## When to Use
+
+- The operator faces a decision under uncertainty with a time horizon
+  (a strategy, an investment, a policy).
+- A forecasting question deserves the full treatment: framing,
+  dependencies, calibrated probabilities, and later scoring.
+- Re-running an existing scenario project with new evidence.
+
+## When NOT to Use
+
+- A single quick probability estimate — use the `superforecasting`
+  skill instead (it is the Tetlock-only fast path).
+- A probability-weighted risk measure over scenario branches — the
+  scenarios server's `scenario_risk_measure` computes it over
+  caller-supplied branch returns (this skill is the general event-tree
+  pipeline).
+- The question has no deadline or no resolution criteria — refine it
+  first (`scenario_triage` will classify it needs_refinement).
+
+## Instructions
+
+### Phase 1 — Frame (Schwartz: the focal question)
+
+1. Call `scenario_triage` with the question. If it classifies
+   needs_refinement, work with the operator to sharpen it before
+   proceeding; if well_specified, a base rate may suffice — say so and
+   stop unless the operator wants the full project anyway.
+2. Render `scenario-planning/type-framing` with the scenario type (one
+   of MAIA's four: company_update, company_analysis, emerging_economic,
+   economic_potential — from the framing conversation's use case or the
+   operator's declaration) and the subject. Carry its defaults — horizon,
+   subject semantics, event question patterns — into the framing
+   conversation.
+3. Call `scenario_frame` with the subject. Run the 7-turn framing
+   conversation it prescribes WITH the operator — you are the coach,
+   not an interviewer. Do not answer for the operator.
+4. Call `scenario_frame_document` with the collected answers to produce
+   the typed FramingDocument.
+5. Scaffold the project worklist: `kanban_board_create` named
+   "<subject> scenarios"; `kanban_goal_create` with the framing
+   document's focal question as `goal_text`, 2–4 observable criteria
+   from its success criteria and the actual specification `source`; omit routine `forecast`. Retain the returned full goal `id`.
+
+### Phase 2 — Diverge and structure (Schwartz: brainstorm)
+
+6. Call `scenario_brainstorm` with the framed subject (the FramingDocument's subject; pass `research_context` when research is already in hand — the tool takes subject, personas, research_context, start_round, time_horizon). Run its 4-round protocol
+   (DIVERGE with the personas, GROUND in facts and base rates, LINK
+   causal chains, PRUNE to the final tree).
+7. If research is needed, run web searches, then call `scenario_build`
+   with the research context to get the extraction scaffold, and extract
+   candidate events against it. Refine the candidates into `ScenarioEvent`
+   objects (yes/no questions, deadlines, dependency edges with
+   conditionals).
+8. Call `scenario_quantify` with the events. It returns marginals, the
+   joint probability, and a sensitivity ranking. Emit the `graph` viz
+   block it describes so the operator sees the tree.
+9. For each quantified event, `kanban_task_create` on the project
+   board: the event's question as the title, the deadline and the
+   marginal probability in the description, and one criterion —
+   "outcome recorded by <deadline>". Resolution (Phase 4) closes each
+   task with its observed outcome as the verification evidence.
+
+### Phase 2b — Divergent 2x2 narratives (Schwartz: axes, stories, indicators)
+
+Run when the uncertainty is structural (the operator needs distinct
+futures to plan against, not one probability). It extends the framing into
+the Schwartz narrative set; the event tree from Phase 2 remains the
+quantified backbone.
+
+10. Render `scenario-planning/driving-forces` with the FramingDocument's
+   `focal_question`, `planning_horizon`, `domain`, and any `market_match`
+   candidates as `market_context` (single `market` record shape) to enumerate
+   microenvironment key forces, map STEEP driving forces (rated 1–5 on
+   importance and uncertainty), and select two independent critical
+   uncertainties as axes. Then run `lisp_eval` `SP-1` to partition
+   `driving_forces` into the 2×2 `importance_uncertainty_matrix` quadrants
+   (`importance >= 4` and `uncertainty >= 4` for high/high) and verify both
+   `critical_uncertainties` fall in the high-importance, high-uncertainty
+   quadrant:
+   - form: `(begin (define hi-hi (lambda (fs) (if (is_null fs) (list) (let ((f (car fs))) (if (and (>= (assoc "importance" f) 4) (>= (assoc "uncertainty" f) 4)) (cons (assoc "force" f) (hi-hi (cdr fs))) (hi-hi (cdr fs))))))) (let ((q1 (hi-hi driving_forces))) (list q1 (= (length critical_uncertainties) 2) (member (assoc "force" (nth 0 critical_uncertainties)) q1) (member (assoc "force" (nth 1 critical_uncertainties)) q1))))`
+   - env: `{ "driving_forces": <driving_forces>, "critical_uncertainties": <critical_uncertainties> }`
+11. Render `scenario-planning/axes-and-narratives` with `focal_question`,
+   `critical_uncertainties`, and `planning_horizon` for the four quadrant
+   narratives, then `scenario-planning/scenario-quality-gate` with
+   `scenarios`, `focal_question`, and the two axis definitions (`axis_1`,
+   `axis_2`) — the gate's axis-span coverage criterion is checked against the
+   actual axes, not inferred from narratives. A separate render, it scores
+   divergence, consistency and coverage (0–1) and flags parametric variation.
+   Compute `gate_pass` deterministically via `lisp_eval` `SP-2` over the two
+   renders as returned:
+   - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define score (lambda (key) (let ((v (assoc key quality))) (if (and (numberp v) (>= v 0) (<= v 1)) v nil)))) (define div (score "divergence_score")) (define con (score "consistency_score")) (define cov (score "coverage_score")) (define flag (assoc "parametric_variation_flag" quality)) (define n (if (listp scenarios) (length scenarios) 0)) (define findings (if (listp (assoc "gate_findings" quality)) (assoc "gate_findings" quality) (list))) (define any-fail (lambda (fs) (if (is_null fs) (not t) (if (string= (text-of (car fs) "status") "fail") t (any-fail (cdr fs)))))) (define malformed (or (is_null div) (is_null con) (is_null cov) (not (or (eq flag t) (eq flag (not t)))))) (define reasons (if malformed (list) (append (if (= n 4) (list) (list "scenario_count_not_four")) (if (eq flag t) (list "parametric_variation") (list)) (if (>= div 0.6) (list) (list "divergence_below_0.6")) (if (>= con 0.6) (list) (list "consistency_below_0.6")) (if (>= cov 0.6) (list) (list "coverage_below_0.6"))))) (define pass (and (not malformed) (is_null reasons))) (list (list "gate_pass" pass) (list "verdict" (cond (malformed "malformed_render") (pass "pass") (t "revise"))) (list "reasons" reasons) (list "render_findings_agree" (if malformed (not t) (eq (any-fail findings) (not pass)))) (list "scenario_count" n) (list "divergence" div) (list "consistency" con) (list "coverage" cov)))`
+   - env: `{ "scenarios": <the axes-and-narratives render's scenarios array>, "quality": <the scenario-quality-gate render output, unchanged> }`
+   - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+     ```lisp-receipts
+     {"gate":"SP-2","case":"pass","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"pass","note":"n"}],"divergence_score":0.8,"consistency_score":0.7,"coverage_score":0.6,"parametric_variation_flag":false}},"expected":{"gate_pass":true,"verdict":"pass","reasons":[],"render_findings_agree":true,"scenario_count":4,"divergence":0.8,"consistency":0.7,"coverage":0.6}}
+     {"gate":"SP-2","case":"divergence-below-floor","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"fail","note":"n"}],"divergence_score":0.59,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":false}},"expected":{"gate_pass":false,"verdict":"revise","reasons":["divergence_below_0.6"],"render_findings_agree":true,"scenario_count":4,"divergence":0.59,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"silent-fail-disagrees","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"pass","note":"n"}],"divergence_score":0.5,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":false}},"expected":{"gate_pass":false,"verdict":"revise","reasons":["divergence_below_0.6"],"render_findings_agree":false,"scenario_count":4,"divergence":0.5,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"three-scenarios","env":{"scenarios":[{},{},{}],"quality":{"gate_findings":[{"criterion":"divergence","status":"fail","note":"n"}],"divergence_score":0.8,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":false}},"expected":{"gate_pass":false,"verdict":"revise","reasons":["scenario_count_not_four"],"render_findings_agree":true,"scenario_count":3,"divergence":0.8,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"parametric-variation","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"fail","note":"n"}],"divergence_score":0.8,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":true}},"expected":{"gate_pass":false,"verdict":"revise","reasons":["parametric_variation"],"render_findings_agree":true,"scenario_count":4,"divergence":0.8,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"several-reasons","env":{"scenarios":[{},{},{},{},{}],"quality":{"gate_findings":[{"criterion":"divergence","status":"fail","note":"n"}],"divergence_score":0.8,"consistency_score":0.5,"coverage_score":0.5,"parametric_variation_flag":true}},"expected":{"gate_pass":false,"verdict":"revise","reasons":["scenario_count_not_four","parametric_variation","consistency_below_0.6","coverage_below_0.6"],"render_findings_agree":true,"scenario_count":5,"divergence":0.8,"consistency":0.5,"coverage":0.5}}
+     {"gate":"SP-2","case":"malformed-text-divergence","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"pass","note":"n"}],"divergence_score":"high","consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":false}},"expected":{"gate_pass":false,"verdict":"malformed_render","reasons":[],"render_findings_agree":false,"scenario_count":4,"divergence":null,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"malformed-divergence-above-one","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"pass","note":"n"}],"divergence_score":1.2,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":false}},"expected":{"gate_pass":false,"verdict":"malformed_render","reasons":[],"render_findings_agree":false,"scenario_count":4,"divergence":null,"consistency":0.8,"coverage":0.8}}
+     {"gate":"SP-2","case":"malformed-text-flag","env":{"scenarios":[{"name":"a"},{"name":"b"},{"name":"c"},{"name":"d"}],"quality":{"gate_findings":[{"criterion":"divergence","status":"pass","note":"n"}],"divergence_score":0.8,"consistency_score":0.8,"coverage_score":0.8,"parametric_variation_flag":"no"}},"expected":{"gate_pass":false,"verdict":"malformed_render","reasons":[],"render_findings_agree":false,"scenario_count":4,"divergence":0.8,"consistency":0.8,"coverage":0.8}}
+     ```
+   - `pass`, or `revise` with `reasons` (`scenario_count_not_four`, `parametric_variation`, `divergence_below_0.6`, `consistency_below_0.6`, `coverage_below_0.6`), or `malformed_render` (a score missing, non-numeric or outside 0–1, or a flag that is not a boolean). `render_findings_agree` is false when the quality render's `gate_findings` carry no `fail` for a failing gate (or a `fail` for a passing one) — report it; the computed verdict governs.
+   A failing gate revises the narratives its fix notes name and re-runs once
+   (max 2 cycles); a second failure delivers the scenarios with the fix notes
+   shown.
+12. Render `scenario-planning/implications-indicators` with `focal_question`
+   and `scenarios` for robust and contingent strategies and observable
+   early-warning indicators. Carry whether indicators were defined into
+   Phase 5's `scenario_assess` (`has_early_warning_indicators`, a boolean).
+
+### Phase 3 — Quantify and update (Tetlock)
+
+13. For each event needing calibration, call `scenario_calibrate` with
+   its Fermi sub-questions, base rate and reference class. Read the returned
+   estimate and source limitations; historical loss does not trigger automatic
+   probability correction or certify calibration.
+14. On new evidence for a single event, call `scenario_update` (Bayes; it
+   takes the project-wide `forecast_id`) and then `scenario_propagate`
+   with the full event list and the event's new prior to recompute
+   descendants and the joint (propagate takes events, event_id, new_prior
+   — no forecast_id). Mint a `forecast_id` for each frozen prospective declaration. Call `scenario_declare` with `forecast_id`, full `events`, exact event-ID → UTC timestamp `resolution_at` map and a named `resolver` before outcome visibility. Revised probabilities, propositions or horizons require a new identity; calibrate and propagate do not declare a forecast. The propagation
+   journal is the audit
+   record — report the deltas. When the evidence is an OBSERVATION (an
+   observed probability, an occurred/not-occurred outcome, or a likelihood
+   ratio) rather than a prior revision, call
+   `scenario_recompute_posteriors` instead — it recomputes in BOTH
+   directions (backward to ancestors as well as forward to descendants),
+   exact on polytrees, degrading to forward-only with a note on
+   multiply-connected DAGs.
+15. When multiple independent perspectives exist, collect them and call
+   `scenario_synthesize` (dragonfly-eye, explicitly equal weights; historical losses are not comparable reliability weights).
+16. Call `scenario_cross_validate` comparing your estimate against
+    the server-computed one. If divergence exceeds 0.15, activate the
+    `grill-me` skill on the diverging sub-questions before proceeding,
+    with `respondent: agent` (your own estimate is the work examined:
+    a separate examiner session where one can be spawned, and every
+    answer cites its evidence). The tool's `grill_me_questions` are
+    offered to the examiner as candidate drafts, not asked verbatim.
+    Bound: one grill-me pass per diverging sub-question set;
+    divergence > 0.15 that persists after one pass is recorded with
+    both estimates and flagged for operator adjudication.
+
+### Phase 4 — Resolve and learn (the Brier loop)
+
+Prospective admission requires `declared_at < resolution_at` for every event;
+the map keys must exactly match event IDs and each cutoff's UTC date must match
+its descriptive `deadline`. `scenario_score` cannot resolve before the cutoff.
+The entire declaration is one synced journal event: same-ID identical retries
+are idempotent even after cutoff, preserving original timestamps/probabilities;
+changed membership/proposition/probability/cutoff/resolver conflicts. Old date-only
+declarations remain unscored history; never repair them by post-outcome admission.
+
+17. Before resolution, call `scenario_declare` with `forecast_id`, full events, exact event-ID → UTC timestamp `resolution_at` map and a named outcome-source `resolver` if not already declared. Never declare after observing the outcome. At resolution call `scenario_score` with the same ID, exact frozen events and resolver plus observed outcomes. The server scores stored tree marginals, not resolution-time inputs; duplicate/conflicting outcomes are refused. Report raw loss, event counts, convention and limitations, not universal bands. Declaration records a caller-reported source rule, not authentication. A score is evidence for Review, never automatic task verification or human goal closure.
+18. Call `scenario_calibration` for descriptive eligible-history bins. Report
+    `signed_probability_error` (mean p−outcome in qualifying bins) with
+    `signed_probability_error_sample_count`, `signed_probability_error_qualifying_bins`
+    and `signed_probability_error_bin_min_count`. Empty/unqualified evidence is
+    null/insufficient, not zero. Signed errors can cancel and flip when the event
+    is complemented: they do not diagnose confidence or certify calibration.
+
+### Phase 5 — Assess (Chermack)
+
+19. Call `scenario_assess` with the project id (the framing
+    document's subject, by default — the project record created at step 4
+    is the assessment's anchor; an unknown id is not found). The record
+    derives event and dependency counts from its stored tree and
+    Preparation from its framing document; supply only what the record
+    cannot know — perspective count, disagreement score, strategies
+    generated and implemented, learning events, early-warning
+    indicators. Report the per-phase scores, gaps, strengths, and
+    recommendations.
+20. Record worker progress with `kanban_goal_judge` against every criterion. Request native human closure separately; Chermack findings, worker claims, human choice and optional forecast results must not be conflated.
+
+### Convergence
+
+21. Gate `SP-3` — over the `scenario_score` response and the declared
+    events. First compute the events past their deadline with `terminal`:
+    `jq -c --arg today $(date -u +%F) -f due.jq` over `{"events": <the declared events>}`, with `due.jq` saved verbatim from:
+
+    ```jq
+    [.events[] | select(.deadline < $today) | .id]
+    ```
+
+    Then call `lisp_eval`:
+    - form: `(begin (define text-of (lambda (row key) (if (stringp (assoc key row)) (assoc key row) ""))) (define rows (if (and (listp score) (listp (assoc "per_event" score))) (assoc "per_event" score) (list))) (define scored (if (numberp (assoc "scored_count" score)) (assoc "scored_count" score) 0)) (define resolved-ids (lambda (rs) (if (is_null rs) (list) (if (or (eq (assoc "outcome" (car rs)) t) (eq (assoc "outcome" (car rs)) (not t))) (cons (text-of (car rs) "event_id") (resolved-ids (cdr rs))) (resolved-ids (cdr rs)))))) (define done (resolved-ids rows)) (define due (if (listp past_deadline_ids) past_deadline_ids (list))) (define missing (lambda (xs) (if (is_null xs) (list) (if (member (car xs) done) (missing (cdr xs)) (cons (car xs) (missing (cdr xs))))))) (define unresolved (missing due)) (define unmatched (if (listp (assoc "unmatched_outcome_ids" score)) (assoc "unmatched_outcome_ids" score) (list))) (list (list "verdict" (cond ((or (is_null score) (not (listp score)) (not (numberp (assoc "scored_count" score)))) "score_missing") ((not (is_null unmatched)) "outcomes_unmatched") ((not (is_null unresolved)) "unresolved_past_deadline") ((= scored 0) "nothing_scored") (t "complete"))) (list "scored_count" scored) (list "resolved_events" done) (list "unresolved_past_deadline" unresolved) (list "unmatched_outcome_ids" unmatched) (list "calibration_claimable" (>= scored 10))))`
+    - env: `{ "score": <the scenario_score response, unchanged; null if the call failed>, "past_deadline_ids": <the jq output> }`
+    - receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly):
+      ```lisp-receipts
+      {"gate":"SP-3","case":"complete","env":{"score":{"forecast_id":"f","event_count":2,"scored_count":2,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"},{"event_id":"e3","forecast_probability":0.6,"outcome":false,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":[]},"past_deadline_ids":["e1","e3"]},"expected":{"verdict":"complete","scored_count":2,"resolved_events":["e1","e3"],"unresolved_past_deadline":[],"unmatched_outcome_ids":[],"calibration_claimable":false}}
+      {"gate":"SP-3","case":"unresolved-past-deadline","env":{"score":{"forecast_id":"f","event_count":2,"scored_count":2,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"},{"event_id":"e3","forecast_probability":0.6,"outcome":false,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":[]},"past_deadline_ids":["e1","e3","e4"]},"expected":{"verdict":"unresolved_past_deadline","scored_count":2,"resolved_events":["e1","e3"],"unresolved_past_deadline":["e4"],"unmatched_outcome_ids":[],"calibration_claimable":false}}
+      {"gate":"SP-3","case":"future-dated-does-not-block","env":{"score":{"forecast_id":"f","event_count":2,"scored_count":2,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"},{"event_id":"e3","forecast_probability":0.6,"outcome":false,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":[]},"past_deadline_ids":["e1"]},"expected":{"verdict":"complete","scored_count":2,"resolved_events":["e1","e3"],"unresolved_past_deadline":[],"unmatched_outcome_ids":[],"calibration_claimable":false}}
+      {"gate":"SP-3","case":"outcomes-unmatched","env":{"score":{"forecast_id":"f","event_count":1,"scored_count":2,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":["zz"]},"past_deadline_ids":[]},"expected":{"verdict":"outcomes_unmatched","scored_count":2,"resolved_events":["e1"],"unresolved_past_deadline":[],"unmatched_outcome_ids":["zz"],"calibration_claimable":false}}
+      {"gate":"SP-3","case":"nothing-scored","env":{"score":{"forecast_id":"f","event_count":0,"scored_count":0,"per_event":[],"unmatched_outcome_ids":[]},"past_deadline_ids":[]},"expected":{"verdict":"nothing_scored","scored_count":0,"resolved_events":[],"unresolved_past_deadline":[],"unmatched_outcome_ids":[],"calibration_claimable":false}}
+      {"gate":"SP-3","case":"null-score-missing","env":{"score":null,"past_deadline_ids":[]},"expected":{"verdict":"score_missing","scored_count":0,"resolved_events":[],"unresolved_past_deadline":[],"unmatched_outcome_ids":null,"calibration_claimable":false}}
+      {"gate":"SP-3","case":"text-score-missing","env":{"score":"error","past_deadline_ids":[]},"expected":{"verdict":"score_missing","scored_count":0,"resolved_events":[],"unresolved_past_deadline":[],"unmatched_outcome_ids":null,"calibration_claimable":false}}
+      {"gate":"SP-3","case":"twelve-claimable","env":{"score":{"forecast_id":"f","event_count":1,"scored_count":12,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":[]},"past_deadline_ids":["e1"]},"expected":{"verdict":"complete","scored_count":12,"resolved_events":["e1"],"unresolved_past_deadline":[],"unmatched_outcome_ids":[],"calibration_claimable":true}}
+      {"gate":"SP-3","case":"nine-not-claimable","env":{"score":{"forecast_id":"f","event_count":1,"scored_count":9,"per_event":[{"event_id":"e1","forecast_probability":0.6,"outcome":true,"brier_score":0.16,"scoring_status":"scored"}],"unmatched_outcome_ids":["e1"]},"past_deadline_ids":["e1"]},"expected":{"verdict":"outcomes_unmatched","scored_count":9,"resolved_events":["e1"],"unresolved_past_deadline":[],"unmatched_outcome_ids":["e1"],"calibration_claimable":false}}
+      ```
+    - `complete`: every past-deadline event has a recorded outcome in `per_event` and at least one event was scored. `unresolved_past_deadline` names the events still open; `outcomes_unmatched` echoes the server's `unmatched_outcome_ids`; `nothing_scored` and `score_missing` are not completion. `calibration_claimable` is true only at `scored_count` ≥ 10 — below that, say the curve is thin.
+
+## Regression case
+
+`bash kask/scripts/check-skill-lisp-forms.sh` evaluates the authored `SP-2` and `SP-3` (their `lisp-receipts` blocks beside the forms): `SP-2` over four divergent scenarios at 0.8/0.7/0.6 (pass), divergence 0.59 and 0.5 (revise, named), three scenarios, the parametric flag set, a render whose findings disagree with the computed verdict, a textual score and a score above 1 (malformed); `SP-3` over two past-deadline events both scored (complete), a third past-deadline event unscored (unresolved, named), an unmatched outcome id, zero scored, a null response, and twelve scored (calibration claimable). `bash kask/scripts/cargo-test-nonzero.sh -p agent --lib scenario_planning_` runs the authored `due.jq` over events before, on and after today.
+
+Render `scenario-planning/type-framing` once per MAIA type
+(company_update, company_analysis, emerging_economic,
+economic_potential) — each render emits that type's default horizon,
+subject semantics, and event question patterns. Render
+`scenario-planning/scenario-quality-gate` with a FOUR-scenario
+divergent set (one per quadrant — the exactly-four threshold is part of
+what the gate enforces; it must score divergence, consistency and
+coverage) and with a near-duplicate pair (the divergence score must fall
+and the parametric-variation flag must fire). The `scenario_*`
+MCP seams need live server state; they are a recorded scope boundary, not
+run here.
+
+## Registry Templates
+
+| Template | Purpose |
+|----------|---------|
+| `type-framing.j2` | MAIA per-type framing defaults: default horizon, subject semantics, event question patterns, and basis guidance for the framing conversation. |
+| `driving-forces.j2` | Enumerate microenvironment key forces, map STEEP driving forces on importance × uncertainty, and select two independent critical uncertainties. |
+| `axes-and-narratives.j2` | Four divergent quadrant narratives on the two axes. |
+| `scenario-quality-gate.j2` | Separate gate scoring divergence, consistency and coverage (0–1) with fix notes; `gate_pass` computed by `SP-2` `lisp_eval`. |
+| `implications-indicators.j2` | Robust and contingent strategies with observable early-warning indicators. |
+
+To render a template, call `render_template` with the ref (e.g. `scenario-planning/driving-forces`) and these inputs:
+- `type-framing.j2`: `scenario_type`, `subject`
+- `driving-forces.j2`: `focal_question`, `planning_horizon`, `domain`, `market_context`
+- `axes-and-narratives.j2`: `focal_question`, `critical_uncertainties`, `planning_horizon`
+- `scenario-quality-gate.j2`: `scenarios`, `focal_question`, `axis_1`, `axis_2`
+- `implications-indicators.j2`: `focal_question`, `scenarios`
+
+## Constraints
+
+- The kanban scaffold is the project's worklist: per-event tasks carry
+  deadlines so resolution is trackable; do not create tasks for events
+  pruned during brainstorming.
+- `scenario_build` does NOT persist anything — do not tell the operator
+  scenarios are "saved for later scoring". Only `scenario_score` writes
+  the journal.
+- Probabilities outside [0,1], conditionals whose length is not
+  2^parents, and cycles are rejected by the server — fix the input,
+  never work around the rejection.
+- Withhold is honest: a market-derived base rate from a low-confidence
+  `market_match` is an unknown, not a base rate. Report withheld
+  inputs as unknowns.
+- If any MCP tool call fails, call `curator_report_skill_use_issue`
+  with skill_name "scenario-planning", the tool name, and the error;
+  continue with the best available information.

@@ -1,0 +1,7 @@
+{"gate": "HT-1", "case": "contradiction-updates", "env": {"trigger": "contradiction"}, "expected": "update"}
+{"gate": "HT-1", "case": "new-category-updates", "env": {"trigger": "new_category"}, "expected": "update"}
+{"gate": "HT-1", "case": "flip-updates", "env": {"trigger": "flip"}, "expected": "update"}
+{"gate": "HT-1", "case": "refinement-updates", "env": {"trigger": "refinement"}, "expected": "update"}
+{"gate": "HT-1", "case": "reconfirmation-keeps", "env": {"trigger": "reconfirmation"}, "expected": "keep"}
+{"gate": "HT-1", "case": "empty-keeps", "env": {"trigger": ""}, "expected": "keep"}
+{"gate": "HT-1", "case": "other-keeps", "env": {"trigger": "other"}, "expected": "keep"}

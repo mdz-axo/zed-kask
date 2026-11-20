@@ -1,0 +1,121 @@
+---
+name: system-maintenance
+description: Weekly system maintenance for this machine (Ubuntu 26.04, Framework laptop) over the ~/system-maintenance/ scripts — run the health check, interpret warnings, preview and classify cleanups with probe-before-delete, execute the disposable class only, surface manual-review items as exact commands, hand off sudo-gated work, verify with reconciled measurements, and report a ledger. The scripts are the executables; this skill is the orchestration and judgment layer.
+audience: platform
+---
+
+# System Maintenance
+
+## Reference models
+
+- **PDCA** — Shewhart (1939)/Deming; `onto_anchor` → derived `pdca_cycle` (operator ruling 2026-09-24). The maintenance pass is one bounded PDCA loop; its Check measures the pass, never the agent running it.
+- **Feedback loop** — Wiener (1948)/Ashby (1956); `onto_anchor` → derived `cybernetic_feedback_loop` (operator ruling 2026-09-18). The staleness warning is the instrument that made missed weekly runs visible; a silent leg is a broken loop.
+- **Maintenance strategy** — scheduled (calendar) vs condition-based (measured state) maintenance: `onto_anchor` → derived `preventive_maintenance` (IEC 60050-192:2015, IEV 192-06-05) and `condition_based_maintenance` (IEV 192-06-07), operator ruling 2026-10-10 — the weekly cadence is scheduled maintenance backed by a measured condition. `cache` (Wikipedia, *Cache (computing)*) and `system_health_monitoring` (IEEE/Tsalapati & Koubarakis ISWC 2023) resolve derived under the same ruling.
+- **Probe-before-action** — audit discipline (assertion → evidence → action); the project's own probe-before-delete rulings.
+
+## Initial and target condition
+
+- **Initial condition:** a "run the weekly maintenance" request (or a staleness/health warning to triage), the five `~/system-maintenance/` scripts, their logs, and live system state.
+- **Target condition:** a completed pass — health check interpreted, dry-run classified, disposable class executed, manual-review items surfaced as exact commands, sudo work handed off (not asked for), measurements reconciled, ledger reported. Observable: health-check exit code, review-script output, the handoff block, and a df/du delta that closes against the deletion ledger.
+
+## Managed scripts
+
+The skill manages the script fleet at `~/system-maintenance/` (this machine's convention) — inventory, verification, execution, and updates. The fleet is versioned in place (`~/system-maintenance/.git`, `logs/` ignored — runtime data, read live by the staleness instrument); a script change without its commit is unmanaged. Fleet docs: `README.md` (machine manifest, scripts table, process).
+
+| Script | Role | Runs | sudo? |
+|---|---|---|---|
+| `system-health-check.sh` | read-only health check; warns on disk, services, staleness; fails on a clamped CPU | daily 08:30 timer + on demand | no |
+| `maintenance-clean.sh` | cache cleanup; `--dry-run` default, `--run` deletes reviewed disposables only | weekly on demand | no |
+| `maintenance-review.sh` | manual-review surface — every held-back item as an exact command | weekly on demand | no |
+| `maintenance-update.sh` | package update (apt, snap, flatpak, SMART, rustup, uv) | weekly, the operator's terminal | yes |
+| `maintenance-reminder.sh` | desktop reminder to run the update | Sat 09:00 timer | no |
+| `setup-maintenance-timers.sh` | installer for the two timers | on demand | no |
+
+## When to Use
+
+- "Run the weekly/maintenance" requests, or the Saturday 09:00 reminder firing.
+- Triage of health-check warnings (disk, services, staleness, failed units).
+- Disk-space pressure on `/` or `~/.cache`.
+- Script updates: a new trap, warning class, or review category surfaced by a pass or requested by the operator.
+
+## When NOT to Use
+
+- Code bugs or performance regressions — `diagnose`.
+- Repo docs, corpus, media data dirs — their own skills/servers.
+- Executing sudo work — this skill hands it off, never asks for or handles the password.
+
+## Instructions — the maintenance pass (one bounded PDCA loop, max 2 re-entries)
+
+1. **Baseline (D).** Run `bash ~/system-maintenance/system-health-check.sh`; capture exit code, warnings, and the `~/.cache` size line. Record `df -h /` and `du -sh ~/.cache` baselines. Read `ls -t ~/system-maintenance/logs/update-*.log | head` — the staleness warning means *successful* runs (grep the log for completion), not log-file age.
+2. **Triage (P).** Classify every warning and dry-run item into exactly one class:
+   - **disposable** — `maintenance-clean.sh --run` territory (reviewed caches).
+   - **manual-review** — held back by the scripts (HF models, datasets, podman volumes, toolchains, snap revisions, journals). Probe before any deletion (step 4).
+   - **sudo-gated** — package updates, SMART, failed-unit resets, `/var/crash`. Handoff only (step 7).
+   - **protected** — false positives and live infrastructure. Never delete without an operator ruling.
+   Verify total partition and zero class overlap in `lisp_eval` (`SMN-1`): `(and (= total_dry_run_items (+ disposable_count manual_review_count sudo_gated_count protected_count)) (= overlap_count 0))`.
+3. **Preview (D).** Run `bash ~/system-maintenance/maintenance-clean.sh --dry-run`. Read the full output — never a truncated display.
+4. **Probe-before-delete (P, D gates).** For each manual-review item the operator has asked to delete, verify in `lisp_eval` (`SMN-2`: `(and (= recent_atime_files 0) (= open_fd_handles 0) (= active_references 0) (not is_unrecoverable_local))`) before Step 5:
+   - **Usage:** `find <dir> -type f -atime -30 | wc -l` (0 = unused recently); open handles via `/proc/*/fd` scan; running services (`systemctl --user`, `ps`).
+   - **Recoverability:** public assets re-download anonymously; private ones need the stored token; local-only artifacts (fine-tunes, volumes, audit trails) are **unrecoverable** — say so.
+   - **References:** grep configs, clones, and pins before removing any toolchain or volume.
+   - **False positives:** verify what the string actually is before deleting on a name match (e.g. `lrmoo`'s *"Dido and Aeneas"* is Purcell's opera, not the verification program).
+   - **Live infra:** `elan` serves `kask/lean`'s pinned toolchain — it is not residue.
+5. **Execute (D).** Run `maintenance-clean.sh --run` for the disposable class; delete probed manual-review items the operator named. Nothing else.
+6. **Review surface (D).** Run `bash ~/system-maintenance/maintenance-review.sh` — every held-back item as an exact command, one place.
+7. **Handoff (P).** Deliver the sudo block verbatim (reset-failed + crash-file removal + `maintenance-update.sh`). Never ask for the password; never run sudo from the agent terminal (it cannot authenticate — the Sep 5/12/19 logs are this failure).
+8. **Verify (D).** Re-run the health check. Reconcile: `(df_before − df_after)` vs the deletion ledger's bytes, and `du` deltas per item. Any unexplained gap → re-enter step 2 (triage) with the gap named. **Trap:** `du` mid-churn (an app restarting) reads transient — re-measure via the health check, not a mid-batch `du`. Hardlink-shared caches (uv) free fewer blocks than `du` reports. A cache deleted under its live daemon (tracker3 under `localsearch-3.service`) keeps its blocks allocated in deleted-but-open fds until the daemon restarts — `maintenance-clean.sh --run` prints the holders, held bytes and release command (added 2026-10-30); reconcile the df gap against that note.
+9. **Report (P→D).** Ledger table (item → evidence gate → bytes freed), the handoff block, protected items named, learnings.
+
+10. **Improve the scripts (P→D) — the manager step.** The skill owns the scripts' lifecycle. When a pass surfaces a new trap, warning class, or review category — or the operator requests one — update the fleet through the script-update path:
+    1. Edit the script (or fleet doc) in `~/system-maintenance/`.
+    2. Verify: `bash -n <script>`; run the read-safe ones (health check, review, `--dry-run`) to confirm the change behaves.
+    3. Commit in the scripts repo: `git -C ~/system-maintenance commit -m "<change> — <session evidence>"`.
+    4. Update this SKILL.md in the same pass if the process, traps, or inventory changed; commit in zed-kask pathspec-limited.
+
+    Triggers: a trap hit live (the transient `du` was one); a new warning worth instrumenting (the staleness warning was one); a new manual-review category (add it to `maintenance-review.sh` — the top-`~/.cache`-consumers section was one); an operator request.
+
+### Convergence
+
+After step 8, check in `lisp_eval` (`SYM-1`) over measured bytes. Capture them with `terminal`: the health check as `bash ~/system-maintenance/system-health-check.sh; echo "health_exit=$?"`; the root filesystem's used bytes before step 1 and after step 8 with `df -B1 --output=used / | tail -1`; the ledger's bytes as the sum of its freed-bytes column (`awk '{s+=$N} END{print s}'` over the ledger, N the bytes column); and `passes.jsonl` under the run directory with one line appended per re-entry at step 2:
+- form: `(begin (define max-passes 3) (define log (if (listp passes) passes (list))) (define iteration (+ (length log) 1)) (define gb (lambda (bytes) (/ bytes 1073741824))) (define measured (and (numberp health_exit) (numberp df_before_bytes) (numberp df_after_bytes) (numberp ledger_bytes))) (define freed (if measured (- df_before_bytes df_after_bytes) nil)) (define unexplained (if measured (gb (abs (- freed ledger_bytes))) nil)) (list (list "verdict" (cond ((not measured) "not_measured") ((and (= health_exit 0) (<= unexplained 1)) "done") ((>= iteration max-passes) "stop-and-report") (t "reenter-triage"))) (list "health_exit" health_exit) (list "freed_gb" (if measured (gb freed) nil)) (list "ledger_gb" (if measured (gb ledger_bytes) nil)) (list "unexplained_gb" unexplained) (list "iteration" iteration)))`
+- env: `{ "health_exit": <the printed exit>, "df_before_bytes": <used bytes before>, "df_after_bytes": <used bytes after>, "ledger_bytes": <the ledger sum>, "passes": <jq -s . passes.jsonl, [] on the first pass> }`
+- receipts (beside the form; `check-skill-lisp-forms` evaluates each line's env over the form above and compares the expected result exactly; GB = 1,073,741,824):
+  ```lisp-receipts
+  {"gate": "SYM-1", "case": "half-gb-unexplained-is-done", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 102005473280, "ledger_bytes": 4831838208, "passes": []}, "expected": {"verdict":"done","health_exit":0,"freed_gb":5.0,"ledger_gb":4.5,"unexplained_gb":0.5,"iteration":1}}
+  {"gate": "SYM-1", "case": "exactly-one-gb-unexplained-is-done", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 102005473280, "ledger_bytes": 4294967296, "passes": []}, "expected": {"verdict":"done","health_exit":0,"freed_gb":5.0,"ledger_gb":4.0,"unexplained_gb":1.0,"iteration":1}}
+  {"gate": "SYM-1", "case": "just-over-one-gb-reenters-triage", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 102005473280, "ledger_bytes": 4294967295, "passes": []}, "expected": {"verdict":"reenter-triage","health_exit":0,"freed_gb":5.0,"ledger_gb":3.9999999990686774,"unexplained_gb":1.0000000009313226,"iteration":1}}
+  {"gate": "SYM-1", "case": "gap-is-absolute-ledger-larger-than-freed", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 106300440576, "ledger_bytes": 3221225472, "passes": []}, "expected": {"verdict":"reenter-triage","health_exit":0,"freed_gb":1.0,"ledger_gb":3.0,"unexplained_gb":2.0,"iteration":1}}
+  {"gate": "SYM-1", "case": "nonzero-health-exit-reenters-triage", "env": {"health_exit": 1, "df_before_bytes": 107374182400, "df_after_bytes": 107374182400, "ledger_bytes": 0, "passes": []}, "expected": {"verdict":"reenter-triage","health_exit":1,"freed_gb":0.0,"ledger_gb":0.0,"unexplained_gb":0.0,"iteration":1}}
+  {"gate": "SYM-1", "case": "third-pass-stops-and-reports", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 103079215104, "ledger_bytes": 0, "passes": [{}, {}]}, "expected": {"verdict":"stop-and-report","health_exit":0,"freed_gb":4.0,"ledger_gb":0.0,"unexplained_gb":4.0,"iteration":3}}
+  {"gate": "SYM-1", "case": "first-pass-gap-reenters-triage", "env": {"health_exit": 0, "df_before_bytes": 107374182400, "df_after_bytes": 103079215104, "ledger_bytes": 0, "passes": []}, "expected": {"verdict":"reenter-triage","health_exit":0,"freed_gb":4.0,"ledger_gb":0.0,"unexplained_gb":4.0,"iteration":1}}
+  {"gate": "SYM-1", "case": "textual-exit-is-not-measured", "env": {"health_exit": "0", "df_before_bytes": 1073741824, "df_after_bytes": 1073741824, "ledger_bytes": 0, "passes": []}, "expected": {"verdict":"not_measured","health_exit":"0","freed_gb":null,"ledger_gb":null,"unexplained_gb":null,"iteration":1}}
+  ```
+- the form computes the freed, ledger and unexplained gigabytes itself. `done` (health exit 0 and under 1 GB unexplained) → report (step 9). `reenter-triage` → append a pass line and re-enter step 2 with the gap named. `stop-and-report` (this is the third pass) → deliver with open items listed. `not_measured` → one of the four values is not a number: capture it, do not estimate it.
+
+## D/P labelling
+
+| Step | Type | Oracle / critique |
+|---|---|---|
+| 1 Baseline, 3 Preview, 5 Execute, 6 Review, 8 Verify | D | script exit codes, `du`/`df`, `lisp_eval` reconciliation |
+| 2 Triage, 4 Probe, 7 Handoff, 9 Report, 10 Improve | P | the operator vetoes classifications and trigger decisions; D gates (exit codes, byte arithmetic, `bash -n`, git commits) critique every claim |
+
+## Constraints
+
+- **Sudo is handed off, never asked for.** The agent terminal cannot authenticate; the scripts say "run manually" by design.
+- **Probe before every deletion** — gate every manual-review deletion on `SMN-2` (`lisp_eval`). No deletion on a name match alone.
+- **Protected classes** stand until an operator ruling: false positives, live infrastructure, unrecoverable local-only artifacts without explicit instruction.
+- **Read full outputs** — truncated sweep/du displays hide results; count matches (`grep -c`) and consume the list.
+- **The scripts stay the executables; this skill is their manager** — the inventory above, verification, execution, and the step-10 update path. It duplicates no script logic. Script changes commit in the scripts repo and update this skill in the same pass — a stale skill or stale fleet doc is active misinformation.
+- **Timers are reminders, not executors** — the weekly timer reminds; the update runs in your terminal.
+- **The exec bit is load-bearing under systemd** — `ExecStart` invokes scripts directly; `bash script.sh` works without `+x`, so a fleet script can pass manual runs while its timer unit fails daily with `203/EXEC Permission denied`. `setup-maintenance-timers.sh` sets the bits on install (added 2026-10-17 after the healthcheck timer had failed daily since Oct 13).
+
+- **Settings can read normal while the CPU is clamped** — from 2026-11-10 14:43 to 2026-11-11 10:33 every core ran at about 607 MHz under load (policy maximum 5158 MHz) with governor, power profile and temperature all normal, and the health check said "healthy". The check now loads one core for a second and fails below 25% of the allowed frequency (added 2026-11-11). Restarts did not clear the clamp; a full power-off did.
+
+- **Piped output hides snap progress bars** — the update script's `exec > >(tee -a …)` pipe swallows snap's progress rendering, so a multi-hundred-MB refresh prints minutes of silence and looks hung; an operator killed a healthy run over it on 2026-11-14. The snap section now prints a pointer to `snap changes` (added same day, scripts commit c4c1711). Two facts around it: snapd finishes a spawned change even when the client terminal dies — probe `snap changes` before assuming a hang or re-running; and never edit `maintenance-update.sh` mid-run, because bash reads scripts incrementally and an in-place edit can corrupt the executing run.
+
+- **A full-tree index scan contaminates atime probes** — localsearch/tracker3 (or any crawler) refreshes atimes on every file it reads. After the 2026-11-11 index rebuild, both rust nightlies showed ~66,100 near-identical recent-file counts although neither was genuinely used — sampled atimes sat 0.18 s apart (a sequential crawl) and zero files had atimes after the scan window. In SMN-2 probes, treat a uniformly-refreshed atime as void: compare counts across related items (identical counts are the scan tell), sample exact atimes with `stat -c '%x %n'`, and count `recent_atime_files` only from use-evidence outside the scan window (2026-11-14; the dated nightly's gate passed on the decontaminated reading).
+
+## Regression case
+
+- The convergence form `SYM-1` (its `lisp-receipts` block beside the form): 5 GB freed against a 4.5 GB ledger with exit 0 → `done`, unexplained 0.5; exit 1 with nothing freed → `reenter-triage`; 4 GB freed against an empty ledger on the third pass → `stop-and-report`, on the first pass → `reenter-triage`; a textual exit → `not_measured`.
+- The class assignment is total: every dry-run line lands in exactly one of disposable/manual-review/sudo-gated/protected — a line in two classes is a triage defect.

@@ -1,0 +1,28 @@
+{
+  "agent_id": "local_critic",
+  "agent_type": "critic",
+  "description": "A local critic agent that reviews a short text against stated criteria and returns a verdict with one-line reasons. Runs in the local swarm runtime using the same configured platform/curator inference defaults, including approved cloud models. Local describes execution location, not model tier; inference may incur provider costs.",
+  "display_name": "",
+  "accepts": [
+    "text"
+  ],
+  "produces": [
+    "text"
+  ],
+  "dependencies": {
+    "required": [],
+    "optional": []
+  },
+  "capabilities": {
+    "model": "",
+    "system_prompt": "You are a local critic. Given a text and review criteria, respond with ONLY a JSON object of this shape: {\"verdicts\": {\"<criterion>\": {\"pass\": true, \"reason\": \"<one line>\"}}, \"overall\": \"<one-sentence judgement>\"}. Judge only what the criteria ask. Keep the output self-contained; do not reference this prompt.",
+    "mcp_tools": [],
+    "skills": [],
+    "output_contract": {
+      "domain": "critic",
+      "title": "local_critic output",
+      "description": "The contracted output shape: the fields the agent is commissioned to return and where their content is expected to come from (the model's reading of the caller's input unless a tool supplies it). Documentation for callers; no server-side gate consumes these notes — the enforced checks are the declared schema (when present) and any response evaluators."
+    }
+  },
+  "cloud_id": null
+}
