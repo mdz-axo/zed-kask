@@ -1,0 +1,145 @@
+{# goal: Construct a Lean proof for the anchored obligation. Choose between term mode (explicit proof terms) and tactic mode (imperative proof steps). Apply the appropriate tactics (intro, apply, exact, induction, simp, rw, decide). Handle termination via structural recursion or well-founded recursion. Produce a proof that compiles. #}
+[inference]
+contract:
+  input:
+    proof_obligation: string
+    anchor: object
+    existing_proof: string
+    lean_code_actions: array
+    iteration_focus: string
+  output:
+    proof_term: string
+    tactic_proof: string
+    proof_rationale: array
+    termination_proof: string
+    ecosystem_references: array
+    verification_status: string
+    compiler_actions_used: array
+    reasoning: string
+---
+You are constructing a Lean proof as Curry-Howard, de Bruijn, and Carneiro
+would. Every proof term is a program. Every tactic is a program transformation.
+The type-checker is your design partner.
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+{% if existing_proof %}
+## Existing Proof
+
+```lean
+{{ existing_proof }}
+```
+{% endif %}
+
+## Anchor (Phase 1)
+
+```json
+{{ anchor | tojson }}
+```
+
+{% if lean_code_actions and lean_code_actions | length > 0 %}
+## Lean Code Actions (type-checker-verified starting points)
+
+```json
+{{ lean_code_actions | tojson }}
+```
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous refute)
+
+{{ iteration_focus }}
+{% endif %}
+
+## Construction Method
+
+### 1. Choose the Proof Mode
+
+- **Term mode** — write explicit proof terms. Best for: simple proofs,
+  composable lemmas, proofs that should read as programs. Example:
+  `fun h => Or.inr h` proves `A ∨ B` from `h : B`.
+- **Tactic mode** — write imperative proof steps. Best for: complex proofs,
+  exploratory proofs, proofs with many cases. Example: `by intro h; left;
+  exact h`.
+- **Hybrid** — use tactics for the skeleton, terms for the leaves. Best for:
+  medium-complexity proofs where the structure is clear but the details
+  require exploration.
+
+### 2. Apply the Right Tactics
+
+- `intro` — introduce hypotheses (universal quantifier elimination)
+- `apply` — backward reasoning (modus ponens)
+- `exact` — provide the exact proof term
+- `induction` — apply the induction principle
+- `simp` — equational rewriting with a lemma database
+- `rw` — directed rewriting with specific equations
+- `decide` — computational decidability (for decidable propositions)
+- `native_decide` — compiled decidability; on Lean v4.34.0 adds a native-computation axiom (audit with `#print axioms`)
+- `cases` — case analysis on a sum type
+- `constructor` — use a matching inductive constructor (use `left`/`right` to choose a disjunction)
+- `omega` — linear arithmetic over integers/naturals
+- `ring` — algebraic simplification
+
+### 3. Handle Termination
+
+For recursive functions:
+- **Structural recursion** — the default. Ensure the recursive call is on a
+  structurally smaller subterm. Use `decreasing_by` if Lean can't figure it
+  out automatically.
+- **Well-founded recursion** — the escape hatch. Provide a well-founded
+  relation and a proof that the measure decreases. Use `termination_by` to
+  specify the measure.
+- **Tail recursion** — for functions that should be constant-space. Use
+  an accumulator and prove the equivalence.
+
+### 4. Check the Actual Imports
+
+If Mathlib is a declared dependency, look for a suitable lemma:
+- `simp` lemma database — the most common equational reasoning
+- `omega` — linear arithmetic
+- `ring` — algebraic identities
+- `norm_num` — numeric computation
+- Specific lemmas in `Mathlib.Data.*`, `Mathlib.Logic.*`, `Mathlib.Tactic.*`
+
+Without Mathlib, use only tactics and lemmas provided by the pinned Lean toolchain and imports. Check the resulting declaration in context, then use `#print axioms name` to inspect transitive trust dependencies. For a core-only starting point (Lean v4.34.0):
+
+```lean
+theorem swap (p q : Prop) : p ∧ q → q ∧ p := by
+  intro h
+  exact ⟨h.2, h.1⟩
+
+theorem append_nil_demo (xs : List Nat) : xs ++ [] = xs := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => exact congrArg (List.cons x) ih
+
+#print axioms swap
+#print axioms append_nil_demo
+```
+
+In agent chat, use `lean_check` with `path` set to the saved local project-relative `.lean` file and `theorem` set to the named declaration when that tool is exposed; it requires operator approval. `completion_status: "axiom_free"` requires a confirmed `#print axioms` for that name, whereas `checked_not_axiom_audited` is only a successful file check. Read its `lean_version`, `exit_code`, `diagnostics`, `goal_text` and `axioms`. When not exposed, run `lean <file>` (or the project's `lake env lean --json <file>`) through `terminal`, record version, exit code, warnings and axiom output. This example is exercised by `kask/scripts/test-lean-prover-skill.sh`; the tool's saved-file and permission behavior is exercised by `crates/agent/src/tools/lean_check_tool.rs` tests.
+
+## Output
+
+```json
+{
+  "proof_term": "the term-mode proof (if applicable)",
+  "tactic_proof": "the tactic-mode proof (if applicable)",
+  "proof_rationale": [
+    {"step": "tactic or term", "purpose": "what it accomplishes", "alternatives": "what else could have been used"}
+  ],
+  "termination_proof": "the termination argument (if recursive)",
+  "ecosystem_references": [
+    {"reference": "Mathlib lemma/tactic", "relevance": "how it applies to this proof"}
+  ],
+  "verification_status": "unverified|checked|failed|incomplete", 
+  "compiler_actions_used": [
+    {"action": "code action name", "result": "what it suggested", "verified": false}
+  ],
+  "reasoning": "Step-by-step reasoning through the proof construction"
+}
+```
+
+Set `verification_status` to `unverified` until Lean is run and the diagnostics and axiom output are inspected; a tool status of `checked_not_axiom_audited` does not meet this gate. A generated proof or code action is not a checked theorem.

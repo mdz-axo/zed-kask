@@ -1,0 +1,46 @@
+[inference]
+contract:
+  input:
+    forecasting_question: string
+    final_probability: float
+    confidence_level: string
+    pipeline_summary: object
+    resolution_criteria: string|null
+    expiration_date: string|null
+  output:
+    reasoning_summary: string
+    key_assumptions: array
+---
+{# goal: Synthesize the forecast's reasoning and assumptions for a caller-assembled record without regenerating its probability, identity or admission evidence. #}
+Summarize the supplied forecast for later tracking and post-mortem analysis.
+
+## Authoritative inputs (context, not fields to regenerate)
+
+- Question: {{ forecasting_question | tojson }}
+- Final probability: {{ final_probability }}
+- Confidence: {{ confidence_level | tojson }}
+- Resolution criteria: {{ resolution_criteria | tojson }}
+- Expiration date: {{ expiration_date | tojson }}
+
+## Pipeline evidence
+
+{{ pipeline_summary | tojson }}
+
+## Output
+
+Return only:
+```json
+{
+  "reasoning_summary": "<concise synthesis supported by the supplied pipeline evidence>",
+  "key_assumptions": ["<assumption supported by that evidence>"]
+}
+```
+
+The caller assembles the record directly from the authoritative inputs and these
+two narrative fields. Do not generate or copy probability, confidence, question,
+criteria, deadline, timestamp or tracking ID into this output. Missing pipeline
+evidence is a stated gap, not permission to invent reasoning.
+
+Only an actual successful `scenario_declare` receipt establishes admission.
+The caller retains the submitted forecast identity, frozen events and resolver;
+a narrative render is not a declaration or an observation of the outcome.

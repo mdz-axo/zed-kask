@@ -1,0 +1,55 @@
+{# goal: Reconcile real executor reports against the sealed `DesignSpec` and emit `findings-spec-v1` with observations, uncertainty, deviations, limitations and ED-2 inputs; never turn imprecision or invalid measurement into support. #}
+[inference]
+contract:
+  input:
+    design_spec: object
+    registry_identity: object|null
+    run_reports: array
+    observations: array
+    deviations: array
+    audit_sources: array
+  output:
+    findings_spec: object
+    ed2_inputs: object
+---
+
+Interpret the evidence against the design that was fixed before execution.
+
+## DesignSpec and registry identity
+
+- design_spec: {{ design_spec | tojson }}
+- registry_identity: {{ registry_identity | tojson }}
+
+## Executed evidence
+
+- run_reports: {{ run_reports | tojson }}
+- observations: {{ observations | tojson }}
+- deviations: {{ deviations | tojson }}
+- audit_sources: {{ audit_sources | tojson }}
+
+Create `findings-spec-v1` with:
+
+- `design_spec_id`, seal/fingerprint when applicable, and real report refs;
+- observations, estimand/effect, uncertainty and missingness;
+- every protocol deviation and whether it invalidates measurement or design;
+- measurement, identification, statistical-conclusion and transportability limitations;
+- auxiliary-failure localization among focal hypothesis, instrument, reference data, analysis and domain shift;
+- per-hypothesis prediction comparison;
+- exploratory findings kept separate from confirmatory conclusions;
+- reproduction package and audit refs;
+- typed operational failures (`executor_unavailable`, `protocol_deviation`, `measurement_failed`, `scientific_non_result`) where applicable; distinguish a valid non-result from an unavailable executor or unusable measurement.
+
+These are proposed evidence classifications, not independently established facts or execution clearance. ED-2I checks their stated consistency/report presence; ED-2 only maps them to an outcome label. Preserve source references, uncertainty and disagreements for review; the deterministic label cannot strengthen its evidence.
+
+Emit flat semantic `ed2_inputs`: `design_valid`, `measurement_valid`, `prediction_contradicted`, `equivalence_prespecified`, `equivalence_met`, `precision_adequate`, `severe`. Each boolean carries a short evidence basis inside `findings_spec`; the flat values exist only for ED-2I/ED-2. Do not emit a report count: the caller derives report presence deterministically from the exact `run_reports` array it supplied.
+
+Classification rules:
+
+- zero real report references, an unavailable executor, an invalidating protocol breach or an unusable instrument/report sets `measurement_valid=false`;
+- `prediction_contradicted=true` only when the adequate design's prespecified prediction is contradicted with enough realized precision to distinguish a material effect; otherwise leave it false and expose the wide interval/precision limitation;
+- `equivalence_met=true` only for a prespecified margin met with adequate precision; it cannot coexist with `prediction_contradicted=true`;
+- `severe=true` only when the surviving hypothesis had a realistic opportunity to fail—not merely that its prediction matches.
+
+Do not infer support from a non-significant result. Do not reject a hypothesis from invalid measurement. Do not label a post-hoc bound as equivalence. Do not emit `proposed_outcome` or `typed_scientific_outcome`: the caller computes that branch with ED-2 and attaches the exact deterministic result to the final FindingsSpec.
+
+Return JSON only with exactly `findings_spec`, `ed2_inputs`.

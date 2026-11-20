@@ -1,0 +1,88 @@
+{# goal: Interpret caller-computed Brier/correlation on comparable resolved forecasts and separate longitudinal gaming evidence from an unchanged-probability rewrite; absent evidence remains Undetermined. #}
+[inference]
+contract:
+  input:
+    forecaster_level_composite: array
+    realized_outcomes: array
+    outcome_statistics: object
+  output:
+    validation_verdict: string
+    gaming_suspected: boolean|null
+    validation_findings: array
+---
+{# Phase 4 — VALIDATE (CHECK: correlate EQM composite with accuracy) #}
+{#
+  The paper validated EQMs against realized outcomes. This template consumes
+  the caller's actual Brier/correlation results; it cannot derive them from
+  prose or diagnose gaming from the same unchanged-probability forecast.
+
+  With no realized outcomes, or a forecaster with resolved outcomes and no
+  Brier score in outcome_statistics, the result is fixed, so the render emits it as
+  JSON and no model call follows: verdict undetermined with a skipped
+  finding, never Ready-with-empty-findings (a gate that reports success
+  when it could not perform the check advertises a check that didn't happen).
+#}
+{%- set resolved = realized_outcomes | selectattr("forecaster_id") | map(attribute="forecaster_id") | unique(case_sensitive=true) | list -%}
+{%- set uncovered = resolved | reject("in", outcome_statistics.brier_by_forecaster | default({})) | list -%}
+{%- if not realized_outcomes -%}
+{{ {"validation_verdict": "undetermined", "gaming_suspected": none, "validation_findings": [{"check": "outcome_correlation", "status": "skipped", "detail": "No realized outcomes supplied. EQM scores are not validated against accuracy, and gaming cannot be detected."}]} | tojson(indent=2) }}
+{%- elif uncovered -%}
+{{ {"validation_verdict": "undetermined", "gaming_suspected": none, "validation_findings": [{"check": "outcome_correlation", "status": "skipped", "detail": "outcome_statistics carries no Brier score for these forecasters with resolved outcomes.", "forecasters": uncovered}]} | tojson(indent=2) }}
+{%- else -%}
+You are an EQM validation analyst. Your task is to interpret the caller's computed outcome statistics for this cohort and judge whether gaming is supported.
+
+## Forecaster-Level Composite
+
+```json
+{{ forecaster_level_composite | tojson }}
+```
+
+## Realized Outcomes
+
+```json
+{{ realized_outcomes | tojson }}
+```
+
+## Caller-Computed Outcome Statistics (`lisp_eval` evidence)
+
+`forecasters_resolved` is the number of forecasters with resolved outcomes, `brier_by_forecaster` their mean Brier scores, and `composite_accuracy_r` the correlation between mean composite and accuracy, or the string `"Undetermined"` below five forecasters or on a zero-variance series.
+
+```json
+{{ outcome_statistics | tojson }}
+```
+
+Never substitute the paper's published r=0.51 for this cohort's result.
+
+## Step 1 — Read the Correlation
+
+Take `composite_accuracy_r` as given. If it is `"Undetermined"`, report `undetermined`. Do NOT restate the numeric value in your output — this template does not re-type caller-computed values.
+
+## Step 2 — Gaming Detection
+
+Gaming is suspected only with a comparable longitudinal cohort:
+- Compare *subsequent independent resolved forecasts* in aligned forecaster/question cohorts, not before/after rationales attached to the same fixed forecast.
+- Only when measured EQM scores rise without corresponding Brier improvement in that comparable cohort may `gaming_suspected: true` be considered, with limitations stated.
+- If no comparable later cohort exists, return `gaming_suspected: null` and `validation_verdict: "undetermined"`. Unchanged probability and outcome on one forecast necessarily yield unchanged Brier, which alone is not gaming evidence.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "validation_verdict": "undetermined",
+  "gaming_suspected": null,
+  "validation_findings": [
+    {"check": "outcome_correlation", "status": "skipped", "detail": "No qualifying caller-computed cohort result supplied."},
+    {"check": "gaming_detection", "status": "unverified", "detail": "No comparable subsequent resolved forecasts supplied."}
+  ]
+}
+```
+
+## Constraints
+
+- An `"Undetermined"` correlation returns `validation_verdict: "undetermined"` — do NOT return "validated" or "ready".
+- Gaming detection requires comparable later resolved forecasts; missing data means `gaming_suspected: null`, not a claim of no gaming.
+- `composite_accuracy_r` is the caller's, read from `outcome_statistics`; never restate it in your output (a re-typed copy can drift from the computed value).
+- Do not fabricate validation results — if the data is insufficient, return "undetermined".
+{%- endif -%}

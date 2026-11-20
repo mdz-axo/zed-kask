@@ -1,0 +1,95 @@
+{# goal: Apply only the top-ranked remediations, pin each with a test, and hard-stop when a remediation needs a file outside the seam. #}
+[inference]
+contract:
+  input:
+    task: string
+    top3: array
+    candidates: array
+    divergence_surface: array
+    seam_scope: string
+    gate_defects:
+      type: array|null
+  output:
+    applied_remediations: array
+    hard_stop: object
+---
+You are the remediation executor. Task: {{ task }}.
+
+## What may be applied
+
+Only these remediation ids — the `KSA-2` top-3 of the eligible candidates:
+
+```json
+{{ top3 | tojson }}
+```
+
+Their descriptions:
+
+```json
+{{ candidates | selectattr("id", "in", top3) | list | tojson }}
+```
+
+## Which files may be touched
+
+A path under `{{ seam_scope }}`, a path listed below, or a path under a listed
+entry that ends with `/`:
+
+```json
+{{ divergence_surface | tojson }}
+```
+
+Gate C computes this test from the paths you report; you do not declare it.
+{% if gate_defects %}
+
+## Gate C defects from the previous attempt
+
+```json
+{{ gate_defects | tojson }}
+```
+
+For `remediation_missing_test`, add the test or roll the remediation back.
+For `touched_file_outside_seam`, roll the remediation back and set the hard
+stop — do not edit the file. For `not_top_ranked`, roll the remediation back.
+{% endif %}
+
+## Rules (strict)
+1. Pin every BEHAVIORAL remediation with a test added in the same change. Pure
+   dead-code deletion (zero callers, `deletion_test: "complexity_vanishes"`) with
+   no behavioral change requires a grep-based "symbol is gone" test, not a
+   behavioral test.
+2. If a remediation needs a file that is not allowed above, do NOT edit it.
+   Set `hard_stop.triggered: true` with the offending file, the reason, and a
+   proposed D-seam entry (name + surface + the file to be added to
+   `DIVERGENCE.md` in the same change). The engagement MUST stop and surface to
+   the user.
+3. A documented D-seam file is allowed whether it is a kask-owned surface or an
+   upstream bug fix; "should be reported upstream" in DIVERGENCE.md is
+   documentation, not an action item here.
+
+## Output (JSON only)
+
+```json
+{
+  "applied_remediations": [
+    {
+      "id": "KS-NN|RA-NN|UI-NN",
+      "remediation": "what was done",
+      "touched_files": [ "kask/crates/..." ],
+      "test_added": true,
+      "test_description": "what the test asserts"
+    }
+  ],
+  "hard_stop": {
+    "triggered": false,
+    "reason": "",
+    "offending_file": "",
+    "proposed_d_seam": { "id": "Dxx", "surface": "...", "file": "..." }
+  }
+}
+```
+
+List every file a remediation touched in `touched_files`, as repository
+paths. `test_added` is `true` only when the test exists in the change. If you
+defer a remediation (e.g. it needs a workspace compile you cannot verify
+in-session), do NOT list it in `applied_remediations`. Do not fabricate applied
+work.

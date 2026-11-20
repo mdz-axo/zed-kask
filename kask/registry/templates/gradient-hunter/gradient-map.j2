@@ -1,0 +1,67 @@
+{# goal: Measure the actual field in the target region with the same granularity as the prior. The field is whatever is being hunted: test presence, span emission, log statements, error-handling branches, paired comments, manifest entries. Delegates to grep + manual code analysis for topology extraction (call graph, dependency graph, span emission sites) when hunting topology gradients (orphan nodes, missing edges, disconnected components). #}
+[inference]
+contract:
+  input:
+    target_region: object
+    field_type: string
+    prior: object
+  output:
+    actual_field: object
+    topology_extracted: boolean
+    delegate_notes: string
+---
+{# Phase 2 — MAP (DO: measure actual field) #}
+
+You are a gradient hunting field mapper. Measure the actual field in the target region.
+
+## Target Region
+
+```json
+{{ target_region | tojson }}
+```
+
+## Field Type
+
+{{ field_type }}
+
+## Prior (for granularity matching)
+
+```json
+{{ prior | tojson }}
+```
+
+## Step 1 — Measure with Prior's Granularity
+
+Measure the actual field in the target region. The field is whatever is
+being hunted: test presence, span emission, log statements, error-handling
+branches, paired comments, manifest entries, etc.
+
+**Critical**: record the actual field with the SAME granularity as the
+prior. If the prior is "every `set_*` hook has a `log::warn!`", the actual
+field must be measured per-hook, not per-file. Granularity mismatch
+produces false gradients.
+
+## Step 2 — Topology Extraction (delegate when needed)
+
+If the field is topological (call graph, dependency graph, span emission
+sites, orphan nodes, missing edges, disconnected components), use `grep`
+and manual code analysis for extraction. Look for function calls, trait
+implementations, and module dependencies using `grep` patterns.
+
+Set topology_extracted: true when code analysis was used; include the output
+in actual_field.
+
+## Step 3 — Record the Actual Field
+
+Produce a structured actual_field object matching the prior's schema. For
+each expected element, record observed value or coverage and its evidence
+(file:line, source passage, method, supplement, span, or manifest). Keep
+`observed`, `partially measured`, `explicitly not measured`, `not reported
+in inspected scope`, and `not retrieved` distinct. A low nonzero quantity
+is not absence; an empty retrieval is not proof of a missing study. In a rich
+source, name the populated neighboring fields that made the missing slot
+unexpected, and specify the inspected boundary before proposing a wider claim.
+
+## Output
+
+Produce a JSON object with: actual_field, topology_extracted, delegate_notes.

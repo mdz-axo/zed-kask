@@ -1,0 +1,115 @@
+[inference]
+contract:
+  input:
+    forecasting_question: string
+    prior_probability: float
+    hypothesis_analysis: object
+    new_evidence: array|null
+    market_context: array
+    expert_prior: array
+  output:
+    evidence_items: array
+    likelihood_ratios: array
+    evidence_likelihood: float
+    evidence_base_rate: float
+    updated_probability: float
+---
+{# goal: Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. #}
+You are a Bayesian updating specialist. Your task is to incorporate new evidence and update probabilities using likelihood ratios and Bayesian reasoning.
+
+## Forecasting Question
+{{ forecasting_question }}
+
+## Prior Probability
+{{ prior_probability }} ({{ (prior_probability * 100)|round(1) }}%)
+
+## Current Hypothesis Analysis
+{% if hypothesis_analysis %}
+Primary Hypothesis: {{ hypothesis_analysis.primary_hypothesis }}
+Hypothesis Probability: {{ hypothesis_analysis.primary_probability }}
+{% endif %}
+
+## New Evidence to Evaluate
+{% if new_evidence and new_evidence|length > 0 %}
+{% for evidence in new_evidence %}
+{{ loop.index }}. {{ evidence }}
+{% endfor %}
+{% else %}
+[No new evidence provided - evaluate based on existing hypothesis analysis]
+{% endif %}
+
+{% if market_context %}
+## Prediction-Market Price Moves as Evidence
+A single current market price is context, not a measured price move or a
+likelihood ratio. Update only if dated before/after observations establish a
+new move *after* the stage-2 anchor and an evidence-grounded likelihood ratio
+is available; otherwise make no market-derived update. A `low` reliability
+tier or `stale` calibration also remains context. Never count the same quote
+once as a starting prior and again as new evidence.
+{% for m in market_context %}
+{% set market = m.market | default(m) %}
+- [{{ market.source }}] {{ market.question }} — p={{ market.probability }} (tier: {{ market.reliability_tier }}, spread: {{ market.spread }}, volume: {{ market.volume }}, deadline: {{ market.deadline }}, match_confidence: {{ m.match_confidence | default("unknown") }})
+{% endfor %}
+{% endif %}
+
+{% if expert_prior %}
+## Expert-Judgment Rationales as Evidence
+The following expert-judgment rationale excerpts were extracted from LEAP
+reports. Only the rationale text is rendered here — the probability fields
+(`median_probability`, `superforecaster_median`, `public_median`) are
+deliberately omitted from this section because stage 2 may already have
+selected one as a starting prior. Do not count that probability again as new
+evidence. A rationale may inform a qualitative judgment, but assign no
+likelihood ratio or default strength without independent evidence; do not
+recount the information already used in the selected anchor.
+{% for ep in expert_prior %}
+{% if ep.rationale_excerpt %}
+- [LEAP-rationale/{{ ep.wave | default("unknown") }}] {{ ep.question }} — scenario: {{ ep.scenario | default("unconditional") }}, horizon: {{ ep.time_horizon | default("n/a") }} — rationale: {{ ep.rationale_excerpt }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+## Bayesian Updating Methodology
+
+Belief updating is to good forecasting as brushing and flossing are to good dental hygiene. Update probabilities based on evidence strength.
+
+### Key Concepts
+
+**Likelihood Ratio**: P(E|H) / P(E|~H)
+- How much more likely is this evidence if the hypothesis is true vs. false?
+- LR > 1: Evidence supports hypothesis
+- LR < 1: Evidence contradicts hypothesis
+- LR = 1: Evidence is neutral
+
+**Bayesian Update Formula** (simplified):
+- Posterior = Prior × LR / (1 + Prior × (LR - 1))
+- Or use log odds for multiple updates
+
+### Update Principles
+
+1. **Make many small updates** most of the time
+2. **Occasional large updates** when evidence is very strong
+3. **Avoid base-rate fallacy**: Consider P(E|H) vs P(E|~H), not just P(E|H)
+4. **Resist wishful thinking**: Evaluate evidence objectively
+
+## Analysis Steps
+
+For each piece of evidence:
+1. Assess strength (weak/moderate/strong)
+2. Calculate or estimate likelihood ratio
+3. Determine direction (supports or contradicts hypothesis)
+4. Update probability accordingly
+
+## Output
+
+Respond with a JSON object containing:
+- evidence_items: Array of objects with {
+    evidence: string,
+    strength: string (weak/moderate/strong),
+    direction: string (supports/contradicts/neutral),
+    likelihood_ratio: float
+  }
+- likelihood_ratios: Array of floats (LR for each evidence item)
+- evidence_likelihood: float (0.0-1.0, P(E|H) — how likely is this evidence if the hypothesis is true? Aggregate across all evidence items.)
+- evidence_base_rate: float (0.0-1.0, P(E) — how likely is this evidence in general, regardless of the hypothesis? The marginal probability of the evidence.)
+- updated_probability: float (0.0-1.0, your LLM-estimated posterior for cross-validation against the deterministic bayesian_update computation)

@@ -1,0 +1,86 @@
+{# goal: Compose the comparison-backed artifact and unified diff for an Algedonic review proposal card, or report that no proposal is justified; the proposal is never applied here. #}
+[inference]
+contract:
+  input:
+    goal: string
+    target_path: string
+    original_content: string
+    valid_concerns: array
+    comparison: object
+    winning_content: string
+    user_counter_proposal: string|null
+  output:
+    revised_content: string
+    diff: string
+    rationale: string
+    confidence: float
+    status: string
+
+---
+
+You are a template proposal composer. Only a candidate the comparison names for proposal warrants a revised template; the operator decides it in the algedonic review. If baseline wins or the comparison is unverified, do not generate an edit.
+
+## Goal
+
+{{ goal }}
+
+## Target
+
+{{ target_path }}
+
+## Original Content
+
+```
+{{ original_content }}
+```
+
+## Valid Concerns
+
+```json
+{{ valid_concerns | tojson }}
+```
+
+## Candidate comparison and observed evidence
+
+```json
+{{ comparison | tojson }}
+```
+
+## Candidate artifact named for proposal (`winning_content`; empty unless the comparison named a non-baseline candidate)
+
+```
+{{ winning_content }}
+```
+
+{% if user_counter_proposal %}
+## Operator Counter-Proposal (from the algedonic review)
+
+The operator has provided edits or constraints on the review card to incorporate:
+
+```
+{{ user_counter_proposal }}
+```
+{% endif %}
+
+## Composition Rules
+
+1. Use only the supplied candidate artifact when the comparison names it for proposal. Confirm its ID and recorded evidence agree; do not invent a candidate from critique alone. This output is a proposal for the operator; it is never written to the target here. If no candidate improved the fixed tasks, return `no_change` with empty revised content and diff.
+2. Prefer the simplest candidate that attains the measured improvement; a replacement design can win even if its diff is large.
+3. Keep the `[inference]` contract structure intact if revising a `.j2` file.
+4. If the target is a legacy manifest, treat it as inert text; never claim its edits change skill execution.
+5. Prefer explicit, typed contracts over prose where possible.
+6. If `user_counter_proposal` is present, evaluate it against the same hard gates and tasks and report the result; the operator decides.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "status": "proposal | no_change | unverified",
+  "revised_content": "the full proposed template body, or empty when no change is justified",
+  "diff": "unified diff: --- original\n+++ revised\n@@ ...",
+  "rationale": "observed baseline-versus-candidate comparison, or why no proposal is justified",
+  "confidence": 0.85
+}
+```

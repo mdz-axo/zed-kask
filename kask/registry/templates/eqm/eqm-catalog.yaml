@@ -1,0 +1,555 @@
+# EQM Catalog — the paper's 60 Explanation Quality Markers
+# Reference document for the eqm skill (measure and improve phases).
+#
+# Source: Karvetski, Huang, Kučinskas et al. (2026), "Measuring Judgment
+# Quality in Natural-Language Explanations: Evidence from Forecasting
+# Tournaments" — Forecasting Research Institute. arXiv:2606.30987.
+# Appendix A.4, Tables A1-A6: the full 60-pattern set, verbatim.
+#
+# The 60 patterns are organized into the paper's six theory-informed
+# families. Each pattern carries the paper's verbatim description and
+# directional hypothesis (the association with forecasting accuracy).
+# The 12 most predictive are marked `predictive: true` and are the
+# default subset implemented in the market_score_rationale MCP tool
+# (hkask-mcp-prediction-markets/src/eqm.rs::KEY_EQMS).
+#
+# Directional hypothesis:
+#   helps — positively correlated with forecasting accuracy (a "good habit")
+#   hurts — negatively correlated with forecasting accuracy (a "warning sign")
+#   neutral — no directional hypothesis (the paper assigned it neutral)
+#
+# The paper's key asymmetry finding: EQMs flag bad forecasts more reliably
+# than they identify excellent ones. Red-flag screening is the strong signal;
+# green-flag endorsement is the weak signal.
+#
+# Scoring: 0/1/2 per marker (0 = absent, 1 = partial, 2 = clearly present).
+# Composite = Σ(helps scores) − Σ(hurts scores), range [-N_hurts×2, +N_helps×2].
+#
+# NOTE: the MCP tool's KEY_EQMS const carries the OPERATIONAL scoring
+# descriptions for the predictive 12 — adapted from the paper's definitions
+# for the kask context (scoring rubric language, "rationale" instead of
+# "forecaster"). This catalog carries the paper's RESEARCH definitions
+# verbatim. Both are honest: the catalog is the reference model; the tool
+# is the operational instrument. The ID sets match exactly (verified
+# set-wise against KEY_EQMS).
+#
+# This catalog is the single source of truth for EQM definitions as
+# published. The MCP tool's KEY_EQMS const carries the predictive 12's
+# operational descriptions; this file carries all 60 research definitions
+# for skills that need the full catalog (research, validation, domain-tuning).
+
+categories:
+  - id: bias_and_emotion
+    name: "Bias and Emotion"
+    markers:
+      - id: clustering_illusion
+        name: "Clustering Illusion"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster finds patterns in data using either minimal data
+          points or suggests a pattern without reasonably testing for the
+          pattern. Examples include assuming that recent or isolated events
+          are part of a larger trend, using just a few data points to make a
+          robust statistical argument, or eyeballing graphs without digging
+          into the data to confirm.
+      - id: confirmation_bias
+        name: "Confirmation Bias"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster seems to favor a hypothesis or outcome, and then
+          presents some piece of evidence (e.g., news story, data point)
+          that confirms the hypothesis or outcome without searching for
+          evidence for other hypotheses or outcomes.
+      - id: extreme_confidence
+        name: "Extreme Confidence"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster expresses a high degree of confidence in his
+          forecast, stating the events "will" happen or "will not" happen,
+          or that the outcome is nearly certain.
+      - id: speculative_terms
+        name: "Speculative Terms"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster speculates on what might happen using terms like
+          "could" or "might".
+      - id: gut_based
+        name: "Gut Based"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster relies on instinctive or intuitive reasoning
+          without citing evidence or data to support their conclusion. This
+          includes statements like "I feel," "I sense," or "it seems to me,"
+          which suggest a forecast based on personal instinct rather than
+          analysis or factual support.
+      - id: inside_view
+        name: "Inside View"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster analyzes only the dynamics of the current question,
+          without taking an outside view and considering how past events or
+          precedent could provide additional insight.
+      - id: personal_anecdote
+        name: "Personal Anecdote"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster uses a personal anecdote to help inform his
+          forecast.
+      - id: simplification_bias
+        name: "Simplification Bias"
+        predictive: true
+        direction: hurts
+        description: >
+          The forecaster is over-simplifying a complex forecasting dynamic
+          into a simplistic viewpoint.
+      - id: positive_emotion
+        name: "Positive Emotion"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster expresses positive emotion (e.g., excitement) with
+          regard to the topic, question, or a particular outcome.
+      - id: negative_emotion
+        name: "Negative Emotion"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster expresses negative emotion (e.g., dread) with
+          regard to the topic, question, or a particular outcome.
+      - id: political_preference
+        name: "Political Preference"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster expresses a political preference that relates to
+          one of the question outcomes.
+
+  - id: analytical_reasoning
+    name: "Analytical Reasoning"
+    markers:
+      - id: analogies
+        name: "Analogies"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster uses an analogy to another event or forecasting
+          question to form his forecast.
+      - id: best_practices
+        name: "Best Practices"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster applies one of the following strategies: 1)
+          analyzing past data trends, averages, or variations when
+          predicting upcoming values, 2) considering the last occurrence of
+          an event in cases where timing matters, or 3) using historical
+          precedents while balancing arguments for potential differences in
+          the current context.
+      - id: causal_reasoning
+        name: "Causal Reasoning"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster identifies at least one current or future key
+          driver that he believes will have an influence on the outcome of
+          the question and clearly integrates the driver(s) into his
+          forecast. Note, this is not speculative reasoning, but clear
+          cause-and-effect type reasoning including detailed knowledge of
+          system dynamics or known limits/boundaries on what is feasible
+          given the question at hand.
+      - id: domain_expertise
+        name: "Domain Expertise"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates advanced domain or technical expertise
+          that relates to the question.
+      - id: historic_expertise
+        name: "Historic Expertise"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates advanced historical knowledge that
+          relates to the question.
+      - id: fermi_breakdown
+        name: "Fermi Breakdown"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster breaks the main forecasting problem down into sub-
+          problems, then solves each subproblem, and aggregates to reach a
+          final forecast.
+      - id: scenario_reasoning
+        name: "Scenario Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster presents multiple potential future outcomes,
+          considering different scenarios that could impact the question's
+          resolution, indicating detailed, structured exploration of more
+          than one plausible path.
+      - id: second_level_reasoning
+        name: "Second Level Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster tries to reason beyond the most immediate or nearer
+          term actions, and considers second-order effects such as the
+          response to a potential action, or the response to the response of
+          a potential action.
+      - id: statistical_causal_blend
+        name: "Statistical Causal Blend"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster evaluates the forecast from a statistical
+          perspective AND also considers at least one current or future
+          causal driver when forming his forecast.
+      - id: statistical_polling
+        name: "Statistical Polling"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster incorporates insights from statistical polling or
+          surveys to form his forecast.
+      - id: statistical_reasoning
+        name: "Statistical Reasoning"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster looks to past occurrences or data and uses
+          logical/statistical reasoning to inform his forecast. This could
+          be looking at past occurrences, forming a comparison class and
+          deriving a baserate, using basic statistics, or building a
+          statistical model.
+      - id: statistical_sensitivity_analysis
+        name: "Statistical Sensitivity Analysis"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster includes some form of sensitivity analysis within
+          his statistical reasoning.
+      - id: wildcards
+        name: "Wildcards"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster explicitly mentions rare but consequential events
+          that would greatly change the expected outcome of the question.
+
+  - id: alignment_and_discipline
+    name: "Alignment and Discipline"
+    markers:
+      - id: forecast_rationale_align
+        name: "Forecast and Rationale Align"
+        predictive: true
+        direction: helps
+        description: >
+          The expressed forecast and the forecaster's rationale align in two
+          ways: 1) the outcome expressed in the rationale as most likely has
+          the highest forecast probability, and 2) the level of uncertainty
+          expressed in the rationale matches the magnitude of the forecast.
+      - id: forecast_rationale_misalign
+        name: "Forecast and Rationale Misalign"
+        predictive: true
+        direction: hurts
+        description: >
+          The expressed forecast and the forecaster's rationale are
+          misaligned in that 1) the outcome expressed in the rationale as
+          most likely does not have the highest forecast probability, or 2)
+          the level of uncertainty expressed in the rationale differs from
+          the magnitude of the forecast.
+      - id: forecaster_error
+        name: "Forecaster Error"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster commits an error in translating his rationale into
+          a forecast (e.g., says small chance of event occurring, then gives
+          large forecast, or vice versa).
+      - id: levels_of_confidence
+        name: "Levels of Confidence"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster makes an elaborate argument and expresses a level
+          of confidence within each structural point of the argument,
+          possibly describing features or assumptions of the argument where
+          the forecaster is less certain.
+      - id: resolution_criteria_deep_dive
+        name: "Resolution Criteria Deep Dive"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster takes a deep dive into the resolution criteria of
+          the question, as a lawyer might, to determine exactly what may and
+          may not count towards an affirmative resolution.
+      - id: timing
+        name: "Timing"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster mentions the question's resolution timeframe or the
+          time left for the question to resolve, and integrates this timing
+          into his forecast or decision to adjust his forecast.
+      - id: conditions_to_update
+        name: "Conditions to Update"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster outlines future conditions that will trigger an
+          update to his forecast.
+      - id: updating
+        name: "Updating"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is updating or affirming a previous forecast.
+      - id: adjusting_down
+        name: "Adjusting Down"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges a baseline probability (either derived
+          from a data point, statistical means, or a forecast from a
+          teammate) but chooses to adjust (for a factor OTHER than time)
+          this baseline probability DOWN for his forecast to reflect a
+          LESSER likelihood of the event.
+      - id: adjusting_up
+        name: "Adjusting Up"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster acknowledges a baseline probability (either derived
+          from a data point, statistical means, or a forecast from a
+          teammate) but chooses to adjust (for a factor OTHER than time)
+          this baseline probability UP for his forecast to reflect a GREATER
+          likelihood of the event.
+
+  - id: evidential_sourcing
+    name: "Evidential Sourcing"
+    markers:
+      - id: authority_based
+        name: "Authority Based"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster bases his forecast on a statement from a perceived
+          expert or authority.
+      - id: news_data_easily_accessible
+        name: "News or Data Easily Accessible"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster derives insight from a news story or data source
+          that would likely appear on page 1 of a search engine (e.g., from
+          the major news sources like NYTimes, abcnews, NPR, Reuters, etc.).
+      - id: news_data_remote
+        name: "News or Data Remote"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster derives insight from a news story or data source
+          that would NOT appear on page 1 of a search engine, but rather
+          requires some advanced searching/curation.
+      - id: source_at_face_value
+        name: "Source at Face Value"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster uses information or data from a source without
+          critical analysis, immediately incorporating it into their
+          forecast. This includes uncritical references to news articles or
+          data points followed by accepting it as true without questioning
+          its reliability or potential biases.
+      - id: source_credibility_reliability
+        name: "Source Credibility and Reliability"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster presents information or data from a source/news
+          story and analyzes the source and conclusions in terms of
+          reliability and credibility.
+      - id: teaming_agree
+        name: "Teaming Agree"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is expressing agreement with a point made by a
+          teammate forecaster.
+      - id: teaming_disagree
+        name: "Teaming Disagree"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is disagreeing with, expressing doubt or
+          uncertainty about, or otherwise correcting a point made by a
+          teammate forecaster.
+      - id: teaming_insight
+        name: "Teaming Insight"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster is drawing the majority of his insight from a
+          teammate and using this as a basis for his forecast.
+
+  - id: integrative_reasoning_and_cognitive_framing
+    name: "Integrative Reasoning and Cognitive Framing"
+    markers:
+      - id: abstract_reasoning
+        name: "Abstract Reasoning"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster's reasoning is more abstract, concerned with the
+          "why", is goal-oriented, distal, or transcends the particularities
+          of the given situation.
+      - id: concrete_reasoning
+        name: "Concrete Reasoning"
+        predictive: true
+        direction: helps
+        description: >
+          The forecaster's reasoning is more concrete, concerned with the
+          "how", is proximal, or contextualizes the situation.
+      - id: descriptive_action_verbs
+        name: "Descriptive Action Verbs"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster uses descriptive action verbs (physical or
+          observable action performed by the subject) when describing the
+          actions of key actors.
+      - id: interpretive_action_verbs
+        name: "Interpretive Action Verbs"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster uses interpretive action verbs (verbs convey
+          subjective or inferred meaning rather than purely describing
+          physical action) when describing the actions of key actors.
+      - id: state_verbs
+        name: "State Verbs"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster uses state verbs (a condition, state of being,
+          emotion, or perception) when describing the actions or state of
+          key actors.
+      - id: situational_factors
+        name: "Situational Factors"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster focuses on situational factors that make the event
+          more or less likely.
+      - id: dispositional_factors
+        name: "Dispositional Factors"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster focuses on dispositional factors of key actors that
+          make the event more or less likely.
+      - id: fact_based
+        name: "Fact Based"
+        predictive: true
+        direction: helps
+        description: >
+          The majority of the forecaster's rationale consists of fact-based
+          statements, where each fact has verifiable details, references to
+          actions or events, measurable data or outcomes, historical facts
+          or timelines, or cited sources or reports.
+      - id: fog_based
+        name: "FOG Based"
+        predictive: false
+        direction: hurts
+        description: >
+          The majority of the forecaster's rationale consists of fact-
+          deficient, obfuscating generalities (FOG), where each FOG
+          statement consists of emotional or evocative language, broad
+          generalizations, vague attributions of intent or behavior,
+          speculative language without supporting evidence, or unspecified
+          references to urgency or importance.
+      - id: dialectical_reasoning
+        name: "Dialectical Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges multiple viewpoints or factors that
+          conflict in terms of their conclusion (using terms like "however",
+          "but", "nevertheless", "although", "on the other hand", etc.).
+      - id: elaborative_reasoning
+        name: "Elaborative Reasoning"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster acknowledges multiple viewpoints or factors that
+          align to the same conclusion (using terms like "therefore",
+          "moreover", etc.).
+      - id: first_person
+        name: "First Person"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster writes at least some of his rationale in a first-
+          person perspective, describing an action he is taking, expressing
+          or implying the views as his own, or otherwise using first-person
+          pronouns like "I", "I'll", "I'm", "me", "my", etc.
+      - id: third_person
+        name: "Third Person"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster reasons about the relevant political parties,
+          organizations, individuals, or other entities using third-person
+          pronouns (e.g., "he will", "she did", "they might", "because of
+          them", "their intention", "it", "this group", "these people",
+          "those in power").
+
+  - id: attitude_and_uncertainty_management
+    name: "Attitude and Uncertainty Management"
+    markers:
+      - id: actively_open_minded
+        name: "Actively Open Minded"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster shows a willingness to seek out and reflect on
+          contrary evidence and an openness to changing his mind in the face
+          of contrary evidence.
+      - id: grit
+        name: "Grit"
+        predictive: false
+        direction: helps
+        description: >
+          The forecaster demonstrates either a passion for forecasting,
+          persistence with a difficult task, or perseverance in the face of
+          extreme uncertainty or shortcoming.
+      - id: guessing
+        name: "Guessing"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster states that his forecast is primarily based on a
+          guess.
+      - id: inevitable_impossible
+        name: "Inevitable or Impossible"
+        predictive: false
+        direction: neutral
+        description: >
+          The forecaster expresses either inevitability or impossibility
+          with regards to the outcome of the question.
+      - id: wallowing_in_uncertainty
+        name: "Wallowing in Uncertainty"
+        predictive: false
+        direction: hurts
+        description: >
+          The forecaster laments that the situation is too complex to give
+          an accurate forecast.
+

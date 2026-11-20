@@ -1,0 +1,206 @@
+{# goal: Execute a bug-hunt probe using MCP tools against the target codebase, guided by the charter. Record pre-probe calibration prediction (predicted_findings, predicted_category), dynamic pattern expansion (Ashby), missing-tests detection, and algedonic escalation. #}
+[inference]
+contract:
+  input:
+    charter: object
+    probe_findings: string|null
+    probe_depth: string
+    files_read: integer|null
+    tests_run: integer|null
+    probes_executed: integer|null
+    crates_examined: array|null
+  output:
+    predicted_findings: integer
+    predicted_category: string
+    probe_findings: string
+    probe_escalation: array
+---
+{# Phase 2 — PROBE (MCP tool-driven code exploration) #}
+{#
+  This template provides probe guidance, but the actual probing is inherently
+  agent-coordinated: the agent reads source files, searches for patterns, runs
+  terminal commands (cargo check, cargo test, cargo clippy). This template
+  formats the charter into actionable probe instructions and collects results.
+
+  
+    - Dynamic pattern expansion (Ashby's Law): the static pattern list is a
+      FLOOR, not a ceiling. The charter's crate_model.observed_characteristics
+      amplify regulator variety by generating crate-specific patterns.
+    - Missing-tests detection: absence of tests is itself a quality threat
+      (Weinberg) and a finding, not a silent no-op.
+    - Algedonic channel (VSM S1→S5): critical findings (unsafe with likely UB,
+      panic in fn main path, security-relevant contract violation) are emitted
+      as probe_escalation entries that can short-circuit the full pipeline.
+#}
+
+You are formatting probe execution results. Do NOT generate fictional findings.
+Only report what the agent actually discovered through MCP tool usage.
+
+## Charter
+```json
+{{ charter | tojson }}
+```
+
+## Step 0 — Predict before probing (calibration)
+
+From the charter's `crate_model` alone — BEFORE reading any source files or running any probe — state:
+- `predicted_findings`: the expected number of confirmed or potential findings (`BUG` + `POTENTIAL_BUG`)
+- `predicted_category`: the expected top Beizer category (`requirements | structural | data | coding | interface | integration | timing | configuration`)
+- one sentence of basis grounded in `crate_model` and `beizer_focus`
+
+Record both fields in the output; `bug-hunt-report.j2` Step 0 reconciles them against the observed results.
+
+{% if probe_findings %}
+## Probe Results (Agent-Executed)
+{{ probe_findings }}
+
+## Metadata
+- Files read: {{ files_read | default(0) }}
+- Tests run: {{ tests_run | default(0) }}
+- Probes executed: {{ probes_executed | default(0) }}
+- Crates examined: {{ crates_examined | default([]) | tojson }}
+{% else %}
+## No probe results available
+
+The agent has not yet executed the probe. Using the charter's probe_instructions,
+explore the target with available MCP tools:
+- `read_file` — read source files
+- `grep` — search for bug patterns
+- `terminal` — run cargo check, cargo test, cargo clippy
+
+### Step 1 — Static baseline patterns (floor, not ceiling)
+
+Search for these baseline patterns regardless of crate characteristics:
+- `.unwrap()` / `.expect()` in library code
+- Public functions without contracts
+- `unsafe` blocks without documented safety invariants
+- Integer arithmetic without overflow protection
+- `clone()` calls that may hide ownership confusion
+- Mutable state without synchronization
+- `panic!` or `todo!` in non-startup code
+
+### Step 2 — Dynamic pattern expansion (Ashby's Law — amplifier)
+
+The static list above has critical variety deficit against a real Rust crate.
+Use the charter's `crate_model.observed_characteristics` to generate
+additional crate-specific patterns. If `crate_model` is absent or sparse,
+infer characteristics from the source you read in Step 1.
+
+Map observed characteristics to expanded patterns:
+
+| Characteristic | Expanded patterns to search for |
+|----------------|---------------------------------|
+| `async` | `.await` on `MutexGuard` across yield points; `tokio::spawn` without `JoinHandle` consumption; `select!` branches that drop in-flight futures; `RwLock` write guard held across `.await`; missing `Send`/`Sync` bounds on spawned futures; `tokio::time::timeout` not applied to external calls |
+| `unsafe` | `unsafe fn` with non-local safety obligations; raw pointer dereference without null check; `transmute` between types of different sizes; `from_raw_parts` without checking capacity invariants; `unsafe impl Sync` for types with interior mutability; soundness of public API that exposes `unsafe` internally |
+| `trait_objects` | `dyn Trait` with `Send`/`Sync` assumptions not enforced; object safety violations worked around with `where` clauses; downcasting via `Any` without type check; vtable lifetime mismatches; trait methods with default impls that violate LSP |
+| `concurrency` | `Arc<Mutex<_>>` lock ordering across functions; `AtomicBool`/`AtomicUsize` with wrong `Ordering` for the access pattern; `mpsc` channels with unbounded capacity; `Barrier` misuse; `OnceCell` initialization races; `thread_local!` with `RefCell` panicking on reentrancy |
+| `ffi` | `CString` / `CStr` conversion without NUL check; `extern "C"` functions that panic across the FFI boundary; raw pointer lifetimes not tied to a Rust owner; `Drop` for FFI resources that double-frees on panic; struct layout assumptions without `#[repr(C)]` |
+| `macros` | `macro_rules!` with hygiene violations; repeated evaluation of macro arguments; macro-generated code that panics on edge inputs; proc-macro span information lost |
+| `proc_macros` | proc-macro code that panics instead of emitting `compile_error!`; token stream consumption without backtracking; attribute order dependence; generated code that violates the borrow checker in non-obvious ways |
+
+For each expanded pattern, record which characteristic it derives from.
+
+### Step 3 — Missing-tests detection (Weinberg: missing tests = quality threat)
+
+Check for the presence of tests:
+- `cargo test --no-run` — does the crate compile a test binary?
+- `find . -path ./target -prune -o -name '*test*' -print` — are there test modules?
+- For each public function in a critical path (per `crate_model.critical_paths`),
+  is there a corresponding test?
+
+If tests are absent or sparse:
+- Record this as a finding (Tier 3 OBSERVATION in the oracle, but a finding
+  nonetheless). Missing tests are a quality threat per Weinberg's definition.
+- Adjust strategy: shift toward static analysis (more `grep`, more
+  `cargo clippy -- -W warnings`) since dynamic probing has nothing to run.
+- If `probe_depth` includes `dynamic` or `full`, note that BugStalker runtime
+  probes are not possible without a binary to debug.
+
+### Step 4 — Algedonic escalation (VSM S1→S5 short-circuit)
+
+While probing, if you encounter any of the following, emit a `probe_escalation`
+entry IN ADDITION to the normal finding. The agent surfaces these entries to
+the user IMMEDIATELY after the probe phase — before oracle/taxonomize/report
+run — which is the short-circuit; the prefixed findings still flow into the
+oracle as ordinary findings:
+
+- `unsafe` block with likely undefined behavior (raw pointer dereference
+  without provenance, data race through `UnsafeCell`, etc.)
+- `panic!` / `unwrap` / `expect` in a `fn main()` path or in a `Drop` impl
+- Security-relevant contract violation (e.g., authentication bypass,
+  authorization check skipped, crypto misuse)
+- Data loss path with no recovery (e.g., overwrite without backup, file
+  truncation before write)
+
+Each escalation entry must include: `finding_summary`, `location` (file:line),
+`severity` (always CRITICAL), and `reason` (why this warrants short-circuit).
+
+Apply diagnose pattern: reproduce before diagnosing, isolate one variable.
+Apply adversarial pattern: try unexpected input orders, boundary values.
+Apply cybernetic pattern: trace feedback loops, check Good Regulator, verify variety.
+
+{% set beizer_runtime = ["timing", "integration", "structural"] %}
+{% set charter_cats = charter.beizer_focus | default([]) %}
+{% set needs_runtime = charter_cats | select("in", beizer_runtime) | list | length > 0 %}
+{% set depth = probe_depth | default("static") %}
+
+{% if (depth == "dynamic" or depth == "full") and needs_runtime %}
+## Runtime Bug Patterns (BugStalker — Linux x86-64, debug build required)
+
+When the charter targets timing, integration, or structural categories,
+use BugStalker (`bs`) for runtime inspection. Skip if macOS/Windows.
+
+Setup:
+```bash
+cargo build  # debug build required, NOT --release
+bs ./target/debug/<binary>           # CLI mode
+bs --oracle tokio ./target/debug/<binary>  # async code: enables Tokio oracle
+```
+
+Probe patterns:
+- ASYNC DEADLOCK: `bs --oracle tokio ./target/debug/<binary>` — reproduce hang,
+  inspect Tokio oracle panel for blocked tasks, trace `await` chain
+- RACE CONDITION: `bs ./target/debug/<binary>` + `break <shared_state_site>` +
+  `run` + `thread info` + `thread switch <n>` + `var locals` — inspect state
+  across threads at the contention point
+- STATE MACHINE VIOLATION: `bs ./target/debug/<binary>` +
+  `break <transition_fn>` + `run` + `var <state_enum>` + `continue` — trace
+  state transitions, verify invariants at each step
+- MEMORY CORRUPTION: `bs ./target/debug/<binary>` + `break <crash_site>` +
+  `run` + `var locals` + `arg all` + `reg info` — inspect memory at crash point
+- POISONED MUTEX: `bs ./target/debug/<binary>` — break at mutex acquisition,
+  inspect `var <mutex>.is_poisoned()` — identify which thread poisoned it
+- UNEXPECTED POLLING: `bs --oracle tokio ./target/debug/<binary>` — watch
+  scheduler activity, identify futures polled more often than expected
+
+For each runtime probe, record: binary path, breakpoint locations, observed
+variable states, thread states, and whether the behavior matches expectations.
+{% endif %}
+
+Collect all findings as structured text to feed into the oracle phase.
+
+If any algedonic escalations were emitted, prefix the findings with:
+`[ESCALATION] <summary> at <file:line> — <reason>`
+so the agent can surface them to the user before the pipeline completes; the
+prefixed findings also flow into the oracle as ordinary findings.
+{% endif %}
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "predicted_findings": 0,
+  "predicted_category": "coding",
+  "probe_findings": "structured text of raw probe findings",
+  "probe_escalation": [
+    {
+      "finding_summary": "...",
+      "location": "file:line",
+      "severity": "CRITICAL",
+      "reason": "why this warrants immediate short-circuit escalation"
+    }
+  ]
+}
+```

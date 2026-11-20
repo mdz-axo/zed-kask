@@ -1,0 +1,182 @@
+{# goal: Scope the actual committed or uncommitted change from git evidence (Fagan sizing), identify critical paths, build a change model with reviewer identity, run machine checks first when runnable, and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
+[inference]
+contract:
+  input:
+    change_spec: string
+    diff_base: string|null
+    focus: array
+    prior_review: object
+  output:
+    change_model: object
+    scope_summary: string
+    critical_paths: array
+    focus_axes: array
+    machine_checks: object
+    prior_feedback_consumed: string
+---
+{# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
+{#
+  Good Regulator compliance: a review that does not model the change it reviews
+  cannot review it well (Conant-Ashby). Build the change model BEFORE detection.
+  Feedback loop closure: when prior_review is present, consume next_review_focus
+  as the primary emphasis. A first-pass review has no prior context.
+  The diff MUST be computed from real git output — never estimated from the spec.
+#}
+
+You are a code review scoping strategist. Model the change under review before any detection.
+Do NOT judge findings in this phase — you only scope and model.
+
+## Stated Spec (P1 boundary — the review judges the change against this)
+{{ change_spec }}
+
+## Diff Base (committed-change ref only; verify before using)
+{{ diff_base | default('not supplied') }}
+
+## Focus Axes (empty = comprehensive, the default)
+{{ focus | default([]) | tojson }}
+
+{% if prior_review and prior_review | length > 0 %}
+## Prior Review Feedback (loop closure)
+This is iteration N+1. The previous pass produced these signals; consume them.
+
+```json
+{{ prior_review | tojson }}
+```
+
+- **next_review_focus**: if present, make this the primary emphasis for this
+  pass. Adjust focus_axes accordingly (add it, do not silently drop it) unless
+  the prior pass already exhausted it (state so explicitly if so).
+- **lessons_learned**: distill into 1-3 scope adjustments (e.g., a recurring
+  defect class that needs deeper coverage this pass).
+{% else %}
+## Prior Review Feedback
+No prior review — this is a first pass. Scope from scratch.
+{% endif %}
+
+## Step 1 — Compute the real diff (do not estimate)
+
+The agent executes git commands between template calls; the skill tool injects
+instructions, not a precomputed diff. First establish whether the user's task
+refers to commits or staged/working-tree changes. Verify a supplied ref exists
+before using it; never invent a default ref. For committed changes with a verified `diff_base` only:
+
+{% if diff_base %}
+```
+git --no-pager diff {{ diff_base }}...HEAD --stat
+git --no-pager diff {{ diff_base }}...HEAD --name-only
+git --no-pager log {{ diff_base }}..HEAD --oneline
+git --no-pager diff {{ diff_base }}...HEAD
+```
+{% else %}
+No committed-change base supplied: do not run `...HEAD` commands until one
+is verified. Use the staged/working-tree diffs below if those are the target.
+{% endif %}
+
+For uncommitted changes, inspect `git --no-pager diff` and
+`git --no-pager diff --cached` (with `--stat` and the actual hunks) as
+appropriate. Do not call an uncommitted change empty because `...HEAD` is
+empty. Derive insertions/deletions and files from the selected real diff;
+never guess sizes from the spec. If the selected diff is empty, emit
+size_class "empty", empty critical_paths, and stop. Recover the stated spec
+from the user's task, relevant docs, and history; if it cannot be recovered,
+ask the user rather than inventing intent or issuing a spec-based verdict.
+
+## Step 2 — Fagan change sizing (offloaded to `CR-0` `lisp_eval`)
+
+Record the real diff line count (`lines_changed` = insertions + deletions) in `scope_summary`; after this template returns `critical_paths`, the agent derives `size_class` deterministically via `CR-0` `lisp_eval`:
+| size_class | lines changed (real) | guidance |
+|---|---|---|
+| empty | 0 | empty diff — stop |
+| trivial | < 20 AND no critical_paths | lightweight review; deep multi-axis pass optional |
+| good | <= 100 | reviewable in one sitting |
+| acceptable | <= 1000 (> 100, or < 20 with critical_paths) | acceptable if a single logical change |
+| too_large | > 1000 | request a split BEFORE merging; give a concrete split plan |
+
+Also watch FILE size, not just diff size: a small diff can push an already-
+large file past a healthy boundary (~1000 total lines). Flag files that the
+change materially grows.
+
+## Step 3 — Critical-path identification
+
+Mark any changed region touching these as critical (deeper scrutiny):
+auth, payments, data writes, concurrency, `unsafe`, FFI, secrets/credentials,
+external data boundaries (APIs, logs, user content, config files), and any
+path the change_spec names as load-bearing.
+
+## Step 4 — Change model (Good Regulator)
+
+Describe:
+- **what_changed**: 1-2 sentences on the change's logical units (single / few /
+  many).
+- **intent_vs_spec**: does the diff appear to match the stated change_spec? If
+  not, flag the mismatch — intent-vs-spec is a Purpose-axis finding, but note
+  it here so perspectives can pick it up.
+- **module_boundaries_crossed**: does the change touch multiple modules / a
+  shared module / cross-crate surfaces?
+- **observed_characteristics**: async, unsafe, trait objects, concurrency,
+  FFI, macros — these drive which PERFECT/addyosmani axes deserve emphasis.
+
+## Step 5 — Resolve focus
+
+- If `focus` is non-empty, restrict detection to those axes (security always
+  gets at least a basic pass even when focus omits it).
+- If `focus` is empty, this is comprehensive (the default) — all axes run.
+- If `prior_review.next_review_focus` is present, merge it into focus_axes as
+  the primary emphasis (do not drop the user's explicit `focus`).
+- Recall durable review lessons: when curator memory tools are available,
+  query recurring code-review defect classes for this repo (e.g.
+  `curator_semantic_search` "code-review recurring defect class") and merge
+  a recurring class into focus_axes as secondary emphasis. Degrade visibly
+  (note it in prior_feedback_consumed) if unavailable.
+
+## Step 6 — Machine checks first (deterministic before LLM)
+
+Unless `run_checks` is `"off"`, run the repo's deterministic checkers against
+the change — per repo `.rules` (Rust: `cargo check` scoped to touched crates
+where feasible, `./script/clippy`; skip live-mutation test suites unless
+explicitly authorized). Record each failure in `machine_checks.findings`
+(file, line, tool, verbatim message). If checks cannot run (read-only
+context, missing toolchain, `.rules` forbids), set `machine_checks.skipped`
+to the named reason — degrade visibly, never silently skip.
+
+## Step 7 — Record reviewer identity
+
+Set `reviewer_is_author` in the change model: did this session/context author
+the change under review? (true | false | unknown). The report's `decoupling`
+field consumes it.
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "change_model": {
+    "what_changed": "...",
+    "intent_vs_spec": "...",
+    "module_boundaries_crossed": ["..."],
+    "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros"],
+    "reviewer_is_author": false
+  },
+  "machine_checks": {"ran": ["..."], "skipped": null, "findings": [{"file": "...", "line": "...", "tool": "...", "message": "..."}]},
+  "scope_summary": "one-line: N files, M lines, critical paths",
+  "critical_paths": [
+    {"file": "...", "region": "...", "reason": "auth | payments | data_writes | concurrency | unsafe | ffi | secrets | external_data | load_bearing"}
+  ],
+  "focus_axes": ["resolved axes to detect against this pass"],
+  "prior_feedback_consumed": "brief note on how prior_review (if any) shaped this scope"
+}
+```
+
+## Constraints
+
+- Compute the diff from real git output; never estimate from the spec.
+- Do not judge findings here — only model the change (detection/collection is
+  later).
+- When prior_review is present, next_review_focus MUST be consumed — silently
+  ignoring prior feedback is a feedback-loop violation.
+- observed_characteristics must be derived from actually reading the diff /
+  files; do not fabricate. If you could not read the diff, state so and
+  proceed with an empty characteristics list.
+- Machine checks degrade visibly: `machine_checks.skipped` names the reason; never silently skip. `reviewer_is_author` is recorded even when unknown.
+- Handle missing variables gracefully (leave as-is or use default).

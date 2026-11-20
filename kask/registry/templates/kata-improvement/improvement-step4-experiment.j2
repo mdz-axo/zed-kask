@@ -1,0 +1,53 @@
+[inference]
+contract:
+  input:
+    context: object
+    learner_bot: string
+    previous_steps: array|null
+  output:
+    obstacle: string
+    next_experiment: string
+    prediction: string
+    measurement_method: string
+    success_criterion: string
+    learning_commitment: string
+    when_to_check: string
+    metric_after: number|null
+    prediction_result: string|null
+    next_step: string|null
+    skill_match_query: string|null
+---
+{# Improvement Kata — Step 4: Experiment Toward Target #}
+{# goal: Step 4: Iterate toward the Target Condition. Design rapid PDCA experiments with testable predictions. #}
+You are {{ learner_bot }}, running Step 4 of 4: EXPERIMENT TOWARD THE TARGET CONDITION.
+
+Design a PDCA experiment against ONE obstacle. Make a prediction. Execute with the named tool outside this prompt, then measure; rendering a plan is not execution. Compare the post-experiment measurement with `metric_before`, the prediction, and `metrics_target` via `lisp_eval` over the Check forms `(- metrics_target metric_after)` and `(- metric_after metric_before)` — extract each env value as the focus metric's scalar first (the step-2/3 outputs are objects). If no result is available, report `pending_check` and leave `metric_after` null. The gap between prediction and observed result IS the learning.
+
+## Your Storyboard
+
+Context: {{ context | tojson }}
+Prior step outputs: {{ previous_steps | tojson }}
+
+## Design Your PDCA Experiment
+
+1. **PLAN — What is your next step?** — Specific, actionable. One change at a time.
+2. **PLAN — What do you EXPECT?** — Your prediction and WHY. This is the theory you're testing.
+3. **DO — How will you execute?** — What tool, parameter, configuration?
+4. **CHECK — How will you measure?** — What metric? What confirms or refutes your prediction?
+5. **ACT — What will you do with the result?** — Next obstacle if correct, revised theory if wrong.
+6. **How quickly can you go and see?** — Minutes? Hours?
+
+## Output Format
+
+Respond with a JSON object containing:
+- obstacle: the ONE obstacle this experiment addresses
+- next_experiment: specific, actionable description
+- prediction: what you expect and why (your theory)
+- measurement_method: how you'll observe the result
+- success_criterion: what result confirms your prediction
+- learning_commitment: what you commit to learning regardless of outcome
+- when_to_check: how quickly you can see the result
+- metric_after: measured value with source and unit, or null if not observed
+- prediction_result: supported | refuted | pending_check (never infer from a plan)
+- next_step: on refutation re-enter Step 2; on support below target select the next obstacle in Step 3; on target attainment stop; after three experiments report the remaining gap
+- skill_match_query: natural-language description of the skill capability this experiment needs (e.g., 'debug a race condition in async Rust'). Consumed by skill-discovery (route) when the orchestrator routes experiments to installed skills. Omit if no specific skill is needed.

@@ -1,0 +1,34 @@
+{# goal: Compare retained candidate designs using evidence and limitations, producing a DesignSpec and the strongest rejected alternative without machine admission. #}
+[inference]
+contract:
+  input:
+    hypothesis_spec: object
+    candidate_drafts: array
+    design_constraints: object
+  output:
+    selected_design: object|null
+    strongest_rejected_alternative: object|null
+    ranking_justification: object
+---
+
+Compare the retained candidate designs. Preserve their ids, source provenance, scientific content and disclosed limitations; do not silently revise drafts to justify a choice.
+
+## HypothesisSpec
+
+{{ hypothesis_spec | tojson }}
+
+## Candidate drafts
+
+{{ candidate_drafts | tojson }}
+
+## Design constraints
+
+{{ design_constraints | tojson }}
+
+Compare discrimination/elimination power, expected information, measurement and identification strength, robustness to auxiliary failures, cost, time, risk and reversibility. Cite the evidence behind each material assessment. Explain what remains unknown about ethics/safety, feasibility, calibration/transportability, precision, bias control, analysis/stopping and reproducibility. Cost or speed cannot compensate for a known validity failure.
+
+Produce the selected `design-spec-v1` with stable identity/version, `hypothesis_spec_id`, source `candidate_id`, traceability, design, measurement, identification, information justification, analysis, stopping, exact executor/report binding, outcome rule, safety controls, reproducibility and limitations. Keep the candidate comparison and strongest rejected alternative with its `candidate_id` and rejection reason. A revision needs an explicit reason and lineage rather than a rewritten source draft.
+
+If no defensible design is available, return `selected_design=null` and explain the missing evidence or executor and the next useful action. Do not invent a selection. `ranking_justification` records evidence, comparison criteria and unresolved questions, not an eligibility receipt or execution verdict. The human retains functional decisions, judgment and veto; this comparison does not authorize measurements or impose another approval loop.
+
+Return JSON only with exactly `selected_design`, `strongest_rejected_alternative`, `ranking_justification`.

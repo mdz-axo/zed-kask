@@ -1,0 +1,113 @@
+{# goal: Guide the report phase. #}
+{# Variables: findings (list), proposals (list, each with its approved flag), executions (list, each with finding_id, strategy, success and outcome), values_pass (object, optional — the Phase-2f values pass) #}
+{# Output: a therapy session report #}
+[inference]
+contract:
+  input:
+    findings: array
+    proposals: array
+    executions: array
+    values_pass:
+      type: object
+      required: false
+      description: >-
+        The Phase-2f values pass, when it ran: `charter_version` (the
+        `version:` field reviewed) and `value_states`, an array of
+        `{value, state}` where `state` is practiced | thin | conflicted.
+        Absent or empty when the values pass did not run this session — the
+        report then states that instead of rendering empty counts.
+  output:
+    report: string
+---
+
+You are producing the therapy session report for curator memory (`curator.db`).
+
+{% set approved_proposals = proposals | selectattr("approved", "equalto", true) | list %}
+{% set successful_executions = executions | selectattr("success", "equalto", true) | list %}
+{% set successful_finding_ids = successful_executions | map(attribute="finding_id") | list %}
+{% set values_pass_rec = values_pass or {} %}
+{% set values_pass_ran = values_pass is defined and values_pass is not none and values_pass_rec["charter_version"] | default("", true) != "" %}
+{% set value_states = values_pass_rec["value_states"] | default([], true) %}
+{% set practiced_states = value_states | selectattr("state", "equalto", "practiced") | list %}
+{% set thin_states = value_states | selectattr("state", "equalto", "thin") | list %}
+{% set conflicted_states = value_states | selectattr("state", "equalto", "conflicted") | list %}
+{% set recognized_state_count = practiced_states | length + thin_states | length + conflicted_states | length %}
+{% set complete_value_set =
+    value_states | selectattr("value", "equalto", "V1") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V2") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V3") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V4") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V5") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V6") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V7") | list | length == 1 and
+    value_states | selectattr("value", "equalto", "V8") | list | length == 1
+%}
+{% set values_pass_complete = values_pass_ran and value_states | length == 8 and recognized_state_count == 8 and complete_value_set %}
+
+{% if proposals %}
+## Proposals
+
+{{ proposals | tojson }}
+
+{% endif %}
+{% if executions %}
+## Execution Results
+
+{{ executions | tojson }}
+
+{% endif %}
+
+## Report structure
+
+### Memory hygiene summary (forgetting — not learning)
+
+- Contradictions found: {{ findings | selectattr("issue_type", "equalto", "contradiction") | list | length }}
+- Contradictions resolved: {{ findings | selectattr("issue_type", "equalto", "contradiction") | selectattr("id", "in", successful_finding_ids) | list | length }}
+- Fragmented memories found: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | list | length }}
+- Fragmented memories resolved: {{ findings | selectattr("issue_type", "equalto", "fragmentation") | selectattr("id", "in", successful_finding_ids) | list | length }}
+- Miscalibrated confidence found: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | list | length }}
+- Confidence recalibrated: {{ findings | selectattr("issue_type", "equalto", "miscalibrated_confidence") | selectattr("id", "in", successful_finding_ids) | list | length }}
+- Source memories purged (post-reification): {{ successful_executions | selectattr("strategy", "equalto", "purge") | list | length }}
+- Source memories condensed (post-reification): {{ successful_executions | selectattr("strategy", "equalto", "condense") | list | length }}
+- Executions succeeded: {{ successful_executions | length }} of {{ executions | list | length }}
+
+### Reification summary (learning — closes the learning loop)
+
+- Reification candidates found: {{ findings | selectattr("issue_type", "equalto", "reification_candidate") | list | length }}
+- Skills created: {{ successful_executions | selectattr("strategy", "equalto", "create_skill") | list | length }}
+- Templates created: {{ successful_executions | selectattr("strategy", "equalto", "create_template") | list | length }}
+- Rules created: {{ successful_executions | selectattr("strategy", "equalto", "create_rule") | list | length }}
+
+### Values alignment summary (when the values pass ran)
+
+{% if values_pass_complete %}
+- Charter version reviewed: {{ values_pass_rec["charter_version"] }}
+- Values practiced: {{ practiced_states | length }} / thin: {{ thin_states | length }} / conflicted: {{ conflicted_states | length }}
+{% elif values_pass_ran %}
+- Values pass incomplete: charter version {{ values_pass_rec["charter_version"] }} was recorded, but exactly one recognized state (practiced / thin / conflicted) for each value V1–V8 was required; received {{ value_states | length }} row(s), {{ recognized_state_count }} recognized. Do not report alignment counts until the pass record is repaired.
+{% else %}
+- The values pass did not run this session (no charter version reviewed, no per-value states).
+{% endif %}
+- Conflicts found: {{ findings | selectattr("issue_type", "equalto", "charter_alignment") | list | length }} (each with lesson + value citations)
+- Practice gaps carded: {{ approved_proposals | selectattr("strategy", "equalto", "record_practice_gap") | list | length }}
+
+### Per-issue detail
+
+For each finding, report:
+- **Finding**: ID, issue type, entity, description.
+- **Process**: hygiene | reification | post-reification hygiene | values alignment.
+- **Proposal**: strategy, action, reason.
+- **User decision**: approved / modified / rejected.
+- **Execution**: success / failure, outcome.
+- **Reification** (if applicable): what skill/template/rule was created.
+
+### Recommendations
+
+- Follow-up therapy sessions (e.g., "run another session after the next consolidation cycle").
+- Skill effectiveness review (e.g., "review the new skill's effectiveness after N invocations").
+- Remaining reification candidates (e.g., "3 reification candidates were not addressed — consider a follow-up session").
+- Memory database health (e.g., "memory database is now at N h_mems, down from M — within storage budget").
+
+## Output format
+
+Produce a markdown report with the sections above. Be honest — report failures, report when nothing was found, do not fabricate success.

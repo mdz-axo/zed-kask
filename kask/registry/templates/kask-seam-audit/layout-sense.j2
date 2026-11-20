@@ -1,0 +1,111 @@
+{# goal: Measure the rendering container and each child element of a GPUI renderer, flag which children are primary actions and labels, compare sibling consistency, and record whether a primary action is visually dominant. #}
+[inference]
+contract:
+  input:
+    target:
+      type: object
+      description: The card or panel renderer being reviewed (file path, function
+        name, element tree).
+    container_width:
+      type: string
+      default: dock
+      description: 'Container context: "dock" (~300-400px), "center" (~600px+),
+        or a specific pixel width.'
+    codebase_context:
+      type: object
+      required: false
+      description: Sibling card/panel components with their action counts and
+        layout patterns.
+  output:
+    container_outer_width:
+      type: integer
+      description: The container's outer width in pixels, before padding and border.
+    padding_px:
+      type: array
+      description: Each horizontal padding on the container, in pixels (p_3 on
+        both sides is [12, 12]).
+    border_px:
+      type: integer
+      description: Total horizontal border in pixels (border_1 on both sides is 2).
+    gap_px:
+      type: array
+      description: Each gap between adjacent children in the row, in pixels —
+        one entry per gap.
+    child_min_widths:
+      type: array
+      description: One entry per child — {element, min_width_px, kind,
+        primary_action, is_label}. kind is fixed (flex_shrink_0 /
+        non-shrinking), text_column (the flex_1 text column) or flex (other
+        flex_1 children). primary_action is true for a primary interactive
+        element. is_label is true for a fixed child whose width comes from
+        its text.
+    fitts_min_target:
+      type: integer
+      description: Minimum target width per Fitts's Law (32px mouse floor, 44px
+        touch) — which floor applies to this renderer.
+    primary_action_visible:
+      type: boolean
+      description: True if exactly one visually-dominant primary action is present
+        (or an explicit "no primary" justification is declared).
+    sibling_patterns:
+      type: array
+      description: Sibling card patterns found in the codebase (action count,
+        layout approach).
+    consistency_violation:
+      type: boolean
+      description: True if the target's action count/layout diverges from sibling
+        patterns without justification.
+---
+{# Phase: SENSE — measure container and children; the KSA-1 gate derives everything else #}
+
+You are a layout measurement engine. Measure the container and every child element and classify each child. Do not add, subtract, count or compare: the `KSA-1` gate derives the available width, the totals, the action count, the grid check, the five gate verdicts and the narrow-container and long-label probes from the primitives you report.
+
+## Target
+
+{{ target | tojson }}
+
+## Container Context
+
+- **Container width**: {{ container_width | default("dock") }}
+  {% if container_width == "dock" %}— Dock panel: 300-400px. Report 400 as `container_outer_width`; the gate probes the 300px floor itself (the agent panel's minimum dock width, `MIN_PANEL_WIDTH` at crates/agent_ui/src/agent_panel.rs:108).{% endif %}
+  {% if container_width == "center" %}— Center pane: report 600 as `container_outer_width`.{% endif %}
+
+## Codebase Context (sibling patterns)
+
+{% if codebase_context %}
+{{ codebase_context | tojson }}
+{% else %}
+No sibling context provided. Grep the crate for existing card/panel components and compare action counts and layout patterns. If no siblings exist, this is a new pattern — note it.
+{% endif %}
+
+## Measurement Steps
+
+For each child element in the target's element tree, estimate its minimum width and record its kind:
+
+1. **Buttons**: `XSmall` label buttons are ~40-60px each (label + padding). `Small` buttons are ~50-70px. `IconButton` is ~28-32px. Buttons are `fixed` (they do not shrink). A label button is `is_label: true`; an icon button is `is_label: false`.
+2. **Labels**: A `Label` with `truncate()` has a min-width of ~0 (it shrinks). Without `truncate()`, its min-width is the text content width and it is `fixed` with `is_label: true`. A flex_1 text column is `text_column`; other flex_1 children are `flex`.
+3. **Flex children**: `flex_1` children have min-width 0 (they shrink). `flex_shrink_0` children have min-width = their content width (`fixed`).
+4. **Padding and border**: list each horizontal padding in `padding_px` (`p_2` = 8, `p_3` = 12 per side) and the total horizontal border in `border_px` (`border_1` = 1 per side).
+5. **Gaps**: list one `gap_px` entry per gap between adjacent children (`gap_0` = 0, `gap_0p5` = 2, `gap_1` = 4, `gap_1p5` = 6, `gap_2` = 8, `gap_3` = 12). Report the value in the code even when it is off-grid.
+
+## Primary Actions and Hierarchy
+
+1. **`primary_action`** on each child: true for an element the user can click as a primary action — buttons, icon buttons, toggle buttons, menu triggers. Secondary actions behind a `PopoverMenu` are not children of the row and are not listed.
+2. **Primary action hierarchy (`primary_action_visible`)**: true iff there is exactly one visually-dominant primary action (`ButtonStyle::Filled`, or the first/largest button) or an explicit "no primary" declaration with justification; false if zero primary buttons (all `Subtle`) or multiple competing primary buttons.
+3. **Fitts floor (`fitts_min_target`)**: 32 for a mouse-driven renderer, 44 for touch.
+4. **Sibling consistency (`sibling_patterns`, `consistency_violation`)** (Nielsen "Consistency and standards"): if sibling cards in the same crate use a `PopoverMenu` for secondary actions, this card must too.
+
+## Output
+
+Produce a JSON object with:
+- `container_outer_width`: outer width in pixels
+- `padding_px`: array of horizontal paddings
+- `border_px`: total horizontal border
+- `gap_px`: array, one entry per gap
+- `child_min_widths`: array of {element, min_width_px, kind, primary_action, is_label}
+- `fitts_min_target`: 32 or 44
+- `primary_action_visible`: boolean
+- `sibling_patterns`: array of {component, action_count, layout_approach}
+- `consistency_violation`: boolean
+
+Be precise. Estimate widths conservatively (round up). If you cannot estimate a width, say so — do not fabricate a measurement.

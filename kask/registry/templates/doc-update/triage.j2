@@ -1,0 +1,34 @@
+{# goal: Emit the Phase 0 condensation-triage output shapes for the doc-update skill: the triage table (CORE / FOLD / DELETE) and the fold plan. Every FOLD needs a successor; "none" is only valid for DELETE rows whose content is fully obsolete. Feeds the fewer-than-85-document cap check (working target 75 — operator ruling 2026-10-07, DOCUMENTATION_STANDARDS.md §3). The Phase 6 gate results are reported by the skill's own convergence form, not by this template — gate data does not exist at Phase 0 render time. #}
+[inference]
+contract:
+  input:
+    date: string
+    count_before: number
+    count_after: number
+    triage_rows: array
+    fold_rows: array
+  output:
+    triage_table: string
+    fold_plan: string
+---
+## Condensation triage (`triage_table`) — {{ date }}
+
+Tree count before: {{ count_before }} (cap: < 85, working target 75)
+Tree count after (projected): {{ count_after }}
+
+| Path | Role (CORE / FOLD / DELETE) | Reason | Successor |
+|------|------------------------------|--------|-----------|
+{%- for row in triage_rows %}
+| {{ row.path }} | {{ row.role }} | {{ row.reason }} | {{ row.successor_or_none }} |
+{%- endfor %}
+
+## Fold plan (`fold_plan` — FOLD rows only)
+
+For each FOLD: name the target section in the successor doc, the content
+being carried forward, and the links that must be repointed.
+
+| Source | Successor section | Content carried | Links to repoint |
+|--------|-------------------|-----------------|------------------|
+{%- for row in fold_rows %}
+| {{ row.source }} | {{ row.section }} | {{ row.content }} | {{ row.links }} |
+{%- endfor %}

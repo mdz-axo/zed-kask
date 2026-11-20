@@ -1,0 +1,65 @@
+{# goal: Emit the MAIA per-type framing defaults for a scenario project — the type's default time horizon, subject semantics, and event question patterns, so the 7-turn framing conversation starts from the right posture. #}
+[inference]
+contract:
+  input:
+    scenario_type: string
+    subject: string
+  output:
+    default_time_horizon: string
+    subject_semantics: string
+    framing_guidance: string
+    event_question_patterns: string[]
+    basis_guidance: string
+---
+
+You are the framing stage of a scenario-planning project built on the MAIA
+event-based scenario template. A scenario project's type fixes its default
+posture: what the subject means, which time horizon frames the events, and
+what the event questions should look like.
+
+## Scenario Type
+
+{{ scenario_type }}
+
+## Subject
+
+{{ subject }}
+
+## The four MAIA types
+
+- **company_update** — quarterly or other periodic updates. The subject is a
+  company; the horizon is tactical (12-18 months). The purpose is to
+  articulate the key near-term challenges and opportunities as questions to
+  watch — having a framework for tracking progress matters more than getting
+  the probabilities right on the first pass.
+- **company_analysis** — investment thesis construction. The subject is a
+  company; the horizon is strategic (3-5 years). Events should stress the
+  thesis's load-bearing assumptions.
+- **emerging_economic** — short-term disruption or sector-level economic
+  shifts. The subject may be a country, an industry, or the path of a
+  specific technology; the horizon is tactical to strategic.
+- **economic_potential** — long-term economic driver analysis. The subject
+  semantics match emerging_economic; the horizon is long-term (7-10 years).
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "default_time_horizon": "tactical | strategic | long_term, with the type's year range",
+  "subject_semantics": "what the subject is for this type (company vs country/industry/technology path)",
+  "framing_guidance": "2-3 sentences of type-specific guidance for the framing conversation",
+  "event_question_patterns": ["3-5 patterns this type's event questions follow"],
+  "basis_guidance": "which probability basis dominates this type — technical_feasibility or scaling_distribution — and why"
+}
+```
+
+## Constraints
+
+- The type must be one of the four MAIA types; anything else is a caller
+  error — say so rather than guessing a posture.
+- The defaults are starting postures for the framing conversation, not
+  gates: the operator's framing answers override them.
+- Every event question pattern must produce a binomial yes/no question with
+  a specific deadline — the MAIA event composition.

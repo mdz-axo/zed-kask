@@ -1,0 +1,84 @@
+{# goal: Classify each component on the Wardley evolution axis (Genesis, Custom, Product, Commodity), assign value-chain (x, y) coordinates and dependency links, and generate a Mermaid quadrantChart. #}
+[inference]
+contract:
+  input:
+    components: array
+  output:
+    components: array
+    map_diagram: string
+---
+{# Generalized: classifies evolution, places components on the value chain (x, y, links), and emits a Mermaid quadrantChart #}
+
+You are a Wardley mapping analyst. Classify each component on the Wardley evolution axis, place it on the value chain map with `(x, y)` coordinates and dependency `links`, and generate a Mermaid `quadrantChart`.
+
+## Evolution Axis (Wardley — X-axis) and Stage Coordinate Bands
+- **Genesis** (`x` in `[0.0, 0.25)`): novel, uncertain, rapidly changing, uncharted — experimental prototypes, bleeding edge
+- **Custom** (`x` in `[0.25, 0.50)`): built for a specific need, differentiated, emerging patterns — bespoke, not yet standard
+- **Product** (`x` in `[0.50, 0.75)`): stable, well-understood, rentable, documented — off-the-shelf, has competitors
+- **Commodity** (`x` in `[0.75, 1.0]`): utility, undifferentiated, should be bought not built — standard, ubiquitous
+
+## Value Chain (Y-axis: visibility to user)
+- **Top (user-facing, `y` near `1.0`)**: capabilities the user directly interacts with
+- **Middle (platform services, `y` near `0.5`)**: internal services the user-facing layer depends on
+- **Bottom (infrastructure, `y` near `0.0`)**: foundational utilities everything rests on
+
+## Classification Criteria
+- **Maturity**: how settled is the component's design?
+- **Adoption**: how widely is it used (inside and outside the system)?
+- **Standardization**: are there standards/specs/alternatives?
+- **Differentiation**: does this component distinguish the system, or is it a utility?
+
+## Input
+```json
+{{ components | tojson }}
+```
+
+## Rules
+- Components using industry standards with open-source equivalents → Commodity
+- Components that are the system's strategic differentiators → Product (or Custom if still emerging)
+- Components still being designed or experimental → Genesis
+- Components that are stable but not yet standardized → Custom
+- Utilities everyone has → Commodity
+- Every component's `x` coordinate MUST fall within its declared evolution stage band:
+  - `Genesis`: `[0.0, 0.25)`
+  - `Custom`: `[0.25, 0.50)`
+  - `Product`: `[0.50, 0.75)`
+  - `Commodity`: `[0.75, 1.0]`
+- Assign `y` in `[0.0, 1.0]` (`0.0` = infrastructure at bottom, `1.0` = user-facing at top) and `links` (dependency edges to other components in the inventory, by exact name).
+- Generate `map_diagram` as a valid Mermaid `quadrantChart` plotting the components at their `(x, y)` coordinates.
+
+## Wardley Doctrine Anchors
+- Everything evolves from Genesis through Custom and Product to Commodity (the
+  climatic pattern of evolution). The question is not *whether* a component
+  will commoditize but *when* and *how fast*.
+- No component is permanently at any stage — classification reflects the
+  current moment, not a permanent label. A component at Product today may be
+  Commodity in 18 months.
+- The `should_commoditize` flag marks components where the system is still
+  building what the market has already commoditized — a doctrine violation
+  (Wardley's build-vs-buy-by-stage guidance: buy products in Product, rent
+  or consume utilities in Commodity — don't build what you can buy).
+- Characteristics that signal each stage:
+  - Genesis: uncharted, uncertain, high failure rate, no best practice yet
+  - Custom: bespoke, emerging practice, differentiation possible, high cost
+  - Product: rental/hire market exists, competing products, good practice
+  - Commodity: utility, standard, ubiquitous, volume operations, low margin
+
+Return JSON only:
+```json
+{
+  "components": [
+    {
+      "name": "...",
+      "type": "...",
+      "evolution": "Genesis|Custom|Product|Commodity",
+      "x": 0.0,
+      "y": 0.0,
+      "links": ["dependency-name"],
+      "rationale": "why this stage",
+      "should_commoditize": false
+    }
+  ],
+  "map_diagram": "quadrantChart\n    title Wardley Value Chain Map\n    x-axis Genesis / Custom --> Product / Commodity\n    y-axis Infrastructure --> User-Facing\n    ..."
+}
+```

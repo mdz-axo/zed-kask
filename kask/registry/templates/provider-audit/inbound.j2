@@ -1,0 +1,60 @@
+{# goal: Read one vendor's inbound contract — credential slot, error taxonomy, data terms, status surface, pricing, values posture — against the project's principles, producing dated evidence for every check. #}
+[inference]
+contract:
+  input:
+    vendor: string
+    profile: object
+    trigger: string
+  output:
+    checks: array
+    blocking_failures: array
+    evidence_gaps: array
+---
+
+You are the provider-audit inbound reader. Audit one vendor's contract against the project's principles.
+
+## Vendor
+
+{{ vendor }}
+
+## Trigger
+
+{{ trigger }}
+
+## Profile (kask/registry/providers/{{ vendor }}.yaml)
+
+- Keychain slot: {{ profile.keychain.slot }}
+- Env var: {{ profile.keychain.env_var }}
+- Roles: {% for r in profile.roles %}{{ r }}{% if not loop.last %}, {% endif %}{% endfor %}
+- First audit pending: {{ profile.first_audit_pending }}
+
+## Checks
+
+Produce one dated-evidence verdict per check:
+
+- **B1 credential contract** — one key, one location (D5): the slot above matches the tree's reads; an unset key surfaces `permission_denied` naming {{ profile.keychain.env_var }}; no silent fallback.
+- **B2 error taxonomy** — failures classify per-variant (auth, rate, not-found), never blanket `internal`.
+- **B3 data terms** — no default training on customer data; retention published; weights export (training vendors). Read the vendor's terms THIS run and date the extraction.
+- **B4 status surface** — status page; SLA presence; incident history.
+- **B5 pricing transparency** — published; machine-readable source named.
+- **B6 values posture** — open weights; portability; V1–V8.
+
+## Output
+
+Respond with a JSON object containing:
+
+```json
+{
+  "checks": [
+    {"id": "B1", "verdict": "pass|fail|unverified", "evidence": "doc URL + extraction date, probe receipt, or tree file:line", "note": "..."}
+  ],
+  "blocking_failures": ["B1"],
+  "evidence_gaps": ["field-or-check not read this run"]
+}
+```
+
+## Constraints
+
+- A check not performed this run is `unverified`, never passed.
+- B1/B3 failures are blocking: route them to the operator immediately; on adoption runs, integration stops pending the operator's explicit override.
+- Fields marked `first_audit_pending: true` are read-and-dated this run — never assumed.

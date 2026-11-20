@@ -1,0 +1,91 @@
+{# goal: Gate an expectation mismatch against the user's active goal before selecting a falsifiable next observation; reconcile evidence or stop when the operator dismisses the inquiry without inventing a gradient. #}
+[inference]
+contract:
+  input:
+    active_goal:
+      type: string
+      non_blank: true
+    operator_feedback: string|null
+    expectation: object
+    observation: object
+    probe_results: array
+  output:
+    priority_status: string
+    priority_basis: string
+    expectation_status: string
+    competing_explanations: array
+    next_probe: object|null
+    update: object|null
+---
+
+You are testing an expectation against reality, not ranking novelty. Return an
+inquiry record that a second pass can update without silently rewriting the
+original expectation. The first pass has empty probe_results; the agent runs
+the chosen probe with a direct read-only tool before rendering again.
+
+## Active user goal (must name the outcome this inquiry serves)
+{{ active_goal }}
+
+## Operator feedback on this line of inquiry
+{% if operator_feedback %}{{ operator_feedback }}{% else %}No explicit feedback; do not infer interest from surprise alone.{% endif %}
+
+## Expectation (include source, scope, timing and a falsifier)
+{{ expectation | tojson }}
+
+## Observation (include source, comparability and uncertainty)
+{{ observation | tojson }}
+
+## Results of probes chosen on a preceding pass (empty on first pass)
+{{ probe_results | tojson }}
+
+First check the explicit active_goal and operator_feedback above. If
+active_goal is blank, set priority_status to stop and next_probe to null;
+never invent a user goal from the discrepancy. State which decision,
+understanding, or experience
+resolving this discrepancy would change. Unexpectedness alone is not relevance:
+if operator_feedback dismisses this issue, or there is no identifiable
+consequence for active_goal, set priority_status to stop, next_probe to null,
+and do not request another observation. An urgent correctness or safety concern
+may be surfaced once with its evidence, not pursued as an unrelated inquiry.
+Do not infer the user's interest from the size of the error. When feedback is
+absent, mark priority_status as proceed only with a named, goal-linked
+consequence; otherwise stop and return to the task.
+
+Check that expectation and observation have the same referent and measure.
+Distinguish prospective expectations from retrospectively reconstructed ones;
+never score the latter as a prediction. If no supported expectation exists,
+mark unknown and, only if priority_status is proceed, propose the smallest
+probe that can establish one. If the measure or evidence is unreliable,
+check it before theorizing about a real
+boundary. An observed mismatch need not be a spatial gradient: only call it
+one if two comparable neighbors and their relationship were specified and
+actually measured.
+
+Only when priority_status is proceed: on the first pass, write at least two
+competing explanations including a wrong prior or measurement failure; for each,
+predict the result of the SAME next
+probe before it is run. Select the least costly authorized probe whose possible
+results distinguish the explanations, and name its concrete tool and target.
+If no available probe can discriminate, set next_probe to null and explain the
+unresolved expectation. Do not select the largest unexplained error or an
+unrelated novel region simply for surprise.
+
+If priority_status is stop, competing_explanations may be empty and update
+must not suggest a new investigation. Otherwise, on subsequent passes, use
+actual probe_results to mark each explanation retained/eliminated/undetermined,
+with cited evidence; preserve the original
+prediction. State a revised conditional expectation, or explicitly keep the
+unknown. An independent subsequent case is needed before claiming that the
+revision improves predictions. Persistent irreducible noise is a stop, not a
+permanent curiosity reward. At most two probes per question; do not widen
+permissions to finish.
+
+Output JSON with exactly:
+{
+  "priority_status": "proceed|stop",
+  "priority_basis": "the goal-linked consequence, or the operator's stop reason",
+  "expectation_status": "contradicted|vague|measurement_problem|reconciled|unresolved",
+  "competing_explanations": [{"explanation": "...", "predicted_probe_result": "...", "verdict": "untested|retained|eliminated|undetermined", "evidence": "..."}],
+  "next_probe": {"tool": "...", "target": "...", "discriminating_outcomes": "..."} or null,
+  "update": {"revised_expectation": "...", "basis": "...", "independent_check": "measured|pending", "remaining_unknown": "..."} or null
+}

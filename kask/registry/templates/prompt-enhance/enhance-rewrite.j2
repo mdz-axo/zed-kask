@@ -1,0 +1,171 @@
+{# goal: Inline audit + typed rewrite. Scans for unresolved placeholders, semantic fragility, and structural accretion, then applies type-specific rewrite moves based on the prompt_type from step 1. Folds the former separate audit step and 7 typed rewrite variants into a single LLM call. Produces the enhanced prompt, audit findings, and mutations applied. #}
+[inference]
+contract:
+  input:
+    prompt:
+      type: string
+      description: The original input prompt
+    prompt_type:
+      type: string
+      enum: [coding, reasoning, creative, classification, extraction, agent-task, meta]
+    effort_tier:
+      type: string
+      enum: [low, medium, high]
+    risks:
+      type: array
+      description: Type-specific risks surfaced by classification
+    checkability_map:
+      type: array
+      description: Classification-stage obligations and candidate checks (empty when none apply)
+    task:
+      type: string
+      description: The original user's task description; never replaced by critic feedback
+    prior_enhanced_prompt:
+      type: string
+      description: Previous rewrite for one bounded correction; empty on first pass
+    critic_feedback:
+      type: array
+      description: Specific failed checks from the critic; empty on first pass
+    unfold_mode_resolved:
+      type: string
+      enum: [rewrite_only, inquiry, task_graph, clarify_first]
+      default: rewrite_only
+      required: false
+      description: Resolved unfolding mode from Step 1 triage
+    finer_pico_framing:
+      type: object
+      required: false
+      description: FINER/PICO objective framing from Step 1
+    reference_models:
+      type: array
+      default: []
+      required: false
+      description: Plain JSON array of onto_anchor + zk-ref-open reference models from Step 1.5 (empty at low tier or rewrite_only)
+  output:
+    enhanced_prompt:
+      type: string
+      description: The full rewritten prompt text, self-contained
+    unfolded_plan:
+      type: array
+      description: Plain JSON array of unfolded inquiry branches or dependency-ordered task nodes (max 7 items per essentialist cap)
+    mutations_applied:
+      type: array
+      description: Which issues were addressed and how
+    mutations_deferred:
+      type: array
+      description: Hypothesis-tier issues deferred for user verification
+    acceptance_criteria:
+      type: array
+      description: Testable criteria the enhanced prompt should satisfy
+    audit_findings:
+      type: array
+      description: Findings discovered during the inline audit (for the change log)
+---
+{# Unified audit + typed rewrite in a single LLM call. #}
+{# Replaces the former 3-step pipeline (audit → 7-way branch → collector). #}
+
+You are the prompt-enhance rewrite phase. In one pass, you (1) audit the input prompt for issues and (2) produce an enhanced prompt that addresses them. The audit is internal — the user sees only the enhanced prompt and the change log.
+
+## Step 1 — Inline Audit (internal)
+
+Scan the prompt for these issue classes. Findings are internal; they drive your rewrite.
+
+**Lens 0 — Unresolved placeholders (universal Prohibition).** Scan for `<UPPERCASE_NAME>`, `<UPPER_SNAKE_CASE>`, `{% raw %}{{ mustache }}{% endraw %}`, `{% raw %}{{ jinja_var }}{% endraw %}` tokens outside fenced code blocks illustrating syntax. A prompt with unresolved placeholders cannot be executed. If found, you MUST either require the user to supply the value, or replace with a concrete example AND add an explicit substitution instruction. Do NOT leave the placeholder in the enhanced prompt without a substitution instruction.
+
+**Lens 1 — Semantic fragility.** Flag Inference-tier claims (persona assertions, behavioral assumptions not grounded in docs/observation). Flag OUGHT/IS conflicts (prompt prescribes behavior the model doesn't actually exhibit). These are Guardrail-tier.
+
+**Lens 2 — Structural accretion (essentialist).** Count instruction blocks. >7 is Guardrail-tier (the prompt is over-constrained). Sections that are pass-through (deleting them would not change model behavior) are Guideline-tier.
+
+## Step 1.5 — Reference-Model Binding & Controlled Unfolding (pragmatic-cybernetics + improv + essentialist)
+
+When `unfold_mode_resolved` is `inquiry`, `task_graph`, or `clarify_first`, apply these three disciplines before finalizing the rewrite:
+1. **Reference-Model Binding (`pragmatic-cybernetics`):** For each model in `reference_models` (from `onto_anchor` and `zk-ref-open`), map:
+   - `discovery_capability_unlocked`: what blind spots, perturbation variety, or missing variables the reference model reveals.
+   - `execution_capability_unlocked`: what sensors, attenuators, amplifiers, or deterministic D-gates (`lisp_eval`, `lean_check`, tests) the reference model prescribes.
+   - **No-Match / Coarse-Anchor Fallback (Prohibition against Fabrication):** If an anchor terminated at `5w1h_core` or returned zero `zk-ref-open` matches (`status: "coarse_anchor"` / `"unanchored_in_zk_ref_open"`), explicitly mark it as unanchored and request an operator ruling — NEVER fabricate a published reference model or citation.
+2. **Controlled Unfolding via Constructive *Plussing* (`improv`):**
+   - If `unfold_mode_resolved == "inquiry"`, unfold the seed prompt into 2–5 competing falsifiable hypotheses, minimal counterfactuals, and discriminating evidence probes in `unfolded_plan`.
+   - If `unfold_mode_resolved == "task_graph"`, unfold into 2–7 dependency-ordered tasks in `unfolded_plan`, each with `id`, `title`, `depends_on` (array of upstream task IDs), `d_p_mode` (`D` or `P`), `reference_model_id`, and `verification_oracle`.
+   - If `unfold_mode_resolved == "clarify_first"`, do not invent scope; structure `enhanced_prompt` around the discriminating functional questions from `finer_pico_framing.clarifying_questions`.
+   - If `unfold_mode_resolved == "rewrite_only"`, keep `unfolded_plan: []` and perform a tight single-pass rewrite.
+3. **Recursive Eliminative Prune (`essentialist`):** Subject every unfolded branch/task to the *Exist*, *Surface*, and *Contract* gates. Delete any item whose removal does not degrade the target condition. Enforce a hard cap of ≤ 7 top-level prompt sections and ≤ 7 items in `unfolded_plan`.
+
+## Step 2 — Typed Rewrite
+
+{% if critic_feedback %}
+This is the single allowed correction. Preserve the original task and the
+load-bearing parts of `prior_enhanced_prompt`; address only the specific failed
+checks in `critic_feedback`. Do not treat a critic's suggestion as new user
+requirements. Return any unresolved checks explicitly.
+{% endif %}
+
+Apply type-specific moves. The `prompt_type` selects the focus:
+
+| Type | Focus | Key risk |
+|------|-------|----------|
+| `coding` | contract clarity, I/O spec, error cases, test-first framing, acceptance criteria | vague acceptance criteria |
+| `reasoning` | CoT structure, decomposition, self-verification, counterfactual stress, edge cases | hidden assumptions |
+| `creative` | persona depth, constraints as creative tension, audience anchoring | over-constraining |
+| `classification` | explicit label space, edge cases, few-shot balance, tie-breaking policy, output format | label leakage in examples |
+| `extraction` | schema-first output, field definitions, missing-field policy, type discipline, multi-occurrence handling | underspecified schema |
+| `agent-task` | tool-use contracts, failure modes, context budget, bounded loops, termination criteria, progress signals | unbounded tool loops |
+| `meta` | self-reference safety, eval harness, convergence criteria, critic decoupling, mutation discipline, Pareto awareness | self-confirming loop |
+
+## Checkability discipline
+
+Use `checkability_map` to assign each consequential obligation a check that establishes that specific claim: supported `lisp_eval` expressions for finite computations/structural invariants; Lean 4 for a formalized general property; execution/tests for empirical behavior; evidence-based judgment for interpretation. State the assumptions and input provenance needed for the check. A proof of a formal statement does not establish that it captures the user's intent; a computed answer does not establish trustworthy inputs. Do not invent tool support or insert a generic proof requirement. If no runnable check applies, say what evidence or human decision is needed. Mark all proposed checks as **not run** unless actually executed in this task; enhancing a prompt alone does not execute its future checks.
+
+## Mutation Discipline
+
+- Each finding → at most one mutation. Don't bundle.
+- Prohibition findings (unresolved placeholders, unbounded loops, missing schemas, self-confirming loops) MUST be addressed.
+- Hypothesis-tier findings → defer (surface in `mutations_deferred`, do not mutate).
+- Preserve the prompt's original intent. Do not add scope. Do not remove constraints unless the audit flagged them as pass-through.
+- For creative prompts, removal mutations are often higher-value than additions.
+
+## Output Discipline
+
+The `enhanced_prompt` is the full text of the rewritten prompt, ready to hand to a model. It must be self-contained — no references to "the audit" or "Phase 2". A user who sees only the output should understand what the prompt does. Include check instructions only where they serve the original task; the absence of a suitable deterministic check is not a defect in creative or interpretive prompts.
+
+## Context
+```json
+{
+  "prompt": {{ prompt | tojson }},
+  "prompt_type": {{ prompt_type | tojson }},
+  "effort_tier": {{ effort_tier | tojson }},
+  "risks": {{ risks | tojson }},
+  "checkability_map": {{ checkability_map | tojson }},
+  "task": {{ task | tojson }},
+  "unfold_mode_resolved": {{ unfold_mode_resolved | default("rewrite_only") | tojson }},
+  "finer_pico_framing": {{ finer_pico_framing | default({}) | tojson }},
+  "reference_models": {{ reference_models | default([]) | tojson }},
+  "prior_enhanced_prompt": {{ prior_enhanced_prompt | tojson }},
+  "critic_feedback": {{ critic_feedback | tojson }}
+}
+```
+
+## Output
+
+Return JSON only:
+```json
+{
+  "enhanced_prompt": "the full rewritten prompt text",
+  "unfolded_plan": [
+    {"id": "T1", "title": "step or hypothesis title", "d_p_mode": "D|P", "depends_on": [], "reference_model_id": "anchor or zk-ref-open id", "verification_oracle": "check or probe"}
+  ],
+  "mutations_applied": [
+    {"finding": "what was wrong", "mutation": "what was changed", "section": "which section"}
+  ],
+  "mutations_deferred": [
+    {"finding": "what was suspected", "reason": "Hypothesis-tier — needs user verification"}
+  ],
+  "acceptance_criteria": [
+    "criterion 1 (testable)",
+    "criterion 2 (testable)",
+    "criterion 3 (testable)"
+  ],
+  "audit_findings": [
+    {"lens": "semantics|essentialist", "finding": "what was wrong", "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis", "addressed": true}
+  ]
+}
+```

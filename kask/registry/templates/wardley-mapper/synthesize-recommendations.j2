@@ -1,0 +1,79 @@
+{# goal: Identify strategic movement across the classified value-chain map (including drift from an optional previous map) and synthesize actionable, prioritized strategic recommendations traceable to components. #}
+[inference]
+contract:
+  input:
+    current_map: array
+    previous_map:
+      type: string
+      required: false
+  output:
+    movements: array
+    movement_summary: string
+    recommendations: array
+    rationale: string
+---
+
+You are a Wardley mapping strategist. Analyze the classified value-chain map for strategic movement and synthesize actionable strategic recommendations.
+
+## Input — Current Map
+```json
+{{ current_map | tojson }}
+```
+
+## Input — Previous Map (for drift detection, if provided)
+{{ previous_map | default('No previous map — skip drift analysis.') }}
+
+## Movement Analysis Dimensions
+
+1. **Commoditize**: Components currently Custom that provide no differentiation → should move right (toward Commodity). Buy or open-source instead of building.
+2. **Stay Product**: Components that are strategic differentiators → keep at Product. These distinguish the system.
+3. **Over-commoditized**: Components commoditized too early → consider moving left (back toward Custom) to recover differentiation.
+4. **Missing**: Gaps in the value chain where no component exists — what's needed but absent?
+5. **Drift** (if `previous_map` provided): How have components moved since the last map? What's the velocity and direction?
+
+## Wardley Doctrine Anchors
+- Components drift right over time (Genesis → Custom → Product → Commodity). Movement recommendations should align with this drift, not fight it.
+- Inertia is the enemy. Components that should have moved but haven't are higher-priority than components already moving.
+- Beware the "I can build that" trap — if a component is at Product or Commodity in the broader market but the system builds it custom (`should_commoditize: true`), recommend commoditizing it.
+
+## Recommendation Categories
+
+1. **Commoditization targets**: What should stop being built and be bought or open-sourced instead?
+2. **Investment priorities**: What should be built next? Where is the highest-leverage investment?
+3. **Divestment candidates**: What should be stopped or deprecated?
+4. **Ecosystem plays**: What should be opened to complementors or external contributors?
+5. **Alignment check**: Does the strategic direction strengthen or weaken the system's core purpose?
+
+## Rules
+- Every recommendation must trace to a specific component and movement in the analysis.
+- Prioritize by impact (highest first).
+- Be specific — "invest in X" not "invest more."
+- Flag uncertainty — recommendations based on sparse data should be marked lower confidence.
+
+Return JSON only:
+```json
+{
+  "movements": [
+    {
+      "component": "...",
+      "action": "commoditize|stay_product|over_commoditized|missing|drift",
+      "from": "Custom",
+      "to": "Commodity",
+      "rationale": "why this movement is recommended",
+      "priority": "high|medium|low"
+    }
+  ],
+  "movement_summary": "narrative summary of strategic position and key movements",
+  "recommendations": [
+    {
+      "category": "commoditize|invest|divest|ecosystem|alignment",
+      "component": "...",
+      "recommendation": "specific actionable recommendation",
+      "priority": "high|medium|low",
+      "confidence": 0.0,
+      "rationale": "why"
+    }
+  ],
+  "rationale": "coverage and quality assessment of the full map + recommendations"
+}
+```

@@ -1,0 +1,22 @@
+{# goal: Apply HT-1 to update the distilled conclusion only on contradiction, new category, recommendation flip or meaningful refinement; reconfirmation keeps the prior text. #}
+[inference]
+contract:
+  input:
+    cycle_events: array
+    prior_conclusion: string|null
+  output:
+    gate_trigger: string
+    gate_reason: string
+    updated_conclusion: string
+---
+
+Classify one hypothesis-testing cycle against its prior distilled conclusion.
+
+- cycle_events: {{ cycle_events | tojson }}
+- prior_conclusion: {{ prior_conclusion if prior_conclusion else "(none)" }}
+
+Choose exactly one trigger: `contradiction`, `new_category`, `flip`, `refinement`, `reconfirmation`. If no prior conclusion exists, use `new_category`. A refinement names the dimension narrowed, broadened or qualified.
+
+On the first four triggers, produce one concise updated paragraph. On `reconfirmation`, return the prior conclusion verbatim. Do not smuggle new claims through reconfirmation.
+
+Return JSON only with exactly `gate_trigger`, `gate_reason`, `updated_conclusion`.

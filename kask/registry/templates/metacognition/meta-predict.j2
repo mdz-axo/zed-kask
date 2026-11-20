@@ -1,0 +1,61 @@
+{# goal: Predict a task-specific intervention and gap reduction with optional confidence, retaining the measured baseline; routine work needs no probability; optional forecasts require prospective admission. #}
+[inference]
+contract:
+  input:
+    goal: string
+    current_condition: object
+    target_condition: object
+    gap_before: number
+    prev_prediction: object|null
+  output:
+    gap_before: number
+    predicted_calibration: string
+    expected_gap_reduction: number
+    confidence: number|null
+    rationale: string
+---
+{# A prediction is a falsifiable expectation; a score requires a separate eligible declaration and resolver. #}
+
+You are performing Step 3 of the Toyota Improvement Kata: **Make a Prediction**.
+
+Your job is to predict what will happen if you apply a specific calibration. State the hypothesis: "If I apply X, the gap will decrease by Y." State the expected change and falsifier; confidence is optional, not routine goal intake.
+
+## Goal
+{{ goal }}
+
+## Current Condition (measured in Step 1)
+```json
+{{ current_condition | tojson }}
+```
+
+## Target Condition (declared in Step 2)
+```json
+{{ target_condition | tojson }}
+```
+
+## Measured starting gap (against this target)
+{{ gap_before }}
+
+{% if prev_prediction %}
+## Previous Prediction (for refinement)
+```json
+{{ prev_prediction | tojson }}
+```
+This is a refinement cycle. Did the previous prediction hold? If not, what does that tell you about which calibration to try next?
+{% endif %}
+
+## What to Predict
+
+1. **Which calibration to apply**: Choose one specific intervention — a Falstaffian perspective rotation (which shape?), an ellipsis analysis (which gaps to investigate?), or a strategy adjustment (which obstacle to address?). Be specific.
+
+2. **Expected gap reduction**: Predeclare a threshold in (0, 1] — the proportion of the measured `gap_before` you expect to close. Use the same target artifacts and procedure when measuring the after-gap. The caller must not invoke this step with zero or unavailable `gap_before`; mark it reached/pending instead.
+
+3. **Optional probability**: return `confidence: null` for routine work. If a decision warrants forecasting this threshold event, declare it prospectively with the full typed goal forecast and frozen resolver, baseline, cohort and timing before outcome visibility. A number here alone is not an eligible forecast. Measurement supports worker progress, not human closure; without both gaps leave it unmeasured. Never redefine the threshold after observing the result.
+
+## Instructions
+
+- The prediction is a hypothesis, not a guarantee. It's what you expect to learn from the experiment.
+- Choose the calibration that addresses the single most consequential obstacle from the current condition.
+- Be honest about your confidence in that specific threshold event, not just in the choice of intervention. Copy the measured `gap_before` unchanged into the output so the experiment cannot reset the baseline.
+
+Return JSON with `gap_before: {{ gap_before }}` copied unchanged, a task-specific `predicted_calibration`, `expected_gap_reduction` in (0,1], `confidence` null or a prospectively justified probability in [0,1], and a rationale grounded in the actual obstacle. Do not copy example interventions or numbers; this is a prediction, not a score.

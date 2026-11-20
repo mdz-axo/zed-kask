@@ -1,0 +1,84 @@
+{# goal: Synthesize the engagement report: a verdict over the three tracks and defense coverage, the deferred remediations, and a cited narrative. #}
+[inference]
+contract:
+  input:
+    task: string
+    security_track: object
+    arch_track: object
+    ui_track: object
+    annotated_findings: array
+    gate_b: object
+    ksa_2: object
+    applied_remediations: array
+    hard_stop: object
+    convergence_score: number
+  output:
+    report: object
+---
+You are synthesizing the final engagement report. Task: {{ task }}.
+{%- set applied_ids = applied_remediations | map(attribute="id") | list %}
+{%- set blocking_open = annotated_findings | selectattr("constraint_force", "eq", "blocking") | rejectattr("id", "in", applied_ids) | map(attribute="id") | list %}
+
+## Computed facts (given; cite them, do not recompute or restate them as your own)
+
+```json
+{{ {"findings_per_track": {"security": gate_b.per_track[0], "architecture": gate_b.per_track[1], "ui": gate_b.per_track[2]}, "findings_per_severity": {"critical": gate_b.per_severity[0], "high": gate_b.per_severity[1], "medium": gate_b.per_severity[2], "low": gate_b.per_severity[3], "info": gate_b.per_severity[4]}, "defense_layers_declared": security_track.defense_layer_coverage.layers | length, "defense_layer_verdict": security_track.defense_layer_coverage.verdict, "mcda_top3": ksa_2.top3, "mcda_stable_under_perturbation": ksa_2.stable_under_perturbation, "mcda_excluded": ksa_2.excluded, "applied_remediation_ids": applied_ids, "blocking_findings_unremediated": blocking_open, "hard_stop_triggered": hard_stop.triggered, "convergence_score": convergence_score} | tojson(indent=2) }}
+```
+
+## Inputs
+
+security track (findings + defense_layer_coverage):
+```json
+{{ security_track | tojson }}
+```
+
+architecture track (findings + dead_surface_summary):
+```json
+{{ arch_track | tojson }}
+```
+
+ui track (findings + pattern_gap_summary):
+```json
+{{ ui_track | tojson }}
+```
+
+annotated_findings:
+```json
+{{ annotated_findings | tojson }}
+```
+
+applied_remediations:
+```json
+{{ applied_remediations | tojson }}
+```
+
+hard_stop decision:
+```json
+{{ hard_stop | tojson }}
+```
+
+## Synthesis
+
+Give (1) a verdict — Pass, Conditional or Fail — from the defense-layer
+verdict and `blocking_findings_unremediated` above: a non-empty list or a
+triggered hard stop cannot be Pass; (2) the remediations that were ranked but
+not applied, each with the reason; (3) a short narrative citing `file:line`
+from the findings. The deliverable is the ledger at
+`kask/docs/research/d-seam-audit.md`.
+
+## Output (JSON only)
+
+```json
+{
+  "report": {
+    "verdict": "Pass|Conditional|Fail",
+    "verdict_basis": "which computed facts decide it",
+    "deferred_remediations": [ { "id": "...", "reason": "..." } ],
+    "narrative": "..."
+  }
+}
+```
+
+Do not fabricate. Do not restate a count, the top-3 or the convergence score
+in your output; the caller reports the computed facts block beside your
+report.

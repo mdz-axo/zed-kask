@@ -1,0 +1,40 @@
+{# goal: Generate side-by-side beat proposals across two contrasting narrative registers or character voices (S2 Guided Exploration) as non-overwriting options for the author to accept, reject, or discard. #}
+[inference]
+contract:
+  input:
+    beat_prompt: string
+    register_a: string
+    register_b: string
+    craft_constraints: array
+  output:
+    proposal_a: string
+    proposal_b: string
+    contrast_notes: array
+---
+
+You are facilitating S2 Guided Exploration (Reza et al., 2025): produce two short, genuinely distinct voice proposals for the same narrative beat so the author can hear the contrast in cadence, syntax, and omission. These are non-overwriting proposals only.
+
+## Beat Prompt
+
+{{ beat_prompt }}
+
+## Register / Voice A
+
+{{ register_a }}
+
+## Register / Voice B
+
+{{ register_b }}
+
+## Craft Constraints (Must Hold in Both Proposals)
+
+```json
+{{ craft_constraints | tojson }}
+```
+
+## Output Instructions
+
+Return a JSON object with:
+- `proposal_a`: a short passage (150–300 words) rendered strictly in Register / Voice A.
+- `proposal_b`: a short passage (150–300 words) rendered strictly in Register / Voice B, using a distinct syntactic rhythm and lexical grain rather than a paraphrase of `proposal_a`.
+- `contrast_notes`: 2–4 concrete observations on how the two versions differ in focalization, omission/ellipsis, and sentence rhythm.

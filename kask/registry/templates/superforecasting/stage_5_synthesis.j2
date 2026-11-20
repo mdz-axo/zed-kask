@@ -1,0 +1,100 @@
+[inference]
+contract:
+  input:
+    forecasting_question: string
+    updated_probability: float
+    hypothesis_analysis: object
+  output:
+    causal_models: array
+    synthesized_probability_judgment: float
+    dissenting_views: array
+---
+{# goal: Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring to aggregate model judgments, steel-man dissenting views, and produce a synthesized probability. #}
+You are a synthesis analyst. Your task is to integrate multiple causal models and perspectives, practicing the "dragonfly eye" view that aggregates diverse viewpoints.
+
+## Forecasting Question
+{{ forecasting_question }}
+
+## Current Probability (After Bayesian Update)
+{{ updated_probability }} ({{ (updated_probability * 100)|round(1) }}%)
+
+## Current Hypothesis Analysis
+{% if hypothesis_analysis %}
+Primary Hypothesis: {{ hypothesis_analysis.primary_hypothesis }}
+{% endif %}
+
+## Dragonfly Eye Methodology
+
+Superforecasters synthesize by:
+1. Generating multiple causal models
+2. Aggregating their judgments via MCDA-style weighted scoring
+3. Steelmanning opposing arguments
+4. Practicing "on the one hand... on the other hand... on the third hand..." thinking
+
+## Synthesis Steps
+
+### Step 1: Identify Clashing Causal Forces
+What are the major forces pushing toward YES vs. NO?
+- Hawkish forces (pushing toward outcome)
+- Dovish forces (pushing against outcome)
+- Neutral or ambiguous forces
+
+### Step 2: Steelman Opposing Views
+For the strongest argument against your current view:
+- Construct it as strongly as possible
+- Make it persuasive to someone who holds that view
+- Identify what evidence or reasoning would change your mind
+
+### Step 3: Generate Causal Models
+Generate 3-5 distinct causal models. Each model is a different analytical perspective:
+- Model 1 (e.g., historical analogy): What probability does it suggest?
+- Model 2 (e.g., causal mechanism): What probability does it suggest?
+- Model 3 (e.g., expert consensus if available): What probability does it suggest?
+- Additional models as warranted (structural, game-theoretic, base-rate, etc.)
+
+### Step 4: MCDA-Style Weighted Aggregation
+
+Apply Multi-Criteria Decision Analysis to weight and score each causal model. Each model is an "alternative" evaluated against reliability criteria.
+
+**Criteria** (weight each, total = 1.0):
+| Criterion | Description |
+|-----------|-------------|
+| Evidence alignment | How well does the model's prediction align with available evidence? |
+| Reference class stability | How stable/reliable is the reference class the model draws from? |
+| Causal mechanism clarity | How clear and well-understood is the causal mechanism? |
+| Model confidence | How confident is the model in its own prediction? |
+
+**Scoring** (1-10 per criterion per model):
+- Score each model on each criterion (these scores are your judgment)
+- Do NOT compute the composite, weights or weighted average here — report the criterion scores; all three are computed by `lisp_eval` in the SKILL.md stage_5 step
+- Flag compensation masking semantically in each causal model's `compensation_warning`; a high aggregate may mask one critically weak criterion
+
+**Weighted synthesis** (computed downstream by `lisp_eval`, shown for reference):
+- composite = sum of the four criterion scores; normalized weights and `synthesized_probability` are computed together from the raw `causal_models` array
+- If compensation masking is detected, set that model's `compensation_warning: true` — do NOT re-weight: the SKILL.md's `lisp_eval` form is authoritative and derives the composite from `mcda_criteria_scores`; a masked critical criterion is REPORTED, not compensated by weight adjustment
+
+### Step 5: Synthesize
+Interpret the deterministic aggregation after the caller runs it:
+- Where do models agree?
+- Where do they diverge, and why?
+- Which raw criteria created compensation warnings?
+- Does the holistic `synthesized_probability_judgment` materially disagree with the computed probability, and what evidence explains the discrepancy?
+
+## Output
+
+Respond with a JSON object containing:
+- causal_models: Array of objects with {
+    model_name: string,
+    perspective: string,
+    implied_probability: float,
+    confidence: string,
+
+    mcda_criteria_scores: object with {evidence_alignment: int, reference_class_stability: int, causal_mechanism_clarity: int, model_confidence: int},
+    compensation_warning: boolean
+  }
+- synthesized_probability_judgment: float (0.0-1.0, your holistic read, for cross-validation against the lisp_eval weighted average — not the authoritative value)
+- dissenting_views: Array of objects with {
+    view: string,
+    steelmanned_argument: string,
+    weight_considered: float
+  }

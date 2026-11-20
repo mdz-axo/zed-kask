@@ -1,0 +1,35 @@
+{# goal: Predictive twelve EQM marker specs: id, name, direction and description for each marker, held as marker_specs. #}
+{#- Generated from eqm-catalog.yaml (the entries marked predictive: true, descriptions verbatim with line folds joined). The catalog is the source; eqm_marker_specs_match_the_catalog pins the equality. -#}
+{%- set marker_specs = [
+  {"id":"confirmation_bias","name":"Confirmation Bias","direction":"hurts","description":"The forecaster seems to favor a hypothesis or outcome, and then presents some piece of evidence (e.g., news story, data point) that confirms the hypothesis or outcome without searching for evidence for other hypotheses or outcomes."},
+  {"id":"extreme_confidence","name":"Extreme Confidence","direction":"hurts","description":"The forecaster expresses a high degree of confidence in his forecast, stating the events \"will\" happen or \"will not\" happen, or that the outcome is nearly certain."},
+  {"id":"speculative_terms","name":"Speculative Terms","direction":"hurts","description":"The forecaster speculates on what might happen using terms like \"could\" or \"might\"."},
+  {"id":"gut_based","name":"Gut Based","direction":"hurts","description":"The forecaster relies on instinctive or intuitive reasoning without citing evidence or data to support their conclusion. This includes statements like \"I feel,\" \"I sense,\" or \"it seems to me,\" which suggest a forecast based on personal instinct rather than analysis or factual support."},
+  {"id":"simplification_bias","name":"Simplification Bias","direction":"hurts","description":"The forecaster is over-simplifying a complex forecasting dynamic into a simplistic viewpoint."},
+  {"id":"best_practices","name":"Best Practices","direction":"helps","description":"The forecaster applies one of the following strategies: 1) analyzing past data trends, averages, or variations when predicting upcoming values, 2) considering the last occurrence of an event in cases where timing matters, or 3) using historical precedents while balancing arguments for potential differences in the current context."},
+  {"id":"statistical_causal_blend","name":"Statistical Causal Blend","direction":"helps","description":"The forecaster evaluates the forecast from a statistical perspective AND also considers at least one current or future causal driver when forming his forecast."},
+  {"id":"statistical_reasoning","name":"Statistical Reasoning","direction":"helps","description":"The forecaster looks to past occurrences or data and uses logical/statistical reasoning to inform his forecast. This could be looking at past occurrences, forming a comparison class and deriving a baserate, using basic statistics, or building a statistical model."},
+  {"id":"forecast_rationale_align","name":"Forecast and Rationale Align","direction":"helps","description":"The expressed forecast and the forecaster's rationale align in two ways: 1) the outcome expressed in the rationale as most likely has the highest forecast probability, and 2) the level of uncertainty expressed in the rationale matches the magnitude of the forecast."},
+  {"id":"forecast_rationale_misalign","name":"Forecast and Rationale Misalign","direction":"hurts","description":"The expressed forecast and the forecaster's rationale are misaligned in that 1) the outcome expressed in the rationale as most likely does not have the highest forecast probability, or 2) the level of uncertainty expressed in the rationale differs from the magnitude of the forecast."},
+  {"id":"concrete_reasoning","name":"Concrete Reasoning","direction":"helps","description":"The forecaster's reasoning is more concrete, concerned with the \"how\", is proximal, or contextualizes the situation."},
+  {"id":"fact_based","name":"Fact Based","direction":"helps","description":"The majority of the forecaster's rationale consists of fact-based statements, where each fact has verifiable details, references to actions or events, measurable data or outcomes, historical facts or timelines, or cited sources or reports."}
+] -%}
+{#- failing_markers(scores): the markers off target in one market_score_rationale scores[] list, as JSON, in priority order (hurts at 2, hurts at 1, helps at 0, helps at 1), each with its target and catalog description. first_only=true gives the one marker an Improve iteration addresses. -#}
+{%- macro failing_markers(scores, first_only=false) -%}
+{%- set mk = namespace(h2=[], h1=[], p0=[], p1=[]) -%}
+{%- for s in marker_specs -%}
+  {%- set hit = scores | selectattr("id", "eq", s.id) | map(attribute="score") | list -%}
+  {%- if hit | length == 1 -%}
+    {%- set score = hit[0] -%}
+    {%- set goal_score = 2 if s.direction == "helps" else 0 -%}
+    {%- set row = {"id": s.id, "name": s.name, "direction": s.direction, "current_score": score, "target_score": goal_score, "gap": (goal_score - score) | abs, "description": s.description} -%}
+    {%- if s.direction == "hurts" and score == 2 -%}{%- set mk.h2 = mk.h2 + [row] -%}
+    {%- elif s.direction == "hurts" and score == 1 -%}{%- set mk.h1 = mk.h1 + [row] -%}
+    {%- elif s.direction == "helps" and score == 0 -%}{%- set mk.p0 = mk.p0 + [row] -%}
+    {%- elif s.direction == "helps" and score == 1 -%}{%- set mk.p1 = mk.p1 + [row] -%}
+    {%- endif -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- set ordered = mk.h2 + mk.h1 + mk.p0 + mk.p1 -%}
+{{- (ordered[:1] if first_only else ordered) | tojson(indent=2) -}}
+{%- endmacro -%}

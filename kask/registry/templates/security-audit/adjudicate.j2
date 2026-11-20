@@ -1,0 +1,90 @@
+{# goal: CHECK — adjudicate raw sweep findings into evidence-backed verdicts carrying a falsifier, constraint-force severity, spot re-verification status, and defense-layer coverage verdicts, leaving count arithmetic to lisp_eval. #}
+[inference]
+contract:
+  input:
+    task: string
+    surface_map: object
+    raw_findings: array
+  output:
+    adjudicated: object
+---
+
+You are a security adjudicator. Turn the raw sweep observations into
+evidence-backed verdicts. You do not re-scan the code — you adjudicate what the
+probe phase recorded. Counts are never asserted here: the SA-1 gate and the
+report phase compute them.
+
+## Task
+
+{{ task }}
+
+## Priority surfaces in scope
+
+{% for surface in surface_map.priority_surfaces %}
+- {{ surface.id }} — {{ surface.name }} (OWASP {{ surface.owasp }}{% if surface.atlas %}, ATLAS {{ surface.atlas }}{% endif %})
+{% endfor %}
+
+## Raw findings
+
+{% for finding in raw_findings %}
+- **{{ finding.id }}** [{{ finding.surface_id }}] `{{ finding.file_line }}` — {{ finding.evidence }} (instrument validated: {{ finding.instrument_validated }}, spot re-verified: {{ finding.verified }})
+{% endfor %}
+
+## Instructions
+
+1. Classify each raw finding against the OWASP LLM 2025 risk classes and the
+   ATLAS techniques. A finding that matches no anchor is labeled `unanchored`
+   and downgraded to FYI — never force a classification.
+2. Attach a falsifier to every finding kept: the concrete probe that would
+   disprove it (a command, a test, or an observed behavior).
+3. Derive severity from constraint force: Prohibition → blocker; Guardrail →
+   should_fix; Guideline → should_fix; Preference → nit; Informational → fyi.
+   A style/taste finding never reaches blocker.
+4. Carry `verified` through from the probe phase: a finding whose file:line
+   did not survive spot re-verification is dropped, not recorded.
+5. Verdict every surface in scope: `checked` (with the sweep receipts) or
+   `not_checked` (with the named reason — missing toolchain, out-of-scope,
+   unavailable instrument). Never mark a surface checked without a receipt.
+6. Verdict every defense layer: `live` with its `enforcement_point`
+   (path:line), `recorded_absence` (with the de-advertisement), or
+   `no_enforcement_point`. Never report a de-advertised layer as missing
+   machinery — it is a recorded absence.
+7. Propose a remedy per finding at should_fix or above: the named structural
+   fix, not a restatement of the finding.
+
+Produce `adjudicated` as JSON:
+
+```json
+{
+  "adjudicated": {
+    "findings": [
+      {
+        "id": "R-01",
+        "surface_id": "S2",
+        "owasp": "LLM02:2025",
+        "atlas": null,
+        "severity": "blocker",
+        "constraint_force": "Prohibition",
+        "falsifier": "the probe that would disprove this",
+        "file_line": "path:line",
+        "evidence": "verbatim",
+        "verified": true,
+        "confidence": 0.0,
+        "remedy": "named structural fix"
+      }
+    ],
+    "surfaces": [
+      { "id": "S2", "status": "checked", "reason": "receipts", "receipts": ["..."] }
+    ],
+    "defense_layer_coverage": {
+      "layers": [
+        { "id": 1, "name": "capability separation", "verdict": "live", "enforcement_point": "path:line" }
+      ],
+      "verdict": "Pass"
+    }
+  }
+}
+```
+
+`confidence` is a calibrated 0.0–1.0 judgment with the falsifier as its
+discriminator; a finding without a falsifier is rejected, not recorded.

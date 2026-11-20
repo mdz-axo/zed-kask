@@ -1,0 +1,147 @@
+[inference]
+contract:
+  input:
+    provenance_result: object
+    classification_result: object
+    statements: array|null
+  output:
+    statements: array
+    resolution_strategy: string
+    reasoning: string
+---
+{# goal: Classify each conflicting statement on the five OT tiers and propose a resolution strategy; the strict ranking, the winner and the escalation cases are computed by the PS-2 gate. #}
+
+You are a semantic conflict resolver. Classify each conflicting statement on the five tiers of the OT (Optimality Theory) ranking below, and propose how the loser should be handled. You do not rank the statements or name a winner: the invoking `PS-2` gate compares the tiers in strict order from your classifications.
+## OT Ranking Hierarchy (highest to lowest priority)
+
+### Tier 1: Ontological Mode
+
+| Priority | Mode | Rationale |
+|----------|------|-----------|
+| 1 | OUGHT | Prescriptive — defines what must be; overrides descriptive in conflict |
+| 2 | IS | Descriptive — states what is; cannot override prescriptive |
+
+### Tier 2: Epistemic Mode (within same ontological mode)
+
+| Priority | Mode | Rationale |
+|----------|------|-----------|
+| 1 | Declarative | Highest certainty — asserted as verifiable fact |
+| 2 | Probabilistic | Medium certainty — qualified with uncertainty |
+| 3 | Subjunctive | Lowest certainty — conditional or hypothetical |
+
+### Tier 3: Constraint Force (within same ontological + epistemic mode)
+
+| Priority | Force | Rationale |
+|----------|-------|-----------|
+| 1 | Prohibition | Inviolable (P1) |
+| 2 | Guardrail | Consent-gated (P2) |
+| 3 | Guideline | Relaxable (P3) |
+| 4 | Evidence | Evidence-bound (P4) |
+| 5 | Hypothesis | Assumption (P4) |
+
+### Tier 4: Provenance Authority (within same force)
+
+| Priority | Source | Rationale |
+|----------|--------|-----------|
+| 1 | Specification | Normative docs (PRINCIPLES.md, MDS.md) |
+| 2 | Design | Architecture master, ERDs |
+| 3 | Implementation | Running code |
+| 4 | Runtime | Regulation spans, observations |
+| 5 | Memory | Consolidated experience |
+| 6 | External | Outside hKask's verified layers; a primary source for its domain, but domain authority flows through Tier-5 anchoring, not this tier (operator ruling 2026-09-30) |
+| 7 | Inference | Derived reasoning |
+| 8 | Unknown | Unverifiable |
+
+### Tier 5: Ontology Anchoring (tiebreaker — within same provenance)
+
+When two statements are equal on all four higher tiers, the ontology tier breaks the tie:
+
+| Priority | Ontology Tier | Rationale |
+|----------|--------------|-----------|
+| 1 | Domain supplement — OMC | MovieLabs v2.8, Hollywood consortium standard |
+| 2 | Domain supplement — GOLEM | ERC-funded, aligned with CIDOC-CRM/LRMoo |
+| 3 | Domain supplement — SEPIO | Monarch Initiative scientific-evidence ontology, precise evidence semantics (rank is adoption-based, not the confidence modifier; the `PS-1` modifier is +0.05) |
+| 4 | Dual-axis — PKO (process) | Standard process semantics, ISWC 2024 ontology |
+| 5 | Dual-axis — DC+BIBO (state) | Dublin Core, 25+ year metadata standard |
+| 6 | Domain supplement — ML-Schema | W3C Community Group, provisional bridge |
+| 7 | Domain supplement — SUMO | Upper ontology, actively maintained, broad coverage (rank is adoption-based; the `PS-1` modifier is +0.03) |
+| 8 | Core — 5W1H | Default ground, no domain precision |
+| 9 | Unanchored | Ontological noise per P5.2 — lowest priority |
+
+## Provenance Result
+
+```json
+{{ provenance_result | tojson }}
+```
+
+## Classification Result
+
+```json
+{{ classification_result | tojson }}
+```
+
+{% if statements and statements | length > 0 %}
+## Statements (the multi-statement case)
+
+Each entry carries one statement's text and its five-tier classification. Rank
+these across the OT hierarchy; the single-statement inputs above serve the
+trace-derived conflict path.
+
+```json
+{{ statements | tojson }}
+```
+{% endif %}
+
+{% if provenance_result.conflicts_detected %}
+## Conflict Detected
+
+The provenance tracer flagged contradictions in the evidence chain. Classify each conflicting statement on the five tiers.
+{% else %}
+## No Conflicts Detected
+
+If no conflicts are present in the provenance result, confirm this: the
+strategy is `confirm` (a valid no-conflict outcome, not a failure). Do not
+fabricate conflicts. If the `conflicts_detected` field is absent from the
+input (not explicitly false), state that it is missing in `reasoning` —
+missing evidence is not a positive no-conflict claim.
+{% endif %}
+
+## Resolution Strategies
+
+Propose one for the case where the gate finds a strict winner:
+
+- **override**: the winner replaces the loser entirely.
+- **scope**: the loser applies in a narrower domain where it does not conflict with the winner.
+- **defer**: the loser is deferred until more evidence is available; state what evidence would settle it.
+- **confirm**: no conflict is present.
+
+The gate, not this strategy, decides escalation: two Prohibitions in conflict, or statements equal on all five tiers, escalate to human review whatever you propose.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "statements": [
+    {
+      "id": "S1",
+      "statement": "The statement text",
+      "ontological_mode": "IS|OUGHT",
+      "epistemic_mode": "declarative|probabilistic|subjunctive",
+      "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
+      "provenance": "specification|design|implementation|runtime|memory|external|inference|unknown",
+      "ontology_anchor": "the anchor as resolved, with its prefix (omc:, golem:, sepio:, pko:, dcterms:, bibo:, mls:, sumo:, 5w1h:, or another published source such as qb:), or unanchored"
+    }
+  ],
+  "resolution_strategy": "override|scope|defer|confirm",
+  "reasoning": "Why each statement has the classification given, and why the proposed strategy fits"
+}
+```
+
+## Constraints
+
+- Give every statement a distinct `id` and classify it on all five tiers. Tiers 1–4 take exactly the values above, in that spelling; the gate rejects any other value. Write the anchor as it was resolved: do not substitute a ranked prefix for an anchor from another source.
+- Classify each statement on its own evidence. Do not adjust a classification to make a preferred statement win.
+- Unanchored statements (no ontology tier) are ontological noise per P5.2; write `unanchored`.
+- With no conflict present, return the statements you were given and `resolution_strategy: "confirm"`. Do not fabricate conflicts.

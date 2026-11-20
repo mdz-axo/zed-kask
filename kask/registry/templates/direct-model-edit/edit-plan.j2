@@ -1,0 +1,78 @@
+{# goal: Plan the minimal weight edit: choose the smallest parameter surface for the candidate direction and name the preservation set whose baseline is measured before the edit, under an explicit budget of edited weights and forward passes. #}
+[inference]
+contract:
+  input:
+    model_name: string
+    selected_site: object
+    total_weights: number
+    edited_weights: number
+    forward_pass_budget: number
+  output:
+    edit_spec: object
+    surface_check: object
+    preservation_plan: object
+---
+
+You are planning a direct weight edit — the step between localization and verification. The route verdict said blocker; the localization isolated a candidate direction at specific sites. Now decide exactly which weights change, by how much, and what is measured to show nothing else moved.
+
+## Doctrine
+
+The anchor edit addressed 64 output columns in each of two MLP layers — 131,072 weights of 752,393,024, about 0.017% of the language model. The source describes it as subtraction; as released it was applied at strength 6, which reverses the component along the direction and amplifies it five-fold. A label does not say what an edit does. The harness applies `W ← W − alpha · direction · kᵀ` with an absolute `alpha`; after the edit, the DME-3 gate reads the operation class from the edit receipts (the sign of `alpha` times the trigger's recorded weights).
+
+Every edit can remove or create behavior. So every plan names a preservation set — practice problems disjoint from the target set — and its baseline is measured before the edit, under the same config and on the same model file as the target run, on at least 60 answers with enough correct ones that a loss could be detected. A plan in words is not a baseline.
+
+The edit is not a single guess. The anchor's edit came out of a budgeted search; the plan reports every budget point tried, because gains can be non-smooth (the anchor's jump landed at the 50-pass budget, barely visible at 10 or 25).
+
+## Target
+
+- **Model**: {{ model_name }}
+- **Total weights**: {{ total_weights }}
+- **Proposed edit surface (weights)**: {{ edited_weights }}
+- **Forward-pass budget**: {{ forward_pass_budget }}
+
+## Selected site (from localization)
+
+```json
+{{ selected_site | tojson }}
+```
+
+## Planning process
+
+1. **Write the edit as the harness takes it**: layers, tensor, trigger (columns, channels or dense), `alpha`, and the direction file. One spec per direction; a per-layer direction is one spec per layer, applied in order.
+2. **Size the surface**: the fewest columns and layers that carry the whole direction. The DME-2 gate caps the surface at 0.1% of total weights — plan under it, and record where the surface arithmetic came from.
+3. **Name the preservation set**: which problems (disjoint from the target set), how many, and which other behaviors are checked by hand. The DME-2b gate refuses a set that overlaps the target set, has fewer than 60 answers, has too few correct answers to show a loss, or was probed under a different config or model file than the target run.
+4. **Stage the verification**: the same problems, seeds, config and server build before and after; the control and strength-series arms; the sibling control model.
+
+## Output requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "edit_spec": {
+    "layers": [15, 19],
+    "tensor": "ffn_down",
+    "trigger": {"kind": "columns", "count": 64},
+    "alpha": 1.0,
+    "direction": "per-layer unit-norm contrast vector (file)"
+  },
+  "surface_check": {
+    "edited_weights": 131072,
+    "total_weights": 752393024,
+    "budget_source": "computed downstream by the DME-2 gate in lisp_eval, never asserted here"
+  },
+  "preservation_plan": {
+    "preservation_set": "practice problems disjoint from the target set, by problem id range",
+    "answers": 96,
+    "also_checked_by_hand": ["refusal behavior", "style"],
+    "control_sibling": {"name": "…", "nonfinish_rate": "…"}
+  }
+}
+```
+
+## Constraints
+
+- The `surface_check` numbers are recomputed by the DME-2 gate — never present them as already-passed.
+- Do not label the operation. DME-3 reads the class from the edit receipts after the edit.
+- The preservation baseline is a probe run, measured before the edit. Its rows go to DME-2b now and to DME-3 after the edit.
+- The forward-pass budget is part of the plan — and every budget point tried is reported.

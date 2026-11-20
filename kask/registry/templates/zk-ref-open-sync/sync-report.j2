@@ -1,0 +1,56 @@
+{# goal: Render the zk-ref-open refresh completion report from measured delta counts, license gate, fine.db embedding inventory, seal run IDs, bundle manifest, and live recall probes. Deterministic (no LLM call). #}
+[inference]
+contract:
+  input:
+    revision_label:
+      type: string
+      non_blank: true
+    prior_run_id:
+      type: string
+      non_blank: true
+    final_run_id:
+      type: string
+      required: false
+    delta_summary: object
+    license_gate_rc: integer
+    inventory_summary: object
+    bundle_summary: object
+    recall_probes: array
+    pre_copy_snapshots: array
+    open_failures:
+      type: array
+      required: false
+    convergence_verdict:
+      type: string
+      non_blank: true
+---
+## zk-ref-open Sync Report — {{ revision_label }}
+
+- **Convergence verdict (`ZRS-1`):** `{{ convergence_verdict }}`
+- **Run lineage:** `{{ prior_run_id }}` → `{{ final_run_id | default("unsealed") }}`
+- **Delta counts:** +{{ delta_summary.added | default(0) }} added | ~{{ delta_summary.modified | default(0) }} modified | -{{ delta_summary.contracted | default(0) }} contracted | {{ delta_summary.retained | default(0) }} dual-purpose retained
+
+### Gate Measurements
+- **D10 license gate (`zk-ref-license-gate.sh`):** exit `{{ license_gate_rc }}`
+- **Embedding inventory (`fine.db`):** `complete={{ inventory_summary.fine_complete | default(false) }}`, `missing={{ inventory_summary.missing | default("unknown") }}`, confirmed model `{{ inventory_summary.confirmed_model | default("unknown") }}`
+- **Bundle manifest:** `expected_passage_count={{ bundle_summary.expected_passage_count | default("unknown") }}`, registry commit `{{ bundle_summary.registry_commit | default("uncommitted") }}`, release `{{ bundle_summary.release_status | default("unknown") }}`
+
+### Live Recall Probes ({{ recall_probes | selectattr("passed") | list | length }}/{{ recall_probes | length }} passed)
+{% if recall_probes | length == 0 %}
+_No probes recorded._
+{% else %}
+| Query | Expectation | Observed | Passed |
+|---|---|---|---|
+{% for p in recall_probes %}| {{ p.query | default("") }} | {{ p.expectation | default("") }} | {{ p.observed | default("") }} | {{ p.passed | default(false) }} |
+{% endfor %}{% endif %}
+
+### Pre-copy Snapshots ({{ pre_copy_snapshots | length }})
+{% for snap in pre_copy_snapshots %}
+- `{{ snap }}`
+{% endfor %}
+{% if open_failures is defined and open_failures | length > 0 %}
+### Open Failures ({{ open_failures | length }})
+{% for f in open_failures %}
+- {{ f }}
+{% endfor %}
+{% endif %}

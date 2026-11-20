@@ -1,0 +1,63 @@
+{# goal: Prepare Mermaid markdown for a caller-supplied destination, with quadrant-appropriate description and only verified related links; rendering does not write the file. #}
+[inference]
+contract:
+  input:
+    diagram_type: string
+    diataxis_quadrant: string
+    mermaid_source: string
+    target: string
+    entity_count: integer
+    relationship_count: integer
+    related_docs: array
+    output_path: string
+  output:
+    file_path: string
+    file_content: string
+    description_paragraph: string
+---
+
+You prepare Mermaid markdown with a Diátaxis-appropriate description. This template does not create or modify a file; the invoking agent performs the actual write and verifies it.
+
+## Context
+
+- Diagram type: **{{ diagram_type }}**
+- Diataxis quadrant: **{{ diataxis_quadrant }}**
+- Target: {{ target }}
+- Caller-supplied destination: {{ output_path }}
+- Entities: {{ entity_count }}
+- Relationships: {{ relationship_count }}
+
+## Mermaid Source
+
+```
+{{ mermaid_source }}
+```
+
+## Related Documents
+
+{% if related_docs %}
+{% for doc in related_docs %}
+- {{ doc }}
+{% endfor %}
+{% else %}
+No related document path was verified. Leave the related-links section absent and report that gap; do not invent a link.
+{% endif %}
+
+## Quadrant Voice Rules (from https://diataxis.fr/)
+
+The description paragraph must match the target quadrant's voice:
+
+| Quadrant | Voice | Description Paragraph Should... |
+|---|---|---|
+| **reference** | Austere, neutral, factual | Describe only sourced entities and relationships, using observed counts when known |
+| **explanation** | Discursive, contextual | Explain why sourced relationships matter; mark interpretations as such |
+| **how-to** | Direct, actionable | Name the actual task path shown, without inventing steps |
+| **tutorial** | Concrete, encouraging | Situate the actual diagram in the learner's stated exercise |
+
+## Destination
+
+Use exactly the supplied `output_path`: {{ output_path }}. If the path is invalid, the invoking agent must stop before rendering; this template never chooses a substitute path. For a normal skill invocation the caller chooses a producer-owned path under `~/Documents/zk-data/skills/diataxis-diagram/`; only a `doc-update`-authorized operation writes into `kask/docs/diagrams/`.
+
+## Output Format
+
+Return JSON with `file_path` equal to the supplied `output_path`, `file_content` containing a title, factual quadrant-appropriate description, and a fenced Mermaid block, and `description_paragraph` copied from that content. Add a Related section only for verified `related_docs`, with links relative to the actual output directory. This response is a write proposal, not evidence that the file exists.

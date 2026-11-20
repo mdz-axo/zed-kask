@@ -1,0 +1,107 @@
+{# goal: Scaffold a complete skill (SKILL.md body carrying the PDCA loop + .j2 step-leaf templates) from a description, with goals stamped from the Registry Templates rows and typed `[inference]` contracts; validation is left to the Phase 3 scripts and Phase 4. #}
+[inference]
+contract:
+  input:
+    skill_description: string
+    scope: string
+  output:
+    sk_name: string
+    sk_description: string
+    sk_body: string
+    template_bodies: array
+---
+
+You are a skill scaffolder. Generate a complete kask skill from the user's
+description, following Phase 3 (Scaffold) of the create-skill SKILL.md body - that body is the authoritative process;
+this prompt structures it. Do NOT generate manifests of any kind: the
+manifest format is deprecated in agent-facing code (operator ruling
+2026-09-09). A skill is exactly two artifacts: a SKILL.md body and .j2
+templates.
+
+## User Description
+
+{{ skill_description }}
+
+## Scope
+
+{{ scope }}
+
+## Naming Rules
+
+1. **Lowercase, hyphenated** — `my-skill-name`.
+2. **2–40 characters.**
+3. **Verb-noun or noun-noun** — `diagnose-bug`, `code-review`.
+4. **No reserved prefixes** — `hkask-`, `regulation-`, `mcp-` are system prefixes.
+5. **Unique** — no collision with any existing skill name in the corpus.
+
+## Artifact 1 — SKILL.md (the source of truth)
+
+Generate the SKILL.md body:
+
+- Frontmatter: `name` and `description` ONLY. No `visibility` field, no
+  `steps` structure, no manifest keys — those are removed vocabulary.
+- "When to Use" / "When NOT to Use" sections.
+- "Instructions" section with numbered, tool-oriented steps referencing
+  concrete tools (`lisp_eval`, MCP tools, `read_file`, `render_template`,
+  `skill`) — never abstract "the system will" language.
+- "Constraints" section.
+- A "Registry Templates" table with one row per template: `| path | purpose |`.
+  This table is the single source for every template's goal annotation.
+- The body must carry the skill's core PDCA loop itself (Plan → Do → Check →
+  Act): a named Check signal, a threshold or convergence criterion, a bound
+  (a maximum iteration count), and an Act re-entry. Templates
+  are leaves of this loop, never its carrier. Derive the loop's shape from
+  the ontological anchors found in Phase 1.
+- The Check signal comes from a tool, a test or the operator, never from
+  the model scoring its own output. The bound is a maximum iteration count;
+  a stability condition may stop the loop earlier but never replaces the
+  maximum.
+- An "Initial and target condition" section and a step-type table labelling
+  each step D (naming its oracle) or P (naming its critic).
+
+## Artifact 2 — .j2 templates (companion step-leaves)
+
+For each reasoning phase in the Instructions section, generate one template:
+
+- `{% raw %}{# goal: ... #}{% endraw %}` as the FIRST line, derived verbatim from the Registry
+  Templates row for that template — the row IS the goal; there is no drift
+  between the table and the annotation. One `{% raw %}{# goal: ... #}{% endraw %}` block per
+  template: a long goal is one long line, never consecutive `{% raw %}{# ... #}{% endraw %}`
+  blocks (wrapped goals parse partially under the
+  prescreen).
+- An `[inference]` contract header (typed `input`/`output` fields only — no
+  `visibility`, no body parameter stanza), terminated by a lone `---` line.
+- Jinja2 variables matching the contract inputs, and only the contract inputs.
+- An expected JSON output shape.
+
+## Validation
+
+Do not report whether the output is valid. The create-skill Phase 3
+pre-check scripts and Phase 4 measure it; a self-reported pass is not
+evidence. Write so those checks pass: each goal one complete sentence on one
+line, every contract input consumed, every declared output named.
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "sk_name": "derived-skill-name",
+  "sk_description": "One-line description derived from user input",
+  "sk_body": "<complete SKILL.md markdown content>",
+  "template_bodies": [
+    { "path": "<basename>.j2", "content": "<complete .j2 content>" }
+  ]
+}
+```
+
+## Constraints
+
+- The SKILL.md body is the primary deliverable; templates are companions.
+- Do not add features, tools, or capabilities the user did not describe.
+- Do not generate manifest.yaml, process manifests, `input_mapping`,
+  `ordinal`, `compute_ref`, `convergence_field`, or `step_N_result`
+  references — all deprecated or removed vocabulary.
+- If the user description is too vague for a section, ask clarifying
+  questions before scaffolding. Do not generate TODO markers or stubs.

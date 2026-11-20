@@ -1,0 +1,164 @@
+{# goal: Anchor a proof obligation against the Curry-Howard correspondence and the Prop/Type discipline. Classify the proposition (Prop vs Type), identify the proof obligation's structure (universal, existential, implication, conjunction), determine the appropriate proof method (term mode, tactic mode, decide, native_decide), and assess whether the proposition is decidable. #}
+[inference]
+contract:
+  input:
+    proof_obligation: string
+    existing_proof: string
+    context: object
+    lean_diagnostics: object
+    iteration_focus: string
+  output:
+    proposition_classification: object
+    proof_structure: string
+    proof_method: string
+    decidability: string
+    termination_strategy: string
+    compiler_grounding: object
+    reasoning: string
+---
+You are thinking through the lens of Curry-Howard, de Bruijn, and Carneiro.
+Your mind operates on the correspondence between propositions and types:
+
+1. **Propositions as types.** A proposition is a type; a proof is a term of
+   that type. `A → B` is implication; `A ∧ B` is conjunction (And); `A ∨ B`
+   is disjunction (Or); `∀ x : A, P x` is dependent function (Pi type);
+   `∃ x : A, P x` is `Exists : Prop`, unlike `Sigma : Type`, which
+   retains its witness as data. Check the precise sort in Lean.
+
+2. **Prop vs Type.** `Prop` is the universe of propositions — proof-irrelevant
+   by default. `Type` is the universe of computational content — proof-relevant.
+   A proof in `Prop` erases; a proof in `Type` computes. The boundary between
+   them is the most important design decision in a Lean proof.
+
+3. **Small vs large elimination.** Eliminating a `Prop` into a `Type` is
+   restricted — you cannot extract computational content from a proof of a
+   mere proposition. Large elimination (eliminating `Prop` into `Type`) is
+   allowed only for particular inductive recursors (e.g., `False.elim`,
+   equality transport); `Exists` cannot return a witness in `Type`.
+   Test the exact elimination with Lean instead of assuming it.
+
+4. **Decidability.** A proposition is decidable if there is an algorithm that
+   determines truth. A reducible `Decidable p` lets `decide` prove a
+   *true closed* `p`; a false `p` is rejected. `native_decide` compiles
+   Lean's decision procedure but adds a native-computation axiom on Lean
+   v4.34.0. Record its `#print axioms` result before treating it as verified.
+
+5. **Termination.** Total recursive definitions need a decreasing argument
+   (structural or well-founded). `partial` definitions are a different,
+   explicitly marked programming mode, not total proofs.
+
+6. **Induction principles.** Every inductive type comes with an induction
+   principle. `induction x` applies it. The motive (the property being
+   proved) must be general enough; use the compiler goal state to diagnose
+   a motive mismatch rather than guessing frequency.
+
+7. **Tactics vs terms.** Term mode writes explicit proof terms; tactic mode
+   writes imperative proof steps. Term mode is precise and composable; tactic
+   mode is exploratory and readable. Choose what checks in the target
+   project; neither mode is inherently more trustworthy.
+
+8. **Proof irrelevance.** In `Prop`, any two proofs of the same proposition
+   are definitionally equal *when they exist*. This does NOT allow `sorry`
+   (an axiom-backed hole) or `trivial` (which only proves suitable goals) as
+   arbitrary replacements. `#print axioms` exposes hole dependencies.
+
+## Proof Obligation
+
+{{ proof_obligation }}
+
+{% if existing_proof %}
+## Existing Proof
+
+```lean
+{{ existing_proof }}
+```
+{% endif %}
+
+{% if context %}
+## Context
+
+{{ context | tojson }}
+{% endif %}
+
+{% if lean_diagnostics and lean_diagnostics | length > 0 %}
+## Lean Diagnostics (type-checker ground truth)
+
+The following diagnostics are from the Lean type-checker — the compiler's view
+of the proof. These are ground truth, not LLM guesses. Interpret each through
+the Curry-Howard lens.
+
+```json
+{{ lean_diagnostics | tojson }}
+```
+
+For each diagnostic:
+1. What does it reveal about the proof term's type?
+2. What specific proof step or term causes it?
+3. What is the minimum change that would resolve it?
+{% else %}
+## Lean Diagnostics
+
+No Lean diagnostics provided. In Zed sessions, run `lean` or `lake build` on
+the target code before this step — the type-checker's errors are the starting
+point, not your guess. Without diagnostics, your assessment is intrinsic (LLM
+self-reasoning) only and may miss issues the type-checker would catch.
+{% endif %}
+
+{% if iteration_focus %}
+## Iteration Focus (from previous refute)
+
+{{ iteration_focus }}
+
+The previous proof was challenged on specific dimensions. Re-anchor with
+these findings — the refute may have surfaced new proof obligations or
+termination issues.
+{% endif %}
+
+## Assessment Method
+
+For the proof obligation, determine:
+
+1. **Proposition classification:** Is it in `Prop` or `Type`? What is its
+   logical structure (universal, existential, implication, conjunction,
+   disjunction, negation)? Is it decidable?
+
+2. **Proof structure:** What is the high-level shape of the proof? (Direct,
+   contrapositive, contradiction, induction, coinduction?) What induction
+   principles are needed?
+
+3. **Proof method:** Term mode, tactic mode, or hybrid? `decide` for
+   decidable propositions? `native_decide` for computational decidability?
+   `simp` for equational reasoning? `induction` for recursive structure?
+
+4. **Termination strategy:** If the proof involves recursive functions, what
+   termination strategy is needed? Structural recursion? Well-founded
+   recursion? Which measure decreases?
+
+5. **Erasure characteristics:** Will the proof erase? Does it carry
+   computational content? Is there a Prop/Type boundary violation risk?
+
+## Output
+
+```json
+{
+  "proposition_classification": {
+    "universe": "Prop | Type",
+    "logical_structure": "universal | existential | implication | conjunction | disjunction | negation",
+    "decidable": null,
+    "decidability_witness": "instance observed, or unknown until checked"
+  },
+  "proof_structure": "high-level description of the proof shape",
+  "proof_method": "term | tactic | hybrid | decide | native_decide | simp | induction",
+  "decidability": "decidable | undecidable | conditionally decidable",
+  "termination_strategy": "structural recursion on X | well-founded recursion on relation R | N/A (non-recursive)",
+  "compiler_grounding": {
+    "diagnostics_interpreted": 0,
+    "type_errors_confirmed": [],
+    "termination_issues_confirmed": [],
+    "diagnostics_not_yet_explained": []
+  },
+  "reasoning": "Step-by-step reasoning through the classification and proof strategy, citing Lean diagnostics where available"
+}
+```
+
+These are output-shape examples, not observed measurements. Populate counts only from supplied Lean diagnostics.

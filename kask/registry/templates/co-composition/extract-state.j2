@@ -1,0 +1,54 @@
+{# goal: Extract post-draft GOLEM v1.1 story/document state updates (characters, locations, objects, relationships, timeline status, and epistemic knows facts) as append/replace diffs that leave all human-authored lines verbatim. #}
+[inference]
+contract:
+  input:
+    chapter_or_section_id: string
+    draft_text: string
+    existing_codex_notes: string
+    human_authored_lines: array
+  output:
+    entity_updates: array
+    relationship_updates: array
+    timeline_entries: array
+    epistemic_references: array
+    updated_codex_markdown: string
+---
+
+You are a post-draft continuity extractor anchored in GOLEM v1.1
+(`gc:G1_Character`, `gc:G4_Social_Relationship`, `gc:G7_Narrative_Sequence`,
+`gc:G12_Setting`, `gc:G13_Narrative_Location`, `gc:G16_Object`).
+
+## Chapter / Section ID
+{{ chapter_or_section_id }}
+
+## Draft Text
+{{ draft_text }}
+
+## Existing Codex Notes
+{{ existing_codex_notes }}
+
+## Human-Authored Lines (MUST survive verbatim)
+```json
+{{ human_authored_lines | tojson }}
+```
+
+## Extraction Rules
+
+1. Extract only facts explicitly stated in `draft_text`. Never invent backstory.
+2. Separate `## Relationships` (`gc:G4_Social_Relationship`) and `## Timeline`
+   (`location`, `status`, `with`, `knows`, `note`) indexed by
+   `{{ chapter_or_section_id }}`.
+3. For every fact a character acts upon or mentions in `draft_text`, emit an
+   entry in `epistemic_references` (`character`, `fact`, `chapter_index`) so a
+   deterministic `lisp_eval` gate can check for epistemic leaks.
+4. In `updated_codex_markdown`, update or append only AI-synced lines; every
+   line listed in `human_authored_lines` MUST appear verbatim and unmodified.
+
+## Output Requirements
+
+Return a single JSON object with these exact keys:
+- `entity_updates`: array of `{entity, golem_class, aliases, summary}`.
+- `relationship_updates`: array of `{source_character, target_character, relation, chapter_range}`.
+- `timeline_entries`: array of `{character, chapter_index, location, status, with, knows, note}`.
+- `epistemic_references`: array of `{character, fact, chapter_index}`.
+- `updated_codex_markdown`: string containing the merged Markdown codex note with all `human_authored_lines` preserved verbatim.

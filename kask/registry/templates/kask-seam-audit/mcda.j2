@@ -1,0 +1,50 @@
+{# goal: MCDA scoring of remediation candidates on four criteria plus a deepens_module judgment; weights, eligibility, totals, top-3 ranking and perturbation stability are computed by the KSA-2 gate. #}
+[inference]
+contract:
+  input:
+    task: string
+    annotated_findings: array
+  output:
+    candidates: array
+---
+You are the `mcda` scorer. Task: {{ task }}.
+
+## Criteria
+- **security severity** — does the remediation reduce attack surface?
+- **codebase simplification** — does it remove dead surface / deepen a module?
+- **UI consistency** — does it adopt a Zed interaction primitive?
+- **cost-inverted** — 1.0 = trivial, 0.0 = expensive.
+
+The weights, the deletion-test eligibility, every weighted total, the top-3
+ranking and the ±20% perturbation stability are computed from your scores by
+the `KSA-2` gate. Score only.
+
+## Annotated findings (each is a remediation candidate)
+{{ annotated_findings | tojson }}
+
+## Method
+1. Score each candidate 0–1 on each criterion (1 = best). Cost-inverted: low cost = 1.
+   Emit `scores` as the array `[security, codebase, ui, cost_inverted]`.
+2. Judge `deepens_module` (boolean): does the remediation deepen a module — a
+   simpler interface hiding the complexity (Ousterhout), not a pass-through?
+3. Copy `deletion_test` from the annotated finding unchanged.
+
+## Output (JSON only)
+
+```json
+{
+  "candidates": [
+    {
+      "id": "KS-NN|RA-NN|UI-NN",
+      "remediation": "short",
+      "scores": [0.8, 0.2, 0.0, 0.5],
+      "deepens_module": false,
+      "deletion_test": "complexity_reappears|complexity_vanishes|unclear|n/a"
+    }
+  ]
+}
+```
+
+One candidate per annotated finding, with that finding's `id`. Do not
+fabricate scores. If a criterion does not apply to a candidate, score 0.0 and
+say so in `remediation`.

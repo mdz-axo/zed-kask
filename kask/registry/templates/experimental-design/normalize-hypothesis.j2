@@ -1,0 +1,70 @@
+{# goal: Normalize upstream framing and falsifiability artifacts into `hypothesis-spec-v1`, preserving provenance and returning missing load-bearing fields to their owner rather than inventing them. #}
+[inference]
+contract:
+  input:
+    framing_artifact: object
+    falsifiability_artifact: object
+    source_provenance: array
+    constraints: object
+    unresolved_assumptions: array
+  output:
+    hypothesis_spec: object|null
+    missing_fields: array
+    owner_returns: array
+    framer_missing: array
+    falsifiability_missing: array
+    provenance_missing: array
+    constraints_missing: array
+---
+
+Build one `hypothesis-spec-v1` from the upstream artifacts. This is normalization, not new hypothesis generation.
+
+## Framing artifact
+
+{{ framing_artifact | tojson }}
+
+## Falsifiability artifact
+
+{{ falsifiability_artifact | tojson }}
+
+## Provenance, constraints and assumptions
+
+- source_provenance: {{ source_provenance | tojson }}
+- constraints: {{ constraints | tojson }}
+- unresolved_assumptions: {{ unresolved_assumptions | tojson }}
+
+## Contract
+
+The normalized object carries:
+
+- `spec_version="hypothesis-spec-v1"`, stable `spec_id`, optional predecessor and revision reason;
+- research question and domain;
+- H1, H0 and material rivals, with stable id, statement, prediction, falsifier and provenance; retain unresolved threats without claiming they were tested;
+- unit/population/system, intervention/exposure, comparator, estimand and observables;
+- practical effect or equivalence/non-inferiority margin when applicable;
+- ethics, safety, resource and feasibility constraints;
+- references to the admitted target, counterfactuals and discrimination matrix supplied by `falsifiability`;
+- source provenance and unresolved assumptions.
+
+Never force PICO labels onto a non-clinical domain. Never create a replacement discrimination matrix here.
+
+Missing ownership:
+
+- question, H1/H0, unit, intervention/exposure, comparator, estimand, outcomes or required margin → `hypothesis-framer`;
+- rivals, predictions, falsifiers, admission, counterfactuals or discrimination matrix → `falsifiability`;
+- missing provenance or constraints → `operator_or_source`.
+
+`missing_fields` contains each absent load-bearing field exactly once. `owner_returns` contains one object per missing field with `field`, `owner` and a source-bound `reason` identifying the absent evidence. Emit the four partitions in the same output, not a later caller reconstruction:
+
+- `framer_missing`: exactly the fields owned by `hypothesis-framer`;
+- `falsifiability_missing`: exactly the fields owned by `falsifiability`;
+- `provenance_missing`: provenance or unresolved-assumption disclosure gaps owned by `operator_or_source`;
+- `constraints_missing`: ethical, safety, resource or feasibility constraint gaps owned by `operator_or_source`.
+
+The partitions are disjoint and their union equals `missing_fields`; each owner row must agree with its partition. Preserve all owners even though ED-0 returns only the earliest pipeline status. Derive missingness from the retained source text and provenance, not from a previous missing-field list or a desired ready result. Cite the exact artifact/pointer in each reason; explicit unknowns remain unknown. A documented unresolved scientific assumption is not an absent disclosure; an inapplicable margin is not a missing required margin. Conversely, a claim that a source exists without retained evidence does not fill its field. Preserve scoped threats and prospective matrix semantics; never promote proposed implications into observed eliminations or corroborations.
+
+Preserve upstream unresolved threats and missing tests. Scoped controls do not resolve broader threats, and proposed tests are not observations.
+
+Return JSON with exactly the seven fields declared above. `missing_fields` and the four owner partitions are arrays of field-name strings; `owner_returns` contains the field/owner/reason records described above.
+
+If any load-bearing field is missing, `hypothesis_spec` is null; with none missing it is a nonempty `hypothesis-spec-v1` object. Do not emit completeness booleans or an ED-0 verdict—the skill computes them deterministically from these arrays.

@@ -1,0 +1,107 @@
+{# goal: Reconcile the file's seams against Step 0's survival records (deciding fresh only when Step 0 was skipped), then apply the essentialist deletion test (G1): is full re-application necessary, or is surgical marking + pinning sufficient? #}
+[inference]
+contract:
+  input:
+    target_file: string
+    survival_records: object|null
+    assessment_result: object
+    inventory_result: object
+    task: string
+  output:
+    seam_decisions: array
+    strategy: string
+    rationale: string
+    cruft_identified: array
+---
+
+You are an essentialist evaluator for the upstream-rebase process. Your job
+is first to reconcile each seam's survival against Step 0's records
+(deciding fresh only when no records were supplied), and only then to apply
+the deletion test (G1) to decide whether full
+re-application is necessary or whether surgical marking + pinning is
+sufficient.
+
+## Context
+
+**Target file:** `{{ target_file }}`
+**Assessment:** {{ assessment_result }}
+**Functional inventory:** {{ inventory_result }}
+**User task:** {{ task }}
+
+## Seam survival (before G1)
+
+{% if survival_records %}
+**Step 0's survival records (authoritative):**
+
+```json
+{{ survival_records | tojson }}
+```
+
+For each D-seam the file carries, reconcile against the record: confirm the
+recorded decision (retire / simplify / retain / needs-operator-decision)
+still stands given the assessment and inventory evidence. Where the new
+evidence conflicts with a recorded decision, mark that seam
+**needs-operator-decision** with the conflict named — never silently
+override the record.
+{% else %}
+**No Step 0 records supplied** (Step 0 was skipped — a minimal single-file
+rebase). Decide fresh, per seam: state its user-visible purpose, the
+operator's current requirement, and the upstream function at the new tip
+that does or does not deliver that purpose:
+
+- **retire** — upstream delivers the purpose, or the operator has deprecated
+  it (a DIVERGENCE.md row describing a deprecated capability is history, not
+  authority). The kask code, settings, tests, and row are removed.
+- **simplify** — keep only the part upstream still lacks.
+- **retain** — upstream does not deliver it and the requirement stands.
+- **needs-operator-decision** — the requirement itself is ambiguous.
+
+Do not default to retain.
+{% endif %}
+
+A same-named function, a clean conflict resolution, or a green compile is
+not evidence of equivalence. If every seam in the file retires, `strategy`
+is "take-upstream" and G1 does not apply.
+
+## The deletion test (G1)
+
+Apply Ousterhout's deletion test in both directions:
+
+1. **From the caller perspective**: If I delete the full re-application and
+   instead just add `// zed-kask:` markers + pinning tests to the fork's
+   existing file, does complexity reappear? If the fork's file already
+   compiles and is correctly ordered (no use-before-def, no duplicates),
+   then surgical marking + pinning achieves the same end state at lower risk.
+
+2. **From the artifact perspective**: If I delete the surgical approach and
+   do full re-application, does behavior vanish? No — the end state is
+   identical (compiles, ordered, marked, pinned). But full re-application
+   risks introducing NEW bugs in ~2000 lines of re-insertion.
+
+## Decision
+
+- If the fork's file **compiles cleanly** AND **has no use-before-def or
+  duplicate-definition bugs** AND **is correctly ordered** (DAG-compliant):
+  → **surgical** (mark + pin). Lower risk, identical end state.
+
+- If the fork's file **has compile bugs** OR **ordering violations** OR
+  **accumulated cruft that can't be fixed surgically**:
+  → **full re-application**. Necessary to fix the structural issues.
+
+## Output
+
+Produce a JSON object with:
+- `seam_decisions`: array of {d_number, purpose, decision: "retire"|"simplify"|"retain"|"needs-operator-decision", upstream_evidence, counterexample} — one entry per D-row the file carries
+- `strategy`: "take-upstream", "surgical", or "full-reapplication"
+- `rationale`: string (one paragraph explaining the decision)
+- `cruft_identified`: array of {type, location, description} for any cruft found
+  (use-before-def, duplicate definitions, dead code, stale refactor artifacts)
+
+Do NOT emit a `full_reapplication` boolean — it is `(strategy == "full-reapplication")`,
+a value the caller derives from the `strategy` you return.
+
+## Constraints
+
+- Do NOT modify any files. This is a read-only decision step.
+- Be honest: if the file has bugs, recommend full re-application. If it's clean,
+  recommend surgical. Don't gold-plate.

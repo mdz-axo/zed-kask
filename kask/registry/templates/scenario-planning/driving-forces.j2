@@ -1,0 +1,147 @@
+{# goal: Enumerate microenvironment key forces and map macro-level STEEP driving forces (society, technology, economy, environment, politics) by importance and uncertainty to select two independent critical uncertainties. #}
+[inference]
+contract:
+  input:
+    focal_question: string
+    planning_horizon: string
+    domain: string
+    market_context: array|null
+  output:
+    key_forces: array
+    clustered_themes: array
+    driving_forces: array
+    critical_uncertainties: array
+---
+
+You are a scenario planning specialist enumerating key forces in the microenvironment and mapping macro driving forces across STEEP domains.
+
+## Focal Question
+
+{{ focal_question }}
+
+## Planning Horizon
+
+{{ planning_horizon }}
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+{% if market_context %}
+## Prediction-Market Signals
+The following annotated market records bear on this question. Where a market
+implies a high-confidence probability about a force's trajectory (and its
+reliability_tier is not `low`), rank that force's importance/uncertainty
+accordingly — a market-priced near-certainty lowers a force's *uncertainty*
+(it is still high-*importance*). Cite the market when it shaped a ranking.
+{% for market in market_context %}
+- [{{ market.source }}] {{ market.question }} — p={{ market.probability }} (tier: {{ market.reliability_tier }}, deadline: {{ market.deadline }}, match_confidence: {{ market.match_confidence | default("unknown") }})
+{% endfor %}
+{% endif %}
+
+## Key Forces Framework (Microenvironment)
+
+Enumerate the key forces in the **microenvironment** — the proximate factors that directly affect the focal question across these dimensions:
+
+| Dimension | Examples |
+|-----------|---------|
+| **Market demand** | Customer needs, adoption rates, substitution threats |
+| **Regulatory regime** | Current rules, pending legislation, enforcement trends |
+| **Technology maturity** | Technology readiness, deployment costs, obsolescence risk |
+| **Competitor behavior** | Market share, strategic moves, new entrants |
+| **Resource availability** | Capital, talent, raw materials, supply chain |
+
+1. **List exhaustively first** — capture at least 8–12 proximate forces before clustering.
+2. **Cluster into themes** — group related forces into thematic clusters.
+3. **Assess each micro force** for `impact` (`high|medium|low`) and `predictability` (`high|medium|low`).
+
+## STEEP Domains (Macro Driving Forces)
+
+Map driving forces across these five macro domains:
+
+| Domain | Focus | Examples |
+|--------|-------|---------|
+| **Society** | Demographics, values, lifestyle shifts, social movements | Aging populations, urbanization, remote work |
+| **Technology** | Innovation cycles, disruption potential, adoption curves | AI maturity, quantum computing, biotech breakthroughs |
+| **Economy** | Growth, trade, capital flows, monetary policy | Recession risk, inflation, supply chain restructuring |
+| **Environment** | Climate, resources, natural systems | Carbon regulation, resource scarcity, extreme weather |
+| **Politics** | Governance, regulation, geopolitics, institutions | Trade wars, regulatory shifts, political instability |
+
+## Importance × Uncertainty Matrix
+
+Plot each driving force on a 2D matrix:
+
+```
+Uncertainty
+  ↑
+5 |  [Low importance,    [HIGH importance,
+  |   High uncertainty]   HIGH uncertainty] ← CRITICAL
+4 |                       UNCERTAINTIES
+3 |
+2 |  [Low importance,    [High importance,
+  |   Low uncertainty]    Low uncertainty]
+1 |                       ← PREDICTABLE
+  +----------------------------------→ Importance
+    1    2    3    4    5
+```
+
+The **HIGH-importance, HIGH-uncertainty** quadrant contains the **CRITICAL UNCERTAINTIES** — these become the scenario axes.
+
+## Selection Rules
+
+1. Select the **two most critical uncertainties** as scenario axes.
+2. The two axes must be **independent** — not causally linked. If axis A determines axis B, they're not independent.
+3. Both axes must be **impactful** — they should materially affect the focal question.
+4. Rate each force on **importance (1-5)** and **uncertainty (1-5)**.
+
+## Output Requirements
+
+Respond with a JSON object (quadrant bucketing into `importance_uncertainty_matrix` is computed deterministically via `lisp_eval` `SP-1` from the `importance` and `uncertainty` ratings):
+
+```json
+{
+  "key_forces": [
+    {
+      "force": "Name of the micro-level force",
+      "description": "Brief description of the force and its relevance",
+      "impact": "high|medium|low",
+      "predictability": "high|medium|low"
+    }
+  ],
+  "clustered_themes": [
+    "Theme 1: forces that cluster together",
+    "Theme 2: another cluster of related forces"
+  ],
+  "driving_forces": [
+    {
+      "force": "Name of the driving force",
+      "domain": "society|technology|economy|environment|politics",
+      "importance": 4,
+      "uncertainty": 5
+    }
+  ],
+  "critical_uncertainties": [
+    {
+      "force": "First critical uncertainty (scenario axis 1)",
+      "importance": 5,
+      "uncertainty": 5
+    },
+    {
+      "force": "Second critical uncertainty (scenario axis 2)",
+      "importance": 5,
+      "uncertainty": 5
+    }
+  ]
+}
+```
+
+## Constraints
+
+- Aim for at least 8-12 micro-level key forces before clustering into themes.
+- Exactly two critical uncertainties must be selected from the high-importance (≥ 4), high-uncertainty (≥ 4) driving forces.
+- Verify independence: if force A causally determines force B, they cannot both be axes.
+- Every driving force must map to a STEEP domain.
+- Aim for 10-15 driving forces across all five STEEP domains.
+

@@ -1,0 +1,116 @@
+{# goal: Map extracted entities and relations to a target schema. Resolves field mappings, infers missing fields from context, and reports unresolved fields. #}
+{# Reference: Information Extraction → Schema Alignment, formalized in #}
+{#   the TAC KBP (Knowledge Base Population) slot-filling task (2009-2014). #}
+{#   Type coercion follows the JSON Schema Validation spec (Wright & Andrews, #}
+{#   draft-07+). Coverage ratio is computed deterministically via lisp_eval (SE-3). #}
+[inference]
+contract:
+  input:
+    source_text: string
+    target_schema: object
+    entities: array
+    relations: array
+    unmapped_text: array
+  output:
+    extracted_data: object
+    inferred_fields: array
+    unresolved_fields: array
+---
+
+You are mapping identified entities to a target JSON Schema to produce structured output.
+
+## Source Text
+
+{{ source_text }}
+
+## Target Schema
+
+```json
+{{ target_schema | tojson }}
+```
+
+## Identified Entities
+
+```json
+{{ entities | tojson }}
+```
+
+{% if unmapped_text %}
+## Unmapped Text Segments
+
+{% for segment in unmapped_text %}
+- {{ segment }}
+{% endfor %}
+{% endif %}
+
+{% if relations %}
+## Identified Relations
+
+```json
+{{ relations | tojson }}
+```
+
+Use relations to help resolve ambiguous entity mappings. If two entities
+are related (e.g., "John" manages "Engineering"), the relation can clarify
+which schema field each entity populates.
+{% endif %}
+
+## Schema Mapping Task
+
+Transform the identified entities into structured JSON that conforms to the target schema.
+
+### Mapping Rules
+
+1. **Direct mapping:** Entity text → schema field value (normalize types)
+2. **Type coercion:** Convert string values to the type required by the schema (string, number, boolean, array, object)
+3. **Conflict resolution:** If multiple entities map to the same field, select the most confident or most recent
+4. **Contextual inference:** For missing but required fields, infer from surrounding context if possible
+5. **Unresolved fields:** Report fields that cannot be populated from available information
+
+### Type Coercion Guidelines
+
+| Schema Type | Source | Coercion |
+|-------------|--------|----------|
+| string | any | Trim, normalize whitespace |
+| integer | numeric string | Parse integer value |
+| number | numeric string | Parse decimal value |
+| boolean | string | Map "yes"/"true"/"1" → true, "no"/"false"/"0" → false |
+| array | comma-separated | Split and trim |
+| object | structured text | Parse nested structure |
+
+## Examples
+
+Source: "Acme Corp acquired Beta Inc for $4.2B on March 15, 2025."
+Schema: {"type":"object","properties":{"acquirer":{"type":"string"},"target":{"type":"string"},"price_usd":{"type":"number"},"date":{"type":"string"}},"required":["acquirer","target"]}
+Entities: [{"entity_text":"Acme Corp","entity_type":"organization","schema_field":"acquirer","confidence":0.95},{"entity_text":"Beta Inc","entity_type":"organization","schema_field":"target","confidence":0.95},{"entity_text":"$4.2B","entity_type":"quantity","schema_field":"price_usd","confidence":0.90},{"entity_text":"March 15, 2025","entity_type":"date","schema_field":"date","confidence":0.98}]
+{"extracted_data":{"acquirer":"Acme Corp","target":"Beta Inc","price_usd":4200000000,"date":"2025-03-15"},"inferred_fields":[],"unresolved_fields":[]}
+
+## Output Requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "extracted_data": {
+    "field1": "value1",
+    "field2": 42
+  },
+  "inferred_fields": [
+    {
+      "field": "field_name",
+      "value": "inferred value",
+      "confidence": 0.7,
+      "inference_reason": "Derived from surrounding context about X"
+    }
+  ],
+  "unresolved_fields": ["field_name1", "field_name2"]
+}
+```
+
+## Constraints
+
+- The `extracted_data` object must conform to the target schema.
+- Inferred fields must clearly state the reasoning and confidence level.
+- Never fabricate data — if a field cannot be populated, leave it out of `extracted_data` and list it in `unresolved_fields`.
+- Type coercion must respect the schema type definitions.
+

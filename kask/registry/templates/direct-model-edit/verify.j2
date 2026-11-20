@@ -1,0 +1,87 @@
+{# goal: Tabulate the verification of an applied weight edit from the gate results: answer-class changes, the attribution verdict, the preservation verdict and the sibling control. #}
+[inference]
+contract:
+  input:
+    model_name: string
+    edit_summary: object
+    gate_results: object
+    control_model_result: object
+  output:
+    verification_table: array
+    attribution: object
+    collateral_damage: array
+    verdict: object
+---
+
+You are reporting the verification of an applied weight edit. The measuring and the deciding are already done: `dme-measure.jq` paired the answers before and after, and the gates returned their verdicts. Your job is to lay those results out and say plainly what they do and do not show. Compute nothing.
+
+## Doctrine
+
+The anchor's verification found MATH-500 rising 7.9% to 48.1% and token-limit hits falling from 93% to 33%. Its rescue accounting was the honest part: 576 of 579 rescued answers had previously hit the output limit without finishing. The authors' own words: letting the model finish answers it could already work out "is not the same as making a model better at math."
+
+A sibling control completes the verification. The anchor ran the same recipe on a Gemma model that rarely loops, and nothing moved beyond about one point. A control that gains as much as the target suggests a general booster, not a targeted fix.
+
+## Target
+
+- **Model**: {{ model_name }}
+
+## Edit summary (from the edit receipts)
+
+```json
+{{ edit_summary | tojson }}
+```
+
+## Gate results (as returned by `lisp_eval`)
+
+```json
+{{ gate_results | tojson }}
+```
+
+## Sibling control result (same recipe, non-failing model)
+
+```json
+{{ control_model_result | tojson }}
+```
+
+## Reporting process
+
+1. **Copy the paired counts** from the DME-3 result into the table: rescues from truncated answers, rescues from finished-wrong answers, regressions, truncation before and after.
+2. **State the attribution verdict, its notes and the operation class verbatim.** If a note says finished-answer changes were untestable, say so beside the verdict. If the operation class is `uniform-plus-direction` or `mixed-sign`, the edit was not a plain removal: say so.
+3. **State the preservation verdict**: the DME-3 result on the preservation set. `net-loss-established` there is collateral damage.
+4. **State the intervention results**: DME-2c and DME-2d with their notes, or that the direction is an untested candidate. A `direction-specific` verdict carrying the note `control-change-is-itself-established` is reported with the control's net change beside it.
+5. **State the control**: the sibling's delta and its DME-3b verdict. Name any general-booster suspicion out loud.
+
+## Output requirements
+
+Respond with a JSON object:
+
+```json
+{
+  "verification_table": [
+    {"metric": "truncated answers", "before": 1000, "after": 424},
+    {"metric": "rescues from truncated answers", "count": 576},
+    {"metric": "rescues from finished-wrong answers", "count": 3},
+    {"metric": "regressions", "count": 5}
+  ],
+  "attribution": {
+    "verdict": "mostly-unblocking",
+    "operation": "uniform-minus-direction",
+    "notes": [],
+    "what_it_does_not_show": "…"
+  },
+  "collateral_damage": [
+    {"set": "preservation", "verdict": "net-change-not-established"}
+  ],
+  "verdict": {
+    "direction": "direction-specific | candidate, untested",
+    "control_behaved": true,
+    "open_findings": 0
+  }
+}
+```
+
+## Constraints
+
+- Every number is copied from `gate_results`, `edit_summary` or `control_model_result`. If a number is not there, write "not measured".
+- A gate refusal is reported as the refusal. Do not restate it as a pass, and do not fill in what it was missing.
+- The control is not optional: a report without the sibling control is an unverified claim of specificity.

@@ -1,0 +1,53 @@
+[inference]
+contract:
+  input:
+    improvement_plan: object
+    current_config: object
+    context: object
+  output:
+    updated_config: object
+    execution_trace: array
+    cost_breakdown: object
+    proposed_artifact: object
+---
+{# goal: Execute Scaffolding Improvement via Prompt Optimization (§6.1) — apply one of four paradigms (scalar-feedback, qualitative-feedback, population-based evolution, textual gradient) to update the prompt component p_t. #}
+{# Scaffolding Improvement — Prompt Optimization (§6.1) #}
+{# Implements: Ren et al. (2026) Section 6.1 #}
+{# Population-based evolution: the SKILL.md Prompt evolution (GEPA) sub-loop and its gpa-* templates #}
+You are executing the self-induced update operator 𝒰 for Scaffolding Improvement via Prompt Optimization.
+
+## What You Know
+
+Improvement plan: {{ improvement_plan | tojson }}
+Current configuration: {{ current_config | tojson }}
+Context: {{ context | default({}) | tojson }}
+
+## What You Must Do
+
+Apply the prompt optimization paradigm specified in the improvement plan:
+
+### Scalar-Feedback Optimization (§6.1.1)
+- Search over discrete prompt space 𝒫 for p* = argmax f(p).
+- Methods: APE (LLM proposes + search), OPRO (meta-prompt with trajectory), RLPrompt (RL on discrete text), InstructZero (Bayesian Optimization in latent space).
+
+### Qualitative-Feedback Refinement (§6.1.2)
+- Iterative critique-and-revise: p_{t+1} = Refine(p_t, c_t) where c_t = Critique(Output(p_t)).
+- Methods: Self-Refine, Reflexion (verbal introspection), MAPS (rule induction), ACE (context engineering with Generator-Reflector-Curator).
+
+### Population-Based Evolution (§6.1.3)
+- Treat prompts as genes in a population P_t = {p^(i)}.
+- Apply semantic operators: Selection, Crossover (LLM merges parent strengths), Mutation (LLM introduces variations).
+- Methods: EvoPrompt, Promptbreeder (self-referential mutation prompt evolution), GEPA (reflective prompt evolution with meta-level reflection).
+- **Delegation**: If population-based evolution with Pareto frontier management is needed, run self-improvement's Prompt evolution (GEPA) sub-loop (prompt artifacts only). It keeps a Pareto frontier and a bounded convergence check; hypervolume is not computed by any tool, so do not rely on a hypervolume figure from it.
+
+### Textual Gradient Optimization (§6.1.4)
+- Formal directional feedback: p_{t+1} = p_t ⊕ g(p_t) where g(p_t) is a textual gradient.
+- Methods: APO, TextGrad (automatic differentiation via text), MetaTextGrad (meta-optimization of optimizer prompts).
+
+## Constraints
+
+- The prompt p_t is the structural instruction layer reused across interactions (system prompts, policy templates).
+- Context optimization (exemplar selection, retrieval assembly) is a different target — do not conflate.
+- If using population-based evolution, prefer the Prompt evolution (GEPA) sub-loop for Pareto frontier management.
+
+Respond with a JSON object containing `updated_config`, `execution_trace`, `cost_breakdown`, and `proposed_artifact`.

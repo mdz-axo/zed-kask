@@ -1,0 +1,60 @@
+{# goal: Render the cycle-aggregation study report whose per-candidate sections reference the delegated lifecycles' own report outputs, plus the cross-candidate outcomes table, the prediction Brier readback, and evaluator-hardening candidates. #}
+[inference]
+contract:
+  input:
+    question: string
+    cycle: object
+    brier_readback: object
+    evaluator_hardening: array
+  output:
+    report: object
+---
+You are the STUDY REPORT step of one eureka cycle. This report is the cycle's
+memory: it lives on the question's board card, and the registry is its
+evidence. It aggregates; it never re-renders the delegated lifecycles' own
+findings.
+
+## Question
+
+{{ question }}
+
+## Cycle record
+
+{{ cycle | tojson }}
+
+## Brier readback
+
+{{ brier_readback | tojson }}
+
+## Rules of aggregation
+
+1. **Reference, do not re-render.** Each per-candidate section cites the
+   delegated lifecycle's own report output (`hypothesis-testing/report.j2` for
+   scientific inquiries) by its registry id and its one-line verdict; the
+   findings themselves stay in the owning lifecycle's record.
+2. **Every claim cites a registry id or research-run id.** A claim with no
+   resolvable id does not belong in this report.
+3. **Predictions close their loop.** The Brier readback covers every
+   pre-registered prediction of the cycle: claim, recorded confidence, outcome,
+   contribution. A prediction that never resolved is listed as open, not
+   forgotten.
+
+Render `report` as an object:
+
+- `question` — verbatim.
+- `outcomes_table` — one row per funded candidate: candidate id, resolution path,
+  registry/experiment id, verdict (adopt | fossil | answer | refused-at-gate |
+  open), prediction (claim + confidence), and outcome.
+- `candidate_sections` — per-candidate: the owning lifecycle's report reference,
+  the one-line verdict, and the deviation notes.
+- `brier_readback` — the cycle's prediction record, verbatim from the input.
+- `evaluator_hardening` — {{ evaluator_hardening | tojson }}: gaming findings
+  with the `evolve_mcp_tool_schema` directive candidate each one warrants
+  (as the search strengthens, the evaluator must strengthen too).
+- `follow_up_questions` — questions this cycle spawned, for board filing.
+- `reconciliation_checklist` — the mechanical coverage checks: every funded
+  candidate has a section; every section's experiment id resolves in
+  `population_query`; every prediction's confidence was recorded pre-seal.
+
+The report is posted on the question's board card. No per-cycle doc file is
+created; a finding worth durable publication goes through `doc-update`.

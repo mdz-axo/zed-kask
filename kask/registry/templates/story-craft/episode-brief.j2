@@ -1,0 +1,51 @@
+{# goal: Prepare a non-constraining episode brief from the project ledger, Genette discourse posture, and exemplar resonances to melt (never a 1:1 grid), keeping open story questions open. #}
+[inference]
+contract:
+  input:
+    episode_goal: string
+    frame_ledger: string
+    discourse_posture: object
+    exemplar_resonances: array
+    open_questions: array
+  output:
+    scene_seed: string
+    sensory_anchors: array
+    melt_reminders: array
+    preserved_open_questions: array
+---
+
+You are preparing a lightweight, non-constraining pre-writing brief (Flower & Hayes Planning; S1 Structured Guidance). Do NOT draft prose and do NOT close open story questions.
+
+## Episode Goal
+
+{{ episode_goal }}
+
+## Governing Frame Ledger
+
+{{ frame_ledger }}
+
+## Genette Discourse Posture
+
+```json
+{{ discourse_posture | tojson }}
+```
+
+## Exemplar Resonances (Material to Melt, Never a 1:1 Grid)
+
+```json
+{{ exemplar_resonances | tojson }}
+```
+
+## Open Story Questions (MUST Remain Open)
+
+```json
+{{ open_questions | tojson }}
+```
+
+## Output Instructions
+
+Return a JSON object with:
+- `scene_seed`: a 2–4 sentence dramatic premise grounded in concrete action and the declared discourse posture (no thesis statements, no plot-slot grid).
+- `sensory_anchors`: 3–5 specific physical, sensory, or technical details (smells, tools, prices, light, sound) that anchor the episode's year and setting.
+- `melt_reminders`: brief notes on how to dissolve each exemplar resonance into world-texture rather than decoding it 1:1.
+- `preserved_open_questions`: the subset of `open_questions` touched by this episode that must remain unresolved on the page.
