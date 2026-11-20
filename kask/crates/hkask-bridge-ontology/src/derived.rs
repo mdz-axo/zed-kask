@@ -2478,6 +2478,44 @@ pub const DERIVED_CONCEPTS: &[DerivedConcept] = &[
         constituents: &["narrative", "character", "work"],
         authority: "operator ruling 2026-11-18 (co-composition research study); Pianzola et al., GOLEM Ontology v1.1, doi:10.5281/zenodo.14911396; Genette, Narrative Discourse (1980), doi:10.2307/1770890",
     },
+    DerivedConcept {
+        term: "software_audit",
+        aliases: &["protocol audit", "codebase audit"],
+        identity: "systematic, evidence-cited examination of a software codebase against stated specifications or invariants, separating detection from rework",
+        definition: "A software-engineering audit composing DPV 2.3's dpv:Audit ('a systematic examination or evaluation of records, processes, or systems towards a specific objective such as to assess accuracy, compliance, effectiveness, or performance') with CSO 3.5's cso:software_verification and cso:conformance_testing and Fagan's inspection discipline (fagan_inspection: defect and compliance detection separated from code mutation, with every non-absent claim grounded in verified file:line evidence).",
+        constituents: &[
+            "audit",
+            "software verification",
+            "conformance testing",
+            "fagan_inspection",
+        ],
+        authority: "operator ruling 2026-11-20 (Nostr/Blossom/Wallet protocol audit); CSO 3.5 (cso:software_verification, cso:conformance_testing); DPV 2.3 (dpv:Audit); Fagan (1976)",
+    },
+    DerivedConcept {
+        term: "protocol_specification",
+        aliases: &["protocol spec", "wire specification"],
+        identity: "a published specification document defining wire formats, event or message schemas, state transitions, and conformance rules for a communication protocol",
+        definition: "A formal or semi-formal specification of a communication protocol composing CSO 3.5's cso:communication_protocol and cso:formal_specification with BIBO 1.3's bibo:Specification ('a document describing a specification'). Distinguishes canonical upstream protocol definitions (e.g., Nostr NIPs, Blossom BUDs, Cashu NUTs, Lightning BOLTs/LUDs) and their lifecycle status (active, draft, deprecated, unrecommended) from local implementation code or design notes.",
+        constituents: &[
+            "communication protocol",
+            "formal specification",
+            "specification",
+        ],
+        authority: "operator ruling 2026-11-20 (Nostr/Blossom/Wallet protocol audit); CSO 3.5 (cso:communication_protocol, cso:formal_specification); BIBO 1.3 (bibo:Specification)",
+    },
+    DerivedConcept {
+        term: "gap_analysis",
+        aliases: &["conformance gap analysis", "capability gap analysis"],
+        identity: "structured comparison between a target specification or requirement set and verified implemented state, classifying each delta by conformance status and routing action",
+        definition: "A requirements and conformance delta assessment composing CSO 3.5's cso:requirements_analysis and cso:conformance_testing with DPV 2.3's dpv:Audit: enumerates each target capability, verifies current implementation depth against code evidence, and classifies each unimplemented or partial delta by explicit architectural and policy routing criteria.",
+        constituents: &[
+            "requirements analysis",
+            "conformance testing",
+            "audit",
+            "protocol_specification",
+        ],
+        authority: "operator ruling 2026-11-20 (Nostr/Blossom/Wallet protocol audit); CSO 3.5 (cso:requirements_analysis, cso:conformance_testing); DPV 2.3 (dpv:Audit)",
+    },
 ];
 /// Normalization matches the onto_anchor tool's: lowercase alphanumeric
 /// characters only, separators and case folded away.
@@ -2517,6 +2555,24 @@ mod tests {
             concept.definition
         );
         assert!(concept.authority.contains("2026-09-10"));
+    }
+
+    #[test]
+    fn protocol_audit_derived_concepts_resolve_with_ruling_authority() {
+        for (query, expected_term) in [
+            ("software audit", "software_audit"),
+            ("protocol audit", "software_audit"),
+            ("protocol specification", "protocol_specification"),
+            ("protocol spec", "protocol_specification"),
+            ("gap analysis", "gap_analysis"),
+            ("conformance gap analysis", "gap_analysis"),
+        ] {
+            let concept = resolve_derived(query)
+                .unwrap_or_else(|| panic!("{query} must resolve in derived registry"));
+            assert_eq!(concept.term, expected_term);
+            assert!(concept.authority.contains("2026-11-20"));
+            assert!(!concept.constituents.is_empty());
+        }
     }
 
     /// expect: [P5] Aliases and separator variants resolve to the same

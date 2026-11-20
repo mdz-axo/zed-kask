@@ -54,8 +54,8 @@ mod tool_surface_tests {
     hkask_mcp_server::tool_surface_pin!(
         crate::server::NostrClientServer::nostr_client_router(),
         "nostr_client_router",
-        14,
-        tool_surface_is_exactly_14_registered_tools,
+        15,
+        tool_surface_is_exactly_15_registered_tools,
     );
 
     /// The panel names this server's tools from `hkask-types` so it need not
@@ -89,7 +89,7 @@ mod tool_surface_tests {
     #[test]
     fn live_router_schemas_are_strict_for_all_registered_tools() {
         let tools = crate::server::NostrClientServer::nostr_client_router().list_all();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 15);
         for tool in tools {
             let schema =
                 serde_json::to_value(&tool.input_schema).expect("router schema serializes");
@@ -118,6 +118,7 @@ mod tool_surface_tests {
             "the ruled publish path is registered"
         );
         const RULED_WRITING_TOOLS: &[&str] = &[
+            "nostr_publish_deletion",
             "nostr_publish_note",
             "nostr_publish_nutzap",
             "nostr_publish_reaction",

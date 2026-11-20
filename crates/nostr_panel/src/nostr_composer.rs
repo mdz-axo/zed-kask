@@ -21,6 +21,10 @@ pub(crate) const PUBLISH_REACTION_TOOL: &str = "nostr_publish_reaction";
 /// or NIP-22 (`kind: 1111`, <https://nostr-nips.com/nip-22>) reply/comment.
 pub(crate) const PUBLISH_REPLY_TOOL: &str = "nostr_publish_reply";
 
+/// The MCP tool that publishes a NIP-09 `kind: 5` event deletion request
+/// (<https://nostr-nips.com/nip-09>). Always requires native editor approval.
+pub(crate) const PUBLISH_DELETION_TOOL: &str = "nostr_publish_deletion";
+
 /// The MCP tool that prepares a verified NIP-57 Lightning zap invoice
 /// (<https://nostr-nips.com/nip-57>).
 pub(crate) const PREPARE_ZAP_TOOL: &str = "nostr_prepare_zap";

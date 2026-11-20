@@ -754,6 +754,11 @@ pub async fn upload_prepared_media(
         let mut server_outcomes: Vec<Value> = Vec::new();
 
         for target in targets {
+            if let Some(preflight_err) = preflight_upload(&client, target, file, auth_header).await
+            {
+                server_outcomes.push(preflight_err);
+                continue;
+            }
             let response = client
                 .put(&target.upload_url)
                 .header("Authorization", auth_header)
@@ -1124,7 +1129,65 @@ fn ext_for_mime(mime: &str) -> &'static str {
     }
 }
 
-/// Upload a single prepared blob to one Blossom target (`PUT /upload`).
+/// BUD-06 `HEAD /upload` preflight check before transmitting blob bytes.
+///
+/// Returns `None` when the server accepts the preflight (`200`/`204`) or does
+/// not implement BUD-06 (`404`/`405`/`501`, graceful fallback to `PUT /upload`).
+/// Returns `Some(report)` to fail fast on quota/MIME/auth/size rejections
+/// without uploading up to 100 MiB over the wire.
+pub async fn preflight_upload(
+    client: &reqwest::Client,
+    target: &BlossomTarget,
+    file: &PreparedMedia,
+    auth_header: &str,
+) -> Option<Value> {
+    let response = client
+        .head(&target.upload_url)
+        .header("Authorization", auth_header)
+        .header("X-SHA-256", &file.sha256)
+        .header("X-Content-Length", file.size)
+        .header("X-Content-Type", &file.mime_type)
+        .send()
+        .await;
+
+    match response {
+        Ok(resp) => {
+            let status = resp.status();
+            if status == reqwest::StatusCode::OK
+                || status == reqwest::StatusCode::NO_CONTENT
+                || status == reqwest::StatusCode::NOT_FOUND
+                || status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+                || status == reqwest::StatusCode::NOT_IMPLEMENTED
+            {
+                return None;
+            }
+            let detail = resp
+                .headers()
+                .get("x-reason")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| truncate_chars(s, MAX_REASON_CHARS).0)
+                .unwrap_or_else(|| status.to_string());
+            Some(json!({
+                "server": target.base_url,
+                "state": "refused",
+                "status": status.as_u16(),
+                "reason": detail,
+                "preflight": true,
+            }))
+        }
+        Err(error) => {
+            let chain = format_error_chain(&error);
+            Some(json!({
+                "server": target.base_url,
+                "state": "unreachable",
+                "reason": truncate_chars(&chain, MAX_REASON_CHARS).0,
+                "preflight": true,
+            }))
+        }
+    }
+}
+
+/// Upload a single prepared blob to one Blossom target (`BUD-06` preflight + `PUT /upload`).
 pub async fn upload_single_blob(
     client: &reqwest::Client,
     target: &BlossomTarget,
@@ -1132,6 +1195,9 @@ pub async fn upload_single_blob(
     auth_header: &str,
     policy: AddressPolicy,
 ) -> Value {
+    if let Some(preflight_err) = preflight_upload(client, target, file, auth_header).await {
+        return preflight_err;
+    }
     let response = client
         .put(&target.upload_url)
         .header("Authorization", auth_header)
@@ -1754,5 +1820,55 @@ mod tests {
             plan.public_base_url.as_ref().unwrap().base_url,
             "https://media.example.com"
         );
+    }
+
+    #[tokio::test]
+    async fn bud06_preflight_fails_fast_on_507_and_falls_through_on_405() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            for reply in [
+                "HTTP/1.1 507 Insufficient Storage\r\nX-Reason: quota exceeded\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ] {
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                sock.write_all(reply.as_bytes()).await.expect("write");
+            }
+        });
+
+        let client = reqwest::Client::new();
+        let target = BlossomTarget {
+            base_url: format!("http://{addr}"),
+            upload_url: format!("http://{addr}/upload"),
+            server_domain: addr.to_string(),
+        };
+        let file = PreparedMedia {
+            path: "sample.png".into(),
+            mime_type: "image/png".into(),
+            sha256: "a".repeat(64),
+            size: 1024,
+            dimensions: None,
+            bytes: vec![0u8; 16],
+        };
+
+        // 507 fails fast before PUT
+        let rejected = preflight_upload(&client, &target, &file, "Nostr dGVzdA==")
+            .await
+            .expect("507 must fail fast");
+        assert_eq!(rejected["state"], "refused");
+        assert_eq!(rejected["status"], 507);
+        assert_eq!(rejected["reason"], "quota exceeded");
+        assert_eq!(rejected["preflight"], true);
+
+        // 405 falls through gracefully (BUD-06 unsupported)
+        let fallback = preflight_upload(&client, &target, &file, "Nostr dGVzdA==").await;
+        assert!(fallback.is_none(), "405 must allow PUT fallback");
+
+        server.await.expect("server");
     }
 }

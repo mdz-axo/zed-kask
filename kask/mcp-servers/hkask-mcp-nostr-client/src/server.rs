@@ -1859,6 +1859,111 @@ impl NostrClientServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Publish a NIP-09 kind 5 event deletion request (https://nostr-nips.com/nip-09) targeting 1 to 20 of your own event IDs. Always requires explicit native editor confirmation (never bypassed by kask.nostr.autopublish) because deletion requests cannot be undone and relays are not guaranteed to honor them."
+    )]
+    pub async fn nostr_publish_deletion(
+        &self,
+        Parameters(request): Parameters<PublishDeletionRequest>,
+    ) -> Result<String, McpToolError> {
+        execute_tool(self, "nostr_publish_deletion", async {
+            if request.event_ids.is_empty() || request.event_ids.len() > 20 {
+                return Err(McpToolError::invalid_argument(
+                    "event_ids must name between 1 and 20 events",
+                ));
+            }
+            let mut target_event_ids = Vec::with_capacity(request.event_ids.len());
+            for raw in &request.event_ids {
+                let hex = identifiers::parse_event_id(raw)
+                    .map_err(|error| refused("event_ids", error))?
+                    .to_hex();
+                if !target_event_ids.contains(&hex) {
+                    target_event_ids.push(hex);
+                }
+            }
+            let reason = request
+                .reason
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_string();
+            if reason.chars().count() > MAX_CONTENT_CHARS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "reason exceeds maximum of {MAX_CONTENT_CHARS} characters"
+                )));
+            }
+            let session = self.open_session().await?;
+            let targets = session.connected_target_addresses();
+            let ipc = match InferenceIpcClient::from_env().await {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(McpToolError::unavailable(format!(
+                        "could not connect to the editor signing bridge: {e}"
+                    )));
+                }
+                None => {
+                    return Err(McpToolError::unavailable(
+                        "no editor signing bridge is configured (HKASK_INFERENCE_SOCKET unset)",
+                    ));
+                }
+            };
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let wire = hkask_types::nostr_wire::NostrDeletionWire {
+                created_at: now_secs,
+                target_event_ids,
+                target_kind: request.target_kind,
+                reason,
+                relays: targets,
+            };
+            let signed = ipc.sign_nostr_deletion(wire).await.map_err(|e| {
+                McpToolError::unavailable(format!("the editor refused or could not sign: {e}"))
+            })?;
+            let event: Event = serde_json::from_value(signed).map_err(|e| {
+                McpToolError::unavailable(format!("the editor's signed event did not parse: {e}"))
+            })?;
+            event.verify().map_err(|e| {
+                McpToolError::unavailable(format!("the signed event does not verify: {e}"))
+            })?;
+            let relays = session.send(&event).await;
+            let read_back = session.read(&[Filter::new().id(event.id)], 1).await;
+            let read_back = match read_back
+                .events
+                .iter()
+                .find(|(seen, _)| seen.id == event.id)
+            {
+                Some((_, served_by)) => json!({ "found": true, "served_by": served_by }),
+                None => {
+                    json!({ "found": false, "meaning": "no relay asked returned the event by id" })
+                }
+            };
+            Ok(json!({
+                "published": wire_event(&event, &[]),
+                "relays": relays,
+                "read_back": read_back,
+                "content_trust": CONTENT_TRUST,
+                "local_relay": session.local_relay_state(),
+                "relay_scope": RELAY_SCOPE,
+            }))
+        })
+        .await
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PublishDeletionRequest {
+    /// Target event IDs to request deletion for (1 to 20: note, nevent, or 64-character hex).
+    pub event_ids: Vec<String>,
+    /// Optional event kind of the deleted events (emits NIP-09 `k` tag, e.g. 1, 7, 1111).
+    #[serde(default)]
+    pub target_kind: Option<u16>,
+    /// Optional human-readable reason for the deletion request.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

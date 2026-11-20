@@ -182,6 +182,10 @@ pub enum InferenceMethod {
     /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
     SignNostrReaction,
 
+    /// Sign a NIP-09 `kind: 5` event deletion request (<https://nostr-nips.com/nip-09>).
+    /// Gated by [`NOSTR_SIGN_GRANT`] and always requires native operator confirmation.
+    SignNostrDeletion,
+
     /// Sign a NIP-10 (`kind: 1`, <https://nostr-nips.com/nip-10>) or NIP-22
     /// (`kind: 1111`, <https://nostr-nips.com/nip-22>) reply/comment.
     /// Gated by [`NOSTR_SIGN_GRANT`]. Returns `InferenceOutcome::NostrSignedEvent`.
@@ -316,6 +320,9 @@ pub struct InferenceParams {
     /// NIP-25 reaction payload for `InferenceMethod::SignNostrReaction`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_reaction: Option<crate::nostr_wire::NostrReactionWire>,
+    /// NIP-09 deletion request payload for `InferenceMethod::SignNostrDeletion`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nostr_deletion: Option<crate::nostr_wire::NostrDeletionWire>,
     /// NIP-10/NIP-22 reply payload for `InferenceMethod::SignNostrReply`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nostr_reply: Option<crate::nostr_wire::NostrReplyWire>,

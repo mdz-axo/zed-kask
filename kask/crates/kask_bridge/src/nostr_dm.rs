@@ -469,6 +469,82 @@ pub async fn sync_dms(cx: &mut AsyncApp) -> Result<DmSyncReport, String> {
     })
 }
 
+/// NIP-17 preferred DM inbox relay list kind (`kind: 10050`).
+pub const DM_INBOX_RELAYS_KIND: u16 = 10_050;
+
+/// Maximum recipient `kind: 10050` relays contacted per DM send (NIP-17 recommends 1–3).
+const MAX_RECIPIENT_DM_RELAYS: usize = 3;
+
+/// Extract up to [`MAX_RECIPIENT_DM_RELAYS`] SSRF-validated public `wss://`
+/// relays from the newest NIP-17 `kind: 10050` event in `events`.
+pub fn extract_dm_inbox_relays(events: &[Event]) -> Vec<String> {
+    let Some(newest) = events
+        .iter()
+        .filter(|ev| ev.kind == Kind::Custom(DM_INBOX_RELAYS_KIND))
+        .max_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        })
+    else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for tag in newest.tags.iter() {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) != Some("relay") {
+            continue;
+        }
+        let Some(raw) = parts.get(1).map(|s| s.trim()) else {
+            continue;
+        };
+        if !is_public_wss_relay(raw) {
+            continue;
+        }
+        let normalized = raw.trim_end_matches('/').to_string();
+        if !out
+            .iter()
+            .any(|seen: &String| seen.eq_ignore_ascii_case(&normalized))
+        {
+            out.push(normalized);
+            if out.len() == MAX_RECIPIENT_DM_RELAYS {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Look up a recipient's NIP-17 `kind: 10050` DM inbox relays using the
+/// operator's configured `seed_relays` (bounded 5s read; SSRF-filtered).
+async fn discover_recipient_dm_relays(recipient: PublicKey, seed_relays: &[String]) -> Vec<String> {
+    let client = Client::new();
+    for relay in seed_relays {
+        let _ = client.add_relay(relay.as_str()).await;
+    }
+    client.connect().await;
+    let filter = Filter::new()
+        .kind(Kind::Custom(DM_INBOX_RELAYS_KIND))
+        .author(recipient)
+        .limit(4);
+    let events = client
+        .fetch_events(filter)
+        .timeout(Duration::from_secs(5))
+        .await;
+    client.disconnect().await;
+    match events {
+        Ok(list) => {
+            let collected: Vec<Event> = list.into_iter().collect();
+            extract_dm_inbox_relays(&collected)
+        }
+        Err(err) => {
+            tracing::debug!(%err, "NIP-17 kind:10050 discovery failed; falling back to seed relays");
+            Vec::new()
+        }
+    }
+}
+
 /// Send a NIP-17 encrypted DM (NIP-44 v2 + NIP-59 Gift Wrap) after mandatory
 /// native operator approval (`window.prompt`, never bypassed by `autopublish`).
 pub async fn send_dm(
@@ -500,7 +576,19 @@ pub async fn send_dm(
         );
     }
 
-    // Mandatory operator confirmation before touching the keychain or network.
+    // Discover recipient's NIP-17 kind:10050 DM inbox relays before prompting
+    // so the operator sees and approves every exact delivery target.
+    let inbox_relays = discover_recipient_dm_relays(recipient, &relays).await;
+    let (recipient_relays, relay_label) = if !inbox_relays.is_empty() {
+        (inbox_relays, "Recipient NIP-17 inbox relays (kind:10050)")
+    } else {
+        (
+            relays.clone(),
+            "Seed relays (fallback — recipient has no kind:10050 list on seed relays)",
+        )
+    };
+
+    // Mandatory operator confirmation before touching the keychain or signing.
     let window = cx
         .update(|cx| {
             cx.active_window()
@@ -512,7 +600,11 @@ pub async fn send_dm(
     let recipient_npub = recipient.to_bech32().unwrap_or_else(|_| recipient.to_hex());
     let prompt_msg =
         format!("Send encrypted NIP-17 DM (NIP-44 + NIP-59 Gift Wrap) to {recipient_npub}?");
-    let detail = format!("Relays: {}\n\n{}", relays.join(", "), content);
+    let detail = format!(
+        "{relay_label}: {}\n\n{}",
+        recipient_relays.join(", "),
+        content
+    );
     let answer = cx.update_window(window, |_, window, cx| {
         window.prompt(
             PromptLevel::Warning,
@@ -540,21 +632,29 @@ pub async fn send_dm(
         .finalize(&keys)
         .map_err(|err| format!("NIP-59 self-copy gift wrap failed: {err}"))?;
 
-    let client = Client::new();
-    for relay in &relays {
-        if let Err(err) = client.add_relay(relay.as_str()).await {
-            tracing::warn!(%relay, %err, "NIP-17 DM: failed to add relay");
+    let recipient_client = Client::new();
+    for relay in &recipient_relays {
+        if let Err(err) = recipient_client.add_relay(relay.as_str()).await {
+            tracing::warn!(%relay, %err, "NIP-17 DM: failed to add recipient relay");
         }
     }
-    client.connect().await;
-    let send_out = client
+    recipient_client.connect().await;
+    let send_out = recipient_client
         .send_event(&recipient_wrap)
         .await
         .map_err(|err| format!("Failed to send NIP-17 gift wrap: {err}"))?;
-    if let Err(err) = client.send_event(&self_wrap).await {
+    recipient_client.disconnect().await;
+
+    // Publish self-copy wrap to the operator's own seed relays.
+    let self_client = Client::new();
+    for relay in &relays {
+        let _ = self_client.add_relay(relay.as_str()).await;
+    }
+    self_client.connect().await;
+    if let Err(err) = self_client.send_event(&self_wrap).await {
         tracing::warn!(%err, "NIP-17 DM: self-copy gift wrap send failed");
     }
-    client.disconnect().await;
+    self_client.disconnect().await;
 
     let relays_accepted = send_out.success.len();
     let relays_failed = send_out.failed.len();
@@ -678,5 +778,37 @@ mod tests {
         assert!(!is_public_wss_relay("wss://169.254.169.254"));
         assert!(!is_public_wss_relay("wss://[fd00::1]"));
         assert!(!is_public_wss_relay("wss://user:pass@relay.primal.net"));
+    }
+
+    #[test]
+    fn extract_dm_inbox_relays_picks_newest_filters_ssrf_dedups_and_caps_at_three() {
+        let keys = Keys::generate();
+        let older = EventBuilder::new(Kind::Custom(DM_INBOX_RELAYS_KIND), "")
+            .custom_created_at(nostr_sdk::prelude::Timestamp::from_secs(1_700_000_000))
+            .tag(Tag::parse(["relay", "wss://old.example.com"]).expect("tag"))
+            .finalize(&keys)
+            .expect("sign older");
+        let newer = EventBuilder::new(Kind::Custom(DM_INBOX_RELAYS_KIND), "")
+            .custom_created_at(nostr_sdk::prelude::Timestamp::from_secs(1_700_000_500))
+            .tag(Tag::parse(["relay", "ws://insecure.example.com"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://127.0.0.1:7447"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://10.0.0.5"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://inbox1.example.com/"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://INBOX1.example.com"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://inbox2.example.com"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://inbox3.example.com"]).expect("tag"))
+            .tag(Tag::parse(["relay", "wss://inbox4.example.com"]).expect("tag"))
+            .finalize(&keys)
+            .expect("sign newer");
+
+        let extracted = extract_dm_inbox_relays(&[older, newer]);
+        assert_eq!(
+            extracted,
+            vec![
+                "wss://inbox1.example.com".to_string(),
+                "wss://inbox2.example.com".to_string(),
+                "wss://inbox3.example.com".to_string(),
+            ]
+        );
     }
 }

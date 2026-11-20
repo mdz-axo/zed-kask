@@ -1024,6 +1024,7 @@ async fn dispatch(
             | InferenceMethod::SignNostrNutzap
             | InferenceMethod::SignNostrReaction
             | InferenceMethod::SignNostrReply
+            | InferenceMethod::SignNostrDeletion
     ) {
         let admitted = match request.method {
             InferenceMethod::SignNostrNote => crate::nostr_signing::admit_note(
@@ -1056,6 +1057,10 @@ async fn dispatch(
             InferenceMethod::SignNostrReply => crate::nostr_signing::admit_reply(
                 params.tool_grant.as_deref(),
                 params.nostr_reply.as_ref(),
+            ),
+            InferenceMethod::SignNostrDeletion => crate::nostr_signing::admit_deletion(
+                params.tool_grant.as_deref(),
+                params.nostr_deletion.as_ref(),
             ),
             _ => unreachable!(),
         };
@@ -1481,6 +1486,7 @@ async fn dispatch(
         | InferenceMethod::SignNostrNutzap
         | InferenceMethod::SignNostrReaction
         | InferenceMethod::SignNostrReply
+        | InferenceMethod::SignNostrDeletion
         | InferenceMethod::WalletDbUnlock
         | InferenceMethod::WalletSpendApprove
         | InferenceMethod::WalletNwcQuery => {

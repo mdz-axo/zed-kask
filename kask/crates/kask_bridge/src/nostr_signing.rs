@@ -20,7 +20,8 @@ use gpui::{AppContext as _, AsyncApp, PromptLevel};
 use hkask_types::inference_ipc::InferenceErrorPayload;
 use hkask_types::nostr_wire::{
     BlossomBlobSummary, MAX_BLOSSOM_UPLOAD_BYTES, MAX_CONTENT_CHARS, MAX_MEDIA_ATTACHMENTS,
-    NostrMediaAttachment, NostrNutzapWire, NostrReactionWire, NostrReplyWire, NostrZapRequestWire,
+    NostrDeletionWire, NostrMediaAttachment, NostrNutzapWire, NostrReactionWire, NostrReplyWire,
+    NostrZapRequestWire,
 };
 use settings::Settings as _;
 use tokio::sync::oneshot;
@@ -56,6 +57,8 @@ pub(crate) enum NostrSignOperation {
     Reaction(NostrReactionWire),
     /// Sign a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply/comment.
     Reply(NostrReplyWire),
+    /// Sign a NIP-09 `kind: 5` event deletion request (NEVER bypassed by `autopublish`).
+    Deletion(NostrDeletionWire),
 }
 
 /// The admitted sign request, carried from the tokio dispatch task to the
@@ -80,6 +83,10 @@ pub const UPLOAD_DECLINE_LABEL: &str = "Don't upload";
 pub const ZAP_APPROVE_LABEL: &str = "Approve Zap";
 /// Negative label on zap/nutzap approval modal.
 pub const ZAP_DECLINE_LABEL: &str = "Decline";
+/// Affirmative label on NIP-09 deletion modal (never bypassed by autopublish).
+pub const DELETE_APPROVE_LABEL: &str = "Request Deletion";
+/// Negative label on NIP-09 deletion modal.
+pub const DELETE_DECLINE_LABEL: &str = "Cancel";
 
 fn refusal(code: &str, message: impl Into<String>) -> InferenceErrorPayload {
     InferenceErrorPayload {
@@ -402,6 +409,44 @@ pub(crate) fn admit_reply(
     Ok(NostrSignOperation::Reply(payload.clone()))
 }
 
+/// Admit a NIP-09 `kind: 5` deletion request (requires `host/sign_nostr_note`;
+/// always prompts the operator regardless of `autopublish`).
+pub(crate) fn admit_deletion(
+    grant: Option<&str>,
+    payload: Option<&NostrDeletionWire>,
+) -> Result<NostrSignOperation, InferenceErrorPayload> {
+    if !crate::delegation_grants::grant_holds(grant, crate::delegation_grants::NOSTR_SIGN) {
+        return Err(refusal(
+            "Auth",
+            "Signing a Nostr deletion request requires the parent-granted host/sign_nostr_note authority",
+        ));
+    }
+    let Some(payload) = payload else {
+        return Err(refusal(
+            "InvalidArgument",
+            "nostr_deletion payload is required",
+        ));
+    };
+    if payload.target_event_ids.is_empty()
+        || payload.target_event_ids.len() > hkask_nostr_signer::MAX_DELETION_TARGETS
+    {
+        return Err(refusal(
+            "InvalidArgument",
+            format!(
+                "deletion request must name between 1 and {} target event ids",
+                hkask_nostr_signer::MAX_DELETION_TARGETS
+            ),
+        ));
+    }
+    if payload.reason.chars().count() > MAX_CONTENT_CHARS {
+        return Err(refusal(
+            "InvalidArgument",
+            format!("deletion reason exceeds {MAX_CONTENT_CHARS} characters"),
+        ));
+    }
+    Ok(NostrSignOperation::Deletion(payload.clone()))
+}
+
 /// What the operator is shown when autopublish is off. The whole text is in
 /// the detail so what is approved is what is signed.
 pub(crate) fn approval_text(npub: &str, relays: &[String]) -> String {
@@ -603,6 +648,14 @@ pub(crate) fn sign_operation_with_slots(
             hkask_nostr_signer::sign_reply(&key, reply.created_at, &reply.content, &target)
                 .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?
         }
+        NostrSignOperation::Deletion(del) => hkask_nostr_signer::sign_deletion(
+            &key,
+            del.created_at,
+            &del.target_event_ids,
+            del.target_kind,
+            &del.reason,
+        )
+        .map_err(|error| refusal("InvalidArgument", format!("signing failed: {error}")))?,
     };
     drop(key);
     serde_json::from_str(&event.to_json()).map_err(|error| {
@@ -649,8 +702,9 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
         (nostr.autopublish, nostr.npub.clone())
     });
 
-    // D110 ruling: `autopublish` NEVER applies to NIP-57 zaps or NIP-61 nutzaps.
-    if is_zap_op || !autopublish {
+    // D110 & NIP-09 rulings: `autopublish` NEVER applies to zaps, nutzaps, or deletions.
+    let is_deletion_op = matches!(operation, NostrSignOperation::Deletion(_));
+    if is_zap_op || is_deletion_op || !autopublish {
         let Some(window) = cx.update(|cx| {
             cx.active_window()
                 .or_else(|| cx.windows().into_iter().next())
@@ -659,6 +713,8 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 "Unavailable",
                 if is_zap_op {
                     "signing a Nostr zap/nutzap always requires an open editor window for operator approval"
+                } else if is_deletion_op {
+                    "signing a NIP-09 deletion request always requires an open editor window for operator approval"
                 } else {
                     "autopublish is off and no editor window is open to approve the action"
                 },
@@ -742,6 +798,28 @@ pub(crate) async fn handle(request: NostrSignRequest, cx: &mut AsyncApp) {
                 ),
                 [APPROVE_LABEL, DECLINE_LABEL],
                 "the operator did not approve the reply; nothing was signed",
+            ),
+            NostrSignOperation::Deletion(del) => (
+                format!(
+                    "Request deletion of {} Nostr event(s) (NIP-09 kind:5)?",
+                    del.target_event_ids.len()
+                ),
+                format!(
+                    "This cannot be undone, and relays are not guaranteed to honor deletion requests.\n\
+                     Target event(s): {}\nKind: {}\nRelays: {}\nReason: {}",
+                    del.target_event_ids.join(", "),
+                    del.target_kind
+                        .map(|k| k.to_string())
+                        .unwrap_or_else(|| "<unspecified>".to_string()),
+                    del.relays.join(", "),
+                    if del.reason.trim().is_empty() {
+                        "<none>"
+                    } else {
+                        del.reason.trim()
+                    }
+                ),
+                [DELETE_APPROVE_LABEL, DELETE_DECLINE_LABEL],
+                "the operator declined the deletion request; nothing was signed",
             ),
         };
         let answer = cx.update_window(window, |_, window, cx| {
@@ -1111,7 +1189,8 @@ mod tests {
             | NostrSignOperation::ZapRequest(_)
             | NostrSignOperation::Nutzap(_)
             | NostrSignOperation::Reaction(_)
-            | NostrSignOperation::Reply(_) => panic!("expected BlossomUpload"),
+            | NostrSignOperation::Reply(_)
+            | NostrSignOperation::Deletion(_) => panic!("expected BlossomUpload"),
         }
     }
 

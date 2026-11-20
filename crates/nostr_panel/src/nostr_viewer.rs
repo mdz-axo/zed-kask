@@ -57,9 +57,10 @@ use std::sync::Arc;
 
 use crate::blurhash;
 use crate::nostr_composer::{
-    CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_REACTION_TOOL,
-    PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, ReplyContext, WALLET_PAY_INVOICE_TOOL,
-    WALLET_STATUS_TOOL, ZAP_PRESETS_SATS, ZapDraftState, ZapStatus, sanitize_untrusted_text,
+    CHAR_WARNING_THRESHOLD, ComposerState, PREPARE_ZAP_TOOL, PUBLISH_DELETION_TOOL,
+    PUBLISH_REACTION_TOOL, PUBLISH_REPLY_TOOL, PUBLISH_TOOL, PublishOutcome, ReplyContext,
+    WALLET_PAY_INVOICE_TOOL, WALLET_STATUS_TOOL, ZAP_PRESETS_SATS, ZapDraftState, ZapStatus,
+    sanitize_untrusted_text,
 };
 use acp_thread::AgentThreadEntry;
 use agent_client_protocol::v2::schema::ToolCallId;
@@ -234,6 +235,7 @@ const KIND_LABELS: &[(u16, &str, &str)] = &[
     (7, "reacted", "NIP-25"),
     (16, "reposted in full", "NIP-18"),
     (1111, "commented", "NIP-22"),
+    (9735, "zapped", "NIP-57"),
     (30023, "published an article", "NIP-23"),
     (10002, "set relay list", "NIP-65"),
 ];
@@ -1129,6 +1131,82 @@ fn reactions_text(counts: &BTreeMap<String, u64>, clipped: bool) -> String {
     parts.join(" · ")
 }
 
+/// Decode a BOLT11 invoice's HRP amount in whole satoshis (local, zero network).
+fn bolt11_amount_sats(invoice: &str) -> Option<u64> {
+    let trimmed = invoice.trim().to_ascii_lowercase();
+    let trimmed = trimmed.strip_prefix("lightning:").unwrap_or(&trimmed);
+    let sep = trimmed.rfind('1')?;
+    let hrp = &trimmed[..sep];
+    let rest = hrp
+        .strip_prefix("lnbcrt")
+        .or_else(|| hrp.strip_prefix("lntbs"))
+        .or_else(|| hrp.strip_prefix("lntb"))
+        .or_else(|| hrp.strip_prefix("lnbc"))?;
+    if rest.is_empty() {
+        return None;
+    }
+    let (digits, mult_msat, div) = match rest.as_bytes().last().copied()? {
+        b'm' => (&rest[..rest.len() - 1], 100_000_000u64, 1u64),
+        b'u' => (&rest[..rest.len() - 1], 100_000u64, 1u64),
+        b'n' => (&rest[..rest.len() - 1], 100u64, 1u64),
+        b'p' => (&rest[..rest.len() - 1], 1u64, 10u64),
+        b if b.is_ascii_digit() => (rest, 100_000_000_000u64, 1u64),
+        _ => return None,
+    };
+    let n: u64 = digits.parse().ok()?;
+    let msat = if div == 10 {
+        if !n.is_multiple_of(10) {
+            return None;
+        }
+        n / 10
+    } else {
+        n.checked_mul(mult_msat)?
+    };
+    let sats = msat / 1_000;
+    (sats > 0).then_some(sats)
+}
+
+/// Aggregate verified NIP-57 `kind: 9735` zap receipts per referenced note id
+/// as `(zap_count, total_sats)`.
+fn zap_receipt_totals(rows: &[Row]) -> BTreeMap<String, (u64, u64)> {
+    let mut totals: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for row in rows {
+        if row.event.kind != 9735 {
+            continue;
+        }
+        let Some(target) = tag_value(&row.event, ["e", "E"]) else {
+            continue;
+        };
+        let Some(bolt11) = tag_value(&row.event, ["bolt11", "bolt11"]) else {
+            continue;
+        };
+        let Some(description) = tag_value(&row.event, ["description", "description"]) else {
+            continue;
+        };
+        let valid_zap_req = serde_json::from_str::<Value>(description)
+            .ok()
+            .and_then(|v| v.get("kind")?.as_u64())
+            == Some(9734);
+        if !valid_zap_req {
+            continue;
+        }
+        if let Some(sats) = bolt11_amount_sats(bolt11) {
+            let entry = totals.entry(target.to_string()).or_insert((0, 0));
+            entry.0 = entry.0.saturating_add(1);
+            entry.1 = entry.1.saturating_add(sats);
+        }
+    }
+    totals
+}
+
+fn zap_totals_text(count: u64, total_sats: u64) -> String {
+    if count <= 1 {
+        format!("⚡ {total_sats} sats")
+    } else {
+        format!("⚡ {total_sats} sats ({count})")
+    }
+}
+
 /// One event as a view lists it: the event, and what a tool said about its
 /// place.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1328,6 +1406,8 @@ pub struct NostrViewer {
     /// carries, from one local read of the page's notes. Nothing is
     /// fetched beyond that read.
     reactions: BTreeMap<String, BTreeMap<String, u64>>,
+    /// NIP-57 `kind: 9735` zap totals `(count, total_sats)` keyed by note id.
+    zap_totals: BTreeMap<String, (u64, u64)>,
     /// The reactions read hit its limit, so every count is a floor.
     reactions_clipped: bool,
     /// The reactions read's own epoch and failure, so a stale answer is
@@ -1634,6 +1714,7 @@ impl NostrViewer {
             timeline_filter: TimelineFilter::default(),
             expanded_records: HashSet::new(),
             reactions: BTreeMap::new(),
+            zap_totals: BTreeMap::new(),
             reactions_clipped: false,
             reactions_request: Request::new(),
             follows: None,
@@ -1779,6 +1860,7 @@ impl NostrViewer {
     /// contacts no relay. The old counts leave with the page they read.
     fn load_reactions(&mut self, feed: &Feed, cx: &mut Context<Self>) {
         self.reactions.clear();
+        self.zap_totals.clear();
         self.reactions_clipped = false;
         let notes: Vec<String> = feed
             .rows
@@ -1795,7 +1877,7 @@ impl NostrViewer {
         let task = match invoke(
             NOSTR_RELAY_SERVER,
             ARCHIVE_TOOL,
-            json!({ "kinds": [7], "references": notes, "limit": ARCHIVE_PAGE }),
+            json!({ "kinds": [7, 9735], "references": notes, "limit": ARCHIVE_PAGE }),
         ) {
             Ok(task) => task,
             Err(error) => return self.apply_reactions(epoch, Err(error), cx),
@@ -1830,6 +1912,7 @@ impl NostrViewer {
         if let Some(feed) = feed {
             let (counts, clipped) = reaction_counts(&feed.rows);
             self.reactions = counts;
+            self.zap_totals = zap_receipt_totals(&feed.rows);
             self.reactions_clipped = clipped;
         }
         cx.notify();
@@ -2832,6 +2915,14 @@ impl NostrViewer {
                     )
                 },
             )
+            .when_some(self.zap_totals.get(&id).copied(), |el, (count, sats)| {
+                el.child(
+                    Label::new(display_text(&zap_totals_text(count, sats)))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Accent)
+                        .truncate(),
+                )
+            })
             .when(selected, |el| {
                 el.child(
                     Label::new(display_text(&trailer))
@@ -3290,6 +3381,16 @@ impl NostrViewer {
                         .zap
                         .as_ref()
                         .is_some_and(|z| z.target_event_id == event.id);
+                    let my_pubkey_hex = nostr_dm::parse_recipient_pubkey(
+                        &KaskSettings::get_global(cx).nostr.npub,
+                    )
+                    .ok()
+                    .map(|pk| pk.to_hex());
+                    let is_own_event = my_pubkey_hex
+                        .as_deref()
+                        .is_some_and(|mine| mine.eq_ignore_ascii_case(&event.author));
+                    let delete_event_id = event.id.clone();
+                    let delete_kind = event.kind;
                     let reaction_note = self
                         .reaction_feedback
                         .as_ref()
@@ -3343,7 +3444,24 @@ impl NostrViewer {
                                             cx,
                                         );
                                     })),
-                            ),
+                            )
+                            .when(is_own_event, |row| {
+                                row.child(
+                                    ui::Button::new("nostr-detail-delete", "Delete")
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(liking)
+                                        .tooltip(ui::Tooltip::text(
+                                            "Publish a NIP-09 kind:5 deletion request (always asks for confirmation; irreversible)",
+                                        ))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.request_delete(
+                                                delete_event_id.clone(),
+                                                delete_kind,
+                                                cx,
+                                            );
+                                        })),
+                                )
+                            }),
                     )
                     .when_some(reaction_note, |el, (ok, msg)| {
                         el.child(Self::line(
@@ -4049,6 +4167,68 @@ impl NostrViewer {
         }));
     }
 
+    /// Dispatch a NIP-09 `kind: 5` deletion request (`nostr_publish_deletion`)
+    /// for one of the operator's own events. Always prompts in the editor.
+    fn request_delete(&mut self, event_id: String, target_kind: u16, cx: &mut Context<Self>) {
+        if self.reaction_in_flight.is_some() {
+            return;
+        }
+        self.reaction_in_flight = Some(event_id.clone());
+        self.reaction_feedback = None;
+        cx.notify();
+
+        let args = json!({
+            "event_ids": [event_id],
+            "target_kind": target_kind,
+        });
+        let task = match invoke(NOSTR_CLIENT_SERVER, PUBLISH_DELETION_TOOL, args) {
+            Ok(task) => task,
+            Err(err) => {
+                self.reaction_in_flight = None;
+                self.reaction_feedback = Some((event_id, false, err));
+                cx.notify();
+                return;
+            }
+        };
+
+        self._reaction_task = Some(cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.reaction_in_flight = None;
+                match result {
+                    Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
+                        Ok(outcome) if outcome.any_accepted() => {
+                            let accepted = outcome.receipt().accepted.len();
+                            this.reaction_feedback = Some((
+                                event_id.clone(),
+                                true,
+                                format!("Deletion requested (NIP-09 · {accepted} relay(s))"),
+                            ));
+                            this.load_archive(cx);
+                        }
+                        Ok(_) => {
+                            this.reaction_feedback = Some((
+                                event_id,
+                                false,
+                                "Deletion request failed: no relay accepted the kind:5 event."
+                                    .to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            this.reaction_feedback = Some((event_id, false, err));
+                        }
+                    },
+                    Err(err) => {
+                        this.reaction_feedback =
+                            Some((event_id, false, sanitize_untrusted_text(&err.to_string())));
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        }));
+    }
+
     fn toggle_zap_strip(
         &mut self,
         event_id: String,
@@ -4121,31 +4301,7 @@ impl NostrViewer {
                     return;
                 }
             };
-            let lud16 = serde_json::from_str::<Value>(&profile_raw)
-                .ok()
-                .and_then(|v| {
-                    let first = v.get("profiles")?.as_array()?.first()?;
-                    first
-                        .get("lud16")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                        .or_else(|| {
-                            first
-                                .get("metadata")?
-                                .get("lud16")?
-                                .as_str()
-                                .map(str::to_string)
-                        })
-                        .or_else(|| {
-                            first
-                                .get("content")?
-                                .as_str()
-                                .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-                                .and_then(|m| m.get("lud16")?.as_str().map(str::to_string))
-                        })
-                })
-                .filter(|s| !s.trim().is_empty())
-                .map(|s| s.trim().to_string());
+            let lud16 = extract_lud16_from_profile_response(&profile_raw);
 
             let Some(lud16) = lud16 else {
                 this.update(cx, |this, cx| {
@@ -5101,6 +5257,44 @@ impl Render for NostrViewer {
                     .child(body),
             )
     }
+}
+
+/// Extract a recipient's Lightning Address (`lud16`) from a `nostr_profile`
+/// JSON response (`profiles[0].fields.lud16`), with fallbacks for direct or
+/// raw `kind: 0` content shapes.
+fn extract_lud16_from_profile_response(profile_raw: &str) -> Option<String> {
+    serde_json::from_str::<Value>(profile_raw)
+        .ok()
+        .and_then(|v| {
+            let first = v.get("profiles")?.as_array()?.first()?;
+            first
+                .get("fields")
+                .and_then(|fields| fields.get("lud16"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    first
+                        .get("lud16")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    first
+                        .get("metadata")?
+                        .get("lud16")?
+                        .as_str()
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    first
+                        .get("content")?
+                        .as_str()
+                        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+                        .and_then(|m| m.get("lud16")?.as_str().map(str::to_string))
+                })
+        })
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]
@@ -6825,5 +7019,59 @@ mod tests {
             box_bounds.bottom(),
             transport_bounds.bottom()
         );
+    }
+
+    #[test]
+    fn extract_lud16_reads_nostr_profile_fields_shape() {
+        let canonical = r#"{
+            "found": 1,
+            "asked": 1,
+            "profiles": [{
+                "public_key_hex": "aa",
+                "found": true,
+                "fields": {
+                    "name": "alice",
+                    "lud16": " alice@getalby.com "
+                }
+            }]
+        }"#;
+        assert_eq!(
+            extract_lud16_from_profile_response(canonical),
+            Some("alice@getalby.com".to_string())
+        );
+
+        let missing = r#"{"profiles": [{"found": true, "fields": {"name": "bob"}}]}"#;
+        assert_eq!(extract_lud16_from_profile_response(missing), None);
+    }
+
+    #[test]
+    fn zap_receipt_totals_sums_valid_nip57_receipts_and_skips_malformed() {
+        assert_eq!(bolt11_amount_sats("lnbc210n1dummy"), Some(21));
+        assert_eq!(bolt11_amount_sats("lnbc10u1dummy"), Some(1_000));
+        assert_eq!(bolt11_amount_sats("lnbc1dummy"), None);
+
+        let valid_desc = r#"{"id":"aa","kind":9734,"pubkey":"bb","created_at":1,"tags":[],"content":"gm","sig":"cc"}"#;
+        let wrong_kind_desc = r#"{"id":"aa","kind":1,"pubkey":"bb","created_at":1,"tags":[],"content":"not a zap","sig":"cc"}"#;
+        let make_receipt = |id: &str, target: &str, bolt11: &str, desc: &str| {
+            let ev = kind_event(
+                9735,
+                id,
+                1_700_000_000,
+                "",
+                &[&["e", target], &["bolt11", bolt11], &["description", desc]],
+            );
+            wire_row(&ev)
+        };
+        let rows = vec![
+            make_receipt("z1", "note-a", "lnbc210n1qq", valid_desc),
+            make_receipt("z2", "note-a", "lnbc1u1qq", valid_desc),
+            make_receipt("z3", "note-a", "lnbc5u1qq", wrong_kind_desc),
+            make_receipt("z4", "note-b", "lnbc10u1qq", valid_desc),
+        ];
+        let totals = zap_receipt_totals(&rows);
+        assert_eq!(totals.get("note-a"), Some(&(2, 121)));
+        assert_eq!(totals.get("note-b"), Some(&(1, 1_000)));
+        assert_eq!(zap_totals_text(2, 121), "⚡ 121 sats (2)");
+        assert_eq!(zap_totals_text(1, 1_000), "⚡ 1000 sats");
     }
 }

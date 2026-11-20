@@ -12,6 +12,12 @@ use crate::secret::SecretKey;
 /// Short text note kind (NIP-01: <https://nostr-nips.com/nip-01>).
 pub const NOTE_KIND: u16 = 1;
 
+/// Event deletion request kind (NIP-09: <https://nostr-nips.com/nip-09>).
+pub const DELETION_KIND: u16 = 5;
+
+/// Maximum target event IDs in one NIP-09 deletion request.
+pub const MAX_DELETION_TARGETS: usize = 20;
+
 /// Reaction kind (NIP-25: <https://nostr-nips.com/nip-25>).
 pub const REACTION_KIND: u16 = 7;
 
@@ -68,6 +74,9 @@ pub enum SignError {
     /// A NIP-10 or NIP-22 reply violated its protocol invariants.
     #[error("invalid reply payload: {reason}")]
     InvalidReply { reason: &'static str },
+    /// A NIP-09 deletion request violated its protocol invariants.
+    #[error("invalid deletion payload: {reason}")]
+    InvalidDeletion { reason: &'static str },
     /// The operating system did not supply random bytes for the signature's
     /// auxiliary randomness.
     #[error("the operating system did not supply random bytes")]
@@ -352,6 +361,38 @@ pub fn sign_reply(
         ];
         sign_verified_parts(key, COMMENT_KIND, created_at, tags, content)
     }
+}
+
+/// Sign a NIP-09 `kind: 5` event deletion request (<https://nostr-nips.com/nip-09>)
+/// targeting one or more event IDs authored by the same key.
+///
+/// Always requires explicit operator confirmation in the editor (never bypassed
+/// by `autopublish`), because NIP-09 deletion requests cannot be undone.
+pub fn sign_deletion(
+    key: &SecretKey,
+    created_at: u64,
+    target_event_ids: &[String],
+    target_kind: Option<u16>,
+    reason: &str,
+) -> Result<Event, SignError> {
+    if target_event_ids.is_empty() || target_event_ids.len() > MAX_DELETION_TARGETS {
+        return Err(SignError::InvalidDeletion {
+            reason: "target_event_ids must name between 1 and 20 events",
+        });
+    }
+    let mut tags = Vec::with_capacity(target_event_ids.len() + usize::from(target_kind.is_some()));
+    for id in target_event_ids {
+        if !is_lower_sha256_hex(id) {
+            return Err(SignError::InvalidDeletion {
+                reason: "each target event id must be 64 lowercase hex characters",
+            });
+        }
+        tags.push(vec!["e".to_string(), id.clone()]);
+    }
+    if let Some(kind) = target_kind {
+        tags.push(vec!["k".to_string(), kind.to_string()]);
+    }
+    sign_verified_parts(key, DELETION_KIND, created_at, tags, reason.trim())
 }
 
 /// Sign a short-lived BUD-11 `kind: 24242` Blossom upload authorization token
@@ -794,6 +835,39 @@ mod tests {
                 &[sha]
             ),
             Err(SignError::InvalidBlossomAuth { .. })
+        ));
+    }
+
+    #[test]
+    fn sign_deletion_emits_verified_nip09_kind_5_and_rejects_empty_targets() {
+        let key = SecretKey::from_nsec(NIP19_NSEC).expect("published nsec parses");
+        let target = "ab".repeat(32);
+        let event = sign_deletion(
+            &key,
+            1_700_000_200,
+            std::slice::from_ref(&target),
+            Some(NOTE_KIND),
+            "published by accident",
+        )
+        .expect("NIP-09 deletion signs");
+        assert_eq!(event.kind(), DELETION_KIND);
+        assert_eq!(event.content(), "published by accident");
+        assert_eq!(
+            event.tags(),
+            &[
+                vec!["e".to_string(), target],
+                vec!["k".to_string(), "1".to_string()],
+            ]
+        );
+        Event::from_json(&event.to_json()).expect("round-trip verifies");
+
+        assert!(matches!(
+            sign_deletion(&key, 1_700_000_200, &[], Some(NOTE_KIND), ""),
+            Err(SignError::InvalidDeletion { .. })
+        ));
+        assert!(matches!(
+            sign_deletion(&key, 1_700_000_200, &["not-hex".to_string()], None, ""),
+            Err(SignError::InvalidDeletion { .. })
         ));
     }
 }

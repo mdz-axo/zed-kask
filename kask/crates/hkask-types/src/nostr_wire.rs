@@ -55,6 +55,7 @@ pub const CLIENT_TOOL_NAMES: &[&str] = &[
     "nostr_notifications",
     "nostr_prepare_zap",
     "nostr_profile",
+    "nostr_publish_deletion",
     "nostr_publish_note",
     "nostr_publish_nutzap",
     "nostr_publish_reaction",
@@ -172,6 +173,21 @@ pub struct NostrReplyWire {
     pub target_pubkey_hex: String,
     pub root_kind: u16,
     pub content: String,
+    #[serde(default)]
+    pub relays: Vec<String>,
+}
+
+/// Wire payload for requesting an editor-signed NIP-09 `kind: 5` event deletion
+/// request (<https://nostr-nips.com/nip-09>). Gated by `host/sign_nostr_note`
+/// and NEVER bypassed by `autopublish`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrDeletionWire {
+    pub created_at: u64,
+    pub target_event_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_kind: Option<u16>,
+    #[serde(default)]
+    pub reason: String,
     #[serde(default)]
     pub relays: Vec<String>,
 }

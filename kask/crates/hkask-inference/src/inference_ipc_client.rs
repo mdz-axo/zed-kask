@@ -842,6 +842,25 @@ impl InferenceIpcClient {
         }
     }
 
+    /// Ask the editor to sign a NIP-09 `kind: 5` event deletion request.
+    /// Gated by `host/sign_nostr_note` and always requires native confirmation.
+    pub async fn sign_nostr_deletion(
+        &self,
+        payload: hkask_types::nostr_wire::NostrDeletionWire,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let method = InferenceMethod::SignNostrDeletion;
+        let params = InferenceParams {
+            tool_grant: std::env::var(hkask_types::inference_ipc::TOOL_GRANT_ENV).ok(),
+            nostr_deletion: Some(payload),
+            ..Default::default()
+        };
+        let response = self.ipc_roundtrip(&method, params).await?;
+        match response.outcome {
+            InferenceOutcome::NostrSignedEvent { event } => Ok(event),
+            other => Err(unexpected_outcome_error(&method, other)),
+        }
+    }
+
     /// Ask the editor to sign a NIP-10 (`kind: 1`) or NIP-22 (`kind: 1111`) reply/comment.
     /// Gated by `host/sign_nostr_note`.
     pub async fn sign_nostr_reply(
