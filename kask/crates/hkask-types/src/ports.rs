@@ -1,0 +1,23 @@
+//! Hexagonal port traits — infrastructure abstractions.
+//!
+//! Moved from the hkask-ports crate during the types consolidation.
+//! Port traits enable crates to depend on abstractions rather than
+//! concrete implementations.
+
+pub mod embedding;
+pub mod inference_port;
+pub mod inference_types;
+pub mod memory_port;
+pub mod regulation;
+
+pub use embedding::{DecisionBatch, EmbeddingBatch, EmbeddingGenerationError, RerankBatch};
+pub use inference_port::{
+    DecisionFuture, EmbedFuture, EmbedWithIdentityFuture, InferenceFuture, InferencePort,
+    MediaFuture, MediaGenerateParams, ModelEntry, PortFuture, RerankFuture, WorktreeSpawnPort,
+};
+pub use inference_types::{
+    ChatMessage, ChatToolDefinition, ChatToolFunction, InferenceError, InferenceResult,
+    InferenceStreamChunk, InferenceUsage, StructuredToolCall,
+};
+pub use memory_port::{MemoryError, MemoryFuture, MemoryPort, MemorySnippet, TurnRecord};
+pub use regulation::ConsolidationOutcome;
