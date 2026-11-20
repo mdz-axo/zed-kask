@@ -1,0 +1,836 @@
+//! Educt selection algebra — the deterministic word-index ↔ time layer.
+//!
+//! The trust boundary of the transcript-store design: LLM passes emit word
+//! indices, never timestamps; this module owns the only index→time mapping.
+//! Everything here is pure over
+//! `&[TimedWord]` — no I/O, no storage, no inference — so every guarantee
+//! is checkable by test.
+//!
+//! Uniform EDL semantics: `keep = (Keep ops in EDL order, or the full
+//! transcript when no Keep op exists) minus (Cut ops)`. This one rule makes
+//! every EDL shape deterministic — no ops keeps everything (no edits),
+//! all-Cut yields the complement (strikethrough / subtractive editing),
+//! all-Keep yields the reel (additive, EDL order preserved — the
+//! reorderable EDL), and mixed applies strikethroughs inside the reel.
+
+use crate::transcript::TimedWord;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Inclusive word-index range `[start_word, end_word]` into the immutable
+/// `words` array. A valid range always spans at least one word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WordRange {
+    pub start_word: usize,
+    pub end_word: usize,
+}
+
+impl WordRange {
+    /// Construct a range. Ordering (`start_word <= end_word`) is validated
+    /// by the algebra functions so an invalid range reaches the
+    /// named-error path instead of being silently normalized.
+    pub fn new(start_word: usize, end_word: usize) -> Self {
+        Self {
+            start_word,
+            end_word,
+        }
+    }
+
+    /// Number of words spanned (always >= 1 for a valid range).
+    pub fn word_count(&self) -> usize {
+        self.end_word - self.start_word + 1
+    }
+}
+
+/// One EDL operation over a word range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EdlOp {
+    /// Include the range in the output; reel order = EDL order.
+    Keep,
+    /// Exclude the range from the output (strikethrough).
+    Cut,
+}
+
+/// One EDL entry: an operation over a word range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EdlEntry {
+    pub range: WordRange,
+    pub op: EdlOp,
+}
+
+/// An edit-decision list over a transcript's `words` array.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Edl {
+    pub ops: Vec<EdlEntry>,
+}
+
+/// Named selection failures — every variant names the broken invariant
+/// (reject-with-named-reason; a failing EDL is never partially applied).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SelectionError {
+    /// The transcript carries no word-level timings, so nothing can anchor.
+    /// A named degradation — never an empty success.
+    #[error("transcript has no word-level timings; selection cannot anchor")]
+    NoWordTimings,
+    /// A word index is outside the `words` array.
+    #[error("word index {index} out of bounds (words.len() == {len})")]
+    WordIndexOutOfBounds { index: usize, len: usize },
+    /// A range with `start_word > end_word`.
+    #[error("reversed word range: start {start_word} > end {end_word}")]
+    ReversedRange { start_word: usize, end_word: usize },
+    /// Keep ops overlap — the reel would duplicate words.
+    #[error("overlapping Keep ops at word {word}: Keep ranges must be disjoint")]
+    OverlappingKeepOps { word: usize },
+    /// The stored word timings put the range's end before its start: the
+    /// last word ends before the first begins. A bundle is stored as it
+    /// arrives, so this is the one place every consumer of a time range
+    /// (render, locate, exports) meets a malformed one.
+    #[error(
+        "words {start_word}..={end_word} map to a time range that ends ({end_ms} ms) before it starts ({start_ms} ms): the stored word timings are out of order"
+    )]
+    InvertedTimeRange {
+        start_word: usize,
+        end_word: usize,
+        start_ms: u64,
+        end_ms: u64,
+    },
+}
+
+/// Map a word range to its media time range `(start_ms, end_ms)`.
+///
+/// The ONLY index→time mapping in the design — LLM layers never see time.
+pub fn word_range_to_time_range(
+    words: &[TimedWord],
+    range: WordRange,
+) -> Result<(u64, u64), SelectionError> {
+    if words.is_empty() {
+        return Err(SelectionError::NoWordTimings);
+    }
+    if range.start_word > range.end_word {
+        return Err(SelectionError::ReversedRange {
+            start_word: range.start_word,
+            end_word: range.end_word,
+        });
+    }
+    let start = words
+        .get(range.start_word)
+        .ok_or(SelectionError::WordIndexOutOfBounds {
+            index: range.start_word,
+            len: words.len(),
+        })?;
+    let end = words
+        .get(range.end_word)
+        .ok_or(SelectionError::WordIndexOutOfBounds {
+            index: range.end_word,
+            len: words.len(),
+        })?;
+    if end.end_ms < start.start_ms {
+        return Err(SelectionError::InvertedTimeRange {
+            start_word: range.start_word,
+            end_word: range.end_word,
+            start_ms: start.start_ms,
+            end_ms: end.end_ms,
+        });
+    }
+    Ok((start.start_ms, end.end_ms))
+}
+
+/// The rendered transcript text: words joined by single spaces — the form
+/// `text_to_word_ranges` matches against, and the form the corpus export
+/// writes (a corpus search hit on this text maps back to word ranges
+/// exactly, via the same rendering rule).
+pub fn rendered_transcript(words: &[TimedWord]) -> String {
+    words
+        .iter()
+        .map(|word| word.word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Resolve a transcript passage to every matching word range.
+///
+/// Exact match over the rendered transcript text (words joined by single
+/// spaces), aligned to word boundaries. Ambiguity is surfaced as ALL
+/// candidate ranges — never a guess; an empty result means no match (the
+/// caller surfaces that as a named status). Query whitespace is normalized
+/// to the rendered form (split on whitespace, rejoin with single spaces);
+/// queries should quote the rendered form, punctuation included ("world."
+/// not "world").
+pub fn text_to_word_ranges(words: &[TimedWord], text: &str) -> Vec<WordRange> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let normalized_query = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized_query.is_empty() {
+        return Vec::new();
+    }
+
+    // Rendered text with per-word character spans, derived from the same
+    // rendering rule as `rendered_transcript` (single-space separators) so
+    // the two can never drift.
+    let rendered = rendered_transcript(words);
+    let mut spans: Vec<(usize, usize)> = Vec::with_capacity(words.len());
+    let mut offset = 0;
+    for word in words {
+        if offset > 0 {
+            offset += 1; // the separator
+        }
+        spans.push((offset, offset + word.word.len()));
+        offset += word.word.len();
+    }
+
+    // All occurrences — advance one character past each hit so overlapping
+    // occurrences surface as separate candidates — kept only when aligned
+    // to word boundaries on both ends.
+    let advance = normalized_query.chars().next().map_or(1, char::len_utf8);
+    let mut candidates = Vec::new();
+    let mut search_from = 0;
+    while let Some(relative) = rendered[search_from..].find(&normalized_query) {
+        let absolute = search_from + relative;
+        let end_char = absolute + normalized_query.len();
+        let aligned = spans.iter().any(|span| span.0 == absolute)
+            && spans.iter().any(|span| span.1 == end_char);
+        if aligned {
+            let first = spans.iter().position(|span| span.0 == absolute);
+            let last = spans.iter().rposition(|span| span.1 == end_char);
+            if let (Some(first), Some(last)) = (first, last) {
+                candidates.push(WordRange::new(first, last));
+            }
+        }
+        search_from = absolute + advance;
+    }
+    candidates
+}
+
+/// Compute the keep-ranges of an EDL over a transcript of `words_len` words.
+///
+/// Validation (reject-with-named-reason, nothing partially applied):
+/// - every range in bounds and non-reversed;
+/// - Keep ops pairwise disjoint (Cut ops may overlap — union semantics;
+///   a Cut outside every Keep range is a harmless no-op).
+///
+/// An empty transcript is a named degradation (`NoWordTimings`) regardless
+/// of ops — no EDL silently succeeds on a transcript that cannot anchor.
+pub fn edl_to_keep_ranges(words_len: usize, edl: &Edl) -> Result<Vec<WordRange>, SelectionError> {
+    if words_len == 0 {
+        return Err(SelectionError::NoWordTimings);
+    }
+    for entry in &edl.ops {
+        let range = entry.range;
+        if range.start_word > range.end_word {
+            return Err(SelectionError::ReversedRange {
+                start_word: range.start_word,
+                end_word: range.end_word,
+            });
+        }
+        if range.end_word >= words_len {
+            return Err(SelectionError::WordIndexOutOfBounds {
+                index: range.end_word,
+                len: words_len,
+            });
+        }
+    }
+
+    // Keep ops must be pairwise disjoint. Checked on a sorted copy; the
+    // output preserves EDL order (reel order is the reorderable-EDL feature).
+    let mut keeps_sorted: Vec<WordRange> = edl
+        .ops
+        .iter()
+        .filter(|entry| entry.op == EdlOp::Keep)
+        .map(|entry| entry.range)
+        .collect();
+    keeps_sorted.sort_by_key(|range| range.start_word);
+    for pair in keeps_sorted.windows(2) {
+        if pair[1].start_word <= pair[0].end_word {
+            return Err(SelectionError::OverlappingKeepOps {
+                word: pair[1].start_word,
+            });
+        }
+    }
+
+    let cuts = union_ranges(
+        &edl.ops
+            .iter()
+            .filter(|entry| entry.op == EdlOp::Cut)
+            .map(|entry| entry.range)
+            .collect::<Vec<_>>(),
+    );
+
+    // Base: the reel (EDL order) when Keep ops exist, else the full
+    // transcript (subtractive mode).
+    let base: Vec<WordRange> = if keeps_sorted.is_empty() {
+        vec![WordRange::new(0, words_len - 1)]
+    } else {
+        edl.ops
+            .iter()
+            .filter(|entry| entry.op == EdlOp::Keep)
+            .map(|entry| entry.range)
+            .collect()
+    };
+
+    let mut keep_ranges = Vec::new();
+    for range in base {
+        keep_ranges.extend(subtract_cuts_from_range(range, &cuts));
+    }
+    Ok(keep_ranges)
+}
+
+/// Union word ranges: sort, then merge overlapping AND adjacent ranges
+/// (adjacent ranges share no words between them, so merging adds none).
+/// The union covers exactly the words any input range covered — the
+/// deterministic composition step when overlapping annotations (e.g.
+/// highlights) must become a disjoint set (e.g. EDL Keep ops).
+pub fn union_ranges(ranges: &[WordRange]) -> Vec<WordRange> {
+    let mut sorted: Vec<WordRange> = ranges.to_vec();
+    sorted.sort_by_key(|range| range.start_word);
+    let mut merged: Vec<WordRange> = Vec::with_capacity(sorted.len());
+    for range in sorted {
+        match merged.last_mut() {
+            Some(last) if range.start_word <= last.end_word.saturating_add(1) => {
+                last.end_word = last.end_word.max(range.end_word);
+            }
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
+/// Map keep-ranges to a render plan: `(start_ms, end_ms)` pairs for
+/// `video_clip`/`video_concat`.
+///
+/// Ranges that are list-adjacent AND word-adjacent (`next.start ==
+/// prev.end + 1`) merge into one clip — contiguous media is one clip. A
+/// reordered reel (Keep ops out of transcript order) keeps its EDL order:
+/// clips emit in list order. Input ranges are expected validated (the EDL
+/// path enforces disjointness); overlapping direct input yields overlapping
+/// clips, visible in the plan rather than silently merged.
+pub(crate) fn keep_ranges_to_clip_plan(
+    words: &[TimedWord],
+    keep_ranges: &[WordRange],
+) -> Result<Vec<(u64, u64)>, SelectionError> {
+    if words.is_empty() {
+        return Err(SelectionError::NoWordTimings);
+    }
+    let merged = merge_adjacent(keep_ranges);
+    let mut plan = Vec::with_capacity(merged.len());
+    for range in merged {
+        plan.push(word_range_to_time_range(words, range)?);
+    }
+    Ok(plan)
+}
+
+/// EDL → clip plan in one step (the render path: selection → EDL → render).
+pub fn edl_to_clip_plan(words: &[TimedWord], edl: &Edl) -> Result<Vec<(u64, u64)>, SelectionError> {
+    let keep_ranges = edl_to_keep_ranges(words.len(), edl)?;
+    keep_ranges_to_clip_plan(words, &keep_ranges)
+}
+
+/// Subtract sorted, disjoint cuts from one base range, preserving the
+/// base's order. A cut may split the base into multiple pieces; cuts that
+/// do not intersect the base are no-ops. This is the per-clip difference
+/// step of the subtractive mode — and the published home for per-clip
+/// difference math generally: the panel's reel composer bakes an in-reel
+/// strike into the ONE clip's Keep op here instead of entering the EDL
+/// as a global Cut, which the algebra would subtract from EVERY keep.
+/// Callers pass already-unioned cuts (`union_ranges` output).
+pub fn subtract_cuts_from_range(base: WordRange, cuts: &[WordRange]) -> Vec<WordRange> {
+    let mut pieces = Vec::new();
+    let mut cursor = base.start_word;
+    for cut in cuts {
+        if cut.end_word < cursor {
+            continue;
+        }
+        if cut.start_word > base.end_word {
+            break;
+        }
+        let cut_start = cut.start_word.max(cursor);
+        if cut_start > cursor {
+            pieces.push(WordRange::new(cursor, cut_start - 1));
+        }
+        cursor = cut.end_word.saturating_add(1);
+        if cursor > base.end_word {
+            return pieces;
+        }
+    }
+    if cursor <= base.end_word {
+        pieces.push(WordRange::new(cursor, base.end_word));
+    }
+    pieces
+}
+
+/// Merge ranges that are list-adjacent and word-adjacent. Reordered input
+/// (a reel out of transcript order) does not falsely merge: the adjacency
+/// test is positional in the list AND sequential in word index.
+fn merge_adjacent(ranges: &[WordRange]) -> Vec<WordRange> {
+    let mut merged: Vec<WordRange> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start_word == last.end_word.saturating_add(1) => {
+                last.end_word = range.end_word;
+            }
+            _ => merged.push(*range),
+        }
+    }
+    merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::timed_words;
+
+    fn entry(start: usize, end: usize, op: EdlOp) -> EdlEntry {
+        EdlEntry {
+            range: WordRange::new(start, end),
+            op,
+        }
+    }
+
+    // ── word_range_to_time_range ──────────────────────────────────────────
+
+    #[test]
+    fn time_range_maps_exact_boundaries() {
+        let words = timed_words(&["a", "b", "c", "d"]);
+        assert_eq!(
+            word_range_to_time_range(&words, WordRange::new(0, 0)),
+            Ok((0, 500))
+        );
+        assert_eq!(
+            word_range_to_time_range(&words, WordRange::new(3, 3)),
+            Ok((3000, 3500))
+        );
+        assert_eq!(
+            word_range_to_time_range(&words, WordRange::new(1, 2)),
+            Ok((1000, 2500))
+        );
+    }
+
+    #[test]
+    fn time_range_rejects_out_of_bounds_with_named_error() {
+        let words = timed_words(&["a", "b"]);
+        assert_eq!(
+            word_range_to_time_range(&words, WordRange::new(0, 2)),
+            Err(SelectionError::WordIndexOutOfBounds { index: 2, len: 2 })
+        );
+    }
+
+    #[test]
+    fn time_range_rejects_reversed_range() {
+        let words = timed_words(&["a", "b"]);
+        assert_eq!(
+            word_range_to_time_range(&words, WordRange::new(1, 0)),
+            Err(SelectionError::ReversedRange {
+                start_word: 1,
+                end_word: 0
+            })
+        );
+    }
+
+    #[test]
+    fn time_range_rejects_empty_words_as_named_degradation() {
+        assert_eq!(
+            word_range_to_time_range(&[], WordRange::new(0, 0)),
+            Err(SelectionError::NoWordTimings)
+        );
+    }
+
+    // ── text_to_word_ranges ───────────────────────────────────────────────
+
+    #[test]
+    fn text_selection_finds_single_match() {
+        let words = timed_words(&["Hello", "world", "said", "the", "agent"]);
+        assert_eq!(
+            text_to_word_ranges(&words, "said the"),
+            vec![WordRange::new(2, 3)]
+        );
+    }
+
+    #[test]
+    fn text_selection_surfaces_all_candidates() {
+        let words = timed_words(&["the", "plan", "the", "plan", "again"]);
+        assert_eq!(
+            text_to_word_ranges(&words, "the plan"),
+            vec![WordRange::new(0, 1), WordRange::new(2, 3)]
+        );
+    }
+
+    #[test]
+    fn text_selection_no_match_returns_empty() {
+        let words = timed_words(&["a", "b"]);
+        assert!(text_to_word_ranges(&words, "missing passage").is_empty());
+    }
+
+    #[test]
+    fn text_selection_matches_rendered_punctuation() {
+        let words = timed_words(&["Hello,", "world."]);
+        assert_eq!(
+            text_to_word_ranges(&words, "Hello, world."),
+            vec![WordRange::new(0, 1)]
+        );
+        // The unpunctuated form is NOT the rendered form — no match.
+        assert!(text_to_word_ranges(&words, "Hello world").is_empty());
+    }
+
+    #[test]
+    fn text_selection_requires_word_boundaries() {
+        let words = timed_words(&["Hello", "world"]);
+        // Interior substring, not word-aligned — no match.
+        assert!(text_to_word_ranges(&words, "lo wor").is_empty());
+        assert!(text_to_word_ranges(&words, "Hello wor").is_empty());
+    }
+
+    #[test]
+    fn text_selection_normalizes_query_whitespace() {
+        let words = timed_words(&["a", "b", "c"]);
+        assert_eq!(
+            text_to_word_ranges(&words, "  a   b  "),
+            vec![WordRange::new(0, 1)]
+        );
+    }
+
+    #[test]
+    fn rendered_transcript_joins_with_single_spaces() {
+        let words = timed_words(&["Hello,", "world."]);
+        assert_eq!(rendered_transcript(&words), "Hello, world.");
+        assert_eq!(rendered_transcript(&[]), "");
+    }
+
+    #[test]
+    fn text_selection_empty_words_returns_empty() {
+        assert!(text_to_word_ranges(&[], "anything").is_empty());
+    }
+
+    // ── edl_to_keep_ranges ────────────────────────────────────────────────
+
+    #[test]
+    fn empty_edl_keeps_full_transcript() {
+        let keeps = edl_to_keep_ranges(5, &Edl::default()).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(0, 4)]);
+    }
+
+    #[test]
+    fn all_cut_edl_yields_complement() {
+        let edl = Edl {
+            ops: vec![entry(1, 2, EdlOp::Cut)],
+        };
+        let keeps = edl_to_keep_ranges(5, &edl).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(0, 0), WordRange::new(3, 4)]);
+    }
+
+    #[test]
+    fn complement_tiles_the_transcript() {
+        // Property: keep ∪ cut = the full transcript, disjoint.
+        let edl = Edl {
+            ops: vec![entry(1, 1, EdlOp::Cut), entry(3, 5, EdlOp::Cut)],
+        };
+        let keeps = edl_to_keep_ranges(8, &edl).unwrap();
+        let mut covered: Vec<usize> = Vec::new();
+        for range in &keeps {
+            for word in range.start_word..=range.end_word {
+                covered.push(word);
+            }
+        }
+        for word in [1usize, 3, 4, 5] {
+            assert!(!covered.contains(&word), "cut word {word} was kept");
+        }
+        let mut expected: Vec<usize> = (0..8).collect();
+        for word in [1usize, 3, 4, 5] {
+            expected.retain(|w| *w != word);
+        }
+        assert_eq!(covered, expected);
+    }
+
+    #[test]
+    fn all_keep_edl_preserves_edl_order() {
+        // Reordered reel: Keep [3,4] before Keep [0,1] — reel order wins.
+        let edl = Edl {
+            ops: vec![entry(3, 4, EdlOp::Keep), entry(0, 1, EdlOp::Keep)],
+        };
+        let keeps = edl_to_keep_ranges(5, &edl).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(3, 4), WordRange::new(0, 1)]);
+    }
+
+    #[test]
+    fn mixed_edl_cuts_within_keeps() {
+        // Reel [0,4] with a strikethrough at word 2.
+        let edl = Edl {
+            ops: vec![entry(0, 4, EdlOp::Keep), entry(2, 2, EdlOp::Cut)],
+        };
+        let keeps = edl_to_keep_ranges(5, &edl).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(0, 1), WordRange::new(3, 4)]);
+    }
+
+    #[test]
+    fn cut_outside_keeps_is_noop() {
+        let edl = Edl {
+            ops: vec![entry(0, 1, EdlOp::Keep), entry(3, 4, EdlOp::Cut)],
+        };
+        let keeps = edl_to_keep_ranges(5, &edl).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(0, 1)]);
+    }
+
+    #[test]
+    fn overlapping_cuts_merge_by_union() {
+        let edl = Edl {
+            ops: vec![entry(0, 2, EdlOp::Cut), entry(1, 3, EdlOp::Cut)],
+        };
+        let keeps = edl_to_keep_ranges(5, &edl).unwrap();
+        assert_eq!(keeps, vec![WordRange::new(4, 4)]);
+    }
+
+    #[test]
+    fn overlapping_keep_ops_rejected_with_named_error() {
+        let edl = Edl {
+            ops: vec![entry(0, 3, EdlOp::Keep), entry(2, 4, EdlOp::Keep)],
+        };
+        assert_eq!(
+            edl_to_keep_ranges(5, &edl),
+            Err(SelectionError::OverlappingKeepOps { word: 2 })
+        );
+    }
+
+    #[test]
+    fn out_of_bounds_op_rejected() {
+        let edl = Edl {
+            ops: vec![entry(0, 5, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_keep_ranges(5, &edl),
+            Err(SelectionError::WordIndexOutOfBounds { index: 5, len: 5 })
+        );
+    }
+
+    #[test]
+    fn reversed_op_rejected() {
+        let edl = Edl {
+            ops: vec![entry(3, 1, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_keep_ranges(5, &edl),
+            Err(SelectionError::ReversedRange {
+                start_word: 3,
+                end_word: 1
+            })
+        );
+    }
+
+    #[test]
+    fn empty_transcript_is_named_degradation_even_without_ops() {
+        assert_eq!(
+            edl_to_keep_ranges(0, &Edl::default()),
+            Err(SelectionError::NoWordTimings)
+        );
+    }
+
+    // ── keep_ranges_to_clip_plan / edl_to_clip_plan ───────────────────────
+
+    #[test]
+    fn clip_plan_merges_adjacent_ranges() {
+        let words = timed_words(&["a", "b", "c", "d"]);
+        let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(0, 1), WordRange::new(2, 3)])
+            .unwrap();
+        assert_eq!(plan, vec![(0, 3500)]);
+    }
+
+    #[test]
+    fn clip_plan_keeps_nonadjacent_ranges_separate() {
+        let words = timed_words(&["a", "b", "c", "d"]);
+        let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(0, 0), WordRange::new(2, 3)])
+            .unwrap();
+        assert_eq!(plan, vec![(0, 500), (2000, 3500)]);
+    }
+
+    #[test]
+    fn clip_plan_preserves_reel_order() {
+        // Reordered reel: [3,3] then [0,0] — clips emit in list order.
+        let words = timed_words(&["a", "b", "c", "d"]);
+        let plan = keep_ranges_to_clip_plan(&words, &[WordRange::new(3, 3), WordRange::new(0, 0)])
+            .unwrap();
+        assert_eq!(plan, vec![(3000, 3500), (0, 500)]);
+    }
+
+    #[test]
+    fn clip_plan_empty_ranges_yield_empty_plan() {
+        let words = timed_words(&["a"]);
+        assert_eq!(
+            keep_ranges_to_clip_plan(&words, &[]).unwrap(),
+            Vec::<(u64, u64)>::new()
+        );
+    }
+
+    #[test]
+    fn clip_plan_empty_words_is_named_degradation() {
+        assert_eq!(
+            keep_ranges_to_clip_plan(&[], &[WordRange::new(0, 0)]),
+            Err(SelectionError::NoWordTimings)
+        );
+    }
+
+    #[test]
+    fn edl_to_clip_plan_composes_both_stages() {
+        let words = timed_words(&["a", "b", "c", "d", "e"]);
+        // Keep [0,4], cut [1,1] → keep [0,0] + [2,4] → two clips: word 1
+        // is cut between them, so the ranges are not adjacent and do not
+        // merge.
+        let edl = Edl {
+            ops: vec![entry(0, 4, EdlOp::Keep), entry(1, 1, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_clip_plan(&words, &edl).unwrap(),
+            vec![(0, 500), (2000, 4500)]
+        );
+    }
+
+    #[test]
+    fn subtractive_edl_round_trips_to_complement_clip_plan() {
+        let words = timed_words(&["a", "b", "c", "d", "e"]);
+        // Cut the middle word (index 2): keep [0,1] + [3,4] → clips
+        // (0,1500),(3000,4500).
+        let edl = Edl {
+            ops: vec![entry(2, 2, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_clip_plan(&words, &edl).unwrap(),
+            vec![(0, 1500), (3000, 4500)]
+        );
+    }
+
+    /// expect: A Cut-only EDL keeps the complement of the unioned cuts, and
+    /// an all-cut EDL keeps nothing — the render layer refuses the latter
+    /// visibly (nothing to render), never silently rendering the source. [P1]
+    #[test]
+    fn cut_only_edl_is_subtractive_mode() {
+        // Six words; overlapping cuts [1,2] and [2,4] union to [1,4], so the
+        // kept complement is [0,0] + [5,5].
+        let edl = Edl {
+            ops: vec![entry(1, 2, EdlOp::Cut), entry(2, 4, EdlOp::Cut)],
+        };
+        assert_eq!(
+            edl_to_keep_ranges(6, &edl).unwrap(),
+            vec![WordRange::new(0, 0), WordRange::new(5, 5)]
+        );
+        // All-cut: the complement is empty.
+        let all_cut = Edl {
+            ops: vec![entry(0, 5, EdlOp::Cut)],
+        };
+        assert!(edl_to_keep_ranges(6, &all_cut).unwrap().is_empty());
+    }
+
+    // ── union_ranges ─────────────────────────────────────────────────────
+
+    #[test]
+    fn union_ranges_merges_overlaps_and_adjacency_only() {
+        // Overlapping [0,3]+[2,5] → [0,5]; adjacent [6,7] merges with it
+        // ([0,5] and [6,7] are adjacent: 6 == 5+1); disjoint [9,9] stays.
+        let union = union_ranges(&[
+            WordRange::new(2, 5),
+            WordRange::new(0, 3),
+            WordRange::new(9, 9),
+            WordRange::new(6, 7),
+        ]);
+        assert_eq!(union, vec![WordRange::new(0, 7), WordRange::new(9, 9)]);
+    }
+
+    #[test]
+    fn union_ranges_covers_exactly_the_input_words() {
+        // Property: the union's word count equals the distinct words covered
+        // by the inputs — merging never adds or drops a word.
+        let inputs = [
+            WordRange::new(0, 2),
+            WordRange::new(1, 4),
+            WordRange::new(8, 9),
+        ];
+        let distinct: std::collections::HashSet<usize> = inputs
+            .iter()
+            .flat_map(|range| range.start_word..=range.end_word)
+            .collect();
+        let union_words: std::collections::HashSet<usize> = union_ranges(&inputs)
+            .iter()
+            .flat_map(|range| range.start_word..=range.end_word)
+            .collect();
+        assert_eq!(union_words, distinct);
+    }
+
+    #[test]
+    fn union_ranges_empty_input_yields_empty_union() {
+        assert!(union_ranges(&[]).is_empty());
+    }
+
+    // ── subtract_cuts_from_range (the published per-clip difference) ────
+
+    fn ranges(pairs: &[(usize, usize)]) -> Vec<WordRange> {
+        pairs
+            .iter()
+            .map(|(start, end)| WordRange::new(*start, *end))
+            .collect()
+    }
+
+    /// dcterms:identifier: `subtract_cuts_from_range`
+    /// expect: The published per-clip difference step covers contained,
+    /// overlapping, and boundary cuts — a contained cut splits the base
+    /// into its two flanking pieces, a boundary-touching cut removes only
+    /// its side, an overhanging cut trims to the overlap, a covering cut
+    /// empties the base, cuts outside the base are no-ops, and multiple
+    /// cuts tile the base down to the uncut remainders. [P1]
+    #[test]
+    fn subtract_cuts_covers_contained_overlapping_and_boundary() {
+        let base = WordRange::new(10, 20);
+        // Contained: the two flanking pieces.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(12, 14)])),
+            ranges(&[(10, 11), (15, 20)])
+        );
+        // Boundary at the start: only the right remainder.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(10, 12)])),
+            ranges(&[(13, 20)])
+        );
+        // Boundary at the end: only the left remainder.
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(18, 20)])),
+            ranges(&[(10, 17)])
+        );
+        // Overhanging on the left (the cut starts before the base).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(5, 12)])),
+            ranges(&[(13, 20)])
+        );
+        // Overhanging on the right (the cut ends past the base).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(18, 25)])),
+            ranges(&[(10, 17)])
+        );
+        // A cut covering the whole base empties it.
+        assert!(subtract_cuts_from_range(base, &ranges(&[(5, 25)])).is_empty());
+        // Cuts outside the base are no-ops (before and after).
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(0, 5)])),
+            ranges(&[(10, 20)])
+        );
+        assert_eq!(
+            subtract_cuts_from_range(base, &ranges(&[(30, 35)])),
+            ranges(&[(10, 20)])
+        );
+    }
+
+    /// dcterms:identifier: `subtract_cuts_from_range`
+    /// expect: Multiple contained cuts tile the base into the uncut
+    /// remainders, and cuts that together cover the base leave nothing.
+    /// [P1]
+    #[test]
+    fn subtract_cuts_tiles_multiple_cuts_to_the_remainders() {
+        assert_eq!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &ranges(&[(2, 3), (6, 7)])),
+            ranges(&[(0, 1), (4, 5), (8, 10)])
+        );
+        assert!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &ranges(&[(0, 4), (5, 10)])).is_empty()
+        );
+        assert_eq!(
+            subtract_cuts_from_range(WordRange::new(0, 10), &[]),
+            ranges(&[(0, 10)]),
+            "an empty cut list yields the base unchanged"
+        );
+    }
+}

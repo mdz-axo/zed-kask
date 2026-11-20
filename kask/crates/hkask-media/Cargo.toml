@@ -1,0 +1,24 @@
+[package]
+name = "hkask-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Media domain models, transcript/EDL selection algebra, OMC media blocks, and job-list contract"
+
+[lib]
+name = "hkask_media"
+path = "src/hkask_media.rs"
+
+[dependencies]
+hkask-bridge-ontology.workspace = true
+hkask-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
