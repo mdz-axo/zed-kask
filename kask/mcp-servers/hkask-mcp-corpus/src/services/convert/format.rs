@@ -1,0 +1,404 @@
+//! Format detection, text extraction, and HTML/markdown preprocessing for docproc server.
+
+/// Detect document format from file path/extension.
+///
+/// Returns `(format_name, supported, note)` where `supported` indicates whether
+/// `corpus_convert` can extract text from this format.
+///
+/// Supported formats (text extraction works): pdf, markdown, html, plain,
+/// docx, pptx, xlsx, csv (csv as plain text), plus text-serialized knowledge
+/// formats (ttl/owl/rdf/kif/json read as plain text)
+pub(crate) fn detect_format(path: &str) -> (&'static str, bool, Option<&'static str>) {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    match ext.as_str() {
+        "pdf" => ("pdf", true, None),
+        "md" | "markdown" => ("markdown", true, None),
+        "html" | "htm" => ("html", true, None),
+        "txt" => ("plain", true, None),
+        // Ontology/knowledge serializations are text documents: Turtle, OWL,
+        // RDF/XML, KIF and JSON read through the plain-text path (2026-10-02:
+        // the zk-ref reference models were unconvertible without this).
+        "ttl" | "owl" | "rdf" | "kif" | "json" => ("plain", true, None),
+        "docx" | "doc" => ("docx", true, None),
+        "pptx" | "ppt" => ("pptx", true, None),
+        "xlsx" | "xls" => ("xlsx", true, None),
+        // CSV is plain text: the xlsx backend (calamine) fails to sniff large
+        // quoted CSVs ("Cannot detect file format", 2026-10-02 zk-ref), and
+        // raw text preserves the document exactly for corpus chunking.
+        "csv" => ("plain", true, None),
+        "rtf" => (
+            "rtf",
+            false,
+            Some("RTF support requires additional Rust crate"),
+        ),
+        _ => ("unknown", false, None),
+    }
+}
+
+/// Ground the Dublin Core type of a source file from its extension, via the
+/// canonical MIME mapping (`hkask_bridge_ontology::dc_bibo::mime_to_dc_type`).
+///
+/// This is the ingest point of the "every artifact carries a state identity"
+/// contract: `corpus_convert` emits the grounded `dc_type` alongside the
+/// extracted text so downstream tagging starts from a real type, not an
+/// LLM-invented one. Returns `None` for extensions with no mapping — the
+/// caller surfaces that, never a fabricated type.
+pub(crate) fn dc_type_for_path(path: &str) -> Option<hkask_bridge_ontology::dc_bibo::DcConcept> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "pdf" => "application/pdf",
+        "md" | "markdown" => "text/markdown",
+        "html" | "htm" => "text/html",
+        "txt" | "kif" => "text/plain",
+        "ttl" => "text/turtle",
+        "owl" | "rdf" => "application/rdf+xml",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "png" => "image/png",
+        "jpeg" | "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "tiff" | "tif" => "image/tiff",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => return None,
+    };
+    hkask_bridge_ontology::dc_bibo::mime_to_dc_type(mime)
+}
+
+/// Decode text-family file bytes: UTF-8 first, then the document's declared
+/// charset (HTML `meta charset=`), then windows-1252 — the WHATWG default for
+/// legacy text. Returns the decoded text and the encoding actually used so
+/// the caller can surface it (2026-10-02: a Latin-1 saved page,
+/// engelbart-1962.html, was unconvertible under strict UTF-8 decoding).
+/// Infallible by construction — the windows-1252 floor decodes any input.
+pub(crate) fn decode_text_bytes(bytes: &[u8]) -> (String, &'static str) {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return (text.to_string(), "utf-8");
+    }
+    // Sniff a declared charset from the first 4 KiB, case-insensitively.
+    let head_len = bytes.len().min(4096);
+    let head = String::from_utf8_lossy(&bytes[..head_len]).to_lowercase();
+    let label = head
+        .find("charset=")
+        .map(|at| {
+            let rest = &head[at + "charset=".len()..];
+            let end = rest
+                .find(|c: char| c == '"' || c == '\'' || c == ';' || c == '>' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            rest[..end].trim().to_string()
+        })
+        .filter(|label| !label.is_empty());
+    let encoding = label
+        .as_deref()
+        .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
+        .unwrap_or(encoding_rs::WINDOWS_1252);
+    let (text, _, _) = encoding.decode(bytes);
+    (text.into_owned(), encoding.name())
+}
+
+/// Strip YAML frontmatter (delimited by `---`) from content.
+pub fn strip_frontmatter(content: &str) -> String {
+    if content.starts_with("---") {
+        content
+            .splitn(3, "---")
+            .nth(2)
+            .unwrap_or(content)
+            .trim()
+            .to_string()
+    } else {
+        content.to_string()
+    }
+}
+
+/// Strip HTML tags and extract visible text content.
+///
+/// Removes script/style elements entirely, then strips all remaining
+/// HTML tags to produce clean plain text. Collapses consecutive whitespace.
+pub fn strip_html(html: &str) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_strip_tag = false;
+    let chars: Vec<char> = html.chars().collect();
+    let len = chars.len();
+
+    /// Block-level tags that should insert a space when stripped.
+    const BLOCK_TAGS: &[&str] = &[
+        "p",
+        "div",
+        "br",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "li",
+        "tr",
+        "table",
+        "blockquote",
+        "pre",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "main",
+        "aside",
+        "nav",
+        "figure",
+    ];
+
+    let mut i = 0;
+    while i < len {
+        let ch = chars[i];
+
+        if ch == '<' {
+            let remaining: String = chars[i..].iter().collect();
+            let lower_remaining = remaining.to_lowercase();
+
+            // Check for closing script/style tags
+            if lower_remaining.starts_with("</script") || lower_remaining.starts_with("</style") {
+                // Insert space boundary when exiting a strip tag
+                if in_strip_tag
+                    && !result.is_empty()
+                    && !result.chars().last().is_none_or(|c| c.is_whitespace())
+                {
+                    result.push(' ');
+                }
+                in_strip_tag = false;
+                while i < len && chars[i] != '>' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Check for opening script/style tags
+            if lower_remaining.starts_with("<script") || lower_remaining.starts_with("<style") {
+                // Insert space boundary when entering a strip tag
+                if !result.is_empty() && !result.chars().last().is_none_or(|c| c.is_whitespace()) {
+                    result.push(' ');
+                }
+                in_strip_tag = true;
+                while i < len && chars[i] != '>' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // For regular tags, check if it's a block-level tag
+            // and insert a space if needed (for word boundaries)
+            let tag_name = remaining
+                .trim_start_matches('<')
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .next()
+                .unwrap_or("")
+                .to_lowercase();
+            let is_block = BLOCK_TAGS.contains(&tag_name.as_str());
+
+            if is_block
+                && !result.is_empty()
+                && !result.chars().last().is_none_or(|c| c.is_whitespace())
+            {
+                result.push(' ');
+            }
+
+            in_tag = true;
+            i += 1;
+            continue;
+        }
+
+        if ch == '>' {
+            in_tag = false;
+            i += 1;
+            continue;
+        }
+
+        if !in_tag && !in_strip_tag {
+            result.push(ch);
+        }
+
+        i += 1;
+    }
+
+    // Collapse whitespace
+    let collapsed: String = result.split_whitespace().collect::<Vec<&str>>().join(" ");
+
+    // Decode HTML entities after whitespace collapse
+    decode_html_entities(&collapsed)
+}
+
+/// Decode common HTML entities in extracted text.
+///
+/// Handles named entities (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`,
+/// `&nbsp;`, `&#39;`) and numeric entities (`&#NNN;`, `&#xNNN;`).
+/// `&amp;` is decoded last to prevent double-decode of nested entities.
+pub(crate) fn decode_html_entities(text: &str) -> String {
+    let text = text.replace("&nbsp;", " ");
+    let text = text.replace("&lt;", "<");
+    let text = text.replace("&gt;", ">");
+    let text = text.replace("&quot;", "\"");
+    let text = text.replace("&apos;", "'");
+    let text = text.replace("&#39;", "'");
+    let text = text.replace("&amp;", "&");
+
+    // Numeric decimal entities: &#NNN;. Compiled once — this runs per
+    // document page during conversion (F4: regexes were recompiled per call).
+    static RE_DEC: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"&#(\d+);").expect("decimal entity regex"));
+    let text = RE_DEC.replace_all(&text, |caps: &regex::Captures| {
+        caps[1]
+            .parse::<u32>()
+            .ok()
+            .and_then(char::from_u32)
+            .map(|c| c.to_string())
+            .unwrap_or_default()
+    });
+
+    // Numeric hex entities: &#xNNN;. Compiled once — same per-page hot path.
+    static RE_HEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"&#x([0-9a-fA-F]+);").expect("hex entity regex")
+    });
+    RE_HEX
+        .replace_all(&text, |caps: &regex::Captures| {
+            u32::from_str_radix(&caps[1], 16)
+                .ok()
+                .and_then(char::from_u32)
+                .map(|c| c.to_string())
+                .unwrap_or_default()
+        })
+        .into_owned()
+}
+
+/// Strip HTML comments (`<!-- ... -->`) from text.
+///
+/// Handles multi-line comments. Used for markdown files that contain
+/// embedded HTML comments from OCR/Kindle conversion tools.
+pub(crate) fn strip_html_comments(text: &str) -> String {
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?s)<!--.*?-->").expect("html comment regex")
+    });
+    RE.replace_all(text, "").into_owned()
+}
+
+/// Strip URLs, file links, and hyperlinks from text before chunking.
+///
+/// Removes HTML anchor tags (keeps inner text), Markdown URL links (keeps
+/// link text), bare URLs, and protocol URIs (http, https, ftp, file, ssh,
+/// mailto). Collapses leftover double spaces. Preserves newlines and
+/// non-link text.
+pub(crate) fn sanitize_links(text: &str) -> String {
+    // Compiled once — this runs pre-chunking on every converted page.
+    static RE_ANCHOR: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r#"(?is)<a\s[^>]*>(.*?)</a>"#).expect("anchor regex")
+    });
+    static RE_MD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\[([^\]]*)\]\((?:https?://|ftp://|file://|www\.|mailto:)[^)]*\)")
+            .expect("md-link regex")
+    });
+    static RE_URL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r#"(?:https?|ftp|file|ssh)://[^\s<>"'\)\]]+|www\.[^\s<>"'\)\]]+|mailto:[^\s<>"'\)\]]+"#,
+        )
+        .expect("url regex")
+    });
+    static RE_SPACES: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"  +").expect("spaces regex"));
+
+    let text = RE_ANCHOR.replace_all(text, "$1");
+    let text = RE_MD.replace_all(&text, "$1");
+    let text = RE_URL.replace_all(&text, "");
+    let text = RE_SPACES.replace_all(&text, " ");
+    text.lines()
+        .map(|l| l.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_bridge_ontology::dc_bibo;
+
+    #[test]
+    fn dc_type_for_path_grounds_every_supported_convert_format() {
+        // Every format detect_format reports as supported must ground to a
+        // DC type — the ingest state-identity contract.
+        for path in [
+            "doc.pdf",
+            "doc.md",
+            "doc.markdown",
+            "doc.html",
+            "doc.htm",
+            "doc.txt",
+            "doc.docx",
+            "doc.pptx",
+            "doc.xlsx",
+            "doc.csv",
+            "doc.ttl",
+            "doc.owl",
+            "doc.rdf",
+            "doc.kif",
+            "doc.json",
+        ] {
+            let (format, supported, _) = detect_format(path);
+            assert!(supported, "{path} must be a supported format");
+            assert!(
+                dc_type_for_path(path).is_some(),
+                "{path} (format {format}) must ground to a Dublin Core type"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_text_bytes_utf8_passthrough_and_charset_fallback() {
+        let (text, encoding) = decode_text_bytes(b"plain utf-8 text");
+        assert_eq!(text, "plain utf-8 text");
+        assert_eq!(encoding, "utf-8");
+        // "café" in windows-1252: the 0xE9 byte is invalid UTF-8.
+        let legacy = b"<meta charset=\"windows-1252\">caf\xe9";
+        let (text, encoding) = decode_text_bytes(legacy);
+        assert_eq!(text, "<meta charset=\"windows-1252\">café");
+        assert_eq!(encoding, "windows-1252");
+        // No declaration: the legacy default still decodes.
+        let (text, encoding) = decode_text_bytes(b"caf\xe9");
+        assert_eq!(text, "café");
+        assert_eq!(encoding, "windows-1252");
+    }
+
+    #[test]
+    fn dc_type_for_path_maps_extension_families() {
+        // Expected values are the fixture-guarded bridge constants — the
+        // fixture pins the URI's reality, this test pins the mapping.
+        assert_eq!(dc_type_for_path("img.png"), Some(dc_bibo::STILL_IMAGE));
+        assert_eq!(dc_type_for_path("clip.mp4"), Some(dc_bibo::MOVING_IMAGE));
+        assert_eq!(dc_type_for_path("note.wav"), Some(dc_bibo::SOUND));
+        assert_eq!(dc_type_for_path("data.json"), Some(dc_bibo::DATASET));
+        // Legacy binary extensions (.doc/.xls/.ppt) have no canonical MIME
+        // mapping — surfaced as None, never fabricated.
+        assert_eq!(dc_type_for_path("old.doc"), None);
+        assert_eq!(dc_type_for_path("noext"), None);
+    }
+}
