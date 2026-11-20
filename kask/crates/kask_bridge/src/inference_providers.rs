@@ -1,0 +1,631 @@
+//! Inference-provider and data-service credential descriptors.
+//!
+//! Kask uses zed's native inference provider infrastructure — providers are
+//! registered in Settings → AI → LLM Providers, not via kask settings. This
+//! module only maintains the `INFERENCE_PROVIDERS` descriptor table used by:
+//! - `resolve_embedding_credentials` (maps a provider-prefixed model string
+//!   to `(api_url, api_key)` for MCP servers that can't access zed's
+//!   `LanguageModelRegistry`; only `serves_embeddings` providers resolve)
+//! - `credential_urls_for_mcp` (builds the keychain URL set for credentials
+//!   that a remaining MCP child actually consumes)
+//! - `data_service_credential_urls` (builds the settings/keychain UI set)
+//!
+//! ONE key, ONE location: an inference provider's API key lives in the
+//! keychain at the provider's `api_url` — the same slot zed's
+//! `LanguageModelProvider`'s `ApiKeyState` reads. Every consumer
+//! (`ApiKeyState`, `credential_urls_for_mcp` for providers with remaining
+//! MCP-child consumers, `resolve_embedding_credentials`, the IPC batch/rerank
+//! credential reads)
+//! resolves that one slot, so the key cannot exist in two places that
+//! diverge. The former `kask://credentials/<credential_key>` duplicate was
+//! the 2026-08-31 split-brain: a stale copy there fed MCP servers a dead key
+//! while the user's fresh key sat unread at `api_url` (DeepInfra 401). Those
+//! legacy slots are dead data nothing reads — there is no migration and no
+//! fallback; a missing key surfaces as `permission_denied` naming the env var.
+//! Operators set provider keys via Settings → AI → LLM Providers.
+
+use credentials_provider::CredentialsProvider;
+
+// The credential namespace constant lives in the `credentials` module and is
+// re-exported from the crate root. Importing from the defining module here
+// documents the true location and avoids routing through the root re-export.
+use crate::credentials::KASK_CREDENTIAL_NAMESPACE;
+
+pub use hkask_inference::openai_compat::{
+    INFERENCE_PROVIDERS, InferenceProviderDescriptor, provider_by_id,
+};
+
+/// A typed descriptor for a data service credential — the single source of
+/// truth for data service env vars, credential keys, and display metadata.
+/// Replaces the former `DATA_SERVICE_CREDENTIALS` `&[(&str, &str)]` 2-tuple
+/// and the settings UI's parallel `DATA_SERVICES` `&[(&str, &str, &str, &str)]`
+/// 4-tuple, which had overlapping fields in different positions.
+pub struct DataServiceDescriptor {
+    /// The env var name that the credential's consumer reads.
+    pub env_var: &'static str,
+    /// The credential key — `credential_url_for_key` resolves it to the
+    /// keychain URL. Used as the UI's row key.
+    pub credential_key: &'static str,
+    /// Human-readable label shown in the settings UI.
+    pub label: &'static str,
+    /// Dashboard URL where the user can obtain or manage the credential.
+    pub dashboard_url: &'static str,
+    /// Whether this credential should appear as a row in the Data Services
+    /// settings UI. Credentials managed elsewhere (e.g. `HKASK_DB_PASSPHRASE`)
+    /// set this to `false`.
+    pub shows_in_ui: bool,
+}
+
+/// Find the inference-provider descriptor for a credential key. Providers
+/// with an empty `env_var` (ollama) have no key and are excluded — a caller
+/// needing a credential for them is a table-divergence bug.
+pub fn provider_by_credential_key(
+    credential_key: &str,
+) -> Option<&'static InferenceProviderDescriptor> {
+    INFERENCE_PROVIDERS
+        .iter()
+        .find(|p| p.credential_key == credential_key && !p.env_var.is_empty())
+}
+
+/// The canonical keychain URL for a credential, keyed by `credential_key`:
+/// inference-provider-backed credentials (openrouter, deepinfra, runpod)
+/// live at the provider's `api_url` — the same slot zed's
+/// `ApiKeyState` reads — while pure data-service credentials live at
+/// `kask://credentials/<credential_key>`. One key, one location: the settings
+/// UI, native providers, and any remaining MCP child consumer all resolve
+/// through this function, so no consumer can read a slot the writer did not
+/// target.
+pub fn credential_url_for_key(credential_key: &str) -> String {
+    match provider_by_credential_key(credential_key) {
+        Some(provider) => provider.api_url.to_string(),
+        None => format!("{KASK_CREDENTIAL_NAMESPACE}/{credential_key}"),
+    }
+}
+
+/// The canonical registry of data service credentials. The single source of
+/// truth consumed by:
+/// - `data_service_credential_urls` (all settings/keychain-backed services)
+/// - `credential_urls_for_mcp` (the subset declared by remaining MCP children)
+/// - the settings UI (`data_services.rs` renders rows from this registry)
+/// - the coverage governance test (asserts MCP server allowlists align)
+///
+/// Inference-provider-backed entries (RunPod) resolve their keychain URL
+/// through `credential_url_for_key` to the provider's `api_url` slot — see
+/// the module docs for the one-key-one-location invariant.
+pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
+    DataServiceDescriptor {
+        env_var: "HKASK_EXA_API_KEY",
+        credential_key: "exa",
+        label: "Exa",
+        dashboard_url: "https://dashboard.exa.ai/api-keys",
+        shows_in_ui: true,
+    },
+    DataServiceDescriptor {
+        env_var: "HKASK_TAVILY_API_KEY",
+        credential_key: "tavily",
+        label: "Tavily",
+        dashboard_url: "https://app.tavily.com/api-key",
+        shows_in_ui: true,
+    },
+    DataServiceDescriptor {
+        env_var: "HKASK_BRAVE_API_KEY",
+        credential_key: "brave",
+        label: "Brave Search",
+        dashboard_url: "https://api.search.brave.com/app/subscriptions",
+        shows_in_ui: true,
+    },
+    DataServiceDescriptor {
+        env_var: "HKASK_SERPAPI_API_KEY",
+        credential_key: "serpapi",
+        label: "SerpAPI (Google Search)",
+        dashboard_url: "https://serpapi.com/dashboard",
+        shows_in_ui: true,
+    },
+    DataServiceDescriptor {
+        env_var: "HKASK_FIRECRAWL_API_KEY",
+        credential_key: "firecrawl",
+        label: "Firecrawl (web scraping)",
+        dashboard_url: "https://firecrawl.dev/",
+        shows_in_ui: true,
+    },
+    // Semantic Scholar — optional key. The research server registers the
+    // provider keyless (the free tier shares a ~1 req/s global pool — the
+    // 2026-11-01 rate-limit storm); the free key from
+    // https://www.semanticscholar.org/product/api lifts the limit.
+    // Always-on row (enabled when present, mirroring `serpapi`).
+    DataServiceDescriptor {
+        env_var: "HKASK_SEMANTIC_SCHOLAR_API_KEY",
+        credential_key: "semantic_scholar",
+        label: "Semantic Scholar (paper search; optional rate-limit lift)",
+        dashboard_url: "https://www.semanticscholar.org/product/api",
+        shows_in_ui: true,
+    },
+    // DB passphrase — supplied to the DB-backed MCP servers through
+    // `ctx.credentials.get("HKASK_DB_PASSPHRASE")` for SQLCipher stores.
+    // Not shown in the Data Services UI (no toggle; managed via the
+    // hkask keystore chain).
+    DataServiceDescriptor {
+        env_var: "HKASK_DB_PASSPHRASE",
+        credential_key: "hkask_db_passphrase",
+        label: "DB Passphrase",
+        dashboard_url: "",
+        shows_in_ui: false,
+    },
+    // RunPod — the ONE entry whose key belongs to an inference provider: it
+    // lives at the provider `api_url` slot (`https://api.runpod.io`, where the
+    // RunPod `ApiKeyState` reads it), not at `kask://credentials/runpod`.
+    // `credential_url_for_key("runpod")` maps this row to that slot, so the
+    // settings UI and native provider read/write the same location. Its live
+    // consumer is the corpus OCR pipeline, which resolves `RunPod/kask-ocr`
+    // through the D29 provider; no MCP child receives this key after the
+    // former GPU-training-host consumer was removed.
+    DataServiceDescriptor {
+        env_var: "RUNPOD_API_KEY",
+        credential_key: "runpod",
+        label: "RunPod (serverless inference for OCR)",
+        dashboard_url: "https://runpod.io/",
+        shows_in_ui: true,
+    },
+    // The Nebius (GPU training host) row was removed with the training
+    // server and stays removed: it existed only to configure training
+    // jobs and has no read site. The HuggingFace row was retired with it
+    // for the same reason; its 2026-11-04 reinstatement served the kask
+    // model-weights fetcher and was retired again with it (2026-11-11).
+    // FRED (Federal Reserve Economic Data) — read by the prediction-markets
+    // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
+    // reference-level fetches. Optional (curated static fallback when absent),
+    // but an operator who sets it via the settings UI expects it to reach the server.
+    // Shown in the Data Services UI as an always-on row (no enable toggle —
+    // enabled when the key is present, mirroring `serpapi`).
+    DataServiceDescriptor {
+        env_var: "HKASK_FRED_API_KEY",
+        credential_key: "fred",
+        label: "FRED API Key",
+        dashboard_url: "https://fred.stlouisfed.org/docs/api/api_key.html",
+        shows_in_ui: true,
+    },
+];
+
+/// Build the `(env_var, credential_url)` pairs for all settings/keychain-backed
+/// data services, including credentials consumed in-process rather than by an
+/// MCP child (RunPod OCR).
+pub fn data_service_credential_urls() -> Vec<(String, String)> {
+    DATA_SERVICES
+        .iter()
+        .map(|desc| {
+            (
+                desc.env_var.to_string(),
+                credential_url_for_key(desc.credential_key),
+            )
+        })
+        .collect()
+}
+
+/// Build the `(env_var, credential_url)` pairs consumed by remaining MCP
+/// server child processes. The server registry is the authority: a Data
+/// Services or inference-provider key without a child credential allowlist is
+/// deliberately excluded, so native-only RunPod OCR does not trigger child
+/// restarts or receive an unused env grant.
+pub fn credential_urls_for_mcp() -> Vec<(String, String)> {
+    let is_child_credential = |env_var: &str| {
+        crate::mcp_servers::BUILT_IN_MCP_SERVERS
+            .iter()
+            .any(|server| server.credentials.contains(&env_var))
+    };
+    let mut urls = data_service_credential_urls()
+        .into_iter()
+        .filter(|(env_var, _)| is_child_credential(env_var))
+        .collect::<Vec<_>>();
+
+    // Inference providers with current MCP consumers read from the provider's
+    // api_url keychain slot — the same slot zed's ApiKeyState reads. Ollama is
+    // keyless; native-only RunPod has no child allowlist; a
+    // provider already represented by a Data Services row is de-duplicated.
+    for provider in INFERENCE_PROVIDERS {
+        if provider.env_var.is_empty()
+            || !is_child_credential(provider.env_var)
+            || urls.iter().any(|(env_var, _)| env_var == provider.env_var)
+        {
+            continue;
+        }
+        urls.push((provider.env_var.to_string(), provider.api_url.to_string()));
+    }
+
+    urls
+}
+
+/// A provider descriptor and its key, resolved together so dispatch cannot
+/// lose the destination identity when stripping a model prefix.
+pub struct ResolvedEmbeddingCredentials {
+    pub(crate) provider: &'static InferenceProviderDescriptor,
+    pub(crate) api_key: String,
+}
+
+/// zed-kask: D100 item 3 (operator 2026-11-05) — the private leg's LOCAL
+/// embedding binding. Private content (private-store chunks at ingest,
+/// private-context recall queries) embeds through a port bound to the
+/// OLLAMA descriptor — the local `INFERENCE_PROVIDERS` entry that serves
+/// OpenAI-compatible `/embeddings` at its `api_url`
+/// (`http://localhost:11434/v1`) with NO api key: local inference needs
+/// no credentials, and the bearer header the port sends carries an empty
+/// value the local server ignores. The credentialed cloud port never
+/// sees private content — the keyword-only degrade lifts only by going
+/// local, never by widening to the cloud.
+///
+/// `None` when the ollama descriptor is absent from the table (a removed
+/// entry — the private port is then not wired and the keyword-only degrade
+/// persists, surfaced at wiring time).
+pub fn local_ollama_embedding_credentials() -> Option<ResolvedEmbeddingCredentials> {
+    INFERENCE_PROVIDERS
+        .iter()
+        .find(|provider| provider.id.eq_ignore_ascii_case("ollama") && provider.serves_embeddings)
+        .map(|provider| ResolvedEmbeddingCredentials {
+            provider,
+            api_key: String::new(),
+        })
+}
+
+/// Resolve provider-bound credentials for an embedding model string by reading
+/// the API key from the Zed keychain at the provider's `api_url`.
+///
+/// This is the direct path: parse the provider prefix from the model string
+/// (e.g. `DEFAULT_EMBEDDING_MODEL` → the provider prefix), look up the
+/// descriptor in `INFERENCE_PROVIDERS`, and read the API key from the
+/// keychain at the provider's `api_url` (the same URL the
+/// `LanguageModelProvider`'s `ApiKeyState` reads). No `LanguageModelRegistry`
+/// lookup, no case-sensitivity traps.
+///
+/// Returns `None` (after logging a warn) if:
+/// - The model string has no recognized provider prefix.
+/// - The provider is not in `INFERENCE_PROVIDERS`.
+/// - The provider does not serve embeddings (`serves_embeddings: false` —
+///   chat-only gateways and endpoint-discovery providers).
+/// - The keychain has no key at the provider's `api_url`.
+///
+/// Providers with an empty `env_var` (e.g. ollama) are local services that
+/// require no API key — the function returns an empty key for them.
+pub async fn resolve_embedding_credentials(
+    embedding_model: &str,
+    credentials_provider: &dyn CredentialsProvider,
+    cx: &gpui::AsyncApp,
+) -> Option<ResolvedEmbeddingCredentials> {
+    let provider = embedding_provider_descriptor(embedding_model).or_else(|| {
+        tracing::warn!(
+            "Embedding model '{}' does not name an embedding-capable provider \
+                     (no recognized prefix, or a recognized provider that serves no \
+                     OpenAI-compatible /embeddings endpoint — RunPod resolves \
+                     per-endpoint). Set kask.corpus.embedding_model to \
+                     an embedding-capable provider (DeepInfra, OpenRouter, ollama), or \
+                     set HKASK_EMBEDDING_MODEL.",
+            embedding_model
+        );
+        None
+    })?;
+
+    // Local providers (e.g. ollama) don't require an API key — an empty
+    // `env_var` signals "no key needed." Return an empty key so the embedding
+    // port can connect without authentication.
+    if provider.env_var.is_empty() {
+        return Some(ResolvedEmbeddingCredentials {
+            provider,
+            api_key: String::new(),
+        });
+    }
+
+    // Read the API key from the Zed keychain at the provider's `api_url`.
+    // This is the same URL the `LanguageModelProvider`'s `ApiKeyState` reads,
+    // so the embedding port uses the same key the provider uses. It is the
+    // ONE location for the key — a key entered via Settings → AI → LLM
+    // Providers is immediately visible here (and to MCP server children via
+    // `credential_urls_for_mcp`).
+    let api_key = match credentials_provider
+        .read_credentials(provider.api_url, cx)
+        .await
+    {
+        Ok(Some((_, bytes))) => match String::from_utf8(bytes) {
+            Ok(key) if !key.is_empty() => key,
+            _ => {
+                tracing::warn!(
+                    "Embedding provider '{}' — keychain entry at {} is empty or invalid. \
+                     Embedding-based recall will not work until the key is set.",
+                    provider.id,
+                    provider.api_url
+                );
+                return None;
+            }
+        },
+        Ok(None) => {
+            tracing::warn!(
+                "Embedding provider '{}' — no key found in keychain at {}. \
+                 Embedding-based recall will not work until the key is set \
+                 via Settings → AI → LLM Providers.",
+                provider.id,
+                provider.api_url
+            );
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Embedding provider '{}' — failed to read key from keychain at {}: {error}. \
+                 Embedding-based recall will not work until the key is set.",
+                provider.id,
+                provider.api_url
+            );
+            return None;
+        }
+    };
+
+    Some(ResolvedEmbeddingCredentials { provider, api_key })
+}
+
+fn embedding_provider_descriptor(
+    embedding_model: &str,
+) -> Option<&'static InferenceProviderDescriptor> {
+    hkask_inference::openai_compat::embedding_provider_descriptor(embedding_model)
+        .map(|(provider, _)| provider)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::INFERENCE_PROVIDERS;
+    use credentials_provider::test_support::FakeCredentialsProvider;
+
+    // Pins the inference-provider credential consolidation (the
+    // 2026-08-31 split-brain fix — successor to the D29 mirror contract):
+    // (a) every inference-provider key — RunPod included — resolves to the
+    //     provider `api_url` slot via `credential_url_for_key`, so the
+    //     settings UI and zed's `ApiKeyState` read ONE location;
+    // (b) `credential_urls_for_mcp` includes only providers with remaining
+    //     child consumers. Native-only RunPod stays out of child env.
+    //
+    // NOT covered here: "RunPod is absent from the openai_compatible
+    // registration set" — no such set exists in kask_bridge (providers are
+    // registered via zed's native Settings → AI → LLM Providers). RunPod's
+    // non-registration as openai_compatible is enforced by the dedicated
+    // `LanguageModelProvider` in `crates/language_models/src/provider/runpod.rs`,
+    // outside this crate.
+    #[test]
+    fn inference_provider_keys_resolve_to_the_provider_slot() {
+        // (a) one key, one location: the provider api_url is the canonical slot.
+        for provider in INFERENCE_PROVIDERS {
+            if provider.env_var.is_empty() {
+                continue; // ollama — no key exists at all
+            }
+            assert_eq!(
+                super::credential_url_for_key(provider.credential_key),
+                provider.api_url,
+                "credential key '{}' must resolve to the provider api_url slot",
+                provider.credential_key
+            );
+        }
+        // Pure data-service keys keep the kask namespace.
+        assert_eq!(
+            super::credential_url_for_key("exa"),
+            "kask://credentials/exa",
+            "non-provider credential keys must stay in the kask namespace"
+        );
+    }
+
+    /// D5 + D69: a provider's `api_url` is stated in two files — the shipped
+    /// `default.json` pre-seed (the slot zed's `ApiKeyState` keys the keychain
+    /// by, through the `openai_compatible` settings entry) and the
+    /// `INFERENCE_PROVIDERS` descriptor (the slot kask's
+    /// `credential_url_for_key` resolves). Nothing else ties the two copies:
+    /// if they drift, the editor and kask read DIFFERENT keychain slots for
+    /// the same key — the 2026-08-31 DeepInfra 401 split-brain shape. Walks
+    /// every descriptor whose id names a pre-seeded `openai_compatible`
+    /// entry and asserts the two `api_url`s are identical. Native providers
+    /// (RunPod D29, OpenRouter, ollama) have no `openai_compatible` pre-seed
+    /// and are skipped by construction. Pins the shipped pair only —
+    /// a user-side `api_url` override in user settings is a user-owned
+    /// divergence of the same class, out of this test's reach.
+    #[test]
+    fn descriptor_api_urls_match_default_json_pre_seeds() {
+        let default_json = include_str!("../../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json must parse");
+        let pre_seeds = value
+            .get("language_models")
+            .and_then(|lm| lm.get("openai_compatible"))
+            .and_then(|map| map.as_object())
+            .expect("default.json pre-seeds language_models.openai_compatible");
+
+        for provider in INFERENCE_PROVIDERS {
+            let Some(entry) = pre_seeds.get(provider.id) else {
+                continue; // native provider — no openai_compatible pre-seed
+            };
+            let pre_seed_url = entry
+                .get("api_url")
+                .and_then(|url| url.as_str())
+                .unwrap_or_else(|| panic!("pre-seeded entry '{}' must set api_url", provider.id));
+            assert_eq!(
+                pre_seed_url, provider.api_url,
+                "the INFERENCE_PROVIDERS descriptor for '{}' and its default.json \
+                 pre-seed state different api_urls — zed's ApiKeyState (keying the \
+                 keychain by the settings api_url) and kask's credential_url_for_key \
+                 (resolving the descriptor api_url) would read different slots for \
+                 the same key (the D5 401 shape)",
+                provider.id
+            );
+        }
+    }
+
+    #[test]
+    fn credential_urls_for_mcp_injects_only_provider_keys_with_child_consumers() {
+        let urls = super::credential_urls_for_mcp();
+
+        // Provider keys with current MCP-child consumers appear exactly once,
+        // resolved to the provider api_url slot (the same slot ApiKeyState reads).
+        let expected = [
+            ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1"),
+            ("DEEPINFRA_API_KEY", "https://api.deepinfra.com/v1/openai"),
+        ];
+        for (env_var, api_url) in expected {
+            let matches: Vec<&(String, String)> =
+                urls.iter().filter(|(var, _)| var == env_var).collect();
+            assert_eq!(
+                matches.len(),
+                1,
+                "{env_var} must be injected exactly once from its provider slot"
+            );
+            assert_eq!(
+                matches[0].1, api_url,
+                "{env_var} must inject from the provider api_url slot"
+            );
+        }
+
+        // Native providers without MCP-child consumers stay at their canonical
+        // api_url slots but must not be granted to, or restart, any child.
+        assert!(
+            !urls.iter().any(|(var, _)| var == "RUNPOD_API_KEY"),
+            "native-only provider RUNPOD_API_KEY must not enter MCP child env"
+        );
+        let data_service_urls = super::data_service_credential_urls();
+        assert!(
+            data_service_urls
+                .iter()
+                .any(|(var, url)| { var == "RUNPOD_API_KEY" && url == "https://api.runpod.io" })
+        );
+        for retired in ["RUNPOD_S3_ACCESS_KEY", "RUNPOD_S3_SECRET"] {
+            assert!(
+                !urls.iter().any(|(var, _)| var == retired),
+                "retired RunPod S3 credentials must not be requested for MCP children"
+            );
+        }
+
+        // The legacy kask slots must feed NOTHING — a consumer reintroducing
+        // them re-creates the split-brain (stale key → 401).
+        for legacy in [
+            "kask://credentials/openrouter",
+            "kask://credentials/deepinfra",
+            "kask://credentials/runpod",
+        ] {
+            assert!(
+                !urls.iter().any(|(_, url)| url == legacy),
+                "legacy slot {legacy} must not appear in the injection set"
+            );
+        }
+
+        // Data services keep injecting from the kask namespace.
+        assert!(
+            urls.iter()
+                .any(|(var, url)| var == "HKASK_EXA_API_KEY" && url == "kask://credentials/exa")
+        );
+    }
+
+    /// D69 embedding eligibility: only providers that serve an OpenAI-compatible
+    /// `/embeddings` endpoint resolve an embedding port. Endpoint-discovery
+    // RunPod is a recognized `INFERENCE_PROVIDERS` entry
+    // (native provider registration and keychain api_url routing keep working
+    // through the descriptor) but must
+    /// NOT resolve embeddings: `LanguageModelEmbeddingPort` POSTs to
+    /// `{api_url}/embeddings`, a route the provider does not serve, so resolving
+    /// one would let the editor log "semantic recall enabled" at startup and
+    /// then fail on every call. The registry walk pins the flag/resolver
+    /// consistency for every provider; the named controls pin the current
+    /// capability assignment (the flag flip is the behavior under test).
+    #[test]
+    fn embedding_eligibility_rejects_providers_without_an_embeddings_endpoint() {
+        // Registry walk: a provider resolves an embedding descriptor exactly
+        // when its `serves_embeddings` flag is set — the flag and the resolver
+        // cannot drift apart for any current or future entry.
+        for provider in INFERENCE_PROVIDERS {
+            let model = format!("{}/some-model", provider.id);
+            let resolved = super::embedding_provider_descriptor(&model);
+            assert_eq!(
+                resolved.is_some(),
+                provider.serves_embeddings,
+                "provider '{}' (serves_embeddings={}) must resolve an embedding \
+                 descriptor exactly when it serves embeddings",
+                provider.id,
+                provider.serves_embeddings
+            );
+        }
+
+        // Positive controls — the embedding-capable routes resolve
+        // (case-insensitive prefix, matching `resolve_model_names`).
+        for model in [
+            "DeepInfra/BAAI/bge-m3",
+            "OpenRouter/qwen/qwen3-embedding-8b",
+            "ollama/qwen3-embedding:8b",
+            "deepinfra/BAAI/bge-m3",
+        ] {
+            assert!(
+                super::embedding_provider_descriptor(model).is_some(),
+                "'{model}' must resolve an embedding-capable provider"
+            );
+        }
+
+        // Negative controls — recognized providers with no embeddings endpoint
+        // are rejected before credential resolution, so the startup
+        // announcement cannot fire for a route that would fail on every call.
+        assert!(
+            super::embedding_provider_descriptor("RunPod/kask-ocr").is_none(),
+            "'RunPod/kask-ocr' must not resolve an embedding port (no /embeddings endpoint)"
+        );
+    }
+
+    /// expect: "An embedding model naming a provider with no /embeddings
+    /// endpoint is rejected at the credential-resolution route — before any
+    /// keychain read — even when every provider's key is present." Under a
+    /// keychain seeded for all providers, a `None` for RunPod is a
+    /// rejection of the route (eligibility), not of an absent credential;
+    /// this pins that `resolve_embedding_credentials` cannot announce a
+    /// binding for a route with no embeddings endpoint. DeepInfra/OpenRouter
+    /// (keyed) and ollama (keyless local) are the positive controls.
+    #[gpui::test]
+    async fn embedding_credentials_reject_ineligible_routes_with_keys_present(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let secrets: std::collections::HashMap<String, Vec<u8>> = INFERENCE_PROVIDERS
+            .iter()
+            .filter(|provider| !provider.env_var.is_empty())
+            .map(|provider| {
+                (
+                    provider.api_url.to_string(),
+                    format!("{}-fixture-key", provider.credential_key).into_bytes(),
+                )
+            })
+            .collect();
+        let credentials = FakeCredentialsProvider::default();
+        credentials.state.lock().keys = secrets;
+        let async_cx = cx.to_async();
+
+        // Ineligible routes: keys ARE present at their slots, so these
+        // rejections are eligibility rejections, not missing-key failures.
+        let resolved = super::resolve_embedding_credentials(
+            "RunPod/serverless-model",
+            &credentials,
+            &async_cx,
+        )
+        .await;
+        assert!(
+            resolved.is_none(),
+            "embedding model 'RunPod/serverless-model' must not resolve: its provider serves no \
+             /embeddings endpoint at its api_url, so the route cannot succeed"
+        );
+
+        for (model, expected_key) in [
+            ("DeepInfra/BAAI/bge-large", "deepinfra-fixture-key"),
+            ("OpenRouter/qwen/qwen3-embedding", "openrouter-fixture-key"),
+        ] {
+            let resolved =
+                super::resolve_embedding_credentials(model, &credentials, &async_cx).await;
+            let resolved = resolved.unwrap_or_else(|| panic!("{model} must resolve"));
+            assert_eq!(resolved.provider.id, model.split_once('/').unwrap().0);
+            assert_eq!(resolved.api_key, expected_key);
+        }
+
+        // ollama is embedding-capable and keyless — resolves with an empty key.
+        let resolved = super::resolve_embedding_credentials(
+            "ollama/nomic-embed-text",
+            &credentials,
+            &async_cx,
+        )
+        .await;
+        assert!(
+            resolved.is_some_and(|r| r.api_key.is_empty()),
+            "keyless local embedding provider must resolve with an empty key"
+        );
+    }
+}

@@ -1,0 +1,704 @@
+//! Embedding generation over OpenAI-compatible provider credentials.
+//!
+//! The port takes a provider-bound credential bundle resolved upfront from the bridge's
+//! `INFERENCE_PROVIDERS` table (env var) and makes raw
+//! `/embeddings` POSTs through the app's `HttpClient`. No GPUI access is
+//! needed at request time — credentials are resolved once at construction.
+//!
+//! The model string (e.g. `OpenRouter/qwen/qwen3-embedding-8b`) is stripped
+//! of its provider prefix before being sent to the API — the provider expects
+//! the bare model id, not the prefixed form.
+
+use std::sync::Arc;
+
+use futures::AsyncReadExt;
+use hkask_inference::openai_compat::{build_embedding_request_body, parse_embedding_response};
+use hkask_types::{EmbeddingBatch, EmbeddingGenerationError};
+use http_client::{AsyncBody, HttpClient, Method, Request};
+use tokio::sync::{mpsc, oneshot};
+
+/// Shared local-ollama prefix validation for D100 private inference legs
+/// (`build_private_embedding_port` and `resolve_private_classifier_model`).
+fn validate_local_ollama_leg(
+    model: &str,
+    empty_warning: &str,
+    missing_descriptor_warning: &str,
+    setting_key: &str,
+    degrade_consequence: &str,
+) -> Option<(crate::ResolvedEmbeddingCredentials, String)> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        tracing::warn!(target: "kask.private_inference", "{empty_warning}");
+        return None;
+    }
+    let Some(credentials) = crate::inference_providers::local_ollama_embedding_credentials() else {
+        tracing::warn!(target: "kask.private_inference", "{missing_descriptor_warning}");
+        return None;
+    };
+    let prefix_matches = trimmed.split_once('/').is_some_and(|(prefix, rest)| {
+        !rest.is_empty() && prefix.eq_ignore_ascii_case(credentials.provider.id)
+    });
+    if !prefix_matches {
+        tracing::warn!(
+            target: "kask.private_inference",
+            model = %trimmed,
+            local_provider = %credentials.provider.id,
+            "the configured private model does not name the local provider — leg not wired \
+             (set {setting_key} to a {}/<model> string); {degrade_consequence}",
+            credentials.provider.id
+        );
+        return None;
+    }
+    Some((credentials, trimmed.to_string()))
+}
+
+/// zed-kask: D100 item 3 (operator 2026-11-05) — construct the private
+/// leg's LOCAL embedding port.
+///
+/// Binds to the local ollama descriptor (no credentials — see
+/// [`local_ollama_embedding_credentials`]); private chunks and private
+/// recall queries embed through this instance ONLY, and the credentialed
+/// cloud port is never consulted for them. Returns `None` — with a warn
+/// naming the boundary and the setting — when the model is empty (the
+/// operator's explicit opt-out; the keyword-only degrade persists) or when
+/// the model does not name the local provider (a cloud-prefixed string
+/// here would be rejected by the port's per-call provider check, so the
+/// mismatch is surfaced at wiring time instead of failing every call).
+///
+/// The same `http_client`/`tokio_handle`/`max_concurrency` wiring as the
+/// cloud port: the local server is on loopback, but it is still an HTTP
+/// call that must be spawned and bounded.
+pub fn build_private_embedding_port(
+    model: &str,
+    http_client: Arc<dyn HttpClient>,
+    tokio_handle: tokio::runtime::Handle,
+    max_concurrency: usize,
+) -> Option<LanguageModelEmbeddingPort> {
+    let (credentials, _) = validate_local_ollama_leg(
+        model,
+        "private embedding model is empty — private-store chunks and private-context \
+         queries stay keyword-only (set kask.private_inference.embedding_model to lift \
+         the degrade)",
+        "the ollama descriptor is absent from INFERENCE_PROVIDERS — the private \
+         embedding port is not wired; the keyword-only degrade persists",
+        "kask.private_inference.embedding_model",
+        "private content stays keyword-only and never widens to the cloud embedder",
+    )?;
+    Some(LanguageModelEmbeddingPort::new(
+        credentials,
+        http_client,
+        tokio_handle,
+        max_concurrency,
+    ))
+}
+
+/// zed-kask: D100 classifier lift (operator ruling 2026-11-06) — validate the
+/// private leg's LOCAL classifier model at wiring time, the same discipline
+/// `build_private_embedding_port` enforces for the private embedding model:
+/// empty is the explicit opt-out; a non-empty value must name the LOCAL
+/// provider (the `INFERENCE_PROVIDERS` ollama descriptor) — a cloud-prefixed
+/// string is refused (not wired) so private-turn tagging keeps the
+/// structural-only degrade instead of widening to a cloud model. Returns
+/// the trimmed model string; the model string IS the routing signal at the
+/// tagging call (`generate_with_model`).
+pub fn resolve_private_classifier_model(model: &str) -> Option<String> {
+    let (_, validated) = validate_local_ollama_leg(
+        model,
+        "private classifier model is empty — private-turn chunks keep structural tags \
+         only (set kask.private_inference.classifier_model to lift the degrade)",
+        "the ollama descriptor is absent from INFERENCE_PROVIDERS — the private \
+         classifier leg is not wired; private turns keep structural tags only",
+        "kask.private_inference.classifier_model",
+        "private turns keep structural tags only and never widen to the cloud classifier",
+    )?;
+    Some(validated)
+}
+
+#[cfg(test)]
+mod private_port_tests {
+    use super::*;
+    use crate::inference_providers::{INFERENCE_PROVIDERS, local_ollama_embedding_credentials};
+    use hkask_inference::model_constants::DEFAULT_PRIVATE_EMBEDDING_MODEL;
+
+    fn http_client() -> Arc<dyn HttpClient> {
+        http_client::FakeHttpClient::with_404_response()
+    }
+
+    #[test]
+    fn local_ollama_credentials_bind_the_serving_descriptor_with_no_key() {
+        let credentials =
+            local_ollama_embedding_credentials().expect("the ollama descriptor resolves");
+        assert_eq!(credentials.provider.id, "ollama");
+        assert!(credentials.provider.serves_embeddings);
+        assert_eq!(
+            credentials.api_key, "",
+            "local inference needs no credentials"
+        );
+    }
+
+    #[test]
+    fn the_default_private_model_names_the_local_provider() {
+        // The constant and the descriptor cannot drift apart: a prefix change
+        // on either side fails here, not as a per-call port rejection.
+        let credentials =
+            local_ollama_embedding_credentials().expect("the ollama descriptor resolves");
+        let (prefix, model_id) = DEFAULT_PRIVATE_EMBEDDING_MODEL
+            .split_once('/')
+            .expect("the default is provider-qualified");
+        assert_eq!(prefix, credentials.provider.id);
+        assert!(!model_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_rejects_empty_and_cloud_prefixed_models_but_binds_the_local_one() {
+        let handle = tokio::runtime::Handle::current();
+        assert!(
+            build_private_embedding_port("", http_client(), handle.clone(), 4).is_none(),
+            "the explicit empty opt-out wires no port"
+        );
+        assert!(
+            build_private_embedding_port(
+                hkask_inference::model_constants::DEFAULT_EMBEDDING_MODEL,
+                http_client(),
+                handle.clone(),
+                4,
+            )
+            .is_none(),
+            "a cloud-prefixed model never wires the private local port"
+        );
+        let port =
+            build_private_embedding_port(DEFAULT_PRIVATE_EMBEDDING_MODEL, http_client(), handle, 4)
+                .expect("the local default wires the private port");
+        // Construction wires a bound port; no HTTP happens until an embed.
+        drop(port);
+    }
+
+    #[test]
+    fn the_ollama_descriptor_serves_embeddings_from_loopback() {
+        let ollama = INFERENCE_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == "ollama")
+            .expect("the local provider is registered");
+        assert!(ollama.serves_embeddings);
+        assert!(
+            ollama.api_url.contains("localhost") || ollama.api_url.contains("127.0.0.1"),
+            "the local embedding endpoint must be loopback: {}",
+            ollama.api_url
+        );
+    }
+}
+
+/// Request sent to the tokio-side embedding executor.
+struct EmbedRequest {
+    /// The provider-prefixed model string (e.g.
+    /// `OpenRouter/qwen/qwen3-embedding-8b`).
+    /// The prefix is stripped before the API call.
+    model: String,
+    /// Texts to embed.
+    texts: Vec<String>,
+    /// Output width to request from MRL-capable models; `None` = native.
+    dimensions: Option<u32>,
+    /// Reply channel.
+    reply: oneshot::Sender<Result<EmbeddingBatch, EmbeddingGenerationError>>,
+}
+
+/// Embedding generation port over OpenAI-compatible provider credentials.
+///
+/// Construct with `ResolvedEmbeddingCredentials` resolved from the bridge's
+/// `INFERENCE_PROVIDERS` table and the app's `HttpClient`. The port is
+/// `Send + Sync` — no GPUI access is needed at request time.
+#[derive(Clone)]
+pub struct LanguageModelEmbeddingPort {
+    tx: mpsc::UnboundedSender<EmbedRequest>,
+    bound_provider_id: Option<&'static str>,
+}
+
+impl LanguageModelEmbeddingPort {
+    /// Construct the port and spawn the receiver task on the tokio runtime.
+    ///
+    /// The provider descriptor and bearer key are resolved together by
+    /// `resolve_embedding_credentials`. Requests must name that provider;
+    /// mismatches are rejected before serialization or HTTP. The `tokio_handle`
+    /// is used to spawn the receiver task (obtained via
+    /// `gpui_tokio::Tokio::handle(cx)` at the call site).
+    ///
+    /// `max_concurrency` bounds the number of in-flight HTTP calls, mirroring
+    /// the chat port's receiver: it is the embedding-side enforcement point
+    /// for `kask.general.max_concurrency`. Awaiting each HTTP call inline in
+    /// the receiver loop serialized every embedding consumer behind
+    /// whichever request the loop picked up first (head-of-line blocking), so
+    /// a corpus embed wave ran one request at a time regardless of the
+    /// caller's own fan-out.
+    pub fn new(
+        credentials: crate::ResolvedEmbeddingCredentials,
+        http_client: Arc<dyn HttpClient>,
+        tokio_handle: tokio::runtime::Handle,
+        max_concurrency: usize,
+    ) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        let provider = credentials.provider;
+        let api_key = credentials.api_key;
+        let concurrency = Arc::new(tokio::sync::Semaphore::new(max_concurrency.max(1)));
+
+        // The receiver runs on the tokio runtime — no GPUI access needed. Each
+        // request is dispatched as its own spawned task gated by `concurrency`;
+        // the permit is held for the task's lifetime and released on drop. A
+        // dropped caller reply is detected at send time, after the accepted
+        // work completes — cancellation cannot reverse work already sent.
+        tokio_handle.spawn({
+            let tokio_handle = tokio_handle.clone();
+            async move {
+                while let Some(req) = rx.recv().await {
+                    let http_client = http_client.clone();
+                    let api_key = api_key.clone();
+                    let concurrency = concurrency.clone();
+                    tokio_handle.spawn(async move {
+                        let api_url = provider.api_url;
+                        let result = async move {
+                            let _permit = concurrency.acquire().await.map_err(|e| {
+                                EmbeddingGenerationError::Connection(format!(
+                                    "embedding concurrency semaphore closed: {e}"
+                                ))
+                            })?;
+                            let (requested_provider, model_id) =
+                                req.model.split_once('/').ok_or_else(|| {
+                                    EmbeddingGenerationError::InvalidRequest(
+                                        "model must be provider-qualified".into(),
+                                    )
+                                })?;
+                            if !requested_provider.eq_ignore_ascii_case(provider.id)
+                                || model_id.is_empty()
+                            {
+                                return Err(EmbeddingGenerationError::InvalidRequest(format!(
+                                    "model '{}' cannot use the embedding port bound to '{}'; select a model from that provider or reconfigure the port",
+                                    req.model, provider.id,
+                                )));
+                            }
+
+                            // Build and validate the shared OpenAI/OpenRouter `/embeddings`
+                            // request body (`encoding_format: "float"`, non-empty inputs,
+                            // optional MRL `dimensions`, and OpenRouter provider routing).
+                            let body = build_embedding_request_body(
+                                api_url,
+                                model_id,
+                                &req.texts,
+                                req.dimensions,
+                            )?;
+                            let body_bytes = serde_json::to_vec(&body).map_err(|e| {
+                                EmbeddingGenerationError::Json(format!(
+                                    "failed to serialize embedding request: {e}"
+                                ))
+                            })?;
+
+                            let uri = format!("{}/embeddings", api_url.trim_end_matches('/'));
+                            let mut request_builder = Request::builder()
+                                .method(Method::POST)
+                                .uri(&uri)
+                                .header("Content-Type", "application/json");
+                            let trimmed_key = api_key.trim();
+                            if !trimmed_key.is_empty() {
+                                request_builder = request_builder
+                                    .header("Authorization", format!("Bearer {trimmed_key}"));
+                            }
+                            let request = request_builder
+                                .body(AsyncBody::from_bytes(body_bytes.into()))
+                                .map_err(|e| {
+                                    EmbeddingGenerationError::Connection(format!(
+                                        "failed to build embedding request: {e}"
+                                    ))
+                                })?;
+
+                            // Bound every embedding HTTP call (connect + headers + body)
+                            // so a stalled TCP socket cannot hang a corpus batch in
+                            // futex_do_wait indefinitely.
+                            const EMBEDDING_HTTP_TIMEOUT: std::time::Duration =
+                                std::time::Duration::from_secs(60);
+                            let (status, body_text) =
+                                tokio::time::timeout(EMBEDDING_HTTP_TIMEOUT, async {
+                                    // Format `{e:#}` so the full anyhow/reqwest/hyper/TLS/timeout
+                                    // causal chain is logged rather than only the top-level URL wrapper.
+                                    let mut response =
+                                        http_client.send(request).await.map_err(|e| {
+                                            EmbeddingGenerationError::Connection(format!(
+                                                "embedding HTTP request failed: {e:#}"
+                                            ))
+                                        })?;
+
+                                    let status = response.status();
+                                    let mut body_text = String::new();
+                                    response
+                                        .body_mut()
+                                        .read_to_string(&mut body_text)
+                                        .await
+                                        .map_err(|e| {
+                                            EmbeddingGenerationError::Connection(format!(
+                                                "failed to read embedding response body: {e}"
+                                            ))
+                                        })?;
+                                    Ok::<_, EmbeddingGenerationError>((status, body_text))
+                                })
+                                .await
+                                .map_err(|_| {
+                                    EmbeddingGenerationError::Connection(format!(
+                                        "embedding HTTP request timed out after {}s",
+                                        EMBEDDING_HTTP_TIMEOUT.as_secs()
+                                    ))
+                                })??;
+
+                            parse_embedding_response(
+                                status.as_u16(),
+                                &body_text,
+                                req.model,
+                                req.texts.len(),
+                            )
+                        }
+                        .await;
+
+                        if req.reply.send(result).is_err() {
+                            tracing::trace!(target: "hkask.inference", "embedding reply dropped — caller cancelled");
+                        }
+                    });
+                }
+            }
+        });
+
+        Self {
+            tx,
+            bound_provider_id: Some(provider.id),
+        }
+    }
+
+    /// Whether this port is bound to the provider named by `model` (e.g.
+    /// `"ollama/qwen3-embedding:0.6b"` matches a port bound to `"ollama"`).
+    #[must_use]
+    pub(crate) fn matches_model_provider(&self, model: &str) -> bool {
+        let Some(bound) = self.bound_provider_id else {
+            return false;
+        };
+        model
+            .split_once('/')
+            .is_some_and(|(prefix, rest)| !rest.is_empty() && prefix.eq_ignore_ascii_case(bound))
+    }
+
+    /// Construct a port with no backing receiver task. Any `embed` call will
+    /// return a `Connection` error (the channel is closed). For tests that
+    /// construct a `RealMemoryPort` but never call embed.
+    #[cfg(test)]
+    pub fn for_tests() -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        drop(_rx);
+        Self {
+            tx,
+            bound_provider_id: None,
+        }
+    }
+
+    /// Construct a port whose `embed` calls are answered by `embed_fn`,
+    /// which maps each input text to a vector. The receiver task runs on the
+    /// provided tokio handle. For tests that exercise the end-to-end
+    /// embedding recall path without a real HTTP call — the closure must
+    /// produce vectors where similar texts have small cosine distance and
+    /// dissimilar texts have large distance, so KNN `search` returns the
+    /// right neighbors.
+    #[cfg(test)]
+    pub fn for_tests_with_embed_fn<F>(
+        embed_fn: Arc<F>,
+        tokio_handle: tokio::runtime::Handle,
+    ) -> Self
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + ?Sized + 'static,
+    {
+        // The width-unaware fixture is the dimension-aware one with the
+        // width ignored — one reply loop, one EmbeddingBatch shape.
+        Self::for_tests_with_dim_embed_fn(
+            Arc::new(move |text: &str, _width: Option<u32>| embed_fn(text)),
+            tokio_handle,
+        )
+    }
+
+    /// Construct a port whose `embed` calls are answered by `embed_fn`,
+    /// which maps each input text AND the requested output width to a
+    /// vector (`None` = native width). For tests that exercise
+    /// dimension-aware embedding — a federated source sealed at a width
+    /// different from the curator store's must receive a query embedded at
+    /// the source's own width.
+    #[cfg(test)]
+    pub fn for_tests_with_dim_embed_fn<F>(
+        embed_fn: Arc<F>,
+        tokio_handle: tokio::runtime::Handle,
+    ) -> Self
+    where
+        F: Fn(&str, Option<u32>) -> Vec<f32> + Send + Sync + ?Sized + 'static,
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        tokio_handle.spawn(async move {
+            while let Some(req) = rx.recv().await {
+                let vectors: Vec<Vec<f32>> = req
+                    .texts
+                    .iter()
+                    .map(|t| embed_fn(t, req.dimensions))
+                    .collect();
+                let result = if vectors.is_empty() {
+                    Err(EmbeddingGenerationError::EmptyResponse)
+                } else {
+                    Ok(EmbeddingBatch {
+                        vectors,
+                        requested_model: req.model,
+                        actual_model: None,
+                        // The local embed-fn path computes vectors in-process
+                        // — no provider, no tokens, no cost. `reported:
+                        // false` keeps the absence honest.
+                        usage: hkask_types::InferenceUsage::default(),
+                    })
+                };
+                let _ = req.reply.send(result);
+            }
+        });
+        Self {
+            tx,
+            bound_provider_id: None,
+        }
+    }
+
+    /// Generate embeddings for a batch of texts.
+    ///
+    /// `model` is the provider-prefixed model string (e.g.
+    /// `DEFAULT_EMBEDDING_MODEL`). The prefix must match the bound provider
+    /// before it is stripped for the API call.
+    pub async fn embed_with_identity(
+        &self,
+        model: &str,
+        texts: &[String],
+    ) -> Result<EmbeddingBatch, EmbeddingGenerationError> {
+        self.embed_with_dimensions(model, texts, None).await
+    }
+
+    /// Generate embeddings, requesting a specific output width from
+    /// MRL-capable models (the OpenAI-compatible `dimensions` body field).
+    /// `None` lets the model emit its native width; callers whose vector
+    /// stores are width-bound (sqlite-vec `float[N]` and `int8[N]` tables) pass the
+    /// store's width so returned vectors always fit.
+    pub async fn embed_with_dimensions(
+        &self,
+        model: &str,
+        texts: &[String],
+        dimensions: Option<u32>,
+    ) -> Result<EmbeddingBatch, EmbeddingGenerationError> {
+        if texts.is_empty() {
+            return Err(EmbeddingGenerationError::EmptyResponse);
+        }
+        let (tx_reply, rx_reply) = oneshot::channel();
+        self.tx
+            .send(EmbedRequest {
+                model: model.to_string(),
+                texts: texts.to_vec(),
+                dimensions,
+                reply: tx_reply,
+            })
+            .map_err(|e| {
+                EmbeddingGenerationError::Connection(format!("embedding port channel closed: {e}"))
+            })?;
+        rx_reply.await.map_err(|e| {
+            EmbeddingGenerationError::Connection(format!("embedding port reply dropped: {e}"))
+        })?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// expect: Provider substitutions and omitted identities remain distinct from the requested embedding model.
+    #[tokio::test]
+    async fn embedding_response_preserves_provider_confirmed_identity() {
+        let provider = crate::INFERENCE_PROVIDERS
+            .first()
+            .expect("at least one embedding provider");
+        for (response_body, expected_actual) in [
+            (
+                r#"{"data":[{"embedding":[1.0,0.0]}],"model":"provider/substituted-model"}"#,
+                Some("provider/substituted-model"),
+            ),
+            (r#"{"data":[{"embedding":[1.0,0.0]}]}"#, None),
+        ] {
+            let response_body = response_body.to_string();
+            let http_client = http_client::FakeHttpClient::create(move |_| {
+                let response_body = response_body.clone();
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from_bytes(response_body.into_bytes().into()))?)
+                }
+            });
+            let port = LanguageModelEmbeddingPort::new(
+                crate::ResolvedEmbeddingCredentials {
+                    provider,
+                    api_key: "fixture-key".into(),
+                },
+                http_client,
+                tokio::runtime::Handle::current(),
+                4,
+            );
+            let requested = format!("{}/requested-alias", provider.id);
+            let batch = port
+                .embed_with_identity(&requested, &["source text".to_string()])
+                .await
+                .expect("embedding succeeds");
+            assert_eq!(batch.requested_model, requested);
+            assert_eq!(batch.actual_model.as_deref(), expected_actual);
+            assert_eq!(batch.vectors, vec![vec![1.0, 0.0]]);
+        }
+    }
+
+    /// expect: "An embedding override never sends my text to a different provider" [P1]
+    #[tokio::test]
+    async fn embedding_provider_mismatch_sends_no_http() {
+        for provider in crate::INFERENCE_PROVIDERS {
+            let sends = Arc::new(AtomicUsize::new(0));
+            let http_client = http_client::FakeHttpClient::create({
+                let sends = sends.clone();
+                move |mut request| {
+                    let sends = sends.clone();
+                    async move {
+                        sends.fetch_add(1, Ordering::SeqCst);
+                        assert_eq!(
+                            request.uri().to_string(),
+                            format!("{}/embeddings", provider.api_url)
+                        );
+                        assert_eq!(request.headers()["Authorization"], "Bearer fixture-key");
+                        let mut text = String::new();
+                        request.body_mut().read_to_string(&mut text).await?;
+                        let body: serde_json::Value = serde_json::from_str(&text)?;
+                        assert_eq!(body["model"], "organization/embedding");
+                        assert_eq!(body["input"], serde_json::json!(["private source"]));
+                        Ok(http_client::Response::builder().status(200).body(
+                            AsyncBody::from_bytes(
+                                br#"{"data":[{"embedding":[1.0,0.0]}]}"#.to_vec().into(),
+                            ),
+                        )?)
+                    }
+                }
+            });
+            let port = LanguageModelEmbeddingPort::new(
+                crate::ResolvedEmbeddingCredentials {
+                    provider,
+                    api_key: "fixture-key".into(),
+                },
+                http_client,
+                tokio::runtime::Handle::current(),
+                4,
+            );
+            let input = vec!["private source".to_string()];
+            for other in crate::INFERENCE_PROVIDERS
+                .iter()
+                .filter(|other| other.id != provider.id)
+            {
+                let error = port
+                    .embed_with_identity(&format!("{}/embedding", other.id), &input)
+                    .await
+                    .expect_err("provider mismatch");
+                assert!(matches!(error, EmbeddingGenerationError::InvalidRequest(_)));
+            }
+            for model in [
+                "unqualified",
+                "unknown/model",
+                "🦀🦀🦀/model",
+                &format!("{}/", provider.id),
+            ] {
+                assert!(matches!(
+                    port.embed_with_identity(model, &input).await,
+                    Err(EmbeddingGenerationError::InvalidRequest(_))
+                ));
+            }
+            assert_eq!(
+                sends.load(Ordering::SeqCst),
+                0,
+                "rejected inputs must not reach transport"
+            );
+            assert_eq!(
+                port.embed_with_identity(
+                    &format!("{}/organization/embedding", provider.id.to_lowercase()),
+                    &input
+                )
+                .await
+                .expect("same provider")
+                .vectors,
+                vec![vec![1.0, 0.0]]
+            );
+            assert_eq!(sends.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    /// expect: Concurrent embed requests dispatch concurrently — the receiver
+    /// spawns one task per request, so a slow HTTP call does not head-of-line
+    /// block the requests behind it.
+    /// why: The receiver loop previously awaited each HTTP call inline, which
+    /// serialized every embedding consumer into one request at a time
+    /// regardless of the caller's fan-out; a corpus embed wave ran at ~1
+    /// batch per HTTP round-trip. The spawned-task receiver must overlap
+    /// in-flight HTTP calls up to the semaphore bound.
+    /// pre: a fake HTTP client that sleeps 100ms per call and tracks the
+    /// concurrent in-flight count; four embed requests issued together.
+    /// post: all four succeed and the observed maximum in-flight count is at
+    /// least 2 (all four are dispatched before the first sleep completes, so
+    /// the true overlap is 4; the assertion floor tolerates scheduler jitter).
+    #[tokio::test]
+    async fn concurrent_embed_requests_overlap() {
+        let provider = crate::INFERENCE_PROVIDERS
+            .first()
+            .expect("at least one embedding provider");
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let max_in_flight = Arc::new(AtomicUsize::new(0));
+        let http_client = http_client::FakeHttpClient::create({
+            let in_flight = in_flight.clone();
+            let max_in_flight = max_in_flight.clone();
+            move |_| {
+                let in_flight = in_flight.clone();
+                let max_in_flight = max_in_flight.clone();
+                async move {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_in_flight.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from_bytes(
+                            br#"{"data":[{"embedding":[1.0,0.0]}]}"#.to_vec().into(),
+                        ))?)
+                }
+            }
+        });
+        let port = LanguageModelEmbeddingPort::new(
+            crate::ResolvedEmbeddingCredentials {
+                provider,
+                api_key: "fixture-key".into(),
+            },
+            http_client,
+            tokio::runtime::Handle::current(),
+            8,
+        );
+        let model = format!("{}/organization/embedding", provider.id);
+        let t1 = vec!["source text".to_string()];
+        let t2 = vec!["source text".to_string()];
+        let t3 = vec!["source text".to_string()];
+        let t4 = vec!["source text".to_string()];
+        let (r1, r2, r3, r4) = tokio::join!(
+            port.embed_with_identity(&model, &t1),
+            port.embed_with_identity(&model, &t2),
+            port.embed_with_identity(&model, &t3),
+            port.embed_with_identity(&model, &t4),
+        );
+        for result in [r1, r2, r3, r4] {
+            assert_eq!(
+                result.expect("embedding succeeds").vectors,
+                vec![vec![1.0, 0.0]]
+            );
+        }
+        assert!(
+            max_in_flight.load(Ordering::SeqCst) >= 2,
+            "concurrent embeds must overlap; max in-flight was {}",
+            max_in_flight.load(Ordering::SeqCst)
+        );
+    }
+}
