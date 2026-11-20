@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Explicit local proof run, not a promotion/approval gate. No automatic installs.
+# Usage: check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY [CRATE]
+#   CRATE selects the harness manifest; it defaults to hkask-types, the one
+#   remaining proof-bearing crate (the hkask-mcp-training manifest was removed
+#   2026-10-17 with the training server). Add new proof-bearing crates by
+#   extending the case statement with their sources, harnesses, and scope
+#   line — never by loosening the shared budget discipline below.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ "$#" -ne 1 ] && [ "$#" -ne 2 ]; then
+    echo 'usage: check-bounded-proofs.sh NEW_ARTIFACT_DIRECTORY [CRATE]' >&2
+    exit 2
+fi
+CRATE="${2:-hkask-types}"
+cd "$ROOT"
+case "$CRATE" in
+    hkask-types)
+        SOURCES=(
+            kask/crates/hkask-types/src/json_extract.rs
+            kask/crates/hkask-types/Cargo.toml
+            Cargo.lock
+        )
+        HARNESSES=(
+            balanced_scan_never_panics_on_valid_utf8
+            balanced_result_is_container_delimited
+        )
+        SCOPE='Scope: hkask-types JSON-extraction scan core only (find_balanced_json); the fence-stripping wrapper is covered by the property and example layers.'
+        ;;
+    *)
+        echo "unknown crate '$CRATE' — add a manifest in check-bounded-proofs.sh" >&2
+        exit 2
+        ;;
+esac
+version=$(cargo kani --version)
+if [[ "$version" != *'Kani Rust Verifier 0.68.0'* ]]; then
+    echo "Expected pinned Kani 0.68.0; got: $version" >&2
+    exit 1
+fi
+command -v timeout >/dev/null
+command -v prlimit >/dev/null
+mkdir "$1" # refuse to overwrite a prior run's evidence
+OUT="$(cd "$1" && pwd)"
+sha256sum "${SOURCES[@]}" > "$OUT/source-sha256.txt"
+git diff HEAD -- "${SOURCES[@]}" > "$OUT/source.diff"
+{
+    git rev-parse HEAD
+    printf '%s\n' "$version"
+    printf 'Crate: %s\n' "$CRATE"
+    printf '%s\n' "$SCOPE"
+    printf 'Each run: 2 GiB address space, 120s wall limit, unwind=12; default safety/unwind checks.\n'
+} > "$OUT/manifest.txt"
+overall=0
+for harness in "${HARNESSES[@]}"; do
+    date -u +%FT%TZ > "$OUT/$harness.started"
+    command=(cargo kani -p "$CRATE" --lib --harness "$harness" --default-unwind 12)
+    if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+        command+=(--target-dir "$CARGO_TARGET_DIR")
+    fi
+    {
+        printf 'CARGO_BUILD_JOBS=2 timeout -k 5s 120s prlimit --as=2147483648 -- '
+        printf '%q ' "${command[@]}"
+        printf '\n'
+    } >> "$OUT/manifest.txt"
+    status=0
+    CARGO_BUILD_JOBS=2 timeout -k 5s 120s prlimit --as=2147483648 -- "${command[@]}" \
+        > "$OUT/$harness.log" 2>&1 || status=$?
+    printf '%s\n' "$status" > "$OUT/$harness.exit"
+    date -u +%FT%TZ > "$OUT/$harness.finished"
+    if [ "$status" -eq 0 ] && grep -q '^Complete - 1 successfully verified harnesses, 0 failures, 1 total\.' "$OUT/$harness.log"; then
+        printf '%s: verified decision-core obligation\n' "$harness"
+    else
+        printf '%s: NOT VERIFIED (exit %s); inspect raw log, failure need not be a counterexample\n' "$harness" "$status" >&2
+        overall=1
+    fi
+done
+if ! sha256sum --check "$OUT/source-sha256.txt" > "$OUT/source-recheck.log" 2>&1; then
+    echo 'Source changed during verification; results are stale' >&2
+    overall=1
+fi
+(cd "$OUT" && sha256sum -- *.log *.exit *.started *.finished source-sha256.txt source.diff manifest.txt > SHA256SUMS)
+exit "$overall"

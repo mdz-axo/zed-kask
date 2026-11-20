@@ -1,0 +1,6 @@
+# Accepted call-site references — read-triaged: the SKILL.md cites the
+# template as a pattern or methodology example and never renders it, so
+# its required inputs are not the citing skill's to document.
+# One entry per line: <skill> <namespace/stem>
+# A reference matching an entry here is counted as accepted, not checked.
+create-skill wardley-mapper/present-map

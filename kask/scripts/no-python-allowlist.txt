@@ -1,0 +1,13 @@
+# Exceptions to kask/scripts/check-no-python.sh — the zero-Python gate
+# (operator ruling 2026-10-13, tightening the 2026-09-09 heredoc ruling).
+#
+# One repo-relative path per line; '#' comment lines are ignored. EMPTY by
+# default: an entry exists here only as a recorded operator decision, with
+# its ruling reference, and disappears when its condition ends — an
+# exception is never silent.
+#
+# (No entries. The 2026-10-13 transition exception — the two python3
+# heredocs in kask/scripts/build/check-build-profile.sh, landed 2026-09-08
+# under the 2026-09-09 ruling — was consumed by the migration: the
+# clippy-wrapper probe went bash-native and the TOML profile check moved to
+# kask/mcp-servers/hkask-mcp-corpus/tests/build_profile.rs.)

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Verify a trusted, externally pinned receipt against live immutable snapshots.
+set -euo pipefail
+if [[ $# -ne 4 || ( $1 != analyze && $1 != execute ) || ! $3 =~ ^[0-9a-f]{64}$ ]]; then
+  echo 'usage: checker analyze|execute RECEIPT PINNED_SHA256 APPROVED_DIFF_SHA256_OR_DASH' >&2
+  exit 2
+fi
+mode=$1 receipt=$2 pin=$3 approved=$4
+if [[ ( $mode == analyze && $approved != - ) || ( $mode == execute && ! $approved =~ ^[0-9a-f]{64}$ ) ]]; then
+  echo 'analyze requires approval marker -, execute requires an independent approved diff SHA-256' >&2
+  exit 2
+fi
+[[ -f $receipt && ! -L $receipt ]] || { echo 'missing or linked receipt' >&2; exit 1; }
+[[ $(sha256sum "$receipt" | cut -d ' ' -f 1) == "$pin" ]] || { echo 'receipt pin mismatch' >&2; exit 1; }
+declare -A hashes paths
+while IFS=$'\t' read -r role phase id digest path extra; do
+  [[ -z ${extra:-} && -n $role && -n $phase && -n $id && $id =~ ^[A-Za-z0-9_.-]+$ && $digest =~ ^[0-9a-f]{64}$ && $path == /* && -f $path && ! -L $path ]] || { echo 'invalid receipt row' >&2; exit 1; }
+  [[ $(realpath -e -- "$path") == "$path" ]] || { echo 'noncanonical path' >&2; exit 1; }
+  case "$role/$phase/$id" in
+    graph/before/singleton|graph/after/singleton|contract/before/singleton|contract/after/singleton|oracle/before/singleton|oracle/after/singleton|proof/after/singleton|log/before/singleton|log/after/singleton|timing/before/singleton|timing/after/singleton|candidate_diff/after/singleton|source/before/*|source/after/*) ;;
+    *) echo 'unexpected receipt role' >&2; exit 1 ;;
+  esac
+  key="$role/$phase/$id"
+  [[ ! -v hashes[$key] ]] || { echo 'duplicate receipt row' >&2; exit 1; }
+  hashes[$key]=$digest paths[$key]=$path
+  [[ $(sha256sum "$path" | cut -d ' ' -f 1) == "$digest" ]] || { echo "file hash mismatch: $key" >&2; exit 1; }
+done < "$receipt"
+for key in graph/before/singleton graph/after/singleton contract/before/singleton contract/after/singleton oracle/before/singleton oracle/after/singleton proof/after/singleton log/before/singleton log/after/singleton timing/before/singleton timing/after/singleton candidate_diff/after/singleton; do
+  [[ -v hashes[$key] ]] || { echo "missing receipt role: $key" >&2; exit 1; }
+done
+for role in contract oracle; do
+  [[ ${hashes[$role/before/singleton]} == "${hashes[$role/after/singleton]}" ]] || { echo "$role changed" >&2; exit 1; }
+done
+sources=0
+for key in "${!hashes[@]}"; do
+  if [[ $key == source/before/* ]]; then
+    id=${key#source/before/}
+    [[ -v hashes[source/after/$id] ]] || { echo 'missing after source' >&2; exit 1; }
+    ((sources+=1))
+  elif [[ $key == source/after/* ]]; then
+    id=${key#source/after/}
+    [[ -v hashes[source/before/$id] ]] || { echo 'missing before source' >&2; exit 1; }
+  fi
+done
+(( sources > 0 )) || { echo 'no sources' >&2; exit 1; }
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+for tool in jq cmp sha256sum; do
+  command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 69; }
+done
+jq -cS '{required,before}' "${paths[graph/before/singleton]}" > "$work/baseline"
+jq -cS '{required,before}' "${paths[graph/after/singleton]}" > "$work/candidate-baseline"
+cmp -s "$work/baseline" "$work/candidate-baseline" || { echo 'candidate graph changed the baseline signal set' >&2; exit 1; }
+generator="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/generate-verification-preservation-proof.sh"
+bash "$generator" "${paths[graph/after/singleton]}" "$work/derived.lean" > "$work/generator.log" || { echo 'candidate graph is not a valid preservation proof instance' >&2; exit 1; }
+cmp -s "$work/derived.lean" "${paths[proof/after/singleton]}" || { echo 'proof is not generated from candidate graph' >&2; exit 1; }
+if ! jq -e -n \
+  --slurpfile before "${paths[timing/before/singleton]}" \
+  --slurpfile after "${paths[timing/after/singleton]}" '
+    def valid_samples: type == "array" and length >= 2 and all(.[]; type == "number" and . > 0 and floor == .);
+    def valid_state($selected):
+      (keys == ["samples_ms","status"]) and
+      (if $selected then (.status == "measured" and (.samples_ms | valid_samples))
+       else (.status == "not_run" and .samples_ms == []) end);
+    ($before | length == 1) and ($after | length == 1) and
+    ($before[0] | keys == ["cold","scope","warm"]) and
+    ($after[0] | keys == ["cold","scope","warm"]) and
+    ($before[0].scope == $after[0].scope) and
+    ($before[0].scope | IN("cold","warm","both")) and
+    ($before[0].cold | valid_state($before[0].scope == "cold" or $before[0].scope == "both")) and
+    ($after[0].cold | valid_state($before[0].scope == "cold" or $before[0].scope == "both")) and
+    ($before[0].warm | valid_state($before[0].scope == "warm" or $before[0].scope == "both")) and
+    ($after[0].warm | valid_state($before[0].scope == "warm" or $before[0].scope == "both"))
+  ' >/dev/null; then
+  echo 'pinned timing samples are incomplete or nonpositive' >&2
+  exit 1
+fi
+source_changed=false
+: > "$work/diff"
+while IFS= read -r id; do
+  before="source/before/$id" after="source/after/$id"
+  if [[ ${hashes[$before]} != "${hashes[$after]}" ]]; then source_changed=true; fi
+  if [[ $mode == analyze && ${hashes[$before]} != "${hashes[$after]}" ]]; then
+    echo 'analyze mode changed source' >&2; exit 1
+  fi
+  rc=0
+  diff -u --label "source/$id" --label "source/$id" "${paths[$before]}" "${paths[$after]}" >> "$work/diff" || rc=$?
+  [[ $rc -le 1 ]] || { echo 'diff failed' >&2; exit 1; }
+done < <(for key in "${!hashes[@]}"; do [[ $key == source/before/* ]] && printf '%s\n' "${key#source/before/}"; done | LC_ALL=C sort)
+cmp -s "$work/diff" "${paths[candidate_diff/after/singleton]}" || { echo 'candidate diff does not match source snapshots' >&2; exit 1; }
+if [[ $mode == execute && $(sha256sum "$work/diff" | cut -d ' ' -f 1) != "$approved" ]]; then
+  echo 'candidate diff does not match independently approved digest' >&2
+  exit 1
+fi
+jq -cn --arg mode "$mode" --argjson source_changed "$source_changed" \
+  --slurpfile before "${paths[timing/before/singleton]}" \
+  --slurpfile after "${paths[timing/after/singleton]}" '
+  {verified:true,mode:$mode,authorized_diff_verified:($mode=="execute"),source_changed:$source_changed,
+   timing:{scope:$before[0].scope,
+     cold:{status:$before[0].cold.status,before_ms:$before[0].cold.samples_ms,after_ms:$after[0].cold.samples_ms},
+     warm:{status:$before[0].warm.status,before_ms:$before[0].warm.samples_ms,after_ms:$after[0].warm.samples_ms}}}
+  '

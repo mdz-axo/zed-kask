@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Canonical kask test runner — nextest with the [profile.kask] composition.
+#
+# This is the runner the .config/nextest.toml comment points at. It builds the
+# kask test binaries once, queries them for the tests they contain, and runs
+# them through nextest's runner loop with the kask profile: the
+# sequential-db-tests group (hkask-storage), slow-timeout grace periods, and
+# the failing-fast / termination semantics configured in nextest.toml.
+#
+# Package set: every hkask-* crate (which includes the eight MCP servers),
+# kask_bridge, and dme-harness.
+#
+# Usage:
+#   kask/scripts/test                    # full kask suite, no-fail-fast
+#   kask/scripts/test -p <package>       # one package (repeatable)
+#   kask/scripts/test --list             # print the package set, run nothing
+#   kask/scripts/test --cargo            # cargo test fallback (CI portability)
+#   kask/scripts/test -- <nextest args>  # extra nextest arguments
+#
+# Exit codes: nextest's, or 3 when zero tests ran.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
+
+# The MCP server binaries are the canonical install set; the glob below is
+# belt-and-braces (every server package already matches hkask-*).
+mapfile -t MCP_SERVERS < <(grep -vE '^\s*(#|$)' "$SCRIPT_DIR/build/mcp-servers.txt")
+
+list_packages() {
+  printf '%s\n' "${MCP_SERVERS[@]}"
+  echo "kask_bridge"
+  echo "dme-harness"
+  echo "hkask-* (all hkask crates, including the MCP servers above)"
+}
+
+if [[ "${1:-}" == "--list" ]]; then
+  list_packages
+  exit 0
+fi
+
+# Split the passthrough: everything before `--` is this script's, after is
+# nextest's. `--cargo` selects the fallback runner. A `-p <package>` (or
+# `--package`) replaces the default package set so a single package can be
+# run without rebuilding the whole kask graph.
+CARGO_FALLBACK=0
+PACKAGES=()
+args=()
+while (($#)); do
+  case "$1" in
+    --cargo) CARGO_FALLBACK=1; shift ;;
+    -p|--package) shift; PACKAGES+=("$1"); shift ;;
+    --) shift; args+=("$@"); break ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+if ((${#PACKAGES[@]} == 0)); then
+  PACKAGES=(-p 'hkask-*' -p kask_bridge -p dme-harness)
+  for server in "${MCP_SERVERS[@]}"; do
+    PACKAGES+=(-p "$server")
+  done
+else
+  # Rebuild the -p flags for the selected packages.
+  selected=()
+  for pkg in "${PACKAGES[@]}"; do selected+=(-p "$pkg"); done
+  PACKAGES=("${selected[@]}")
+fi
+
+if (( CARGO_FALLBACK )); then
+  # Fallback for environments without cargo-nextest: the same package set
+  # through cargo test, serial (the CI kask-tests invocation).
+  echo "kask/scripts/test: cargo-nextest unavailable or --cargo given — falling back to cargo test" >&2
+  exec bash "$SCRIPT_DIR/cargo-test-nonzero.sh" --tests --no-fail-fast \
+    "${PACKAGES[@]}" -- --test-threads=1 "${args[@]}"
+fi
+
+if ! command -v cargo-nextest >/dev/null 2>&1; then
+  echo "kask/scripts/test: cargo-nextest not found — falling back to cargo test" >&2
+  exec bash "$SCRIPT_DIR/cargo-test-nonzero.sh" --tests --no-fail-fast \
+    "${PACKAGES[@]}" -- --test-threads=1 "${args[@]}"
+fi
+
+# --no-tests auto fails when the selection matches nothing (the
+# cargo-test-nonzero contract: a green run that checked nothing is not a pass).
+echo "kask/scripts/test: cargo nextest run --profile kask ${PACKAGES[*]} --no-fail-fast --no-tests auto ${args[*]:-}"
+cargo nextest run --profile kask "${PACKAGES[@]}" \
+  --no-fail-fast --no-tests auto "${args[@]}"

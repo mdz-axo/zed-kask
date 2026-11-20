@@ -1,0 +1,17 @@
+# Impl-block index for --find disambiguation (the accepted UC-3
+# follow-up, 2026-10-11): `--find FILE Type::method` resolves a method
+# name that is defined in several impl blocks by filtering to the impl
+# of the named type. The `type` field carries the implemented type's
+# full text (`Foo`, or `Foo<T>` for generic impls — the resolver
+# normalizes generics before comparing). Trait names are NOT captured:
+# `impl Trait for Foo` yields `Foo`, so qualification is by the
+# implemented type. Consumed by kask/scripts/resolve-citation-anchor.sh.
+id: rust-impls
+language: Rust
+severity: info
+message: impl block
+rule:
+  kind: impl_item
+  has:
+    field: type
+    pattern: $TYPE

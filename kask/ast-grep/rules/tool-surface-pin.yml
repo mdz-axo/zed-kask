@@ -1,0 +1,24 @@
+# Every manifest-bearing built-in MCP server must carry the shared
+# tool_surface_pin! macro. Match the Rust AST node, not text: comments and
+# string literals are not macro_invocation nodes, legal whitespace before `!`
+# is immaterial, and every macro delimiter ((), {}, []) has the same node kind.
+#
+# A pin nested under a module compiled out unconditionally by #[cfg(any())]
+# is not live and therefore does not satisfy the structural gate. Direct item
+# attributes are caught by the CI liveness leg, which must execute the macro's
+# generated exact-name test for every listed server.
+id: tool-surface-pin
+language: Rust
+severity: hint
+message: "tool_surface_pin! invocation"
+rule:
+  kind: macro_invocation
+  has:
+    field: macro
+    regex: '(^|::)tool_surface_pin$'
+  not:
+    inside:
+      stopBy: end
+      kind: mod_item
+      follows:
+        pattern: '#[cfg(any())]'
