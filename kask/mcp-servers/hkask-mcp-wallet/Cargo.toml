@@ -1,0 +1,50 @@
+[package]
+name = "hkask-mcp-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cashu + Lightning Wallet MCP server (D110) — SQLCipher proof store, CDK Cashu engine (NUT-04/05/07/08/09/11/12/13/19), append-only audit ledger, and editor-gated spend approval."
+
+[lib]
+name = "hkask_mcp_wallet"
+path = "src/hkask_mcp_wallet.rs"
+
+[[bin]]
+name = "hkask-mcp-wallet"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+cdk.workspace = true
+cdk-common.workspace = true
+cdk-sql-common.workspace = true
+hex.workspace = true
+hkask-bridge-ontology.workspace = true
+hkask-inference.workspace = true
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-wallet-core.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+rusqlite.workspace = true
+schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "time", "macros"] }
+tracing.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+cdk = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
+cdk-common = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
+cdk-sql-common = { version = "=0.18.3", default-features = false, features = ["wallet", "mint"] }
+cdk-fake-wallet.workspace = true
+hkask-mcp-test-support.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
