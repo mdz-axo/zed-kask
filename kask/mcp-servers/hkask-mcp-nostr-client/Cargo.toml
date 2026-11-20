@@ -1,0 +1,72 @@
+[package]
+name = "hkask-mcp-nostr-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nostr client MCP server — reads the Nostr identity configured in settings and events from the local relay and the seed relays. Seven tools read. The publish path (nostr_publish_note, ruled 2026-11-13/2026-11-14) asks the editor to sign over the inference IPC wire. The server receives no credential, holds no key and cannot sign: it depends on hkask-nostr-core (public operations) and never on hkask-nostr-signer"
+
+[lib]
+name = "hkask_mcp_nostr_client"
+path = "src/hkask_mcp_nostr_client.rs"
+
+[[bin]]
+name = "hkask-mcp-nostr-client"
+path = "src/main.rs"
+
+[features]
+# The local test relays in `src/test_support.rs`. Never enabled by the
+# installer: a build with this feature can be pointed at loopback relays.
+test-fixture = ["nostr-sdk/local-relay", "tokio/net"]
+
+[dependencies]
+hkask-bridge-ontology.workspace = true
+# The inference IPC client: the publish path asks the editor to sign. The
+# editor holds the key and the approval; this server only carries the
+# note's text and the target relays over the wire.
+hkask-inference.workspace = true
+hkask-mcp-server.workspace = true
+# Public Nostr operations only. This server parses untrusted relay text, so it
+# must never depend on hkask-nostr-signer; `pin hkask-mcp-nostr-client
+# hkask-nostr-signer` (plan, "Tested commands") checks that.
+hkask-nostr-core.workspace = true
+hkask-types.workspace = true
+rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "fs", "net", "process", "time"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tracing.workspace = true
+# The relay client and, under `test-fixture`, the test relay. The same exact
+# pin and TLS provider the relay server uses (operator ruling 2026-11-12).
+nostr-sdk = { workspace = true, features = ["aws_lc_rs", "rustls-tls-webpki-roots"] }
+# Named only to read the websocket transport's error type: which stage of a
+# relay connection failed (`relays::classify_failure`).
+async-wsocket.workspace = true
+base64.workspace = true
+# Probing the seed relays at once.
+futures.workspace = true
+hex.workspace = true
+reqwest.workspace = true
+# The workspace's TLS provider, installed once at startup.
+rustls.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+regex.workspace = true
+
+[dev-dependencies]
+# Tests build identifiers at run time from a throwaway key (an `nsec`-shaped
+# value in the `npub` field, for one), so no key is written into a test file.
+bech32.workspace = true
+hkask-mcp-test-support.workspace = true
+# The real relay server, started inside a test so the client is read against
+# its accept layer and its announcement, not only against the SDK's listener.
+# Tests only: the server binary never links the relay.
+hkask-mcp-nostr-relay = { path = "../hkask-mcp-nostr-relay" }
+# The local relay's announcement file, written inside a test.
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
+
+[lints]
+workspace = true
