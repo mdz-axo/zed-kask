@@ -3,7 +3,7 @@ use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub enum BedrockAdaptiveThinkingEffort {
+pub enum BedrockAdaptiveReasoningEffort {
     Low,
     Medium,
     #[default]
@@ -12,7 +12,7 @@ pub enum BedrockAdaptiveThinkingEffort {
     Max,
 }
 
-impl BedrockAdaptiveThinkingEffort {
+impl BedrockAdaptiveReasoningEffort {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Low => "low",
@@ -33,10 +33,10 @@ pub enum BedrockModelMode {
         budget_tokens: Option<u64>,
     },
     AdaptiveThinking {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
     },
     Reasoning {
-        effort: BedrockAdaptiveThinkingEffort,
+        effort: BedrockAdaptiveReasoningEffort,
     },
 }
 
@@ -525,7 +525,7 @@ impl ConverseModel {
         }
     }
 
-    pub fn max_output_tokens(&self) -> u64 {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::ClaudeFable5_1
             | Self::ClaudeFable5
@@ -534,13 +534,13 @@ impl ConverseModel {
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet5 => 128_000,
+            | Self::ClaudeSonnet5 => Some(128_000),
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => 64_000,
-            Self::ClaudeOpus4_1 => 32_000,
+            | Self::ClaudeHaiku4_5 => Some(64_000),
+            Self::ClaudeOpus4_1 => Some(32_000),
             Self::Llama4Scout17B
             | Self::Llama4Maverick17B
             | Self::Gemma3_4B
@@ -548,26 +548,29 @@ impl ConverseModel {
             | Self::Gemma3_27B
             | Self::MagistralSmall
             | Self::MistralLarge3
-            | Self::PixtralLarge => 8_192,
-            Self::Devstral2_123B | Self::Ministral14B => 131_000,
+            | Self::PixtralLarge => Some(8_192),
+            Self::Devstral2_123B | Self::Ministral14B => Some(131_000),
             Self::Qwen3_32B
             | Self::Qwen3VL235B
             | Self::Qwen3_235B
             | Self::Qwen3Next80B
             | Self::Qwen3Coder30B
             | Self::Qwen3CoderNext
-            | Self::Qwen3Coder480B => 8_192,
-            Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => 5_000,
-            Self::Gpt6Astra => 128_000,
-            Self::GptOss20B | Self::GptOss120B => 16_000,
-            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 131_000,
-            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 98_000,
-            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => 101_000,
-            Self::KimiK2Thinking | Self::KimiK2_5 => 16_000,
-            Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 16_000,
+            | Self::Qwen3Coder480B => Some(8_192),
+            Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => Some(5_000),
+            Self::Gpt6Astra => Some(128_000),
+            Self::GptOss20B | Self::GptOss120B => Some(16_000),
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => Some(131_000),
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => Some(98_000),
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => Some(101_000),
+            Self::KimiK2Thinking | Self::KimiK2_5 => Some(16_000),
+            Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => Some(16_000),
+            // zed-kask: D83 — a custom model's cap is metadata, not a
+            // client-side default: unset stays None so the provider's own
+            // limit binds.
             Self::Custom {
                 max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
+            } => *max_output_tokens,
         }
     }
 
@@ -737,7 +740,7 @@ impl ConverseModel {
         {
             return if thinking.adaptive {
                 BedrockModelMode::AdaptiveThinking {
-                    effort: BedrockAdaptiveThinkingEffort::default(),
+                    effort: BedrockAdaptiveReasoningEffort::default(),
                 }
             } else {
                 BedrockModelMode::Thinking {
@@ -748,15 +751,20 @@ impl ConverseModel {
 
         if matches!(self, Self::Gpt6Astra) {
             BedrockModelMode::Reasoning {
-                effort: BedrockAdaptiveThinkingEffort::Medium,
+                effort: BedrockAdaptiveReasoningEffort::Medium,
             }
         } else if self.supports_adaptive_thinking() {
             BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::default(),
+                effort: BedrockAdaptiveReasoningEffort::default(),
             }
         } else if self.supports_thinking() {
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096),
+                // zed-kask: uncapped. The 4096 hardcode silently killed
+                // reasoning-heavy turns (stream ended finish_reason
+                // "length", mapped to a silent MaxTokens stop). Budgets
+                // are deprecated (operator ruling 2026-09-04); reasoning
+                // depth is the model's business. See DIVERGENCE.md D49.
+                budget_tokens: None,
             }
         } else {
             BedrockModelMode::Default
@@ -1136,18 +1144,21 @@ impl MantleModel {
         }
     }
 
-    pub fn max_output_tokens(&self) -> u64 {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             // AWS doesn't document a hard cap for the GPT-5.x models on Mantle.
             Self::Gpt5_6Sol
             | Self::Gpt5_6Terra
             | Self::Gpt5_6Luna
             | Self::Gpt5_5
-            | Self::Gpt5_4 => 128_000,
-            Self::Grok4_3 => 131_072,
+            | Self::Gpt5_4 => Some(128_000),
+            Self::Grok4_3 => Some(131_072),
+            // zed-kask: D83 — a custom model's cap is metadata, not a
+            // client-side default: unset stays None so the provider's own
+            // limit binds.
             Self::Custom {
                 max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
+            } => *max_output_tokens,
         }
     }
 
@@ -1221,7 +1232,7 @@ mod tests {
             assert_eq!(model.request_id(), request_id);
             assert_eq!(model.display_name(), display_name);
             assert_eq!(model.max_token_count(), context_window);
-            assert_eq!(model.max_output_tokens(), 128_000);
+            assert_eq!(model.max_output_tokens(), Some(128_000));
             assert!(model.supports_tool_use());
             assert!(model.supports_images());
             assert!(model.supports_thinking());
@@ -1286,13 +1297,14 @@ mod tests {
                 "duplicate ConverseModel request_id: {}",
                 model.request_id()
             );
-            assert!(
-                model.max_output_tokens() <= model.max_token_count(),
-                "{} has max_output_tokens ({}) greater than max_token_count ({})",
-                model.id(),
-                model.max_output_tokens(),
-                model.max_token_count()
-            );
+            if let Some(max_output_tokens) = model.max_output_tokens() {
+                assert!(
+                    max_output_tokens <= model.max_token_count(),
+                    "{} has max_output_tokens ({max_output_tokens}) greater than max_token_count ({})",
+                    model.id(),
+                    model.max_token_count()
+                );
+            }
         }
     }
 
@@ -1367,8 +1379,10 @@ mod tests {
                 model.request_id()
             );
             assert!(
-                model.max_output_tokens() <= model.max_token_count(),
-                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model
+                    .max_output_tokens()
+                    .is_none_or(|cap| cap <= model.max_token_count()),
+                "{} has max_output_tokens ({:?}) greater than max_token_count ({})",
                 model.id(),
                 model.max_output_tokens(),
                 model.max_token_count()
@@ -1883,24 +1897,26 @@ mod tests {
         assert!(ConverseModel::ClaudeOpus5_5.supports_adaptive_thinking());
         assert!(ConverseModel::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
         assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
-        assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
+        assert_eq!(BedrockAdaptiveReasoningEffort::XHigh.as_str(), "xhigh");
 
+        // zed-kask (D49): the thinking mode must be uncapped — the 4096
+        // hardcode silently killed reasoning-heavy turns.
         assert_eq!(
             ConverseModel::ClaudeSonnet4.thinking_mode(),
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096)
+                budget_tokens: None
             }
         );
         assert_eq!(
             ConverseModel::ClaudeOpus4_6.thinking_mode(),
             BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::High
+                effort: BedrockAdaptiveReasoningEffort::High
             }
         );
         assert_eq!(
             ConverseModel::ClaudeHaiku4_5.thinking_mode(),
             BedrockModelMode::Thinking {
-                budget_tokens: Some(4096)
+                budget_tokens: None
             }
         );
     }
@@ -1919,14 +1935,92 @@ mod tests {
 
     #[test]
     fn test_max_output_tokens() {
-        assert_eq!(ConverseModel::ClaudeSonnet4_5.max_output_tokens(), 64_000);
-        assert_eq!(ConverseModel::ClaudeOpus4_6.max_output_tokens(), 128_000);
-        assert_eq!(ConverseModel::ClaudeFable5.max_output_tokens(), 128_000);
-        assert_eq!(ConverseModel::ClaudeOpus5.max_output_tokens(), 128_000);
-        assert_eq!(ConverseModel::ClaudeOpus5_5.max_output_tokens(), 128_000);
-        assert_eq!(ConverseModel::ClaudeSonnet5.max_output_tokens(), 128_000);
-        assert_eq!(ConverseModel::ClaudeOpus4_1.max_output_tokens(), 32_000);
-        assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), 8_192);
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.max_output_tokens(),
+            Some(64_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_6.max_output_tokens(),
+            Some(128_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5.max_output_tokens(),
+            Some(128_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.max_output_tokens(),
+            Some(128_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5_5.max_output_tokens(),
+            Some(128_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.max_output_tokens(),
+            Some(128_000)
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_1.max_output_tokens(),
+            Some(32_000)
+        );
+        assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), Some(8_192));
+    }
+
+    #[test]
+    fn test_custom_max_output_tokens_is_not_fabricated() {
+        // zed-kask: D83 — a custom model's output cap is metadata, not a
+        // client-side default: unset stays `None` so the provider's own
+        // limit binds, instead of a fabricated 4096 cap that cuts agent
+        // streams mid-tool-call (the D42/D83 hidden output-limit class).
+        let converse_unset = ConverseModel::Custom {
+            name: "custom-model".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(converse_unset.max_output_tokens(), None);
+
+        let converse_configured = ConverseModel::Custom {
+            name: "custom-model".to_string(),
+            max_tokens: 200_000,
+            display_name: None,
+            max_output_tokens: Some(50_000),
+            default_temperature: None,
+            cache_configuration: None,
+            supports_tool_use: None,
+            supports_images: None,
+            thinking: None,
+        };
+        assert_eq!(converse_configured.max_output_tokens(), Some(50_000));
+
+        let mantle_unset = MantleModel::Custom {
+            name: "custom-mantle-model".to_string(),
+            display_name: None,
+            max_tokens: 200_000,
+            max_output_tokens: None,
+            protocol: MantleProtocol::ChatCompletions,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+        };
+        assert_eq!(mantle_unset.max_output_tokens(), None);
+
+        let mantle_configured = MantleModel::Custom {
+            name: "custom-mantle-model".to_string(),
+            display_name: None,
+            max_tokens: 200_000,
+            max_output_tokens: Some(50_000),
+            protocol: MantleProtocol::ChatCompletions,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+        };
+        assert_eq!(mantle_configured.max_output_tokens(), Some(50_000));
     }
 
     #[test]
@@ -2046,7 +2140,7 @@ mod tests {
         assert_eq!(
             model.thinking_mode(),
             BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::High
+                effort: BedrockAdaptiveReasoningEffort::High
             }
         );
 

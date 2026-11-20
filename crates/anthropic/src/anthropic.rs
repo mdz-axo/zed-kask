@@ -218,7 +218,11 @@ pub struct Model {
     pub id: String,
     pub display_name: String,
     pub max_input_tokens: u64,
-    pub max_output_tokens: u64,
+    /// zed-kask: D83 — the model's output cap as discovered/configured.
+    /// `None` means unknown — never a fabricated default; the mandatory
+    /// wire parameter is resolved by `into_anthropic`'s documented
+    /// fallback (`UNCONFIGURED_MAX_OUTPUT_TOKENS`).
+    pub max_output_tokens: Option<u64>,
     pub default_temperature: f32,
     pub mode: AnthropicModelMode,
     pub thinking_types: Option<ThinkingTypes>,
@@ -277,7 +281,12 @@ impl Model {
                 .is_none_or(|types| types.enabled.supported)
         {
             AnthropicModelMode::Thinking {
-                budget_tokens: Some(4_096),
+                // zed-kask: uncapped. The 4096 hardcode silently killed
+                // reasoning-heavy turns (stream ended finish_reason
+                // "length", mapped to a silent MaxTokens stop). Budgets
+                // are deprecated (operator ruling 2026-09-04); reasoning
+                // depth is the model's business. See DIVERGENCE.md D49.
+                budget_tokens: None,
             }
         } else {
             AnthropicModelMode::Default
@@ -312,7 +321,7 @@ impl Model {
             display_name: entry.display_name,
             id: entry.id,
             max_input_tokens: entry.max_input_tokens,
-            max_output_tokens: entry.max_tokens,
+            max_output_tokens: Some(entry.max_tokens),
             default_temperature: 1.0,
             mode,
             thinking_types,
@@ -1928,7 +1937,14 @@ mod tests {
         let model = Model::from_listed(entry);
         assert!(model.supports_thinking);
         assert!(!model.supports_adaptive_thinking);
-        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        // zed-kask (D49): the thinking mode must be uncapped — the 4096
+        // hardcode silently killed reasoning-heavy turns.
+        assert!(matches!(
+            model.mode,
+            AnthropicModelMode::Thinking {
+                budget_tokens: None
+            }
+        ));
     }
 
     #[test]
@@ -2118,6 +2134,48 @@ mod tests {
         assert_eq!(
             &model.supported_effort_levels,
             &[Effort::Low, Effort::High, Effort::XHigh, Effort::Max]
+        );
+    }
+
+    #[test]
+    fn anthropic_crate_has_zero_zed_log_telemetry_and_honors_custom_api_url() {
+        for (file, src) in [
+            ("anthropic.rs", include_str!("anthropic.rs")),
+            ("batches.rs", include_str!("batches.rs")),
+            ("completion.rs", include_str!("completion.rs")),
+        ] {
+            let needle = concat!("/v1/", "log/zed");
+            assert!(
+                !src.contains(needle),
+                "S146-F01 / P1: crates/anthropic/{file} must never contain {needle}"
+            );
+        }
+
+        let seen_uris = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_clone = Arc::clone(&seen_uris);
+        let client = FakeHttpClient::create(move |request| {
+            let seen = Arc::clone(&seen_clone);
+            async move {
+                seen.lock().expect("lock").push(request.uri().to_string());
+                Ok(http::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(r#"{"data":[],"has_more":false}"#))?)
+            }
+        });
+        let custom_base = "http://127.0.0.1:18080/anthropic-proxy";
+        let models = futures::executor::block_on(list_models(
+            client.as_ref(),
+            custom_base,
+            "local-proxy-secret",
+            &CustomHeaders::default(),
+        ))
+        .expect("list_models succeeds against custom api_url");
+        assert!(models.is_empty());
+        let uris = seen_uris.lock().expect("lock").clone();
+        assert_eq!(
+            uris,
+            vec!["http://127.0.0.1:18080/anthropic-proxy/v1/models?limit=1000".to_string()],
+            "custom api_url must never leak requests to api.anthropic.com"
         );
     }
 }

@@ -132,6 +132,13 @@ impl ApiKeyState {
     }
 
     /// Set or delete the API key in the system keychain.
+    ///
+    /// zed-kask: the env-var lock has been removed. Users can always update
+    /// the key via the settings UI, even if an env var is set. The keychain
+    /// is the single source of truth — a key set via the UI overrides any
+    /// env var on the next `load_if_needed` because the keychain write
+    /// updates `load_status` to `SystemKeychain`, and `load_if_needed`
+    /// early-returns when `load_status` is already `Loaded`.
     pub fn store<Ent: 'static>(
         &mut self,
         url: SharedString,
@@ -140,11 +147,6 @@ impl ApiKeyState {
         provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<Ent>,
     ) -> Task<Result<()>> {
-        if self.is_from_env_var() {
-            return Task::ready(Err(anyhow!(
-                "bug: attempted to store API key in system keychain when API key is from env var",
-            )));
-        }
         if self.url != url {
             self.url = url.clone();
             self.load_status = LoadStatus::NotLoaded;
@@ -380,6 +382,126 @@ impl Display for ApiKeySource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::pin::Pin;
+
+    struct TestEnt {
+        api_key: ApiKeyState,
+    }
+
+    /// Records keychain writes; never touches the real OS keychain.
+    #[derive(Default)]
+    struct RecordingCredentialsProvider {
+        writes: std::sync::Mutex<Vec<(String, String, String)>>,
+    }
+
+    impl CredentialsProvider for RecordingCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            url: &'a str,
+            username: &'a str,
+            password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            let url = url.to_string();
+            let username = username.to_string();
+            let password = String::from_utf8_lossy(password).into_owned();
+            Box::pin(async move {
+                self.writes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push((url, username, password));
+                Ok(())
+            })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// Pin (zed-kask): the env-var lock on `ApiKeyState::store` is removed —
+    /// a user can always update the key via the settings UI, even when an
+    /// env var supplied the current key. The keychain write happens and the
+    /// UI-entered key wins (`load_status` becomes `SystemKeychain`), so the
+    /// next `load_if_needed` early-returns with the UI key instead of the
+    /// env value. A revert to the env-var guard fails this test on the
+    /// write-never-happened assertion.
+    #[gpui::test]
+    async fn store_overrides_an_env_var_key(cx: &mut gpui::TestAppContext) {
+        let provider = Arc::new(RecordingCredentialsProvider::default());
+        let url: SharedString = "https://example.com".into();
+        let entity = cx.new(|_| TestEnt {
+            api_key: ApiKeyState::new(
+                url.clone(),
+                EnvVar::new("ZED_TEST_STORE_OVERRIDE_VAR".into()),
+            ),
+        });
+
+        // Simulate a key loaded from the environment variable.
+        entity.update(cx, |ent, _| {
+            ent.api_key.load_status = LoadStatus::Loaded(ApiKey {
+                source: ApiKeySource::EnvVar("ZED_TEST_STORE_OVERRIDE_VAR".into()),
+                key: "env-key".into(),
+            });
+        });
+
+        let task = cx.update(|cx| {
+            entity.update(cx, |ent, cx| {
+                ent.api_key.store(
+                    url.clone(),
+                    Some("ui-key".to_string()),
+                    |ent: &mut TestEnt| &mut ent.api_key,
+                    provider.clone(),
+                    cx,
+                )
+            })
+        });
+        task.await.unwrap();
+
+        // The keychain write happened with the UI-entered key.
+        let writes = provider
+            .writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(
+            writes.as_slice(),
+            [(
+                "https://example.com".to_string(),
+                "Bearer".to_string(),
+                "ui-key".to_string()
+            )]
+            .as_slice(),
+            "store must write the UI-entered key to the keychain even when an env var is set"
+        );
+        drop(writes);
+
+        // The UI-entered key now wins.
+        entity.update(cx, |ent, _| {
+            assert!(matches!(
+                ent.api_key.load_status,
+                LoadStatus::Loaded(ApiKey {
+                    source: ApiKeySource::SystemKeychain,
+                    ..
+                })
+            ));
+            assert_eq!(
+                ent.api_key.key("https://example.com"),
+                Some("ui-key".into())
+            );
+        });
+    }
     use credentials_provider::test_support::FakeCredentialsProvider;
     use gpui::{Entity, TestAppContext};
 

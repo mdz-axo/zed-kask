@@ -29,6 +29,7 @@ use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
+use crate::provider::runpod::RunpodLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 use crate::provider::x_ai_subscribed::XAiSubscribedProvider;
@@ -159,15 +160,37 @@ enum CompatibleProviderKind {
     Anthropic,
 }
 
+/// zed-kask: D100 — a compatible-provider entry may not take the id of a
+/// provider that serves privacy-marked threads. The registry has a single
+/// provider ID namespace and a later registration replaces an earlier one,
+/// so an entry named `ollama` or `llama.cpp` would replace the built-in
+/// local provider with an endpoint of the user's choosing — and a private
+/// thread admits models by provider id. Such an entry is ignored, with a
+/// warning naming it.
+fn shadows_private_thread_provider(id: &str, section: &str) -> bool {
+    let shadows = ::settings::PRIVATE_THREAD_LOCAL_PROVIDERS.contains(&id);
+    if shadows {
+        log::warn!(
+            "ignoring `{section}` provider `{id}`: the name is reserved for the \
+             built-in local provider that serves private threads"
+        );
+    }
+    shadows
+}
+
 impl CompatibleProviders {
     fn from_settings(cx: &App) -> Self {
         let settings = AllLanguageModelSettings::get_global(cx);
         let mut providers: HashMap<Arc<str>, CompatibleProviderKind> = settings
             .openai_compatible
             .keys()
+            .filter(|id| !shadows_private_thread_provider(id, "openai_compatible"))
             .map(|id| (id.clone(), CompatibleProviderKind::OpenAi))
             .collect();
         for id in settings.anthropic_compatible.keys() {
+            if shadows_private_thread_provider(id, "anthropic_compatible") {
+                continue;
+            }
             // The registry has a single provider ID namespace, so a name can
             // only refer to one provider. OpenAI-compatible entries win
             // collisions because they predate Anthropic-compatible ones, so
@@ -289,6 +312,14 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        Arc::new(RunpodLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
         Arc::new(GoogleLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
@@ -366,50 +397,77 @@ fn register_language_model_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use clock::FakeSystemClock;
     use feature_flags::FeatureFlagAppExt as _;
-    use gpui::{AppContext as _, AsyncApp, BorrowAppContext as _};
+    use gpui::{AppContext as _, BorrowAppContext as _};
     use http_client::FakeHttpClient;
     use language_model::IconOrSvg;
     use release_channel::AppVersion;
-    use std::future::Future;
-    use std::pin::Pin;
     use ui::IconName;
 
-    struct FakeCredentialsProvider;
-
-    impl CredentialsProvider for FakeCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
-            Box::pin(async { Ok(None) })
+    #[test]
+    fn provider_tool_serializers_preserve_json_text_parameters() {
+        fn round_trip<T: serde::de::DeserializeOwned + serde::Serialize>(
+            fixture: &serde_json::Value,
+        ) -> serde_json::Value {
+            let definition: T =
+                serde_json::from_value(fixture.clone()).expect("provider tool input");
+            serde_json::to_value(definition).expect("provider tool wire JSON")
         }
 
-        fn write_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _username: &'a str,
-            _password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
+        let parameters = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "description": "Complete JSON text"},
+                "name": {"type": "string"}
+            },
+            "required": ["payload", "name"]
+        });
+        let function = serde_json::json!({
+            "type": "function",
+            "function": {"name": "probe", "description": "JSON text tool", "parameters": parameters}
+        });
+        for wire in [
+            round_trip::<open_ai::ToolDefinition>(&function),
+            round_trip::<open_router::ToolDefinition>(&function),
+            round_trip::<deepseek::ToolDefinition>(&function),
+            round_trip::<mistral::ToolDefinition>(&function),
+            round_trip::<llama_cpp::ToolDefinition>(&function),
+            round_trip::<lmstudio::ToolDefinition>(&function),
+            round_trip::<ollama::OllamaTool>(&function),
+        ] {
+            assert_eq!(wire["function"]["parameters"], parameters);
         }
+        let anthropic = round_trip::<anthropic::Tool>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "input_schema": parameters
+        }));
+        assert_eq!(anthropic["input_schema"], parameters);
+        let google = round_trip::<google_ai::FunctionDeclaration>(&serde_json::json!({
+            "name": "probe", "description": "JSON text tool", "parametersJsonSchema": parameters
+        }));
+        assert_eq!(google["parametersJsonSchema"], parameters);
+    }
 
-        fn delete_credentials<'a>(
-            &'a self,
-            _url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            Box::pin(async { Ok(()) })
-        }
+    // zed-kask: D93 — the local `FakeCredentialsProvider` struct was removed at
+    // the 2026-11-08 upstream merge: the shared fake lives with its trait in
+    // `credentials_provider::test_support`, installed via
+    // `zed_credentials_provider::set_fake_credentials_provider`.
+
+    // zed-kask: D93 — delegates to the shared installer (the fake lives with
+    // its trait in `credentials_provider::test_support`; the installer lives
+    // with the global in `zed_credentials_provider`).
+    pub(crate) fn set_fake_credentials_provider(
+        cx: &mut App,
+    ) -> Arc<credentials_provider::test_support::FakeCredentialsProvider> {
+        zed_credentials_provider::set_fake_credentials_provider(cx)
     }
 
     fn init_test(cx: &mut App) -> (Arc<Client>, Arc<dyn CredentialsProvider>) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        set_fake_credentials_provider(cx);
+        // OpenCode's dynamic model catalog reads the global filesystem.
+        <dyn fs::Fs>::set_global(fs::FakeFs::new(cx.background_executor().clone()), cx);
         cx.set_global(db::AppDatabase::test_new());
         let app_version = AppVersion::global(cx);
         release_channel::init_test(app_version, release_channel::ReleaseChannel::Dev, cx);
@@ -421,7 +479,10 @@ mod tests {
             FakeHttpClient::with_404_response(),
             cx,
         );
-        (client, Arc::new(FakeCredentialsProvider))
+        (
+            client,
+            zed_credentials_provider::set_fake_credentials_provider(cx),
+        )
     }
 
     fn update_compatible_provider_settings(
@@ -466,6 +527,33 @@ mod tests {
             .filter(|provider| provider.id().0.as_ref() == id)
             .map(|provider| provider.icon())
             .collect()
+    }
+
+    /// zed-kask: D100 — a compatible entry cannot take a private-thread
+    /// provider's id. Entries named `ollama` or `llama.cpp` in either
+    /// section are dropped before registration, so they never replace the
+    /// built-in local providers; other entries are unaffected.
+    #[gpui::test]
+    fn test_compatible_entries_cannot_shadow_private_thread_providers(cx: &mut App) {
+        let (_client, _credentials_provider) = init_test(cx);
+        let providers =
+            update_compatible_provider_settings(&["ollama", "acme"], &["llama.cpp", "zeta"], cx);
+        for reserved in ["ollama", "llama.cpp"] {
+            assert!(
+                !providers.0.contains_key(reserved),
+                "a compatible entry named `{reserved}` is dropped"
+            );
+        }
+        assert_eq!(
+            providers.0.get("acme"),
+            Some(&CompatibleProviderKind::OpenAi),
+            "an ordinary openai_compatible entry still registers"
+        );
+        assert_eq!(
+            providers.0.get("zeta"),
+            Some(&CompatibleProviderKind::Anthropic),
+            "an ordinary anthropic_compatible entry still registers"
+        );
     }
 
     #[gpui::test]
@@ -565,6 +653,53 @@ mod tests {
             registry.read_with(cx, |registry, _| provider_icons(registry, "acme")),
             Vec::new(),
             "removing all entries should unregister the provider"
+        );
+    }
+
+    /// Pin (D29): RunPod is registered as a dedicated `LanguageModelProvider`
+    /// (like DeepSeek), not via `openai_compatible`. The dedicated
+    /// registration is what makes `RunPod/kask-ocr` resolvable through the
+    /// IPC bridge with an empty settings file — an `openai_compatible`
+    /// provider only exists after a settings entry creates it, and its id
+    /// would not carry the endpoint-name model resolution the OCR pipeline
+    /// depends on. The kask_bridge mirror test pins the credential side; this
+    /// pins the provider-registration side.
+    #[gpui::test]
+    fn runpod_is_a_dedicated_provider_not_openai_compatible(cx: &mut App) {
+        let (client, credentials_provider) = init_test(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        // The Cloud provider reads the LLM token listener global.
+        client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        registry.update(cx, |registry, cx| {
+            register_language_model_providers(
+                registry,
+                user_store,
+                client,
+                credentials_provider,
+                cx,
+            );
+        });
+
+        // The dedicated registration surfaces with an empty settings file —
+        // no `openai_compatible` entry can do that (they only register via
+        // `register_compatible_providers` after a settings entry exists).
+        // The registration id is lowercase `runpod` (the display name
+        // "RunPod" is separate) — the same case split that forced D29's
+        // `resolve_ocr_model` case-insensitivity fix.
+        let runpod = registry
+            .read(cx)
+            .provider(&LanguageModelProviderId::from("runpod".to_string()))
+            .expect("RunPod must be registered as a dedicated provider");
+        assert_eq!(runpod.id().0.as_ref(), "runpod");
+
+        // Control: DeepSeek is the dedicated-provider pattern D29 mirrors.
+        assert!(
+            registry
+                .read(cx)
+                .provider(&LanguageModelProviderId::from("deepseek".to_string()))
+                .is_some(),
+            "DeepSeek (the dedicated-provider pattern RunPod mirrors) must also be registered"
         );
     }
 }

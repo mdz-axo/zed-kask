@@ -21,6 +21,8 @@ pub struct Model {
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
+    #[serde(default)]
+    pub parameter_size: Option<String>,
     pub disabled: Option<String>,
 }
 
@@ -45,8 +47,17 @@ impl Model {
             supports_tools,
             supports_vision,
             supports_thinking,
+            parameter_size: None,
             disabled: None,
         }
+    }
+
+    pub fn with_parameter_size(mut self, parameter_size: impl Into<String>) -> Self {
+        let size = parameter_size.into();
+        if !size.trim().is_empty() {
+            self.parameter_size = Some(size);
+        }
+        self
     }
 
     pub fn new_disabled(name: &str, reason: String) -> Self {
@@ -58,6 +69,7 @@ impl Model {
             supports_tools: None,
             supports_vision: None,
             supports_thinking: None,
+            parameter_size: None,
             disabled: Some(reason),
         }
     }

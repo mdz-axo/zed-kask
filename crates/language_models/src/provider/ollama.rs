@@ -32,6 +32,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::local_context::discovered_context_cap;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -143,6 +144,7 @@ impl State {
                     let extra_headers = extra_headers.clone();
                     async move {
                         let name = model.name.as_str();
+                        let parameter_size = model.details.parameter_size.clone();
 
                         show_model(
                             http_client.as_ref(),
@@ -167,6 +169,7 @@ impl State {
                                     Some(model.supports_vision()),
                                     Some(model.supports_thinking()),
                                 )
+                                .with_parameter_size(parameter_size)
                             },
                         )
                     }
@@ -255,26 +258,12 @@ impl OllamaLanguageModelProvider {
     /// Every model this provider offers, keyed by id: the fetched list when
     /// auto-discovery is on, with settings entries merged over it.
     fn ollama_models(&self, cx: &App) -> HashMap<String, ollama::Model> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         let settings = OllamaLanguageModelProvider::settings(cx);
-
-        if settings.auto_discover {
-            for model in self.state.read(cx).fetched_models.iter() {
-                let mut model = model.clone();
-                if let Some(context_window) = settings.context_window {
-                    model.max_tokens = context_window;
-                }
-                models.insert(model.name.clone(), model);
-            }
-        }
-
-        merge_settings_into_models(
-            &mut models,
-            &settings.available_models,
-            settings.context_window,
-        );
-
-        models
+        compute_effective_models(
+            &self.state.read(cx).fetched_models,
+            settings,
+            discovered_context_cap(&settings.api_url),
+        )
     }
 
     /// The current configuration of `model`, if this provider still offers it.
@@ -587,6 +576,7 @@ fn map_to_language_model_completion_events(
     struct State {
         stream: Pin<Box<dyn Stream<Item = anyhow::Result<ChatResponseDelta>> + Send>>,
         used_tools: bool,
+        reported_model: bool,
     }
 
     // We need to create a ToolUse and Stop event from a single
@@ -595,6 +585,7 @@ fn map_to_language_model_completion_events(
         State {
             stream,
             used_tools: false,
+            reported_model: false,
         },
         async move |mut state| {
             let response = state.stream.next().await?;
@@ -608,6 +599,12 @@ fn map_to_language_model_completion_events(
             };
 
             let mut events = Vec::new();
+            if !state.reported_model && !delta.model.trim().is_empty() {
+                state.reported_model = true;
+                events.push(Ok(LanguageModelCompletionEvent::ResponseModel(
+                    delta.model.clone(),
+                )));
+            }
 
             match delta.message {
                 ChatMessage::User { content, images: _ } => {
@@ -900,11 +897,7 @@ impl ConfigurationView {
             self.api_key_editor.clone().into_any_element()
         } else {
             ConfiguredApiCard::new("ollama-reset-key", configured_card_label)
-                .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
-                .when(env_var_set, |this| {
-                    this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))
-                })
                 .into_any_element()
         };
 
@@ -1116,6 +1109,53 @@ impl Render for ConfigurationView {
     }
 }
 
+/// The models `provided_models` exposes: discovery merged with the
+/// `available_models` and `context_window` overrides.
+///
+/// zed-kask: D107 — `discovered_context_cap` bounds the context window of a
+/// discovered model to what this machine can serve (see `local_context`).
+/// The window is sent to Ollama as `num_ctx`, so an uncapped trained length
+/// (`qwen3:1.7b` reports 40,960) made a CPU-only laptop evaluate a prompt it
+/// could not finish in useful time. A cloud-proxied model runs elsewhere and
+/// is not capped; neither is any value the user set in Zed.
+fn compute_effective_models(
+    fetched_models: &[ollama::Model],
+    settings: &OllamaSettings,
+    discovered_context_cap: Option<u64>,
+) -> HashMap<String, ollama::Model> {
+    let mut models: HashMap<String, ollama::Model> = HashMap::default();
+
+    if settings.auto_discover {
+        for model in fetched_models {
+            let mut model = model.clone();
+            if let Some(context_window) = settings.context_window {
+                model.max_tokens = context_window;
+            } else if let Some(cap) = discovered_context_cap
+                && !settings::is_ollama_cloud_model_name(&model.name)
+            {
+                model.max_tokens = model.max_tokens.min(cap);
+            }
+            if !settings::is_ollama_cloud_model_name(&model.name)
+                && settings::is_unsupported_small_local_tool_model(
+                    &model.name,
+                    model.parameter_size.as_deref(),
+                )
+            {
+                model.supports_tools = Some(false);
+            }
+            models.insert(model.name.clone(), model);
+        }
+    }
+
+    merge_settings_into_models(
+        &mut models,
+        &settings.available_models,
+        settings.context_window,
+    );
+
+    models
+}
+
 fn merge_settings_into_models(
     models: &mut HashMap<String, ollama::Model>,
     available_models: &[AvailableModel],
@@ -1142,6 +1182,7 @@ fn merge_settings_into_models(
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
+                    parameter_size: None,
                     disabled: None,
                 },
             );
@@ -1171,6 +1212,124 @@ fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool
 mod tests {
     use super::*;
 
+    /// zed-kask: D107 — the reported bug: `qwen3:1.7b` discovered with its
+    /// trained 40,960 context on a 15 GiB CPU-only machine.
+    #[test]
+    fn discovered_context_is_capped_but_settings_are_not() {
+        let fetched = vec![
+            ollama::Model::new("qwen3:1.7b", Some(40_960), Some(true), None, Some(true)),
+            ollama::Model::new("tiny:latest", Some(2_048), None, None, None),
+            ollama::Model::new("glm-5.3:cloud", Some(200_000), Some(true), None, None),
+        ];
+        let discover = OllamaSettings {
+            auto_discover: true,
+            ..Default::default()
+        };
+
+        let capped = compute_effective_models(&fetched, &discover, Some(4_096));
+        assert_eq!(capped["qwen3:1.7b"].max_tokens, 4_096);
+        assert_eq!(
+            capped["qwen3:1.7b"].supports_tools,
+            Some(false),
+            "sub-3B local models disable default tool calling unless overridden in settings"
+        );
+        assert_eq!(
+            capped["tiny:latest"].max_tokens, 2_048,
+            "the cap never raises a model's own context"
+        );
+        assert_eq!(
+            capped["glm-5.3:cloud"].max_tokens, 200_000,
+            "a cloud-proxied model does not run on this machine"
+        );
+
+        let remote = compute_effective_models(&fetched, &discover, None);
+        assert_eq!(
+            remote["qwen3:1.7b"].max_tokens, 40_960,
+            "a remote server is not capped by this machine's memory"
+        );
+
+        let global_override = OllamaSettings {
+            context_window: Some(32_768),
+            ..discover.clone()
+        };
+        let overridden = compute_effective_models(&fetched, &global_override, Some(4_096));
+        assert_eq!(
+            overridden["qwen3:1.7b"].max_tokens, 32_768,
+            "the `context_window` setting wins over the cap"
+        );
+
+        let per_model = OllamaSettings {
+            available_models: vec![AvailableModel {
+                name: "qwen3:1.7b".to_string(),
+                display_name: None,
+                max_tokens: 16_384,
+                keep_alive: None,
+                supports_tools: Some(true),
+                supports_images: None,
+                supports_thinking: None,
+            }],
+            ..discover
+        };
+        let listed = compute_effective_models(&fetched, &per_model, Some(4_096));
+        assert_eq!(
+            listed["qwen3:1.7b"].max_tokens, 16_384,
+            "a per-model `max_tokens` setting wins over the cap"
+        );
+        assert_eq!(
+            listed["qwen3:1.7b"].supports_tools,
+            Some(true),
+            "an explicit `available_models` `supports_tools` setting overrides the sub-3B default"
+        );
+    }
+
+    #[gpui::test]
+    async fn ollama_stream_emits_wire_response_model_once() {
+        let deltas = vec![
+            Ok(ChatResponseDelta {
+                model: "qwen3:1.7b".to_string(),
+                created_at: "2026-11-17T00:00:00Z".to_string(),
+                message: ChatMessage::Assistant {
+                    content: "Hola".to_string(),
+                    tool_calls: None,
+                    images: None,
+                    thinking: None,
+                },
+                done_reason: None,
+                done: false,
+                prompt_eval_count: None,
+                eval_count: None,
+            }),
+            Ok(ChatResponseDelta {
+                model: "qwen3:1.7b".to_string(),
+                created_at: "2026-11-17T00:00:01Z".to_string(),
+                message: ChatMessage::Assistant {
+                    content: String::new(),
+                    tool_calls: None,
+                    images: None,
+                    thinking: None,
+                },
+                done_reason: Some("stop".to_string()),
+                done: true,
+                prompt_eval_count: Some(12),
+                eval_count: Some(4),
+            }),
+        ];
+        let mapped: Vec<_> = map_to_language_model_completion_events(stream::iter(deltas).boxed())
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|r| r.expect("clean delta"))
+            .collect();
+        let reported: Vec<_> = mapped
+            .iter()
+            .filter_map(|ev| match ev {
+                LanguageModelCompletionEvent::ResponseModel(m) => Some(m.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reported, vec!["qwen3:1.7b"]);
+    }
+
     #[test]
     fn test_merge_settings_preserves_display_names_for_similar_models() {
         // Regression test for https://github.com/zed-industries/zed/issues/43646
@@ -1188,6 +1347,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                parameter_size: None,
                 disabled: None,
             },
         );
@@ -1201,6 +1361,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                parameter_size: None,
                 disabled: None,
             },
         );

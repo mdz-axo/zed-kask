@@ -277,7 +277,7 @@ struct ModelSupportedFeatures {
     #[serde(default)]
     min_thinking_budget: Option<u32>,
     #[serde(default)]
-    reasoning_effort: Vec<String>,
+    thinking_effort: Vec<String>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -404,7 +404,7 @@ impl Model {
     }
 
     pub fn reasoning_effort_levels(&self) -> &[String] {
-        &self.capabilities.supports.reasoning_effort
+        &self.capabilities.supports.thinking_effort
     }
 
     pub fn family(&self) -> &str {
@@ -2027,7 +2027,7 @@ mod tests {
                     adaptive_thinking: false,
                     max_thinking_budget: None,
                     min_thinking_budget: None,
-                    reasoning_effort: vec![],
+                    thinking_effort: vec![],
                 },
                 model_type: "chat".to_string(),
                 tokenizer: None,

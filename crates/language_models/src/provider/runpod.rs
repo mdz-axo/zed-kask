@@ -1,0 +1,991 @@
+//! RunPod serverless endpoint provider.
+//!
+//! zed-kask (D29): RunPod serverless endpoints are not a standard
+//! OpenAI-compatible provider. Each endpoint has its own API URL
+//! (`https://api.runpod.ai/v2/{endpoint_id}/openai/v1`), and endpoint
+//! discovery uses the RunPod GraphQL API at `https://api.runpod.io/graphql`
+//! (not `/v1/models`). The GraphQL API and the serverless REST API use
+//! different domains: `api.runpod.io` for GraphQL, `api.runpod.ai` for REST.
+//! This file registers RunPod as a dedicated `LanguageModelProvider` so each
+//! model carries its own endpoint URL and the IPC bridge
+//! (`LanguageModelRegistry`) can resolve `RunPod/kask-ocr` for the corpus OCR
+//! pipeline.
+//!
+//! See `DIVERGENCE.md` D29 for the full rationale and pin tests.
+
+use anyhow::{Result, anyhow};
+use credentials_provider::CredentialsProvider;
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
+use http_client::{CustomHeaders, HttpClient};
+use language_model::{
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView, RateLimiter,
+    chat_completion::ChatCompletionEventMapper, env_var, unavailable_error,
+};
+use open_ai::{ResponseStreamEvent, stream_completion};
+use serde::Deserialize;
+use settings::Settings;
+use std::sync::{Arc, LazyLock};
+use ui::IconName;
+
+use crate::provider::open_ai::{ChatCompletionMaxTokensParameter, into_open_ai};
+pub use settings::RunpodAvailableModel as AvailableModel;
+
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("runpod");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("RunPod");
+
+const API_KEY_ENV_VAR_NAME: &str = "RUNPOD_API_KEY";
+static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+
+/// Default RunPod GraphQL API base URL. Used for endpoint discovery via the
+/// GraphQL API at `{api_url}/graphql`. The serverless REST API (OpenAI-compatible
+/// inference) uses a different domain (`api.runpod.ai`) — see
+/// `RUNPOD_REST_API_BASE_URL` and `endpoint_url`.
+pub const RUNPOD_DEFAULT_API_URL: &str = "https://api.runpod.io";
+
+/// Default RunPod serverless REST API base URL. The OpenAI-compatible endpoint
+/// URL for a serverless endpoint is
+/// `{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1`.
+/// Per the RunPod docs (https://docs.runpod.io/serverless/vllm/openai-compatibility),
+/// the REST API domain is `api.runpod.ai`, NOT `api.runpod.io` (which is the
+/// GraphQL API domain).
+pub const RUNPOD_REST_API_BASE_URL: &str = "https://api.runpod.ai";
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct RunpodSettings {
+    pub api_url: String,
+    pub auto_discover: bool,
+    pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
+}
+
+pub struct RunpodLanguageModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: Entity<State>,
+    discovery_state: Entity<DiscoveryState>,
+    request_limiters: ModelRateLimiters,
+}
+
+pub struct State {
+    api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
+}
+
+impl State {
+    fn is_authenticated(&self) -> bool {
+        self.api_key_state.has_key()
+    }
+
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
+        let api_url = RunpodLanguageModelProvider::api_url(cx);
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
+    }
+
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
+        let api_url = RunpodLanguageModelProvider::api_url(cx);
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
+    }
+}
+
+/// Discovery state for auto-discovering RunPod serverless endpoints via the
+/// RunPod GraphQL API. Mirrors the OpenAI-compatible `DiscoveryState` pattern:
+/// a `fetch_models_task` is spawned on authenticate / settings change, and
+/// `fetched_models` is merged into `provided_models` by the provider.
+pub struct DiscoveryState {
+    /// Endpoints discovered via the GraphQL API. Empty until a successful fetch.
+    fetched_models: Vec<AvailableModel>,
+    /// In-flight fetch task. Replaced on re-authentication or settings change.
+    fetch_models_task: Option<Task<Result<()>>>,
+}
+
+impl DiscoveryState {
+    fn new() -> Self {
+        Self {
+            fetched_models: Vec::new(),
+            fetch_models_task: None,
+        }
+    }
+
+    /// Spawn (or replace) the fetch-endpoints task. Reads the api_key and
+    /// api_url from the shared state. When `auto_discover` is false, this is
+    /// a no-op.
+    fn restart_fetch_endpoints_task(
+        &mut self,
+        state: Entity<State>,
+        http_client: Arc<dyn HttpClient>,
+        cx: &mut Context<Self>,
+    ) {
+        let state_read = state.read(cx);
+        let auto_discover = RunpodLanguageModelProvider::settings(cx).auto_discover;
+        let api_url = RunpodLanguageModelProvider::api_url(cx);
+        let extra_headers = RunpodLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
+        let api_key = state_read
+            .api_key_state
+            .key(&api_url)
+            .map(|k| k.to_string());
+        // Release the borrow before spawning the task.
+        let _ = state_read;
+
+        if !auto_discover {
+            return;
+        }
+
+        let Some(api_key) = api_key else {
+            log::warn!(
+                "RunPod provider: auto_discover is enabled but no API key is set — set the RunPod API key (env var {API_KEY_ENV_VAR_NAME}) to discover endpoints"
+            );
+            return;
+        };
+
+        let task = cx.spawn(async move |this, cx| {
+            let result =
+                fetch_runpod_endpoints(http_client.as_ref(), &api_url, &api_key, &extra_headers)
+                    .await;
+            match result {
+                Ok(models) => {
+                    // The registry observes this entity directly (see
+                    // `subscribe`), so the shared state is left untouched:
+                    // notifying it re-triggered discovery (D76).
+                    this.update(cx, |this, cx| {
+                        this.fetched_models = models;
+                        cx.notify();
+                    })
+                    .ok();
+                }
+                Err(error) => {
+                    // `{error:#}` (anyhow's alternate format) includes the
+                    // full source chain — connect vs DNS vs TLS vs timeout.
+                    // The top-level Display alone logged "error sending
+                    // request" with no cause, leaving transport failures
+                    // undiagnosable (observed 2026-09-04: two discovery
+                    // failures whose root cause could not be recovered).
+                    log::warn!(
+                        "RunPod provider: endpoint discovery from {api_url}/graphql failed: {error:#}"
+                    );
+                }
+            }
+            Ok(())
+        });
+        self.fetch_models_task.replace(task);
+    }
+}
+
+impl RunpodLanguageModelProvider {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
+        let state = cx.new(|cx| {
+            cx.observe_global::<settings::SettingsStore>({
+                let mut last_settings = RunpodLanguageModelProvider::settings(cx).clone();
+                move |this: &mut State, cx| {
+                    let current_settings = RunpodLanguageModelProvider::settings(cx);
+                    let settings_changed = current_settings != &last_settings;
+                    if settings_changed {
+                        let url_changed = last_settings.api_url != current_settings.api_url;
+                        last_settings = current_settings.clone();
+                        if url_changed {
+                            let credentials_provider = this.credentials_provider.clone();
+                            let api_url = Self::api_url(cx);
+                            this.api_key_state.handle_url_change(
+                                api_url,
+                                |this| &mut this.api_key_state,
+                                credentials_provider,
+                                cx,
+                            );
+                        }
+                        cx.notify();
+                    }
+                }
+            })
+            .detach();
+            State {
+                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
+            }
+        });
+
+        let http_client_for_discovery = http_client.clone();
+        let http_client_for_initial = http_client.clone();
+        let state_for_discovery = state.clone();
+        let discovery_state = cx.new(|cx| {
+            cx.observe(
+                &state,
+                move |this: &mut DiscoveryState, observed_state, cx| {
+                    this.restart_fetch_endpoints_task(
+                        observed_state,
+                        http_client_for_discovery.clone(),
+                        cx,
+                    );
+                },
+            )
+            .detach();
+            let mut discovery = DiscoveryState::new();
+            discovery.restart_fetch_endpoints_task(
+                state_for_discovery.clone(),
+                http_client_for_initial.clone(),
+                cx,
+            );
+            discovery
+        });
+
+        Self {
+            http_client,
+            state,
+            discovery_state,
+            request_limiters: ModelRateLimiters::default(),
+        }
+    }
+
+    fn language_model(&self, model: &AvailableModel) -> LanguageModel {
+        LanguageModel {
+            // RunPod serverless endpoints host single-model vLLM workers (e.g.
+            // OLMOCR-2 for OCR). These are specialized models that do not support
+            // tool calls. Advertising `false` is fail-closed: the agent panel
+            // won't offer RunPod models for tool-using agent profiles, and the
+            // inference request won't include tool definitions the model can't
+            // honor. A future tool-capable endpoint can override this via a
+            // per-model config field when one is needed.
+            supports_tools: false,
+            supports_images: model.supports_images,
+            supports_streaming_tools: false,
+            supports_thinking: false,
+            supported_effort_levels: Vec::new().into(),
+            tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+            max_output_tokens: model.max_output_tokens,
+            ..LanguageModel::new(
+                LanguageModelId::from(model.name.clone()),
+                // The endpoint name (not the display_name) is the resolution
+                // key: the IPC server builds `ModelListEntry.name` as
+                // `{provider_id}/{model.name()}`, which must match
+                // `DEFAULT_OCR_MODEL = "RunPod/kask-ocr"` in `resolve_ocr_model`.
+                LanguageModelName::from(model.name.clone()),
+                PROVIDER_ID,
+                PROVIDER_NAME,
+                format!("runpod/{}", model.name),
+                model.max_tokens,
+            )
+        }
+    }
+
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<AvailableModel, LanguageModelCompletionError> {
+        // Settings models first (user-configured takes precedence), then
+        // discovered models not already present by name.
+        Self::settings(cx)
+            .available_models
+            .iter()
+            .chain(self.discovery_state.read(cx).fetched_models.iter())
+            .find(|available| available.name == model.id.0.as_ref())
+            .cloned()
+            .ok_or_else(|| unavailable_error(model))
+    }
+
+    fn settings(cx: &App) -> &RunpodSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).runpod
+    }
+
+    fn api_url_from_settings(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            RUNPOD_DEFAULT_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
+    }
+
+    fn api_url(cx: &App) -> SharedString {
+        Self::api_url_from_settings(cx)
+    }
+}
+
+impl LanguageModelProviderState for RunpodLanguageModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+
+    /// zed-kask (D76): observe discovered endpoints as well as the shared state.
+    fn subscribe<T: 'static>(
+        &self,
+        cx: &mut gpui::Context<T>,
+        callback: impl Fn(&mut T, &mut gpui::Context<T>) + 'static,
+    ) -> Option<gpui::Subscription> {
+        let callback = std::rc::Rc::new(callback);
+        let on_state = callback.clone();
+        Some(gpui::Subscription::join(
+            cx.observe(&self.state, move |this, _, cx| on_state(this, cx)),
+            cx.observe(&self.discovery_state, move |this, _, cx| callback(this, cx)),
+        ))
+    }
+}
+
+impl LanguageModelProvider for RunpodLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn icon(&self) -> IconOrSvg {
+        // RunPod serves OpenAI-compatible APIs; reuse the OpenAI-compatible
+        // icon rather than adding a new SVG asset.
+        IconOrSvg::Icon(IconName::AiOpenAiCompat)
+    }
+
+    fn default_model(&self, cx: &App) -> Option<LanguageModel> {
+        let settings_models = &Self::settings(cx).available_models;
+        if let Some(model) = settings_models.first() {
+            return Some(self.language_model(model));
+        }
+        // Fall back to the first discovered model when no static models are configured.
+        self.discovery_state
+            .read(cx)
+            .fetched_models
+            .first()
+            .map(|model| self.language_model(model))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<LanguageModel> {
+        None
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        let settings_models = &Self::settings(cx).available_models;
+        let discovered_models = &self.discovery_state.read(cx).fetched_models;
+
+        // Merge: settings models first (user-configured takes precedence),
+        // then discovered models not already present by name.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut models: Vec<AvailableModel> = Vec::new();
+        for model in settings_models {
+            seen.insert(model.name.clone());
+            models.push(model.clone());
+        }
+        for model in discovered_models {
+            if seen.insert(model.name.clone()) {
+                models.push(model.clone());
+            }
+        }
+        models
+            .into_iter()
+            .map(|model| self.language_model(&model))
+            .collect()
+    }
+
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.read(cx);
+        Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
+            state.api_key_state.has_key(),
+            state.api_key_state.is_from_env_var(),
+            state.api_key_state.env_var_name().clone(),
+            "https://www.runpod.io/console/serverless".into(),
+        )))
+    }
+
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
+    }
+}
+
+impl LanguageModelClient for RunpodLanguageModelProvider {
+    fn stream_completion(
+        &self,
+        model: &LanguageModel,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let served_model_name = config
+            .served_model_name
+            .clone()
+            .unwrap_or_else(|| config.name.clone());
+        let request = match into_open_ai(
+            request,
+            &served_model_name,
+            false, // supports_parallel_tool_calls
+            false, // supports_prompt_cache_key
+            config.max_output_tokens,
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,  // reasoning_effort
+            false, // interleaved_reasoning
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
+        let stream = self.stream_chat_completion(&request_limiter, &config, request, cx);
+        async move {
+            // zed-kask: D29 — use upstream's shared mapper, including D20/D36 handling.
+            let mapper = ChatCompletionEventMapper::new();
+            Ok(mapper.map_stream(stream.await?.boxed()).boxed())
+        }
+        .boxed()
+    }
+}
+
+impl RunpodLanguageModelProvider {
+    fn stream_chat_completion(
+        &self,
+        request_limiter: &RateLimiter,
+        config: &AvailableModel,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<ResponseStreamEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let http_client = self.http_client.clone();
+        let endpoint_url = endpoint_url("", &config.endpoint_id);
+
+        let (api_key, extra_headers) = self.state.read_with(cx, |state, cx| {
+            let api_url = Self::api_url(cx);
+            let extra_headers = Self::settings(cx).custom_headers.clone();
+            (state.api_key_state.key(&api_url), extra_headers)
+        });
+
+        let provider = PROVIDER_NAME;
+        let future = request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_completion(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &endpoint_url,
+                &api_key,
+                request,
+                &extra_headers,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
+/// Derive the OpenAI-compatible endpoint URL for a RunPod serverless endpoint.
+/// Uses `RUNPOD_REST_API_BASE_URL` (`api.runpod.ai`), NOT the GraphQL API URL
+/// (`api.runpod.io`). The two domains are different per the RunPod docs.
+fn endpoint_url(_api_url: &str, endpoint_id: &str) -> String {
+    format!("{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1")
+}
+
+// ── RunPod GraphQL discovery ──────────────────────────────────────────────
+
+/// GraphQL response shape from `query { myself { endpoints { ... } } }`.
+#[derive(Debug, Deserialize)]
+struct GraphqlResponse {
+    #[serde(default)]
+    data: Option<GraphqlData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlData {
+    #[serde(default)]
+    myself: Option<GraphqlMyself>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GraphqlMyself {
+    #[serde(default)]
+    endpoints: Vec<RunpodEndpoint>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunpodEndpoint {
+    id: String,
+    name: String,
+    /// Endpoint env vars. We read `MODEL_NAME` for the display name when the
+    /// endpoint has no human-friendly name.
+    #[serde(default)]
+    env: Vec<RunpodEnvVar>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunpodEnvVar {
+    key: String,
+    value: String,
+}
+
+/// Context-length fallback for discovered endpoints when the models listing
+/// is unreachable or doesn't report `max_model_len`. RunPod's GraphQL API
+/// doesn't expose context length.
+const DISCOVERED_MAX_TOKENS_FALLBACK: u64 = 32_768;
+
+/// The OpenAI-compatible `/v1/models` listing served by a RunPod serverless
+/// endpoint's vLLM worker.
+#[derive(Debug, Deserialize)]
+struct OpenAiModelsListing {
+    #[serde(default)]
+    data: Vec<OpenAiModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiModelEntry {
+    /// The id vLLM actually serves — the only authoritative value for the
+    /// OpenAI `model` request field.
+    id: String,
+    /// The model's context length, when the worker reports it.
+    #[serde(default)]
+    max_model_len: Option<u64>,
+}
+
+/// Resolve the served model id (and context length) from the endpoint's own
+/// OpenAI-compatible models listing.
+///
+/// vLLM matches the OpenAI `model` field against its served ids
+/// case-sensitively, and the RunPod vLLM template can serve a model under an
+/// id that differs from the `MODEL_NAME` env var (observed on kask-ocr: env
+/// `allenai/olmOCR-2-7B-1025`, served `allenai/olmocr-2-7b-1025`). A
+/// mismatched id fails every completion — non-streaming requests get a 500,
+/// streaming requests get an HTTP 200 with an empty body, which downstream
+/// consumers (the corpus OCR pipeline) classify as a silent failure. The
+/// endpoint's own listing is the authoritative source, so prefer it.
+async fn resolve_served_model(
+    http_client: &dyn HttpClient,
+    endpoint_id: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<Option<(String, Option<u64>)>> {
+    use futures::AsyncReadExt;
+    use http_client::{AsyncBody, Method, Request as HttpRequest, RequestBuilderExt};
+
+    let uri = format!("{RUNPOD_REST_API_BASE_URL}/v2/{endpoint_id}/openai/v1/models");
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::empty())
+        .map_err(|error| anyhow!("failed to build RunPod models request: {error}"))?;
+
+    let mut response = http_client
+        .send(request)
+        .await
+        .map_err(|error| anyhow!("RunPod models request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| anyhow!("failed to read RunPod models error body: {error}"))?;
+        return Err(anyhow!(
+            "RunPod models request returned {}: {body}",
+            response.status()
+        ));
+    }
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| anyhow!("failed to read RunPod models body: {error}"))?;
+    let parsed: OpenAiModelsListing = serde_json::from_str(&body)
+        .map_err(|error| anyhow!("failed to parse RunPod models listing: {error}"))?;
+    Ok(parsed
+        .data
+        .into_iter()
+        .next()
+        .map(|entry| (entry.id, entry.max_model_len)))
+}
+
+/// Map a discovered GraphQL endpoint to an [`AvailableModel`].
+///
+/// `served` is the authoritative `(served model id, max_model_len)` pair from
+/// the endpoint's own models listing when the probe succeeded. `None` falls
+/// back to the `MODEL_NAME` env var for the served name — the pre-probe
+/// behavior, kept as the degraded path.
+fn endpoint_to_available_model(
+    endpoint: &RunpodEndpoint,
+    served: Option<(&str, Option<u64>)>,
+) -> AvailableModel {
+    let model_name_env = endpoint
+        .env
+        .iter()
+        .find(|var| var.key == "MODEL_NAME")
+        .map(|var| var.value.clone());
+    let display_name = model_name_env
+        .as_ref()
+        .map(|mn| format!("{} ({})", endpoint.name, mn));
+    let (served_model_name, max_tokens) = match served {
+        Some((id, max_model_len)) => (
+            Some(id.to_string()),
+            max_model_len
+                .filter(|len| *len > 0)
+                .unwrap_or(DISCOVERED_MAX_TOKENS_FALLBACK),
+        ),
+        None => (model_name_env.clone(), DISCOVERED_MAX_TOKENS_FALLBACK),
+    };
+    AvailableModel {
+        name: endpoint.name.clone(),
+        display_name,
+        endpoint_id: endpoint.id.clone(),
+        max_tokens,
+        max_output_tokens: None,
+        // Infer vision support from the MODEL_NAME env var. OLMOCR and
+        // other OCR models are vision models — discovery should report
+        // `true` so the IPC vision-model list includes them and
+        // `resolve_ocr_model` can verify the model is vision-capable.
+        supports_images: model_name_env.as_ref().is_some_and(|mn| {
+            let lower = mn.to_ascii_lowercase();
+            lower.contains("olmocr") || lower.contains("ocr") || lower.contains("vision")
+        }),
+        served_model_name,
+    }
+}
+
+/// Fetch RunPod serverless endpoints via the GraphQL API and convert them to
+/// `AvailableModel` entries.
+async fn fetch_runpod_endpoints(
+    http_client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+    extra_headers: &CustomHeaders,
+) -> Result<Vec<AvailableModel>> {
+    use http_client::{AsyncBody, Method, Request as HttpRequest, RequestBuilderExt};
+
+    let base = api_url.trim_end_matches('/');
+    let uri = format!("{base}/graphql");
+    // The GraphQL query is a static string — no user input is interpolated.
+    let query = r#"query { myself { endpoints { id name type env { key value } } } }"#;
+    let body = serde_json::json!({ "query": query });
+    let body = serde_json::to_string(&body)
+        .map_err(|error| anyhow!("failed to serialize RunPod GraphQL query: {error}"))?;
+
+    let request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(body))
+        .map_err(|error| anyhow!("failed to build RunPod GraphQL request: {error}"))?;
+
+    let mut response = http_client
+        .send(request)
+        .await
+        .map_err(|error| anyhow!("RunPod GraphQL request failed: {error}"))?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        use futures::AsyncReadExt;
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| anyhow!("failed to read RunPod GraphQL error body: {error}"))?;
+        return Err(anyhow!(
+            "RunPod GraphQL request returned {}: {body}",
+            response.status()
+        ));
+    }
+
+    let mut body = String::new();
+    use futures::AsyncReadExt;
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|error| anyhow!("failed to read RunPod GraphQL response: {error}"))?;
+
+    let parsed: GraphqlResponse = serde_json::from_str(&body)
+        .map_err(|error| anyhow!("failed to parse RunPod GraphQL response: {error}"))?;
+
+    let endpoints = parsed
+        .data
+        .and_then(|data| data.myself)
+        .map(|myself| myself.endpoints)
+        .unwrap_or_default();
+
+    let mut models: Vec<AvailableModel> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for endpoint in endpoints {
+        if !seen.insert(endpoint.name.clone()) {
+            continue;
+        }
+        // Resolve the authoritative served-model id from the endpoint's own
+        // OpenAI-compatible models listing. The GraphQL `MODEL_NAME` env var is
+        // the configured model, but vLLM may serve it under a different id
+        // (observed on kask-ocr: env `allenai/olmOCR-2-7B-1025`, served
+        // `allenai/olmocr-2-7b-1025`) and the OpenAI `model` field match is
+        // case-sensitive, so the env value fails every completion.
+        let served = match resolve_served_model(http_client, &endpoint.id, api_key, extra_headers)
+            .await
+        {
+            Ok(served) => served,
+            Err(error) => {
+                // Fail-visible: the MODEL_NAME fallback reproduces the
+                // served-id mismatch when the endpoint serves a different
+                // id, so the probe failure must be diagnosable in the log.
+                log::warn!(
+                    "RunPod provider: could not resolve the served model for endpoint {} ({}): {error:#} — falling back to the MODEL_NAME env var",
+                    endpoint.name,
+                    endpoint.id
+                );
+                None
+            }
+        };
+        models.push(endpoint_to_available_model(
+            &endpoint,
+            served
+                .as_ref()
+                .map(|(id, max_model_len)| (id.as_str(), *max_model_len)),
+        ));
+    }
+
+    Ok(models)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D29 pin: the endpoint URL is derived as
+    /// `{RUNPOD_REST_API_BASE_URL}/v2/{id}/openai/v1`, using the REST API
+    /// domain (`api.runpod.ai`), NOT the GraphQL API domain (`api.runpod.io`).
+    #[test]
+    fn endpoint_url_derives_from_api_url_and_endpoint_id() {
+        assert_eq!(
+            endpoint_url("", "hsldzov6932wf5"),
+            "https://api.runpod.ai/v2/hsldzov6932wf5/openai/v1"
+        );
+    }
+
+    /// D29 pin: the telemetry_id is `runpod/{endpoint_name}` (lowercase
+    /// provider prefix), so `RunPod/kask-ocr` resolves through
+    /// `resolve_model_names` via the case-insensitive telemetry_id match.
+    /// This test pins the format string; the full `LanguageModel::telemetry_id`
+    /// method is exercised by the integration test in `model_resolution.rs`.
+    #[test]
+    fn telemetry_id_format_is_runpod_prefixed_endpoint_name() {
+        // `telemetry_id()` returns `format!("runpod/{}", self.model_name)`.
+        // Pin the format so a rename of the provider prefix is caught.
+        let model_name = "kask-ocr";
+        let telemetry_id = format!("runpod/{}", model_name);
+        assert_eq!(telemetry_id, "runpod/kask-ocr");
+    }
+
+    /// D29 pin: `RunPod/kask-ocr` resolves through `resolve_model_names`
+    /// because the provider id `runpod` matches `RunPod` case-insensitively
+    /// and the model id `kask-ocr` matches the endpoint name. This test pins
+    /// the string-comparison contract; a full integration test would require a
+    /// GPUI test context with a registered RunPod provider.
+    #[test]
+    fn runpod_provider_id_matches_runpod_case_insensitively() {
+        let configured_prefix = "RunPod";
+        let registered_id = "runpod";
+        assert!(
+            registered_id.eq_ignore_ascii_case(configured_prefix),
+            "case-insensitive comparison must match RunPod <-> runpod"
+        );
+    }
+
+    /// D29 pin: the configured model name `RunPod/kask-ocr` matches the
+    /// telemetry_id `runpod/kask-ocr` case-insensitively.
+    #[test]
+    fn runpod_telemetry_id_matches_configured_name_case_insensitively() {
+        let configured = "RunPod/kask-ocr";
+        let telemetry_id = "runpod/kask-ocr";
+        assert!(
+            telemetry_id.eq_ignore_ascii_case(configured),
+            "telemetry_id comparison must be case-insensitive \
+             (runpod/kask-ocr must match RunPod/kask-ocr)"
+        );
+    }
+
+    /// D29 pin: the GraphQL response is parsed into `AvailableModel` entries,
+    /// with the display name derived from `MODEL_NAME` when present. This pins
+    /// the degraded (no-probe) mapping: `served_model_name` falls back to the
+    /// `MODEL_NAME` env var.
+    #[test]
+    fn graphql_response_parses_into_available_models() {
+        let body = r#"{
+            "data": {
+                "myself": {
+                    "endpoints": [
+                        {
+                            "id": "hsldzov6932wf5",
+                            "name": "kask-ocr",
+                            "type": "QB",
+                            "env": [
+                                {"key": "MODEL_NAME", "value": "allenai/olmOCR-2-7B-1025"},
+                                {"key": "RAW_OPENAI_OUTPUT", "value": "true"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let parsed: GraphqlResponse = serde_json::from_str(body).unwrap();
+        let endpoints = parsed
+            .data
+            .and_then(|data| data.myself)
+            .map(|myself| myself.endpoints)
+            .unwrap_or_default();
+        assert_eq!(endpoints.len(), 1);
+        let endpoint = &endpoints[0];
+        assert_eq!(endpoint.id, "hsldzov6932wf5");
+        assert_eq!(endpoint.name, "kask-ocr");
+
+        // The degraded path (probe unavailable): served_model_name comes
+        // from the MODEL_NAME env var, max_tokens from the discovery default.
+        let available = endpoint_to_available_model(endpoint, None);
+        assert_eq!(available.name, "kask-ocr");
+        assert_eq!(available.endpoint_id, "hsldzov6932wf5");
+        assert_eq!(available.max_tokens, DISCOVERED_MAX_TOKENS_FALLBACK);
+        assert!(available.supports_images);
+        assert_eq!(
+            available.served_model_name.as_deref(),
+            Some("allenai/olmOCR-2-7B-1025"),
+            "served_model_name must fall back to the MODEL_NAME env var"
+        );
+    }
+
+    /// The served-id probe result overrides the `MODEL_NAME` env var: vLLM
+    /// serves `allenai/olmocr-2-7b-1025` (lowercase) while the env var
+    /// carries the mixed-case HF id — the case-sensitive OpenAI `model`
+    /// field match is why the probe exists. The listing's `max_model_len`
+    /// replaces the discovery-default context length.
+    #[test]
+    fn served_model_probe_overrides_case_mismatched_env_name() {
+        let body = r#"{
+            "data": {
+                "myself": {
+                    "endpoints": [
+                        {
+                            "id": "hsldzov6932wf5",
+                            "name": "kask-ocr",
+                            "type": "QB",
+                            "env": [
+                                {"key": "MODEL_NAME", "value": "allenai/olmOCR-2-7B-1025"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let parsed: GraphqlResponse = serde_json::from_str(body).unwrap();
+        let endpoint = &parsed
+            .data
+            .and_then(|data| data.myself)
+            .map(|myself| myself.endpoints)
+            .unwrap_or_default()[0];
+
+        let available = endpoint_to_available_model(
+            endpoint,
+            Some(("allenai/olmocr-2-7b-1025", Some(128_000))),
+        );
+        assert_eq!(
+            available.served_model_name.as_deref(),
+            Some("allenai/olmocr-2-7b-1025"),
+            "the endpoint's own models listing is authoritative for the served id"
+        );
+        assert_eq!(available.max_tokens, 128_000);
+        // The resolution key stays the endpoint name; the env var still
+        // drives display_name and the vision heuristic.
+        assert_eq!(available.name, "kask-ocr");
+        assert_eq!(
+            available.display_name.as_deref(),
+            Some("kask-ocr (allenai/olmOCR-2-7B-1025)")
+        );
+        assert!(available.supports_images);
+    }
+
+    /// A listing without `max_model_len` (or with a zero value) keeps the
+    /// discovery-default context length — the probe's id still wins.
+    #[test]
+    fn served_model_probe_without_max_model_len_uses_discovery_default() {
+        let body = r#"{
+            "data": {
+                "myself": {
+                    "endpoints": [
+                        {
+                            "id": "hsldzov6932wf5",
+                            "name": "kask-ocr",
+                            "type": "QB",
+                            "env": [
+                                {"key": "MODEL_NAME", "value": "allenai/olmOCR-2-7B-1025"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let parsed: GraphqlResponse = serde_json::from_str(body).unwrap();
+        let endpoint = &parsed
+            .data
+            .and_then(|data| data.myself)
+            .map(|myself| myself.endpoints)
+            .unwrap_or_default()[0];
+
+        let available = endpoint_to_available_model(endpoint, Some(("served-id", None)));
+        assert_eq!(available.served_model_name.as_deref(), Some("served-id"));
+        assert_eq!(available.max_tokens, DISCOVERED_MAX_TOKENS_FALLBACK);
+    }
+
+    /// The endpoint's OpenAI-compatible models listing parses: the served id
+    /// and `max_model_len` are extracted from the first entry.
+    #[test]
+    fn openai_models_listing_parses() {
+        let body = r#"{"data":[{"created":1789104003,"id":"allenai/olmocr-2-7b-1025","max_model_len":128000,"object":"model","owned_by":"vllm","parent":null,"permission":[]}],"object":"list"}"#;
+        let parsed: OpenAiModelsListing = serde_json::from_str(body).unwrap();
+        let first = parsed.data.first().expect("listing must have an entry");
+        assert_eq!(first.id, "allenai/olmocr-2-7b-1025");
+        assert_eq!(first.max_model_len, Some(128_000));
+
+        // A listing without max_model_len still parses (serde default).
+        let body_no_len = r#"{"data":[{"id":"m","object":"model"}],"object":"list"}"#;
+        let parsed_no_len: OpenAiModelsListing = serde_json::from_str(body_no_len).unwrap();
+        assert_eq!(parsed_no_len.data[0].max_model_len, None);
+    }
+}

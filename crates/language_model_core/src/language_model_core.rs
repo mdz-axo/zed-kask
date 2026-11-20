@@ -27,7 +27,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::util::{
     fix_streamed_json, is_context_window_exceeded_message, parse_prompt_too_long,
-    parse_tool_arguments,
+    parse_tool_arguments, tool_call_truncation_error,
 };
 pub use gpui_shared_string::SharedString;
 
@@ -63,6 +63,10 @@ pub enum LanguageModelCompletionEvent {
     StartMessage {
         message_id: String,
     },
+    /// Wire-reported model identifier echoed by the serving provider (e.g.
+    /// Ollama's `ChatResponseDelta.model`), allowing the caller to record and
+    /// verify the actual model that served the completion.
+    ResponseModel(String),
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
     Compaction(CompactionUpdate),
@@ -281,6 +285,22 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    /// zed-kask: D36 — the stream ended (`finish_reason: "stop"`) with a
+    /// tool call's arguments still incomplete: the accumulated argument
+    /// string is a JSON fragment, so the call is truncated, not runnable.
+    /// Emitted by the shared `ChatCompletionEventMapper` instead of
+    /// draining the fragment into a tool-call turn; nothing is dispatched.
+    #[error(
+        "tool call '{tool_name}' was truncated mid-JSON before dispatch \
+         ({json_parse_error}; {raw_input_chars} chars of arguments received); \
+         the call was not executed — resend it with complete arguments"
+    )]
+    ToolCallTruncated {
+        tool_name: String,
+        json_parse_error: String,
+        raw_input_chars: usize,
+    },
+
     /// The provider no longer offers a model with this id, for example after
     /// its settings or fetched model list changed.
     #[error("{provider} no longer offers the model {}", model.0)]
@@ -442,6 +462,9 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            // zed-kask: D36 — retrying a cut stream re-sends the same
+            // request and cuts at the same output-length boundary.
+            | Self::ToolCallTruncated { .. }
             | Self::ModelUnavailable { .. }
             | Self::Other(_) => false,
         }
@@ -472,6 +495,7 @@ impl LanguageModelCompletionError {
             | Self::BuildRequestBody { .. }
             | Self::DeserializeResponse { .. }
             | Self::StreamEndedUnexpectedly { .. }
+            | Self::ToolCallTruncated { .. }
             | Self::ModelUnavailable { .. }
             | Self::Other(_) => None,
         }
@@ -941,6 +965,51 @@ mod tests {
                 error
             ),
         }
+    }
+
+    #[test]
+    fn cloudflare_wrapped_context_overflow_is_prompt_too_large() {
+        let message = r#"Provider returned error
+provider_name: Cloudflare
+raw: {"errors":[{"message":"AiError: {\"message\":\"Requested token count exceeds the model's maximum context length of 1048576 tokens. You requested a total of 1412853 tokens: 818417 tokens from the input messages and 594436 tokens for the completion.\",\"code\":400}","code":8007}]}"#;
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+    }
+
+    #[test]
+    fn plain_provider_context_overflow_is_not_a_generic_invalid_request() {
+        let message = "This model's maximum context length is 1048576 tokens, but the request requires 1142292 tokens (530169 input including image/vision expansion + 612123 for the completion). Reduce the input length or max_tokens.";
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(
+                StatusCode::BAD_REQUEST,
+                "Invalid max_tokens parameter"
+            ),
+            ProviderErrorCategory::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn openrouter_endpoint_context_overflow_is_prompt_too_large() {
+        let message = "This endpoint's maximum context length is 1048576 tokens. However, you requested about 1186901 tokens (1058535 of text input, 62830 of tool input, 65536 in the output). Please reduce the length of the input, or use the context-compression plugin to compress your prompt automatically.";
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(StatusCode::BAD_REQUEST, message),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
+
+        let openai_messages_overflow = "This model's maximum context length is 128000 tokens. However, your messages resulted in 140000 tokens. Please reduce the length of the messages.";
+        assert_eq!(
+            ProviderErrorCategory::from_http_status(
+                StatusCode::BAD_REQUEST,
+                openai_messages_overflow
+            ),
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        );
     }
 
     #[test]
