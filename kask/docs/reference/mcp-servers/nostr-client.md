@@ -1,7 +1,7 @@
 ---
 title: "Nostr Client MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-11-18
+last_updated: 2026-11-20
 version: "0.1.0"
 status: "Active"
 domain: "Composition"
@@ -11,7 +11,7 @@ mds_categories: [domain, composition, trust, lifecycle]
 # Nostr Client MCP Server Reference
 
 **Crate:** `kask/mcp-servers/hkask-mcp-nostr-client`
-**Tools:** 10 — `nostr_account`, `nostr_decode`, `nostr_fetch_events`, `nostr_thread`, `nostr_profile`, `nostr_author_relays`, `nostr_notifications`, `nostr_publish_note`, `nostr_blossom_archive`, `nostr_blossom_mirror` (pinned by `tool_surface_is_exactly_10_registered_tools` at `kask/mcp-servers/hkask-mcp-nostr-client/src/hkask_mcp_nostr_client.rs:51-61@tool_surface_tests` and wire-matched to `hkask_types::nostr_wire::CLIENT_TOOL_NAMES`).
+**Tools:** 14 — `nostr_account`, `nostr_decode`, `nostr_fetch_events`, `nostr_thread`, `nostr_profile`, `nostr_author_relays`, `nostr_notifications`, `nostr_publish_note`, `nostr_publish_reaction`, `nostr_publish_reply`, `nostr_prepare_zap`, `nostr_publish_nutzap`, `nostr_blossom_archive`, `nostr_blossom_mirror` (pinned by `tool_surface_is_exactly_14_registered_tools` at `kask/mcp-servers/hkask-mcp-nostr-client/src/hkask_mcp_nostr_client.rs:51-61@tool_surface_tests` and wire-matched to `hkask_types::nostr_wire::CLIENT_TOOL_NAMES`).
 **Auto-start:** Yes by default with the built-in fleet (`id: "nostr-client"`, `binary: "hkask-mcp-nostr-client"`, `kask/crates/kask_bridge/src/mcp_servers/catalog.rs:384-410@BUILT_IN_MCP_SERVERS`). Disabled by default on privacy-marked threads via `DEFAULT_PRIVATE_THREAD_DISABLED_SERVERS` (`crates/settings_content/src/settings_content.rs:2230-2236`).
 
 The Nostr client server is the agent's public-network Nostr instrument (D106): seven read-only inspection and query tools over the local relay (`hkask-mcp-nostr-relay`) and up to 8 operator-configured `wss://` seed relays, plus three step-execution tools (`nostr_publish_note`, `nostr_blossom_archive`, `nostr_blossom_mirror`) whose cryptographic signatures are produced exclusively inside the editor process over the inference IPC channel.[^nip-01][^blossom-bud02]
@@ -36,7 +36,7 @@ Startup reads four environment variables once via `Config::from_env` (`kask/mcp-
 
 Relays named inside untrusted events (NIP-65 `kind: 10002` relay lists or NIP-19 relay hints) are surfaced as data and **never contacted** (`kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:362-382`). Direct-message kinds (`4`, `13`, `14`, `1059`) are refused on every read path. Every event's ID and Schnorr signature are verified before return, and relay provenance is merged per event ID.
 
-## Tool catalog (10 tools)
+## Tool catalog (14 tools)
 
 All tool handlers live on `NostrClientServer` in `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs`:
 
@@ -50,6 +50,10 @@ All tool handlers live on `NostrClientServer` in `kask/mcp-servers/hkask-mcp-nos
 | `nostr_author_relays` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:739@NostrClientServer::nostr_author_relays` | `pko:ProcedureExecution` / `bibo:Report` | Reads an author's NIP-65 (`kind: 10002`) read/write relay list without contacting listed relays.[^nip-65] |
 | `nostr_notifications` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:809@NostrClientServer::nostr_notifications` | `pko:ProcedureExecution` / `dcterms:Dataset` | Reads replies, mentions, reposts, reactions, and comments tagging the configured `npub` (`limit` default 20, max 100; fails when no identity is configured). |
 | `nostr_publish_note` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:869@NostrClientServer::nostr_publish_note` | `pko:StepExecution` / `dcterms:Dataset` | Publishes a `kind: 1` note (max 4,000 chars) with caller-supplied `created_at` and optional `media_paths` (<= 4 local files, <= 100 MiB each, uploaded via `BUD-02` `PUT /upload` with `NIP-92` `imeta` tags), signed by the editor over IPC, broadcast to local + usable seed relays, and verified by ID read-back.[^nip-92] |
+| `nostr_publish_reaction` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1681@NostrClientServer::nostr_publish_reaction` | `pko:StepExecution` / `dcterms:Dataset` | Publishes a NIP-25 `kind: 7` reaction (default `"+"`) targeting an event and author; signed inside the editor over IPC after operator approval (or `autopublish`).[^nip-25] |
+| `nostr_publish_reply` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1765@NostrClientServer::nostr_publish_reply` | `pko:StepExecution` / `dcterms:Dataset` | Publishes a NIP-10 `kind: 1` reply (marked `root`/`reply` `e` tags) or NIP-22 `kind: 1111` comment (for non-`kind: 1` roots such as `kind: 30023` articles); signed inside the editor over IPC after operator approval (or `autopublish`).[^nip-10][^nip-22] |
+| `nostr_prepare_zap` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1483@NostrClientServer::nostr_prepare_zap` | `pko:StepExecution` / `dcterms:Dataset` | Prepares a NIP-57 Lightning zap: resolves recipient `lud16` under SSRF checks, obtains an editor-signed `kind: 9734` zap request (`host/sign_nostr_zap`, never `autopublish`), fetches and verifies the BOLT11 `description_hash` and `amount_msat`, and returns the verified invoice for `wallet_pay_invoice`.[^nip-57] |
+| `nostr_publish_nutzap` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1598@NostrClientServer::nostr_publish_nutzap` | `pko:StepExecution` / `dcterms:Dataset` | Publishes an editor-signed NIP-61 `kind: 9321` nutzap (`host/sign_nostr_zap`, never `autopublish`) carrying P2PK-locked Cashu proofs created by `wallet_send_ecash`.[^nip-61] |
 | `nostr_blossom_archive` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1085@NostrClientServer::nostr_blossom_archive` | `pko:StepExecution` / `dcterms:Dataset` | Reads verified events, fetches referenced public `https://` NIP-92 `imeta` blobs (<= 100 MiB, SSRF public-host check, no redirects), verifies SHA-256 against the `imeta` `x` tag, and uploads verified blobs to the local Blossom sidecar using editor-signed `kind: 24242` auth. |
 | `nostr_blossom_mirror` | `kask/mcp-servers/hkask-mcp-nostr-client/src/server.rs:1282@NostrClientServer::nostr_blossom_mirror` | `pko:StepExecution` / `dcterms:Dataset` | Mirrors blobs from the local Blossom sidecar out to configured public `kask.nostr.blossom_servers` via `BUD-02` `PUT /upload` using editor-signed `kind: 24242` auth. |
 
@@ -68,8 +72,11 @@ Dual-axis P5.4 ontology annotation is wired through `hkask_mcp_server::dual_axis
 [^nip-01]: Nostr Implementation Possibilities. *NIP-01: Basic protocol flow description*. https://github.com/nostr-protocol/nips/blob/master/01.md
 [^nip-10]: Nostr Implementation Possibilities. *NIP-10: Text Notes and Threads (`kind: 1` `e`/`p` tags)*. https://github.com/nostr-protocol/nips/blob/master/10.md
 [^nip-19]: Nostr Implementation Possibilities. *NIP-19: bech32-encoded entities*. https://github.com/nostr-protocol/nips/blob/master/19.md
-[^nip-22]: Nostr Implementation Possibilities. *NIP-22: Comment (`kind: 1111`)*. https://github.com/nostr-protocol/nips/blob/master/22.md
-[^nip-49]: Nostr Implementation Possibilities. *NIP-49: Private Key Encryption (`ncryptsec`)*. https://github.com/nostr-protocol/nips/blob/master/49.md
+[^nip-22]: Nostr Implementation Possibilities. *NIP-22: Comment (`kind: 1111`)*. https://nostr-nips.com/nip-22
+[^nip-25]: Nostr Implementation Possibilities. *NIP-25: Reactions (`kind: 7`)*. https://nostr-nips.com/nip-25
+[^nip-49]: Nostr Implementation Possibilities. *NIP-49: Private Key Encryption (`ncryptsec`)*. https://nostr-nips.com/nip-49
+[^nip-57]: Nostr Implementation Possibilities. *NIP-57: Lightning Zaps (`kind: 9734`)*. https://nostr-nips.com/nip-57
+[^nip-61]: Nostr Implementation Possibilities. *NIP-61: Nutzaps (`kind: 9321`)*. https://nostr-nips.com/nip-61
 [^nip-65]: Nostr Implementation Possibilities. *NIP-65: Relay List Metadata (`kind: 10002`)*. https://github.com/nostr-protocol/nips/blob/master/65.md
 [^nip-92]: Nostr Implementation Possibilities. *NIP-92: Media Attachments (`imeta`)*. https://github.com/nostr-protocol/nips/blob/master/92.md
 [^blossom-bud02]: Hzrd149. *Blossom Specifications — BUD-02 (Blob upload/delete) & BUD-11 (`kind: 24242` authorization)*. https://github.com/hzrd149/blossom

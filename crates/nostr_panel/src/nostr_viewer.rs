@@ -4014,7 +4014,7 @@ impl NostrViewer {
 
         self._reaction_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.reaction_in_flight = None;
                 match result {
                     Ok(raw) => match crate::nostr_composer::parse_publish_receipt(&raw) {
@@ -4044,7 +4044,8 @@ impl NostrViewer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4107,7 +4108,7 @@ impl NostrViewer {
             let profile_raw = match profile_task.await {
                 Ok(raw) => raw,
                 Err(err) => {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(z) = this.zap.as_mut() {
                             z.status = ZapStatus::Failed(format!(
                                 "Profile lookup failed: {}",
@@ -4115,7 +4116,8 @@ impl NostrViewer {
                             ));
                         }
                         cx.notify();
-                    });
+                    })
+                    .log_err();
                     return;
                 }
             };
@@ -4146,24 +4148,26 @@ impl NostrViewer {
                 .map(|s| s.trim().to_string());
 
             let Some(lud16) = lud16 else {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if let Some(z) = this.zap.as_mut() {
                         z.status = ZapStatus::Failed(
                             "Recipient profile has no Lightning Address (lud16).".to_string(),
                         );
                     }
                     cx.notify();
-                });
+                })
+                .log_err();
                 return;
             };
 
             // 2. Prepare NIP-57 zap request + verified BOLT11 invoice.
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(z) = this.zap.as_mut() {
                     z.status = ZapStatus::PreparingInvoice;
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
             let prep_task = match invoke(
                 NOSTR_CLIENT_SERVER,
                 PREPARE_ZAP_TOOL,
@@ -4176,24 +4180,26 @@ impl NostrViewer {
             ) {
                 Ok(t) => t,
                 Err(err) => {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(z) = this.zap.as_mut() {
                             z.status = ZapStatus::Failed(err);
                         }
                         cx.notify();
-                    });
+                    })
+                    .log_err();
                     return;
                 }
             };
             let prep_raw = match prep_task.await {
                 Ok(raw) => raw,
                 Err(err) => {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(z) = this.zap.as_mut() {
                             z.status = ZapStatus::Failed(sanitize_untrusted_text(&err.to_string()));
                         }
                         cx.notify();
-                    });
+                    })
+                    .log_err();
                     return;
                 }
             };
@@ -4201,7 +4207,7 @@ impl NostrViewer {
                 .ok()
                 .and_then(|v| v.get("bolt11").and_then(Value::as_str).map(str::to_string))
             else {
-                let _ = this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if let Some(z) = this.zap.as_mut() {
                         z.status = ZapStatus::Failed(
                             "nostr_prepare_zap did not return a verified bolt11 invoice."
@@ -4209,7 +4215,8 @@ impl NostrViewer {
                         );
                     }
                     cx.notify();
-                });
+                })
+                .log_err();
                 return;
             };
 
@@ -4230,12 +4237,13 @@ impl NostrViewer {
                 Err(_) => "cashu",
             };
 
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(z) = this.zap.as_mut() {
                     z.status = ZapStatus::PayingInvoice;
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
             let idempotency_key = format!(
                 "nostr-zap-{}-{}",
                 target_event_id,
@@ -4255,17 +4263,18 @@ impl NostrViewer {
             ) {
                 Ok(t) => t,
                 Err(err) => {
-                    let _ = this.update(cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(z) = this.zap.as_mut() {
                             z.status = ZapStatus::Failed(err);
                         }
                         cx.notify();
-                    });
+                    })
+                    .log_err();
                     return;
                 }
             };
             let pay_result = pay_task.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some(z) = this.zap.as_mut() {
                     z.status = match pay_result {
                         Ok(_) => ZapStatus::Settled(format!(
@@ -4275,7 +4284,8 @@ impl NostrViewer {
                     };
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4407,15 +4417,17 @@ impl NostrViewer {
         let window_handle = window.window_handle();
         self._publish_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(raw_json) => {
                         let any_accepted = this.composer.finish_publish_ok(&raw_json);
                         if any_accepted {
                             if let Some(ed) = &editor_handle {
-                                let _ = window_handle.update(cx, |_, window, cx| {
-                                    ed.update(cx, |ed, cx| ed.set_text("", window, cx));
-                                });
+                                window_handle
+                                    .update(cx, |_, window, cx| {
+                                        ed.update(cx, |ed, cx| ed.set_text("", window, cx));
+                                    })
+                                    .log_err();
                             }
                             this.load_archive(cx);
                         }
@@ -4425,7 +4437,8 @@ impl NostrViewer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4709,7 +4722,7 @@ impl NostrViewer {
         self.dm_loaded_local = true;
         self._dm_task = Some(cx.spawn(async move |this, cx| {
             let result = nostr_dm::load_local_threads().await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(threads) => {
                         this.dm_threads = threads;
@@ -4725,7 +4738,8 @@ impl NostrViewer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4733,13 +4747,14 @@ impl NostrViewer {
         self.dm_selected_peer = Some(peer_hex.clone());
         self._dm_task = Some(cx.spawn(async move |this, cx| {
             let result = nostr_dm::load_local_messages(peer_hex).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 match result {
                     Ok(messages) => this.dm_messages = messages,
                     Err(err) => this.dm_status = Some((false, err)),
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4752,7 +4767,7 @@ impl NostrViewer {
         cx.notify();
         self._dm_task = Some(cx.spawn(async move |this, cx| {
             let result = nostr_dm::sync_dms(cx).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.dm_busy = false;
                 match result {
                     Ok(report) => {
@@ -4773,7 +4788,8 @@ impl NostrViewer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
@@ -4795,7 +4811,7 @@ impl NostrViewer {
         let input_handle = input_ed;
         self._dm_task = Some(cx.spawn(async move |this, cx| {
             let result = nostr_dm::send_dm(recipient_raw, content, cx).await;
-            let _ = this.update(cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.dm_busy = false;
                 match result {
                     Ok(report) => {
@@ -4809,9 +4825,11 @@ impl NostrViewer {
                                 report.relays_accepted
                             ),
                         ));
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            input_handle.update(cx, |ed, cx| ed.set_text("", window, cx));
-                        });
+                        window_handle
+                            .update(cx, |_, window, cx| {
+                                input_handle.update(cx, |ed, cx| ed.set_text("", window, cx));
+                            })
+                            .log_err();
                         this.dm_loaded_local = false;
                         this.load_local_dm_threads(cx);
                     }
@@ -4820,7 +4838,8 @@ impl NostrViewer {
                     }
                 }
                 cx.notify();
-            });
+            })
+            .log_err();
         }));
     }
 
